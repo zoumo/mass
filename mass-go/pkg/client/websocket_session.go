@@ -81,7 +81,7 @@ type historyQuery struct {
 }
 
 // CreateSession creates a Session without sending an initial input.
-func (c *WebSocketClient) CreateSession(ctx context.Context, v resource.Session, out any) error {
+func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any) error {
 	return c.call(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
 		Metadata: sessionMetadata{Namespace: v.Metadata.Namespace, Name: v.Metadata.Name},
 		Spec:     v.Spec,
@@ -89,7 +89,7 @@ func (c *WebSocketClient) CreateSession(ctx context.Context, v resource.Session,
 }
 
 // CreateSessionWithInput sends create-only input and preserves its receipt.
-func (c *WebSocketClient) CreateSessionWithInput(ctx context.Context, v resource.SessionCreateInput, out any) error {
+func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionCreateInput, out any) error {
 	return c.call(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
 		Metadata:     sessionMetadata{Namespace: v.Metadata.Namespace, Name: v.Metadata.Name},
 		Spec:         v.Spec,
@@ -98,7 +98,7 @@ func (c *WebSocketClient) CreateSessionWithInput(ctx context.Context, v resource
 }
 
 // GetSession resolves one explicit SessionRef without fallback or escaping.
-func (c *WebSocketClient) GetSession(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) GetSession(ctx context.Context, ref resource.SessionRef, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (c *WebSocketClient) GetSession(ctx context.Context, ref resource.SessionRe
 }
 
 // ListSessions uses the nested page object and returns the same page shape as Service.
-func (c *WebSocketClient) ListSessions(ctx context.Context, q resource.SessionQuery, out any) error {
+func (c *Client) ListSessions(ctx context.Context, q resource.SessionQuery, out any) error {
 	if q.Limit < 0 || q.SessionID != "" {
 		return invalid()
 	}
@@ -122,7 +122,7 @@ func (c *WebSocketClient) ListSessions(ctx context.Context, q resource.SessionQu
 }
 
 // ResumeSession resumes a Session without sending a new input.
-func (c *WebSocketClient) ResumeSession(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) ResumeSession(ctx context.Context, ref resource.SessionRef, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func (c *WebSocketClient) ResumeSession(ctx context.Context, ref resource.Sessio
 }
 
 // ResumeSessionWithInput resumes a Session and preserves the one-use receipt.
-func (c *WebSocketClient) ResumeSessionWithInput(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
+func (c *Client) ResumeSessionWithInput(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (c *WebSocketClient) ResumeSessionWithInput(ctx context.Context, ref resour
 }
 
 // CloseSession waits for the existing Service close settlement.
-func (c *WebSocketClient) CloseSession(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) CloseSession(ctx context.Context, ref resource.SessionRef, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (c *WebSocketClient) CloseSession(ctx context.Context, ref resource.Session
 }
 
 // SendPrompt submits one runtime Input and returns only observed acceptance evidence.
-func (c *WebSocketClient) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
+func (c *Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func (c *WebSocketClient) SendPrompt(ctx context.Context, ref resource.SessionRe
 }
 
 // Answer sends one open JSON value; nil is encoded as an explicit JSON null.
-func (c *WebSocketClient) Answer(ctx context.Context, ref resource.SessionRef, interaction string, answer, out any) error {
+func (c *Client) Answer(ctx context.Context, ref resource.SessionRef, interaction string, answer, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (c *WebSocketClient) Answer(ctx context.Context, ref resource.SessionRef, i
 }
 
 // Cancel targets the work fixed when the Service admits the request.
-func (c *WebSocketClient) Cancel(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) Cancel(ctx context.Context, ref resource.SessionRef, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ func (c *WebSocketClient) Cancel(ctx context.Context, ref resource.SessionRef, o
 }
 
 // LoadSession returns only the Service acceptance result.
-func (c *WebSocketClient) LoadSession(ctx context.Context, input resource.SessionLoad, out any) error {
+func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, out any) error {
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func (c *WebSocketClient) LoadSession(ctx context.Context, input resource.Sessio
 }
 
 // CancelHistoryLoad cancels the original load identity, never a newer input.
-func (c *WebSocketClient) CancelHistoryLoad(ctx context.Context, ref resource.SessionRef, loadID string, out any) error {
+func (c *Client) CancelHistoryLoad(ctx context.Context, ref resource.SessionRef, loadID string, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func (c *WebSocketClient) CancelHistoryLoad(ctx context.Context, ref resource.Se
 }
 
 // History reads committed events only.
-func (c *WebSocketClient) History(ctx context.Context, ref resource.SessionRef, q store.HistoryQuery, out any) error {
+func (c *Client) History(ctx context.Context, ref resource.SessionRef, q store.HistoryQuery, out any) error {
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}

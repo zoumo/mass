@@ -1,4 +1,4 @@
-// Package subcommand owns the terminal interface to the MASS HTTP service.
+// Package subcommand owns the terminal interface to the MASS WebSocket JSON-RPC service.
 package subcommand
 
 import (
@@ -84,10 +84,10 @@ func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 }
 
 func (o *options) command() *cobra.Command {
-	root := &cobra.Command{Use: "massctl", Short: "Manage MASS resources over HTTP", SilenceUsage: true, SilenceErrors: true, Args: cobra.NoArgs, CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true}}
+	root := &cobra.Command{Use: "massctl", Short: "Manage MASS resources over WebSocket JSON-RPC", SilenceUsage: true, SilenceErrors: true, Args: cobra.NoArgs, CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true}}
 	root.Example = "  massctl runtime list\n  massctl session get review -n demo\n  massctl -o json session history SESSION_ID"
 	root.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
-	root.PersistentFlags().StringVar(&o.url, "url", envURL(), "MASS service URL (MASS_URL)")
+	root.PersistentFlags().StringVar(&o.url, "url", envURL(), "MASS WebSocket endpoint (MASS_URL)")
 	root.PersistentFlags().StringVarP(&o.output, "output", "o", "human", "Output: human or json")
 	root.PersistentFlags().DurationVar(&o.timeout, "timeout", 30*time.Second, "Request timeout; 0 disables (watch: through ready only)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -143,7 +143,7 @@ func envURL() string {
 	if v := os.Getenv("MASS_URL"); v != "" {
 		return v
 	}
-	return "http://127.0.0.1:24368"
+	return "ws://127.0.0.1:24368/rpc"
 }
 
 type singleValue struct {

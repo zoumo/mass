@@ -39,7 +39,7 @@ func ticket12Calls(t *testing.T, path string) []ticket12Call {
 	return calls
 }
 
-func TestTicket12CodexColdLoadHTTPHistoryAndContinuedInput(t *testing.T) {
+func TestTicket12CodexColdLoadRPCHistoryAndContinuedInput(t *testing.T) {
 	ticket12ColdLoadHTTP(t, "cold")
 }
 

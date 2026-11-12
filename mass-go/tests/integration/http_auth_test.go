@@ -11,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -29,12 +28,12 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 
-type HTTPAuthSuite struct{ suite.Suite }
+type WebSocketAuthSuite struct{ suite.Suite }
 
 // Exercise actual daemon/client entrypoints with test-owned credentials and TLS;
 // this does not call native Agents or use personal accounts.
-func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
-	t := httpAuthSuite.T()
+func (webSocketAuthSuite *WebSocketAuthSuite) TestAuthenticatedDaemon() {
+	t := webSocketAuthSuite.T()
 	owned := t.TempDir()
 	tokenPath := filepath.Join(owned, "token")
 	require.NoError(t, os.WriteFile(tokenPath, []byte("synthetic-http-token\n"), 0o600))
@@ -80,14 +79,16 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 		waited = true
 		require.NoError(t, err, stderr.String())
 	}
-	require.True(t, strings.HasPrefix(ready.URL, "https://"))
+	require.True(t, strings.HasPrefix(ready.URL, "wss://"))
+	require.True(t, strings.HasSuffix(ready.URL, "/rpc"))
 	roots := x509.NewCertPool()
 	require.True(t, roots.AppendCertsFromPEM(certPEM))
 	wire := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
 	defer wire.CloseIdleConnections()
 	httpClient := &http.Client{Transport: wire, Timeout: 5 * time.Second}
-	for _, path := range []string{"/apis/v1/runtimes", "/apis/v1/sessions/YS9i", "/apis/v1/namespaces/demo/sessions/task/events/stream"} {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, ready.URL+path, http.NoBody)
+	httpsURL := "https://" + strings.TrimPrefix(strings.TrimSuffix(ready.URL, "/rpc"), "wss://")
+	for _, path := range []string{"/rpc"} {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, httpsURL+path, http.NoBody)
 		require.NoError(t, err)
 		response, err := httpClient.Do(request)
 		require.NoError(t, err)
@@ -95,7 +96,7 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 		require.Equal(t, "Bearer", response.Header.Get("WWW-Authenticate"))
 		response.Body.Close()
 	}
-	probe, err := http.NewRequestWithContext(ctx, http.MethodGet, ready.URL+"/readyz", http.NoBody)
+	probe, err := http.NewRequestWithContext(ctx, http.MethodGet, httpsURL+"/readyz", http.NoBody)
 	require.NoError(t, err)
 	response, err := httpClient.Do(probe)
 	require.NoError(t, err)
@@ -103,24 +104,14 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	response.Body.Close()
 	var rows []resource.Runtime
 	c := newHTTPClient(t, ready.URL, "synthetic-http-token")
-	c.HTTP.SetTransport(wire).SetTimeout(5 * time.Second)
+	c.SetTLSClientConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})
 	require.NoError(t, c.ListRuntimes(ctx, resource.RuntimeQuery{}, &rows))
 	require.NotNil(t, rows)
 	require.Empty(t, rows)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ready.URL+"/apis/v1/runtimes", http.NoBody)
-	require.NoError(t, err)
-	request.Header.Set("Authorization", "Bearer synthetic-http-token")
-	response, err = httpClient.Do(request)
-	require.NoError(t, err)
-	body, err := io.ReadAll(response.Body)
-	response.Body.Close()
-	require.NoError(t, err)
-	require.JSONEq(t, "[]", string(body))
-	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
 	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, cmd.Wait())
 	waited = true
-	conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", strings.TrimPrefix(ready.URL, "https://"))
+	conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", strings.TrimPrefix(httpsURL, "https://"))
 	if conn != nil {
 		conn.Close()
 	}
@@ -135,7 +126,7 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 		invalid.Env = cmd.Env
 		require.Error(t, invalid.Run(), "unsafe or unspecified access mode must fail startup")
 	}
-	t.Log("PASS authenticated TLS daemon/client with 5s idle configuration, unauthenticated aliases and stream rejected, probes, direct JSON, explicit access-mode and negative-timeout rejection, and listener cleanup")
+	t.Log("PASS authenticated TLS WebSocket daemon/client with 5s idle configuration, unauthenticated RPC rejected, probes, explicit access-mode and negative-timeout rejection, and listener cleanup")
 }
 
-func TestHTTPAuthSuite(t *testing.T) { suite.Run(t, new(HTTPAuthSuite)) }
+func TestWebSocketAuthSuite(t *testing.T) { suite.Run(t, new(WebSocketAuthSuite)) }

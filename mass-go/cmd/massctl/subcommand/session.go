@@ -251,8 +251,8 @@ func (o *options) sessionCommands() *cobra.Command {
 }
 
 func (o *options) watch(cmd *cobra.Command, ref resource.SessionRef) error {
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
+	setupCtx, cancelSetup := context.WithCancel(cmd.Context())
+	defer cancelSetup()
 	var timer *time.Timer
 	var mu sync.Mutex
 	ready := false
@@ -261,22 +261,22 @@ func (o *options) watch(cmd *cobra.Command, ref resource.SessionRef) error {
 			mu.Lock()
 			defer mu.Unlock()
 			if !ready {
-				cancel()
+				cancelSetup()
 			}
 		})
 		defer timer.Stop()
 	}
-	observer, err := o.client.Observe(ctx, ref)
+	observer, err := o.client.Subscribe(setupCtx, ref)
 	if err != nil {
 		return requestError(err, "watch")
 	}
 	defer observer.Close()
 	mu.Lock()
 	ready = true
-	expired := ctx.Err() != nil
+	expired := setupCtx.Err() != nil
 	mu.Unlock()
 	if expired {
-		return requestError(ctx.Err(), "watch")
+		return requestError(setupCtx.Err(), "watch")
 	}
 	if timer != nil {
 		timer.Stop()
@@ -285,7 +285,7 @@ func (o *options) watch(cmd *cobra.Command, ref resource.SessionRef) error {
 		return err
 	}
 	for {
-		event, err := observer.Next()
+		event, err := observer.Next(cmd.Context())
 		if errors.Is(err, io.EOF) {
 			return nil
 		}

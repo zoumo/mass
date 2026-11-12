@@ -1009,7 +1009,7 @@ observed:
 		}
 	}
 	require.NoError(t, svc.Shutdown(ctx(t)))
-	t.Log("PASS block item identity, lane separation, closure suppression, empty filtering, ambiguous fail-close and tool identity through SSE and history")
+	t.Log("PASS block item identity, lane separation, closure suppression, empty filtering, ambiguous fail-close and tool identity through subscriptions and history")
 }
 
 const claudeLiveBlockStateCapacity = 4096

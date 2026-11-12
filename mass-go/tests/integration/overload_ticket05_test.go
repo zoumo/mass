@@ -115,11 +115,11 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			defer h.Shutdown()
 			server := httptest.NewServer(h)
 			defer server.Close()
-			c := client.New(server.URL, "synthetic")
+			c := client.New(rpcEndpoint(server.URL), "synthetic")
 			defer c.Close()
 			observation, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			watch, err := c.Observe(observation, refs["healthy"])
+			watch, err := c.Subscribe(observation, refs["healthy"])
 			require.NoError(t, err)
 			defer watch.Close()
 			input := runtime.Input{Content: []events.ContentBlock{events.Text("synthetic")}}
@@ -134,7 +134,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			requireOverloadOrResumeRequired(t, c.SendPrompt(observation, refs["damaged"], input, nil))
 			require.NoError(t, c.SendPrompt(observation, refs["healthy"], input, nil))
 			for {
-				e, eErr := watch.Next()
+				e, eErr := watch.Next(ctx(t))
 				require.NoError(t, eErr)
 				if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
 					break
@@ -158,7 +158,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 				require.Equal(t, []events.ContentBlock{events.Text("complete synthetic fact")}, message.Content)
 			}
 			require.NoError(t, svc.Shutdown(observation))
-			t.Log("PASS synthetic native provider: healthy SSE/HTTP/history completes after slow saturation before gate release; 160 ordered full facts retained; native processes reaped")
+			t.Log("PASS synthetic native provider: healthy JSON-RPC/subscription/history completes after slow saturation before gate release; 160 ordered full facts retained; native processes reaped")
 		})
 	}
 }

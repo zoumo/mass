@@ -41,12 +41,18 @@ type rpcSubscription struct {
 	readyOnce sync.Once
 	startErr  error
 
-	mu      sync.Mutex
-	sub     *service.Subscription
-	aborted bool
+	mu       sync.Mutex
+	sub      *service.Subscription
+	aborted  bool
+	shutdown error
 
-	stop chan chan struct{}
+	stop chan rpcSubscriptionStop
 	done chan struct{}
+}
+
+type rpcSubscriptionStop struct {
+	ack   chan struct{}
+	cause error
 }
 
 func subscriptionAlreadyActive() *Error {
@@ -77,7 +83,7 @@ func (c *rpcConnection) reserveSubscription(conn *rpc2.Conn) (*rpcSubscription, 
 		owner: c,
 		conn:  conn,
 		ready: make(chan struct{}),
-		stop:  make(chan chan struct{}),
+		stop:  make(chan rpcSubscriptionStop),
 		done:  make(chan struct{}),
 	}
 	c.subscription = s
@@ -90,12 +96,14 @@ func (c *rpcConnection) releaseSubscription(s *rpcSubscription) {
 		c.subscription = nil
 	}
 	c.mu.Unlock()
+	c.maybeDrained()
 }
 
 func (c *rpcConnection) disconnect() {
 	c.mu.Lock()
 	c.disconnected = true
 	s := c.subscription
+	c.closeDrainedLocked()
 	c.mu.Unlock()
 	if s != nil {
 		s.abort()
@@ -138,7 +146,7 @@ func (c *rpcConnection) dispatchSubscribe(
 	}
 	if !s.setSubscription(sub) {
 		c.releaseSubscription(s)
-		close(s.done)
+		s.finish()
 		return
 	}
 
@@ -161,7 +169,7 @@ func (c *rpcConnection) dispatchSubscribe(
 func (c *rpcConnection) failSubscription(s *rpcSubscription) {
 	s.fail(nil)
 	c.releaseSubscription(s)
-	close(s.done)
+	s.finish()
 }
 
 func (c *rpcConnection) dispatchUnsubscribe(
@@ -179,7 +187,7 @@ func (c *rpcConnection) dispatchUnsubscribe(
 
 	ack := make(chan struct{})
 	select {
-	case s.stop <- ack:
+	case s.stop <- rpcSubscriptionStop{ack: ack}:
 		<-ack
 		<-s.done
 	case <-s.done:
@@ -199,36 +207,66 @@ func (s *rpcSubscription) forward() {
 	sub := s.subscription()
 	if sub == nil {
 		s.owner.releaseSubscription(s)
-		close(s.done)
+		s.finish()
 		return
 	}
 	defer func() {
 		s.owner.releaseSubscription(s)
-		close(s.done)
+		s.finish()
 	}()
 	defer s.abort()
 
 	for {
 		select {
-		case ack := <-s.stop:
+		case request := <-s.stop:
 			s.abort()
-			s.sendClosed(sub.Err())
-			close(ack)
+			for event := range sub.Events() {
+				if err := s.notifyEvent(event); err != nil {
+					close(request.ack)
+					return
+				}
+			}
+			cause := request.cause
+			if cause == nil {
+				cause = sub.Err()
+			}
+			s.sendClosed(cause)
+			close(request.ack)
 			return
 		case event, ok := <-sub.Events():
 			if !ok {
-				s.sendClosed(sub.Err())
+				cause := sub.Err()
+				if shutdown := s.shutdownCause(); shutdown != nil {
+					cause = shutdown
+				}
+				s.sendClosed(cause)
 				return
 			}
-			if err := s.conn.Notify(context.Background(), "session.event", sessionEventRPC{
-				SubscriptionID: s.id,
-				Event:          event,
-			}); err != nil {
+			if err := s.notifyEvent(event); err != nil {
 				_ = s.conn.Close()
 				return
 			}
 		}
 	}
+}
+
+func (s *rpcSubscription) markShutdown(cause error) {
+	s.mu.Lock()
+	s.shutdown = cause
+	s.mu.Unlock()
+}
+
+func (s *rpcSubscription) shutdownCause() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.shutdown
+}
+
+func (s *rpcSubscription) notifyEvent(event events.SessionEvent) error {
+	return s.conn.Notify(context.Background(), "session.event", sessionEventRPC{
+		SubscriptionID: s.id,
+		Event:          event,
+	})
 }
 
 func (s *rpcSubscription) abort() {
@@ -270,6 +308,11 @@ func (s *rpcSubscription) subscription() *service.Subscription {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sub
+}
+
+func (s *rpcSubscription) finish() {
+	close(s.done)
+	s.owner.maybeDrained()
 }
 
 func (s *rpcSubscription) sendClosed(cause error) {

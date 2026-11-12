@@ -100,7 +100,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
 			request = &p
-			// Decode the raw public SSE payload to check exact extension data, not
+			// Decode the raw public event notification to check exact extension data, not
 			// float64 values introduced by a test-side generic JSON decoder.
 			dec := json.NewDecoder(bytes.NewReader(scan.Bytes()))
 			dec.UseNumber()

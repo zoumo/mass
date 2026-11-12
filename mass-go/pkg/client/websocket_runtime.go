@@ -32,7 +32,7 @@ type runtimeListParams struct {
 }
 
 // CreateRuntime registers Runtime metadata and spec without starting a Driver.
-func (c *WebSocketClient) CreateRuntime(ctx context.Context, v resource.Runtime, out any) error {
+func (c *Client) CreateRuntime(ctx context.Context, v resource.Runtime, out any) error {
 	if err := events.CheckDynamicJSON(map[string]any(v.Spec.Config)); err != nil {
 		return invalid()
 	}
@@ -44,7 +44,7 @@ func (c *WebSocketClient) CreateRuntime(ctx context.Context, v resource.Runtime,
 }
 
 // GetRuntime returns one persistent Runtime without side effects.
-func (c *WebSocketClient) GetRuntime(ctx context.Context, name string, out any) error {
+func (c *Client) GetRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
@@ -52,7 +52,7 @@ func (c *WebSocketClient) GetRuntime(ctx context.Context, name string, out any) 
 }
 
 // ListRuntimes returns all registered Runtimes matching the optional query.
-func (c *WebSocketClient) ListRuntimes(ctx context.Context, q resource.RuntimeQuery, out any) error {
+func (c *Client) ListRuntimes(ctx context.Context, q resource.RuntimeQuery, out any) error {
 	params := runtimeListParams{}
 	if q != (resource.RuntimeQuery{}) {
 		params.Query = &q
@@ -61,7 +61,7 @@ func (c *WebSocketClient) ListRuntimes(ctx context.Context, q resource.RuntimeQu
 }
 
 // UpdateRuntime replaces the complete desired spec.
-func (c *WebSocketClient) UpdateRuntime(ctx context.Context, name string, spec resource.RuntimeSpec, out any) error {
+func (c *Client) UpdateRuntime(ctx context.Context, name string, spec resource.RuntimeSpec, out any) error {
 	if err := events.CheckDynamicJSON(map[string]any(spec.Config)); err != nil {
 		return invalid()
 	}
@@ -72,7 +72,7 @@ func (c *WebSocketClient) UpdateRuntime(ctx context.Context, name string, spec r
 }
 
 // StartRuntime starts an unstarted Runtime and returns its current state.
-func (c *WebSocketClient) StartRuntime(ctx context.Context, name string, out any) error {
+func (c *Client) StartRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
@@ -80,7 +80,7 @@ func (c *WebSocketClient) StartRuntime(ctx context.Context, name string, out any
 }
 
 // StopRuntime waits for the Runtime's complete release and settlement.
-func (c *WebSocketClient) StopRuntime(ctx context.Context, name string, out any) error {
+func (c *Client) StopRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
@@ -88,7 +88,7 @@ func (c *WebSocketClient) StopRuntime(ctx context.Context, name string, out any)
 }
 
 // DeleteRuntime removes a stopped, unreferenced Runtime.
-func (c *WebSocketClient) DeleteRuntime(ctx context.Context, name string) error {
+func (c *Client) DeleteRuntime(ctx context.Context, name string) error {
 	if !validSegment(name) {
 		return invalid()
 	}

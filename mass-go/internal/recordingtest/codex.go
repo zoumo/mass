@@ -459,7 +459,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	var byName resource.Session
 	require.NoError(t, api.GetSession(h.ctx, resource.SessionRef{Namespace: "default", Name: c.name}, &byName))
 	require.Equal(t, session.Status.SessionID, byName.Status.SessionID)
-	observer, err := api.Observe(h.ctx, ref)
+	observer, err := api.Subscribe(h.ctx, ref)
 	require.NoError(t, err)
 	defer observer.Close()
 	if !c.initialInput {
@@ -487,7 +487,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	var observedEvents []events.SessionEvent
 	if c.evidence != "" {
 		defer func() {
-			writeJSON(t, filepath.Join(c.evidence, "sse-events.json"), observedEvents)
+			writeJSON(t, filepath.Join(c.evidence, "subscription-events.json"), observedEvents)
 		}()
 	}
 	result := facts{SessionID: ref.SessionID, Accepted: true}
@@ -519,7 +519,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		observedEvents = append(observedEvents, event)
 		result.StreamKinds = append(result.StreamKinds, event.Type())
 		if h.diagnostic != nil {
-			h.diagnostic.report.Boundaries["mass_relay_sse"] = "observed"
+			h.diagnostic.report.Boundaries["mass_relay_subscription"] = "observed"
 		}
 		if event.Persistent() {
 			persistent = append(persistent, event)
@@ -570,7 +570,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	}
 	require.NoError(t, api.History(h.ctx, ref, store.HistoryQuery{}, &history))
 	require.Empty(t, history.Next)
-	require.Equal(t, persistent, history.Events, "public history must equal durable SSE events")
+	require.Equal(t, persistent, history.Events, "public history must equal durable subscription events")
 	if h.diagnostic != nil {
 		h.diagnostic.report.Boundaries["history_commit"] = "history_equals_relay"
 	}
@@ -1397,7 +1397,7 @@ func RunRecordCodexBasic(t *testing.T) {
 	writeJSON(t, filepath.Join(scratch, "facts.json"), observed)
 	h.phase = "testify-export"
 	if h.diagnostic != nil {
-		h.diagnostic.report.Boundaries["mass_relay_sse"] = "completed"
+		h.diagnostic.report.Boundaries["mass_relay_subscription"] = "completed"
 		h.diagnostic.report.Boundaries["history_commit"] = "completed"
 	}
 	stage := filepath.Join(scratch, "export")

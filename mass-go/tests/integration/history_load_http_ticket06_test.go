@@ -17,7 +17,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
-func TestTicket06CLILoadHTTPHistoryAndFutureSSE(t *testing.T) {
+func TestTicket06CLILoadRPCHistoryAndFutureEvents(t *testing.T) {
 	svc, cwd := ticket06Service(t, "")
 	handler, err := transport.New(svc, transport.Options{Token: "load-token"})
 	require.NoError(t, err)
@@ -25,7 +25,7 @@ func TestTicket06CLILoadHTTPHistoryAndFutureSSE(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	// This is the built CLI against the real HTTP/Service/SDK synthetic peer.
-	cmd := exec.CommandContext(ctx(t), ctl, "--url", server.URL, "-o", "json", "session", "load", "imported", "-n", "one", "--runtime", "agent", "--cwd", cwd, "--session-id", "native-thread")
+	cmd := exec.CommandContext(ctx(t), ctl, "--url", rpcEndpoint(server.URL), "-o", "json", "session", "load", "imported", "-n", "one", "--runtime", "agent", "--cwd", cwd, "--session-id", "native-thread")
 	cmd.Env = []string{"MASS_TOKEN=load-token"}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -41,7 +41,7 @@ func TestTicket06CLILoadHTTPHistoryAndFutureSSE(t *testing.T) {
 		var r resource.Session
 		return c.GetSession(ctx(t), ref, &r) == nil && r.Status.HistoryLoad.Phase == "completed" && r.Status.HistoryLoad.NativeVerified && r.Status.HistoryLoad.NativeResumed && r.Status.HistoryLoad.NativeCompleted && r.Status.HistoryLoad.DeliveryCompleted && !r.Status.HistoryLoad.CleanupCompleted
 	}, 5*time.Second, time.Millisecond)
-	// A late observer reads committed history independently; SSE is future-only.
+	// A late observer reads committed history independently; subscriptions are future-only.
 	var page store.HistoryPage
 	require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{Limit: 2}, &page))
 	require.Len(t, page.Events, 2)
@@ -51,14 +51,14 @@ func TestTicket06CLILoadHTTPHistoryAndFutureSSE(t *testing.T) {
 	require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{After: page.Next}, &tail))
 	require.Len(t, tail.Events, 1)
 	require.Equal(t, "last", tail.Events[0].ItemID)
-	observer, err := c.Observe(ctx(t), ref)
+	observer, err := c.Subscribe(ctx(t), ref)
 	require.NoError(t, err)
 	defer observer.Close()
 	var receipt runtime.InputReceipt
 	require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continue retained native session")}}, &receipt))
 	require.Equal(t, "continued", receipt.Submission)
 	for {
-		e, nextErr := observer.Next()
+		e, nextErr := observer.Next(ctx(t))
 		require.NoError(t, nextErr)
 		if p, ok := e.Payload().(events.AgentMessage); ok {
 			require.Nil(t, e.Replay, "current content must not gain old replay authority")

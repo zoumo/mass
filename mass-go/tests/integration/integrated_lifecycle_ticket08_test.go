@@ -185,7 +185,7 @@ func ticket08HTTP(t *testing.T, kind string, gate *ticket08Gate, configure ...fu
 	h, err := transport.New(svc, transport.Options{LocalOnly: true})
 	require.NoError(t, err)
 	server := httptest.NewServer(h)
-	c := client.New(server.URL, "")
+	c := client.New(rpcEndpoint(server.URL), "")
 	t.Cleanup(func() {
 		require.NoError(t, c.Close())
 		server.Close()
@@ -208,7 +208,7 @@ func ticket08HTTP(t *testing.T, kind string, gate *ticket08Gate, configure ...fu
 			require.Equal(t, 1, absent.ExitCode())
 			require.Empty(t, strings.TrimSpace(string(out)))
 		}
-		t.Log("cleanup readback: all owned peer PIDs absent after native release; HTTP listener closed")
+		t.Log("cleanup readback: all owned peer PIDs absent after native release; RPC listener closed")
 	})
 	t.Cleanup(func() {
 		select {
@@ -256,14 +256,14 @@ func TestTicket08CloseRevokesQueuedAuthorityAndDrains(t *testing.T) {
 			c, requests, project := ticket08HTTP(t, kind, gate)
 			ref := ticket08Session(t, c, project, "active")
 			healthy := ticket08Session(t, c, project, "healthy")
-			observer, err := c.Observe(ctx(t), ref)
+			observer, err := c.Subscribe(ctx(t), ref)
 			require.NoError(t, err)
 			defer observer.Close()
 			require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
 			current := ticket08Request(t, requests)
 			ticket08Wait(t, gate.entered)
 			for {
-				e, nextErr := observer.Next()
+				e, nextErr := observer.Next(ctx(t))
 				require.NoError(t, nextErr)
 				if p, ok := e.Payload().(events.InteractionRequested); ok && p.Interaction == current.Interaction {
 					break
@@ -318,7 +318,7 @@ func TestTicket08CloseRevokesQueuedAuthorityAndDrains(t *testing.T) {
 			require.Empty(t, facts["cancel-final"], "close must not inject a native cancellation")
 			seen := map[string]bool{}
 			for !seen[facts["queued-last"]] {
-				e, nextErr := observer.Next()
+				e, nextErr := observer.Next(ctx(t))
 				require.NoError(t, nextErr)
 				seen[e.EventID] = true
 			}
@@ -331,13 +331,13 @@ func TestTicket08CloseRevokesQueuedAuthorityAndDrains(t *testing.T) {
 				require.ErrorAs(t, answerErr, &public)
 				require.Equal(t, "conflict", public.Code, "valid old answer must be rejected by lifecycle authority, not malformed input")
 			}
-			healthyObserver, err := c.Observe(ctx(t), healthy)
+			healthyObserver, err := c.Subscribe(ctx(t), healthy)
 			require.NoError(t, err)
 			defer healthyObserver.Close()
 			require.NoError(t, c.SendPrompt(ctx(t), healthy, runtime.Input{Content: []events.ContentBlock{events.Text("still healthy")}}, nil))
 			healthyID := messageItemID(kind, "healthy-fact")
 			for {
-				e, nextErr := healthyObserver.Next()
+				e, nextErr := healthyObserver.Next(ctx(t))
 				require.NoError(t, nextErr)
 				if p, ok := e.Payload().(events.AgentMessage); ok && p.MessageID == healthyID {
 					break

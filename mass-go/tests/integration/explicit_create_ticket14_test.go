@@ -1,12 +1,9 @@
 package integration_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -47,22 +44,15 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	body, err := json.Marshal(map[string]any{"metadata": map[string]any{"namespace": "default", "name": "first"}, "spec": map[string]any{"runtimeRef": "explicit", "cwd": work}, "initialInput": map[string]any{"content": []any{map[string]any{"type": "text", "text": "hello"}}}})
-	require.NoError(t, err)
-	req, err := http.NewRequestWithContext(ctx(t), http.MethodPost, server.URL+"/apis/v1/sessions", bytes.NewReader(body))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	response, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer response.Body.Close()
-	var got struct {
-		resource.Session
-		InitialInputReceipt *runtime.InputReceipt `json:"initialInputReceipt"`
-	}
-	rawResponse, err := io.ReadAll(response.Body)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, response.StatusCode, "explicit input must release the native init wait: %s", rawResponse)
-	require.NoError(t, json.Unmarshal(rawResponse, &got))
+	c := client.New(rpcEndpoint(server.URL), "")
+	defer c.Close()
+	input := runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}
+	var got resource.SessionCreated
+	require.NoError(t, c.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{
+		Metadata:     resource.Metadata{Namespace: "default", Name: "first"},
+		Spec:         resource.SessionSpec{RuntimeRef: "explicit", SessionSpec: runtime.SessionSpec{Cwd: work}},
+		InitialInput: &input,
+	}, &got), "explicit input must release the native init wait")
 	_, err = uuid.Parse(got.Status.SessionID)
 	require.NoError(t, err)
 	require.NotNil(t, got.InitialInputReceipt)
@@ -223,7 +213,29 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 	}
 }
 
-func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
+func TestTicket14PreInitPermissionIsExplicitFailure(t *testing.T) {
+	svc, _, _ := setup(t, nil)
+	path, work := nativeScenario(t, "claude", "explicit-permission")
+	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	require.NoError(t, err)
+	_, err = svc.StartRuntime(ctx(t), "agent")
+	require.NoError(t, err)
+	result, err := svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "first"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}, InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}})
+	require.Error(t, err)
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "outcome_unknown", public.Code)
+	require.Equal(t, "pre_identity_native_observation", public.Reason)
+	require.Empty(t, result.Status.SessionID)
+	require.Nil(t, result.InitialInputReceipt)
+	page, err := svc.ListSessions(resource.SessionQuery{})
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	_, err = svc.StopRuntime(ctx(t), "agent")
+	require.NoError(t, err, "owned process and opening reservation are settled, not the caller input side effects")
+}
+
+func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	bin := filepath.Join(root, "ticket14-claude-peer")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-continuity").CombinedOutput()
 	require.NoError(t, err, "%s", out)
@@ -250,9 +262,9 @@ func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	c := client.New(server.URL, "")
+	c := client.New(rpcEndpoint(server.URL), "")
 	defer c.Close()
-	observer, err := c.Observe(ctx(t), ref)
+	observer, err := c.Subscribe(ctx(t), ref)
 	require.NoError(t, err)
 	defer observer.Close()
 	var receipt runtime.InputReceipt
@@ -260,7 +272,7 @@ func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
 	require.NotEqual(t, got.InitialInputReceipt.Submission, receipt.Submission)
 	var streamed events.SessionEvent
 	for {
-		e, err := observer.Next()
+		e, err := observer.Next(ctx(t))
 		require.NoError(t, err)
 		if e.Type() == "agent.message" {
 			streamed = e
@@ -294,7 +306,7 @@ func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
 	require.NotNil(t, resumed.InitialInputReceipt)
 	var resumedMessage bool
 	for {
-		e, err := observer.Next()
+		e, err := observer.Next(ctx(t))
 		require.NoError(t, err)
 		if e.Type() == "agent.message" {
 			resumedMessage = true

@@ -123,11 +123,11 @@ func nextClientSubscription(t *testing.T, subscription *client.Subscription) eve
 	return event
 }
 
-func TestWebSocketClientSubscriptionConnectionsAndOwnership(t *testing.T) {
+func TestClientSubscriptionConnectionsAndOwnership(t *testing.T) {
 	fixture := newClientSubscriptionFixture(t)
 	prePublished := clientSubscriptionEvent(t, "pre-published")
 	fixture.api.setPrePublish(prePublished)
-	wsClient := client.NewWebSocket(fixture.http.URL, "test-token")
+	wsClient := client.New(websocketURL(fixture.http), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	var initialized initialized
@@ -163,9 +163,9 @@ func TestWebSocketClientSubscriptionConnectionsAndOwnership(t *testing.T) {
 	require.Equal(t, 0, fixture.api.cancelCount())
 }
 
-func TestWebSocketClientSubscriptionUnsubscribe(t *testing.T) {
+func TestClientSubscriptionUnsubscribe(t *testing.T) {
 	fixture := newClientSubscriptionFixture(t)
-	wsClient := client.NewWebSocket(fixture.http.URL, "test-token")
+	wsClient := client.New(websocketURL(fixture.http), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	subscription, err := wsClient.Subscribe(t.Context(), resource.SessionRef{SessionID: "observed"})
 	require.NoError(t, err)
@@ -178,9 +178,9 @@ func TestWebSocketClientSubscriptionUnsubscribe(t *testing.T) {
 	require.Equal(t, 0, fixture.api.cancelCount())
 }
 
-func TestWebSocketClientSubscriptionNaturalTermination(t *testing.T) {
+func TestClientSubscriptionNaturalTermination(t *testing.T) {
 	fixture := newClientSubscriptionFixture(t)
-	wsClient := client.NewWebSocket(fixture.http.URL, "test-token")
+	wsClient := client.New(websocketURL(fixture.http), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	subscription, err := wsClient.Subscribe(t.Context(), resource.SessionRef{SessionID: "observed"})
 	require.NoError(t, err)
@@ -193,9 +193,9 @@ func TestWebSocketClientSubscriptionNaturalTermination(t *testing.T) {
 	require.Equal(t, 0, fixture.api.cancelCount())
 }
 
-func TestWebSocketClientSubscriptionLocalOverflowFailsObservation(t *testing.T) {
+func TestClientSubscriptionLocalOverflowFailsObservation(t *testing.T) {
 	fixture := newClientSubscriptionFixture(t)
-	wsClient := client.NewWebSocket(fixture.http.URL, "test-token")
+	wsClient := client.New(websocketURL(fixture.http), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	subscription, err := wsClient.Subscribe(t.Context(), resource.SessionRef{SessionID: "observed"})
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestWebSocketClientSubscriptionLocalOverflowFailsObservation(t *testing.T) 
 	require.Equal(t, 0, fixture.api.cancelCount())
 }
 
-func TestWebSocketClientSubscriptionEOFWithoutClosedIsAbnormal(t *testing.T) {
+func TestClientSubscriptionEOFWithoutClosedIsAbnormal(t *testing.T) {
 	httpServer := newFakeWebSocketServer(t, func(conn *websocket.Conn) {
 		for range 2 {
 			_, data, err := conn.ReadMessage()
@@ -246,7 +246,7 @@ func TestWebSocketClientSubscriptionEOFWithoutClosedIsAbnormal(t *testing.T) {
 			}
 		}
 	})
-	wsClient := client.NewWebSocket(httpServer.URL, "")
+	wsClient := client.New(websocketURL(httpServer), "")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	subscription, err := wsClient.Subscribe(t.Context(), resource.SessionRef{SessionID: "observed"})
 	require.NoError(t, err)
@@ -258,7 +258,7 @@ func TestWebSocketClientSubscriptionEOFWithoutClosedIsAbnormal(t *testing.T) {
 	require.NotErrorIs(t, err, io.EOF)
 }
 
-func TestWebSocketClientSubscriptionRejectsMalformedNotification(t *testing.T) {
+func TestClientSubscriptionRejectsMalformedNotification(t *testing.T) {
 	httpServer := newFakeWebSocketServer(t, func(conn *websocket.Conn) {
 		for range 2 {
 			_, data, err := conn.ReadMessage()
@@ -288,7 +288,7 @@ func TestWebSocketClientSubscriptionRejectsMalformedNotification(t *testing.T) {
 			`{"jsonrpc":"2.0","method":"session.event","params":{"subscriptionId":"other"}}`,
 		))
 	})
-	wsClient := client.NewWebSocket(httpServer.URL, "")
+	wsClient := client.New(websocketURL(httpServer), "")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	subscription, err := wsClient.Subscribe(t.Context(), resource.SessionRef{SessionID: "observed"})
 	require.NoError(t, err)

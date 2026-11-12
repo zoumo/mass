@@ -74,7 +74,6 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
 	f.StringSliceVar(&o.AllowedOrigins, "allowed-origin", nil, "allowed WebSocket Origin (repeatable)")
 	f.DurationVar(&o.SessionIdleTimeout, "session-idle-timeout", service.DefaultSessionIdleTimeout, "idle Session close timeout (0 disables)")
-	cmd.AddCommand(newOpenAPICommand())
 	return cmd
 }
 
@@ -113,28 +112,35 @@ func run(parent context.Context, o options) (result error) {
 	if (o.Local && token != "") || (!o.Local && token == "") {
 		return errors.New("select local mode or token authentication")
 	}
-	meta, err := backend.Open(o.Data, o.MetaStore, false)
+	dataDir, err := canonicalDataDir(o.Data)
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, meta.Close()) }()
-	history, err := eventfile.Open(o.Data, false)
+	meta, err := backend.Open(dataDir, o.MetaStore, false)
 	if err != nil {
-		return err
+		return dataDirectoryError(err)
+	}
+	defer func() { result = errors.Join(result, meta.Close()) }()
+	history, err := eventfile.Open(dataDir, false)
+	if err != nil {
+		return dataDirectoryError(err)
 	}
 	defer func() { result = errors.Join(result, history.Close()) }()
 	var policy service.InteractionPolicy
 	if o.Approve {
 		policy = prototype.AutoApprovePermissions
 	}
-	svc := service.NewWithOptions(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(o.Data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(o.Data, "private")}}), service.Options{
+	svc := service.NewWithOptions(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dataDir, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(dataDir, "private")}}), service.Options{
 		InteractionPolicy:  policy,
 		SessionIdleTimeout: o.SessionIdleTimeout,
 	})
+	settled := false
 	defer func() {
-		ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
-		defer c()
-		result = errors.Join(result, svc.Shutdown(ctx))
+		if !settled {
+			ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
+			defer c()
+			result = errors.Join(result, svc.Shutdown(ctx))
+		}
 	}()
 	if err := svc.Prepare(parent); err != nil {
 		return err
@@ -150,7 +156,12 @@ func run(parent context.Context, o options) (result error) {
 	if err != nil {
 		return err
 	}
-	defer handler.Shutdown()
+	closed := false
+	defer func() {
+		if !closed {
+			handler.Shutdown()
+		}
+	}()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	done := make(chan error, 1)
 	go func() {
@@ -160,33 +171,67 @@ func run(parent context.Context, o options) (result error) {
 			done <- server.Serve(listener)
 		}
 	}()
-	scheme := "http://"
+	scheme := "ws://"
 	if o.TLSCert != "" {
-		scheme = "https://"
+		scheme = "wss://"
 	}
-	if err = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": scheme + listener.Addr().String()}); err != nil {
+	if err = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": scheme + listener.Addr().String() + "/rpc"}); err != nil {
 		server.Close()
 		return err
 	}
+	var serveErr error
 	select {
-	case err = <-done:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
+	case serveErr = <-done:
 	case <-ctx.Done():
 	}
-	// Close admission and streams before HTTP shutdown; Service settles Agent work.
-	handler.Shutdown()
-	stop, c := context.WithTimeout(context.Background(), 10*time.Second)
-	defer c()
-	err = server.Shutdown(stop)
-	if err != nil {
+	// Stop admission, settle Service final events while observations remain
+	// writable, drain those observations, then close HTTP and the Stores.
+	handler.CloseAdmission()
+	settleCtx, settleCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	settleErr := svc.Shutdown(settleCtx)
+	settleCancel()
+	settled = true
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	drainErr := handler.DrainAndClose(drainCtx)
+	drainCancel()
+	closed = true
+	httpCtx, httpCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	httpErr := server.Shutdown(httpCtx)
+	httpCancel()
+	if httpErr != nil {
 		_ = server.Close()
 	}
-	serveErr := <-done
-	if !errors.Is(serveErr, http.ErrServerClosed) {
-		err = errors.Join(err, serveErr)
+	if serveErr == nil {
+		// The serve goroutine reports after the listener is shut down.
+		serveErr = <-done
+	}
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		serveErr = nil
+	}
+	return errors.Join(serveErr, settleErr, drainErr, httpErr)
+}
+
+func canonicalDataDir(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", errors.New("absolute data directory required")
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func dataDirectoryError(err error) error {
+	if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		return &runtime.OperationError{
+			Code:    "conflict",
+			Reason:  "data_directory_in_use",
+			Message: "Another massd process owns this data directory",
+		}
 	}
 	return err
 }

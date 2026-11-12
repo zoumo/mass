@@ -84,9 +84,9 @@ func closeChannel(ch chan struct{}) {
 	}
 }
 
-func TestWebSocketClientRuntimeCRUDAndConcurrentQueries(t *testing.T) {
+func TestClientRuntimeCRUDAndConcurrentQueries(t *testing.T) {
 	httpServer, driver := newTypedRuntimeServer(t)
-	wsClient := client.NewWebSocket(httpServer.URL, "test-token")
+	wsClient := client.New(websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	var created resource.Runtime
@@ -157,8 +157,8 @@ func TestWebSocketClientRuntimeCRUDAndConcurrentQueries(t *testing.T) {
 	require.Equal(t, "resource_not_found", operation.Reason)
 }
 
-func TestWebSocketClientRuntimeRejectsInvalidNamesLocally(t *testing.T) {
-	wsClient := client.NewWebSocket("http://127.0.0.1:1", "test-token")
+func TestClientRuntimeRejectsInvalidNamesLocally(t *testing.T) {
+	wsClient := client.New("ws://127.0.0.1:1/rpc", "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	for _, call := range []func() error{
 		func() error { return wsClient.GetRuntime(t.Context(), ".", nil) },

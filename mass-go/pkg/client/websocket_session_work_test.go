@@ -230,15 +230,15 @@ func newTypedWorkFixture(t *testing.T) *typedWorkFixture {
 	}
 }
 
-func newInitializedWorkClient(t *testing.T, fixture *typedWorkFixture) *client.WebSocketClient {
+func newInitializedWorkClient(t *testing.T, fixture *typedWorkFixture) *client.Client {
 	t.Helper()
-	wsClient := client.NewWebSocket(fixture.server.URL, "test-token")
+	wsClient := client.New(websocketURL(fixture.server), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	require.NoError(t, wsClient.Initialize(t.Context(), &client.ClientInfo{Name: "test", Version: "1"}, nil))
 	return wsClient
 }
 
-func TestWebSocketClientSessionWorkTypedReceiptsAndOpenAnswer(t *testing.T) {
+func TestClientSessionWorkTypedReceiptsAndOpenAnswer(t *testing.T) {
 	fixture := newTypedWorkFixture(t)
 	fixture.driver.setPrompt(runtime.InputReceipt{
 		Submission: "typed-input",
@@ -301,7 +301,7 @@ func TestWebSocketClientSessionWorkTypedReceiptsAndOpenAnswer(t *testing.T) {
 	require.Equal(t, 1, cancels)
 }
 
-func TestWebSocketClientSessionWorkPreservesUnknownOutcome(t *testing.T) {
+func TestClientSessionWorkPreservesUnknownOutcome(t *testing.T) {
 	fixture := newTypedWorkFixture(t)
 	public := &runtime.OperationError{
 		Code:    "outcome_unknown",
@@ -321,7 +321,7 @@ func TestWebSocketClientSessionWorkPreservesUnknownOutcome(t *testing.T) {
 	require.Equal(t, 1, prompts)
 }
 
-func TestWebSocketClientLocalTimeoutLeavesPromptOwnedByService(t *testing.T) {
+func TestClientLocalTimeoutLeavesPromptOwnedByService(t *testing.T) {
 	fixture := newTypedWorkFixture(t)
 	fixture.driver.setPromptBlock()
 	fixture.driver.setPrompt(runtime.InputReceipt{Submission: "timeout-input"}, nil)
@@ -361,7 +361,7 @@ func TestWebSocketClientLocalTimeoutLeavesPromptOwnedByService(t *testing.T) {
 	require.Equal(t, 1, prompts, "late completion must not trigger an automatic retry")
 }
 
-func TestWebSocketClientConnectionCloseLeavesPromptOwnedByService(t *testing.T) {
+func TestClientConnectionCloseLeavesPromptOwnedByService(t *testing.T) {
 	fixture := newTypedWorkFixture(t)
 	fixture.driver.setPromptBlock()
 	fixture.driver.setPrompt(runtime.InputReceipt{Submission: "closed-input"}, nil)

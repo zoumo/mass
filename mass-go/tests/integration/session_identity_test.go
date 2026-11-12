@@ -2,14 +2,10 @@ package integration_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -82,7 +78,7 @@ func identityOnlyScenario(t *testing.T, id string) (string, string) {
 	return path, work
 }
 
-func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
+func TestRPCCreateWaitsForIdentityAndReturnsRawID(t *testing.T) {
 	c := ctx(t)
 	dir := t.TempDir()
 	st, err := file.Open(dir, false)
@@ -101,16 +97,11 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	body, err := json.Marshal(map[string]any{"metadata": map[string]string{"namespace": "one", "name": "demo"}, "spec": map[string]string{"runtimeRef": "agent", "cwd": work}})
-	require.NoError(t, err)
-	req, err := http.NewRequestWithContext(c, http.MethodPost, server.URL+"/apis/v1/sessions", bytes.NewReader(body))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("Content-Type", "application/json")
 	type result struct {
-		response *http.Response
-		err      error
+		session resource.SessionCreated
+		err     error
 	}
+	rpcClient := newHTTPClient(t, server.URL, "test-token")
 	released := false
 	defer func() {
 		if !released {
@@ -119,8 +110,12 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 	}()
 	done := make(chan result, 1)
 	go func() {
-		res, e := http.DefaultClient.Do(req) //nolint:bodyclose // Ownership transfers to the receiving test, which closes both early and committed responses.
-		done <- result{res, e}
+		var created resource.SessionCreated
+		err := rpcClient.CreateSession(c, resource.Session{
+			Metadata: resource.Metadata{Namespace: "one", Name: "demo"},
+			Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}},
+		}, &created)
+		done <- result{session: created, err: err}
 	}()
 	select {
 	case <-gate.entered:
@@ -128,10 +123,7 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 		t.Fatal(c.Err())
 	}
 	select {
-	case early := <-done:
-		if early.response != nil {
-			early.response.Body.Close()
-		}
+	case <-done:
 		t.Fatal("creation returned before identity commit")
 	case <-time.After(30 * time.Millisecond):
 	}
@@ -146,42 +138,14 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 		t.Fatal(c.Err())
 	}
 	require.NoError(t, out.err)
-	raw, err := io.ReadAll(out.response.Body)
-	out.response.Body.Close()
-	require.NoError(t, err)
-	require.Equal(t, 201, out.response.StatusCode, string(raw))
-	require.Equal(t, "/apis/v1/sessions/a%2Fb%20%25%E7%A9%BA%E9%97%B4", out.response.Header.Get("Location"))
-	for _, target := range []string{out.response.Header.Get("Location"), "/apis/v1/namespaces/one/sessions/a%2Fb%20%25%E7%A9%BA%E9%97%B4", "/apis/v1/namespaces/one/sessions/demo"} {
-		request, err := http.NewRequestWithContext(c, http.MethodGet, server.URL+target, http.NoBody)
-		require.NoError(t, err)
-		request.Header.Set("Authorization", "Bearer test-token")
-		res, err := http.DefaultClient.Do(request)
-		require.NoError(t, err)
-		b, err := io.ReadAll(res.Body)
-		res.Body.Close()
-		require.NoError(t, err)
-		require.Equal(t, 200, res.StatusCode, string(b))
-		require.Contains(t, string(b), `"sessionId":"a/b %空间"`)
+	require.Equal(t, "a/b %空间", out.session.Status.SessionID)
+	for _, ref := range []resource.SessionRef{
+		{SessionID: out.session.Status.SessionID},
+		{Namespace: "one", Name: "demo"},
+	} {
+		var found resource.Session
+		require.NoError(t, rpcClient.GetSession(c, ref, &found))
+		require.Equal(t, "a/b %空间", found.Status.SessionID)
 	}
-	req, err = http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/demo/archive", strings.NewReader("{}"))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	_, err = io.Copy(io.Discard, res.Body)
-	require.NoError(t, err)
-	require.NoError(t, res.Body.Close())
-	require.Equal(t, http.StatusNotFound, res.StatusCode)
-
-	req, err = http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/demo/close", strings.NewReader("{}"))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("Content-Type", "application/json")
-	res, err = http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	b, err := io.ReadAll(res.Body)
-	res.Body.Close()
-	require.NoError(t, err)
-	require.Equal(t, 200, res.StatusCode, string(b))
+	require.NoError(t, rpcClient.CloseSession(c, resource.SessionRef{Namespace: "one", Name: "demo"}, nil))
 }

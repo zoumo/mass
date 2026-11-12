@@ -28,7 +28,12 @@ type rpcEndpoint struct {
 
 	mu     sync.Mutex
 	closed bool
-	conns  map[*rpc2.Conn]context.CancelFunc
+	conns  map[*rpc2.Conn]rpcConnectionEntry
+}
+
+type rpcConnectionEntry struct {
+	cancel     context.CancelFunc
+	connection *rpcConnection
 }
 
 func newRPCEndpoint(life context.Context, api API, opts Options) *rpcEndpoint {
@@ -46,7 +51,7 @@ func newRPCEndpoint(life context.Context, api API, opts Options) *rpcEndpoint {
 		writeTimeout:  opts.WriteTimeout,
 		serverVersion: version,
 		origins:       origins,
-		conns:         map[*rpc2.Conn]context.CancelFunc{},
+		conns:         map[*rpc2.Conn]rpcConnectionEntry{},
 	}
 }
 
@@ -78,9 +83,11 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 		api:           s.api,
 		serverVersion: s.serverVersion,
 		inflight:      map[string]struct{}{},
+		drained:       make(chan struct{}),
+		endpoint:      s,
 	}
 	connection := rpc2.NewConn(ctx, stream, &rpcHandler{connection: rpcConnection}, rpc2.SetLogger(rpcLogger{}))
-	if !s.track(connection, cancel) {
+	if !s.track(connection, cancel, rpcConnection) {
 		cancel()
 		_ = connection.Close()
 		return
@@ -111,13 +118,13 @@ func (s *rpcEndpoint) isClosed() bool {
 	return s.closed
 }
 
-func (s *rpcEndpoint) track(conn *rpc2.Conn, cancel context.CancelFunc) bool {
+func (s *rpcEndpoint) track(conn *rpc2.Conn, cancel context.CancelFunc, connection *rpcConnection) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return false
 	}
-	s.conns[conn] = cancel
+	s.conns[conn] = rpcConnectionEntry{cancel: cancel, connection: connection}
 	return true
 }
 
@@ -127,15 +134,94 @@ func (s *rpcEndpoint) untrack(conn *rpc2.Conn) {
 	s.mu.Unlock()
 }
 
+func (s *rpcEndpoint) closeAdmission() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+}
+
+func (s *rpcEndpoint) markSubscriptionsForShutdown() {
+	cause := &Error{Code: "unavailable", Reason: "server_shutdown", Message: "Server is shutting down"}
+	s.mu.Lock()
+	connections := make([]*rpcConnection, 0, len(s.conns))
+	for _, entry := range s.conns {
+		connections = append(connections, entry.connection)
+	}
+	s.mu.Unlock()
+	for _, connection := range connections {
+		connection.markSubscriptionForShutdown(cause)
+	}
+}
+
+func (s *rpcEndpoint) drain(ctx context.Context) error {
+	s.mu.Lock()
+	connections := make([]*rpcConnection, 0, len(s.conns))
+	for _, entry := range s.conns {
+		connections = append(connections, entry.connection)
+	}
+	s.mu.Unlock()
+	for _, connection := range connections {
+		connection.shutdownSubscription(ctx)
+		select {
+		case <-connection.drained:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+type rpcConnection struct {
+	api           API
+	serverVersion string
+
+	mu               sync.Mutex
+	initialized      bool
+	inflight         map[string]struct{}
+	disconnected     bool
+	subscription     *rpcSubscription
+	nextSubscription uint64
+	drained          chan struct{}
+	endpoint         *rpcEndpoint
+}
+
+func (c *rpcConnection) shutdownSubscription(ctx context.Context) {
+	c.mu.Lock()
+	subscription := c.subscription
+	c.mu.Unlock()
+	if subscription == nil {
+		return
+	}
+	ack := make(chan struct{})
+	select {
+	case subscription.stop <- rpcSubscriptionStop{ack: ack, cause: &Error{Code: "unavailable", Reason: "server_shutdown", Message: "Server is shutting down"}}:
+		select {
+		case <-ack:
+		case <-ctx.Done():
+		}
+	case <-subscription.done:
+	case <-ctx.Done():
+	}
+}
+
+func (c *rpcConnection) markSubscriptionForShutdown(cause error) {
+	c.mu.Lock()
+	subscription := c.subscription
+	c.mu.Unlock()
+	if subscription != nil {
+		subscription.markShutdown(cause)
+	}
+}
+
 func (s *rpcEndpoint) closeAll() {
 	s.mu.Lock()
 	s.closed = true
 	conns := make([]*rpc2.Conn, 0, len(s.conns))
-	for conn, cancel := range s.conns {
+	for conn, entry := range s.conns {
 		conns = append(conns, conn)
-		cancel()
+		entry.cancel()
 	}
-	s.conns = map[*rpc2.Conn]context.CancelFunc{}
+	s.conns = map[*rpc2.Conn]rpcConnectionEntry{}
 	s.mu.Unlock()
 	for _, conn := range conns {
 		_ = conn.Close()
@@ -150,21 +236,13 @@ func (h *rpcHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Requ
 	h.connection.handle(ctx, conn, req)
 }
 
-type rpcConnection struct {
-	api           API
-	serverVersion string
-
-	mu               sync.Mutex
-	initialized      bool
-	inflight         map[string]struct{}
-	disconnected     bool
-	subscription     *rpcSubscription
-	nextSubscription uint64
-}
-
 func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request) {
 	if req.Notif {
 		slog.Default().Debug("ignored JSON-RPC notification", "method", req.Method)
+		return
+	}
+	if c.endpoint != nil && c.endpoint.isClosed() {
+		replyServiceError(ctx, conn, req.ID, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
 		return
 	}
 	key := req.ID.String()
@@ -240,6 +318,31 @@ func (c *rpcConnection) end(id string) {
 	c.mu.Lock()
 	delete(c.inflight, id)
 	c.mu.Unlock()
+	c.maybeDrained()
+}
+
+func (c *rpcConnection) maybeDrained() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.inflight) != 0 {
+		return
+	}
+	if c.subscription != nil {
+		select {
+		case <-c.subscription.done:
+		default:
+			return
+		}
+	}
+	c.closeDrainedLocked()
+}
+
+func (c *rpcConnection) closeDrainedLocked() {
+	select {
+	case <-c.drained:
+	default:
+		close(c.drained)
+	}
 }
 
 func (c *rpcConnection) isInitialized() bool {

@@ -2,7 +2,13 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -67,14 +73,58 @@ func workflowHTTP(c *client.Client, ctx context.Context, op string, p workflowPa
 	return transport.Invalid()
 }
 
-// newHTTPClient binds client resource cleanup to the current test.
+func rpcEndpoint(serverURL string) string {
+	if strings.HasPrefix(serverURL, "ws://") || strings.HasPrefix(serverURL, "wss://") {
+		return serverURL
+	}
+	endpoint := "ws" + strings.TrimPrefix(serverURL, "http")
+	if !strings.HasSuffix(endpoint, "/rpc") {
+		endpoint += "/rpc"
+	}
+	return endpoint
+}
+
+// newHTTPClient binds WebSocket JSON-RPC client cleanup to the current test.
 func newHTTPClient(t *testing.T, serverURL, token string) *client.Client {
 	t.Helper()
-	c := client.New(serverURL, token)
+	c := client.New(rpcEndpoint(serverURL), token)
 	t.Cleanup(func() {
 		if err := c.Close(); err != nil {
-			t.Errorf("close HTTP client: %v", err)
+			t.Errorf("close RPC client: %v", err)
 		}
 	})
 	return c
+}
+
+type rawRPCResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   *struct {
+		Code    int64           `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
+	} `json:"error"`
+}
+
+func rawRPCCall(t *testing.T, endpoint, token, method string, params json.RawMessage) rawRPCResponse {
+	t.Helper()
+	headers := http.Header{}
+	if token != "" {
+		headers.Set("Authorization", "Bearer "+token)
+	}
+	conn, handshake, err := websocket.DefaultDialer.DialContext(ctx(t), endpoint, headers)
+	if handshake != nil {
+		_ = handshake.Body.Close()
+	}
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": map[string]string{"protocolVersion": "1"}}))
+	var initialized rawRPCResponse
+	require.NoError(t, conn.ReadJSON(&initialized))
+	require.Nil(t, initialized.Error)
+	require.NoError(t, conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": "call", "method": method, "params": params}))
+	var response rawRPCResponse
+	require.NoError(t, conn.ReadJSON(&response))
+	return response
 }

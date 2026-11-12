@@ -3,8 +3,6 @@ package service_test
 import (
 	"context"
 	"errors"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
@@ -342,67 +341,48 @@ func (s *RuntimeStopSuite) TestFailureLeavesOtherRuntimeIndependent() {
 	s.Equal("stopping", r.Status.State)
 }
 
-func (s *RuntimeStopSuite) TestHTTPStopRestartAndSafeDelete() {
+func (s *RuntimeStopSuite) TestRPCStopRestartAndSafeDelete() {
 	h, err := transport.New(s.svc, transport.Options{Token: "test-token"})
 	s.Require().NoError(err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	call := func(method, path, body string) (int, string) {
-		req, err := http.NewRequestWithContext(s.T().Context(), method, server.URL+"/apis/v1"+path, strings.NewReader(body))
-		s.Require().NoError(err)
-		req.Header.Set("Authorization", "Bearer test-token")
-		if body != "" {
-			req.Header.Set("Content-Type", "application/json")
-		}
-		res, err := http.DefaultClient.Do(req)
-		s.Require().NoError(err)
-		defer res.Body.Close()
-		b, err := io.ReadAll(res.Body)
-		s.Require().NoError(err)
-		s.Equal("no-store", res.Header.Get("Cache-Control"))
-		return res.StatusCode, string(b)
-	}
-	status, body := call("DELETE", "/runtimes/agent", "")
-	s.Equal(409, status, body)
-	for _, invalid := range []string{"null", "[]", "true", `{"unknown":true}`} {
-		status, body = call("POST", "/runtimes/agent/stop", invalid)
-		s.Equal(400, status, body)
-	}
+	c := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	defer c.Close()
+	ctx := s.T().Context()
+	var public *runtime.OperationError
+	err = c.DeleteRuntime(ctx, "agent")
+	s.Require().ErrorAs(err, &public)
+	s.Equal("conflict", public.Code)
 	s.d.failStop.Store(true)
-	status, body = call("POST", "/runtimes/agent/stop", "{}")
-	s.Equal(500, status, body)
-	s.Contains(body, `"code":"outcome_unknown"`)
-	status, body = call("GET", "/runtimes/agent", "")
-	s.Equal(200, status, body)
-	s.Contains(body, `"state":"stopping"`)
-	status, body = call("POST", "/runtimes/agent/start", "")
-	s.Equal(409, status, body)
-	status, body = call("POST", "/runtimes", `{"metadata":{"name":"healthy"},"spec":{"type":"fixture","config":{}}}`)
-	s.Require().Equal(201, status, body)
-	status, body = call("POST", "/runtimes/healthy/start", "")
-	s.Equal(200, status, body)
-	status, body = call("POST", "/runtimes/healthy/stop", "")
-	s.Equal(200, status, body)
-	status, body = call("DELETE", "/runtimes/healthy", "")
-	s.Equal(204, status, body)
-	s.Empty(body)
+	err = c.StopRuntime(ctx, "agent", nil)
+	s.Require().ErrorAs(err, &public)
+	s.Equal("outcome_unknown", public.Code)
+	var runtimeValue resource.Runtime
+	s.Require().NoError(c.GetRuntime(ctx, "agent", &runtimeValue))
+	s.Equal("stopping", runtimeValue.Status.State)
+	err = c.StartRuntime(ctx, "agent", nil)
+	s.Require().ErrorAs(err, &public)
+	s.Equal("conflict", public.Code)
+	var healthy resource.Runtime
+	s.Require().NoError(c.CreateRuntime(ctx, resource.Runtime{Metadata: resource.Metadata{Name: "healthy"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}}, &healthy))
+	s.Require().NoError(c.StartRuntime(ctx, "healthy", &healthy))
+	s.Require().NoError(c.StopRuntime(ctx, "healthy", &healthy))
+	s.Require().NoError(c.DeleteRuntime(ctx, "healthy"))
 	s.d.failStop.Store(false)
-	status, body = call("POST", "/runtimes/agent/stop", "{}")
-	s.Equal(200, status, body)
-	s.Contains(body, `"state":"stopped"`)
-	status, body = call("DELETE", "/runtimes/agent", "")
-	s.Equal(409, status, body)
-	status, body = call("POST", "/runtimes/agent/start", "")
-	s.Equal(200, status, body)
-	s.Contains(body, `"state":"running"`)
-	status, body = call("POST", "/runtimes", `{"metadata":{"name":"unused"},"spec":{"type":"fixture","config":{}}}`)
-	s.Require().Equal(201, status, body)
-	status, body = call("DELETE", "/runtimes/unused", "")
-	s.Equal(204, status, body)
-	s.Empty(body)
-	status, body = call("GET", "/runtimes/unused", "")
-	s.Equal(404, status, body)
+	s.Require().NoError(c.StopRuntime(ctx, "agent", &runtimeValue))
+	s.Equal("stopped", runtimeValue.Status.State)
+	err = c.DeleteRuntime(ctx, "agent")
+	s.Require().ErrorAs(err, &public)
+	s.Equal("conflict", public.Code)
+	s.Require().NoError(c.StartRuntime(ctx, "agent", &runtimeValue))
+	s.Equal("running", runtimeValue.Status.State)
+	var unused resource.Runtime
+	s.Require().NoError(c.CreateRuntime(ctx, resource.Runtime{Metadata: resource.Metadata{Name: "unused"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}}, &unused))
+	s.Require().NoError(c.DeleteRuntime(ctx, "unused"))
+	err = c.GetRuntime(ctx, "unused", &unused)
+	s.Require().ErrorAs(err, &public)
+	s.Equal("not_found", public.Code)
 }
 
 func (s *RuntimeStopSuite) TestStopRetainsOverflowArrivingDuringDriverRelease() {

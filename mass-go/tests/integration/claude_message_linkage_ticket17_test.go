@@ -70,7 +70,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			observationCtx, cancelObservation := context.WithTimeout(t.Context(), 17*10*time.Second)
 			t.Cleanup(cancelObservation)
 			stopOpeningDeadline := context.AfterFunc(ctx(t), cancelObservation)
-			observer, err := c.Observe(observationCtx, ref)
+			observer, err := c.Subscribe(observationCtx, ref)
 			stopOpeningDeadline()
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, observer.Close()) })
@@ -79,7 +79,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			sendWith := func(text string, proven bool, submit func(*runtime.InputReceipt) error) {
 				t.Helper()
 				workCtx := ctx(t)
-				// Keep each send-to-idle observation bounded even on a quiet SSE stream.
+				// Keep each send-to-idle observation bounded even on a quiet subscription.
 				stopWorkDeadline := context.AfterFunc(workCtx, cancelObservation)
 				defer stopWorkDeadline()
 				var receipt runtime.InputReceipt
@@ -88,7 +88,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 				seen := 0
 				sawContent := false
 				for {
-					e, err := observer.Next()
+					e, err := observer.Next(ctx(t))
 					require.NoError(t, err)
 					if e.Type() == "session.error" {
 						requireClaudeForwardingGap(t, e)
@@ -238,7 +238,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(line), &input))
 				require.ErrorIs(t, syscall.Kill(input.PID, 0), syscall.ESRCH, "owned peer must have exited")
 			}
-			t.Log("PASS owned native peers exited; SSE/history retained identical facts")
+			t.Log("PASS owned native peers exited; subscription/history retained identical facts")
 		})
 	}
 }

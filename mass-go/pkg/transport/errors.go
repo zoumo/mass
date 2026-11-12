@@ -92,10 +92,3 @@ func fail(w http.ResponseWriter, status int, err *Error) {
 		return // The response is already committed; the client may have disconnected.
 	}
 }
-
-type protocolError struct {
-	status int
-	public *Error
-}
-
-func (e *protocolError) Error() string { return e.public.Error() }

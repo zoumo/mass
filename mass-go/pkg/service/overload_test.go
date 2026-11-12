@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -249,7 +250,7 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				defer h.Shutdown()
 				server := httptest.NewServer(h)
 				defer server.Close()
-				c := client.New(server.URL, "fixture")
+				c := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "fixture")
 				defer c.Close()
 				input := runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}
 				err = c.SendPrompt(ctx, slow, input, nil)

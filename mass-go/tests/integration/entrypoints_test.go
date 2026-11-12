@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,7 +82,7 @@ func (s *entrypointSuite) SetupTest() {
 		}
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), time.Second)
 		defer checkCancel()
-		conn, e := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimPrefix(s.url, "http://"))
+		conn, e := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimPrefix(strings.TrimSuffix(s.url, "/rpc"), "ws://"))
 		if conn != nil {
 			conn.Close()
 		}
@@ -97,7 +96,7 @@ func (s *entrypointSuite) SetupTest() {
 
 func (s *entrypointSuite) call(op string, p workflowParams, out any) {
 	s.T().Helper()
-	// HTTP-only capabilities stay covered without exposing CLI compatibility flags.
+	// RPC-only capabilities stay covered without exposing CLI compatibility flags.
 	if op == "session.answer" || len(p.History.Types) > 0 || p.SessionQuery.Namespace != "" || p.SessionQuery.RuntimeRef != "" || p.SessionQuery.State != "" {
 		s.Require().NoError(workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), op, p, out))
 		return
@@ -314,7 +313,7 @@ func (s *entrypointSuite) readWork(ref resource.SessionRef, text string, questio
 				}
 				if question {
 					s.Equal(1, questions)
-					s.T().Log("PASS synthetic explicit user question via HTTP and original SDK handle")
+					s.T().Log("PASS synthetic explicit user question via JSON-RPC and original SDK handle")
 				} else {
 					if text != "continue" || isClaude {
 						s.Positive(permissions)
@@ -344,7 +343,7 @@ func (s *entrypointSuite) basic(kind string) {
 	}
 	ref, original, work := s.openWithExecutable(kind, "basic", bin)
 	// Closing a registered observer does not close or cancel the native session.
-	watch, e := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
+	watch, e := newHTTPClient(s.T(), s.url, "").Subscribe(ctx(s.T()), ref)
 	s.Require().NoError(e)
 	s.Require().NoError(watch.Close())
 	s.runWork(ref, "hello", false)
@@ -424,7 +423,7 @@ func (s *entrypointSuite) basic(kind string) {
 	var sessions resource.SessionPage
 	s.call("session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "demo", State: "offline", Limit: 1}}, &sessions)
 	s.Len(sessions.Items, 1)
-	s.T().Log("PASS synthetic no-input identity, independent input, live chunks, persisted complete facts, filtering/pagination, unsubscribe isolation, close/stop/same-ID resume and fresh input via product CLI/HTTP+SSE")
+	s.T().Log("PASS synthetic no-input identity, independent input, live chunks, persisted complete facts, filtering/pagination, unsubscribe isolation, close/stop/same-ID resume and fresh input via product CLI/JSON-RPC subscriptions")
 }
 func (s *entrypointSuite) TestCodexBasicRecovery()  { s.basic("codex") }
 func (s *entrypointSuite) TestClaudeBasicRecovery() { s.basic("claude") }
@@ -448,7 +447,7 @@ func (s *entrypointSuite) cancel(kind string) {
 		}
 	}
 	// Disconnect while work remains executing, then cancel through another client.
-	o, e := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
+	o, e := newHTTPClient(s.T(), s.url, "").Subscribe(ctx(s.T()), ref)
 	s.Require().NoError(e)
 	s.Require().NoError(o.Close())
 	var state resource.Session
@@ -492,17 +491,11 @@ func (s *entrypointSuite) TestParametersAndDirectory() {
 	v, e := cmd.CombinedOutput()
 	s.Require().Error(e)
 	s.NotContains(string(v), "secret")
-	for _, body := range []string{`null`, `{} {}`, `{"metadata":{}}`, `{"unexpected":"private-diagnostic"}`} {
-		request, e := http.NewRequestWithContext(ctx(s.T()), http.MethodPost, s.url+"/apis/v1/sessions", strings.NewReader(body))
-		s.Require().NoError(e)
-		request.Header.Set("Content-Type", "application/json")
-		response, e := http.DefaultClient.Do(request)
-		s.Require().NoError(e)
-		var v transport.Error
-		s.Require().NoError(json.NewDecoder(response.Body).Decode(&v))
-		response.Body.Close()
-		s.Equal("invalid_argument", v.Code)
-		s.NotContains(v.Message, "private-diagnostic")
+	for _, params := range []string{`null`, `{}`, `{"input":{"metadata":{}}}`, `{"unexpected":"private-diagnostic"}`} {
+		response := rawRPCCall(s.T(), s.url, "", "session.create", json.RawMessage(params))
+		s.Require().NotNil(response.Error)
+		s.Equal(int64(-32602), response.Error.Code)
+		s.NotContains(response.Error.Message, "private-diagnostic")
 	}
 
 	s.T().Log("PASS invalid parameters, unknown operation, runtime list/delete, stable redacted not_found and CLI parse errors")
@@ -603,7 +596,7 @@ func (s *entrypointSuite) unsupportedMedia(kind string) {
 	s.call("session.close", workflowParams{Session: ref}, nil)
 	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.get", workflowParams{Session: ref}, nil)
 	s.Require().NoError(err)
-	observation, err := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
+	observation, err := newHTTPClient(s.T(), s.url, "").Subscribe(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	s.Require().NoError(observation.Close())
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)

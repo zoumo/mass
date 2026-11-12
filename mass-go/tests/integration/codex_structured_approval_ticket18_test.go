@@ -158,7 +158,7 @@ func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name, kind, rej
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	client := newHTTPClient(t, server.URL, "synthetic")
-	watch, err := client.Observe(ctx(t), ref)
+	watch, err := client.Subscribe(ctx(t), ref)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = watch.Close() })
 	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("authored offline approval")}})
@@ -176,7 +176,7 @@ func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name, kind, rej
 	}
 approvalLoop:
 	for {
-		e, err := watch.Next()
+		e, err := watch.Next(ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.SessionError); ok {
 			meta := codexMeta(e)

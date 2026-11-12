@@ -39,7 +39,7 @@ type unsubscribeParams struct {
 // Subscription is one dedicated WebSocket observation with a bounded local
 // queue. Next is the only consumer of that queue.
 type Subscription struct {
-	client *WebSocketClient
+	client *Client
 	conn   *rpc2.Conn
 	stream *rpcwire.Stream
 	cancel context.CancelFunc
@@ -62,7 +62,7 @@ type Subscription struct {
 
 // Subscribe opens a new authenticated, initialized WebSocket and waits for the
 // subscribe response before returning the observation.
-func (c *WebSocketClient) Subscribe(ctx context.Context, ref resource.SessionRef) (_ *Subscription, resultErr error) {
+func (c *Client) Subscribe(ctx context.Context, ref resource.SessionRef) (_ *Subscription, resultErr error) {
 	if err := validateSessionRef(ref); err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (c *WebSocketClient) Subscribe(ctx context.Context, ref resource.SessionRef
 	return subscription, nil
 }
 
-func (c *WebSocketClient) registerSubscription(s *Subscription) bool {
+func (c *Client) registerSubscription(s *Subscription) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -132,7 +132,7 @@ func (c *WebSocketClient) registerSubscription(s *Subscription) bool {
 	return true
 }
 
-func (c *WebSocketClient) unregisterSubscription(s *Subscription) {
+func (c *Client) unregisterSubscription(s *Subscription) {
 	c.mu.Lock()
 	delete(c.observations, s)
 	c.mu.Unlock()

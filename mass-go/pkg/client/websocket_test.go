@@ -28,6 +28,10 @@ func newRPCTransport(t *testing.T) *httptest.Server {
 	return httpServer
 }
 
+func websocketURL(server *httptest.Server) string {
+	return "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
+}
+
 type initialized struct {
 	ProtocolVersion string `json:"protocolVersion"`
 	ServerInfo      struct {
@@ -36,9 +40,9 @@ type initialized struct {
 	} `json:"serverInfo"`
 }
 
-func TestWebSocketClientInitialize(t *testing.T) {
+func TestClientInitialize(t *testing.T) {
 	httpServer := newRPCTransport(t)
-	wsClient := client.NewWebSocket(httpServer.URL, "test-token")
+	wsClient := client.New(websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	var result initialized
@@ -54,28 +58,28 @@ func TestWebSocketClientInitialize(t *testing.T) {
 	require.Equal(t, "already_initialized", rpcErr.Reason())
 }
 
-func TestWebSocketClientLazyAndAuthentication(t *testing.T) {
+func TestClientLazyAndAuthentication(t *testing.T) {
 	httpServer := newRPCTransport(t)
-	lazy := client.NewWebSocket("http://127.0.0.1:1", "test-token")
+	lazy := client.New("ws://127.0.0.1:1/rpc", "test-token")
 	t.Cleanup(func() { _ = lazy.Close() })
 
-	unauthorized := client.NewWebSocket(httpServer.URL, "wrong-token")
+	unauthorized := client.New(websocketURL(httpServer), "wrong-token")
 	t.Cleanup(func() { _ = unauthorized.Close() })
 	err := unauthorized.Initialize(t.Context(), nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "401")
 }
 
-func TestWebSocketClientRejectsInvalidClientInfo(t *testing.T) {
-	wsClient := client.NewWebSocket("http://127.0.0.1:1", "test-token")
+func TestClientRejectsInvalidClientInfo(t *testing.T) {
+	wsClient := client.New("ws://127.0.0.1:1/rpc", "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	err := wsClient.Initialize(t.Context(), &client.ClientInfo{Name: "test"}, nil)
 	require.Error(t, err)
 }
 
-func TestWebSocketClientCancellationAndCloseWakeWaiter(t *testing.T) {
+func TestClientCancellationAndCloseWakeWaiter(t *testing.T) {
 	httpServer := newHangingWebSocketServer(t)
-	wsClient := client.NewWebSocket(httpServer.URL, "test-token")
+	wsClient := client.New(websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
@@ -100,14 +104,14 @@ func TestWebSocketClientCancellationAndCloseWakeWaiter(t *testing.T) {
 	require.Error(t, wsClient.Initialize(t.Context(), nil, nil))
 }
 
-func TestWebSocketClientRejectsMalformedServerMessage(t *testing.T) {
+func TestClientRejectsMalformedServerMessage(t *testing.T) {
 	httpServer := newFakeWebSocketServer(t, func(conn *websocket.Conn) {
 		if _, _, err := conn.ReadMessage(); err != nil {
 			return
 		}
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`[{"jsonrpc":"2.0","id":"a","result":null}]`))
 	})
-	wsClient := client.NewWebSocket(httpServer.URL, "")
+	wsClient := client.New(websocketURL(httpServer), "")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	err := wsClient.Initialize(t.Context(), nil, nil)
@@ -116,14 +120,14 @@ func TestWebSocketClientRejectsMalformedServerMessage(t *testing.T) {
 	require.Equal(t, int64(-32600), profileErr.Code)
 }
 
-func TestWebSocketClientRejectsInvalidInitializeResult(t *testing.T) {
+func TestClientRejectsInvalidInitializeResult(t *testing.T) {
 	httpServer := newFakeWebSocketServer(t, func(conn *websocket.Conn) {
 		if _, _, err := conn.ReadMessage(); err != nil {
 			return
 		}
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"jsonrpc":"2.0","id":"0","result":{"protocolVersion":"2","serverInfo":{"name":"mass","version":"x"}}}`))
 	})
-	wsClient := client.NewWebSocket(httpServer.URL, "")
+	wsClient := client.New(websocketURL(httpServer), "")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	err := wsClient.Initialize(t.Context(), nil, nil)

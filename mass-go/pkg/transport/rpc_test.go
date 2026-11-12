@@ -134,6 +134,56 @@ func TestRPCAuthenticationAndOrigin(t *testing.T) {
 	require.Nil(t, readRPC(t, conn).Error)
 }
 
+func TestHealthProbesAndRetiredBusinessRoutes(t *testing.T) {
+	_, httpServer := newRPCServer(t, transport.Options{Token: "test-token"})
+	request := func(method, path string, authenticated bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), method, httpServer.URL+path, http.NoBody)
+		require.NoError(t, err)
+		if authenticated {
+			req.Header.Set("Authorization", "Bearer test-token")
+		}
+		response, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = response.Body.Close() })
+		return response
+	}
+
+	for path, status := range map[string]string{"/livez": "alive", "/readyz": "ready"} {
+		response := request(http.MethodGet, path, false) //nolint:bodyclose // The helper registers body cleanup.
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+		require.Equal(t, status, body["status"])
+		require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+
+		response = request(http.MethodPost, path, false) //nolint:bodyclose // The helper registers body cleanup.
+		require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
+		require.Equal(t, http.MethodGet, response.Header.Get("Allow"))
+	}
+	response := request(http.MethodPost, "/rpc", true) //nolint:bodyclose // The helper registers body cleanup.
+	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
+	require.Equal(t, http.MethodGet, response.Header.Get("Allow"))
+
+	for _, path := range []string{
+		"/apis/v1/runtimes",
+		"/apis/v1/sessions/YS9i",
+		"/apis/v1/namespaces/demo/sessions/task/events/stream",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			response := request(method, path, true) //nolint:bodyclose // The helper registers body cleanup.
+			require.Equal(t, http.StatusNotFound, response.StatusCode)
+			var body struct {
+				Code   string `json:"code"`
+				Reason string `json:"reason"`
+			}
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+			require.Equal(t, "not_found", body.Code)
+			require.Equal(t, "route_not_found", body.Reason)
+		}
+	}
+}
+
 func TestRPCInitializeLifecycle(t *testing.T) {
 	_, httpServer := newRPCServer(t, transport.Options{Token: "test-token", ServerVersion: "test-version"})
 	conn := dialRPC(t, httpServer, rpcHeaders("test-token"))

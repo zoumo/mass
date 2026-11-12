@@ -3,13 +3,9 @@ module github.com/zoumo/mass/mass-go
 go 1.26.9
 
 require (
-	github.com/danielgtaylor/huma/v2 v2.39.1
-	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/oapi-codegen/nullable v1.2.0
-	github.com/oapi-codegen/runtime v1.6.0
 	github.com/sourcegraph/jsonrpc2 v0.2.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -18,12 +14,9 @@ require (
 	github.com/zoumo/agent-sdk-go v0.0.0-20261113030733-09d4ddf1ff20
 	github.com/zoumo/agent-sdk-testify v0.2.1
 	modernc.org/sqlite v1.60.1
-	resty.dev/v3 v3.0.0-rc.4
 )
 
 require (
-	github.com/Masterminds/semver/v3 v3.5.0 // indirect
-	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -32,6 +25,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
@@ -39,7 +33,6 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	modernc.org/libc v1.77.1 // indirect

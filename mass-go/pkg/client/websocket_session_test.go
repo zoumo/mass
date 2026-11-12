@@ -161,9 +161,9 @@ func newTypedSessionServer(t *testing.T) (*httptest.Server, *typedSessionDriver,
 	return httpServer, driver, st
 }
 
-func TestWebSocketClientSessionLifecycleAndHistory(t *testing.T) {
+func TestClientSessionLifecycleAndHistory(t *testing.T) {
 	httpServer, driver, st := newTypedSessionServer(t)
-	wsClient := client.NewWebSocket(httpServer.URL, "test-token")
+	wsClient := client.New(websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	initial := runtime.Input{Content: []events.ContentBlock{events.Text("create input")}}
@@ -266,9 +266,9 @@ func TestWebSocketClientSessionLifecycleAndHistory(t *testing.T) {
 	driver.mu.Unlock()
 }
 
-func TestWebSocketClientSessionValidatesReferencesAndBusinessErrors(t *testing.T) {
+func TestClientSessionValidatesReferencesAndBusinessErrors(t *testing.T) {
 	httpServer, _, _ := newTypedSessionServer(t)
-	wsClient := client.NewWebSocket(httpServer.URL, "test-token")
+	wsClient := client.New(websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	for _, ref := range []resource.SessionRef{
