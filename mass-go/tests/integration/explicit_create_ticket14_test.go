@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -39,13 +38,12 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "explicit")
 	require.NoError(t, err)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	c := client.New(rpcEndpoint(server.URL), "")
-	defer c.Close()
+	c := newHTTPClient(t, server.URL, "")
 	input := runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}
 	var got resource.SessionCreated
 	require.NoError(t, c.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{
@@ -86,7 +84,7 @@ func TestTicket14ExplicitCreateCLI(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
@@ -120,7 +118,7 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)
-			h, err := transport.New(svc, transport.Options{LocalOnly: true})
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			defer h.Shutdown()
 			server := httptest.NewServer(h)
@@ -256,14 +254,13 @@ func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	first, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, first.Events, 1)
-	require.Equal(t, "message-1:0", first.Events[0].ItemID)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	require.Equal(t, got.InitialInputReceipt.Submission, first.Events[0].Meta["claude"].(map[string]any)["submission"])
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	c := client.New(rpcEndpoint(server.URL), "")
-	defer c.Close()
+	c := newHTTPClient(t, server.URL, "")
 	observer, err := c.Subscribe(ctx(t), ref)
 	require.NoError(t, err)
 	defer observer.Close()

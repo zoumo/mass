@@ -47,7 +47,7 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 			opened, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "continuous"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}})
 			require.NoError(t, err)
 			ref := resource.SessionRef{SessionID: opened.Status.SessionID}
-			h, err := transport.New(svc, transport.Options{Token: "synthetic"})
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "synthetic"}))
 			require.NoError(t, err)
 			defer h.Shutdown()
 			server := httptest.NewServer(h)

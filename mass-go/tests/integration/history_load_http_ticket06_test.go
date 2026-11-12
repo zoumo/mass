@@ -19,7 +19,7 @@ import (
 
 func TestTicket06CLILoadRPCHistoryAndFutureEvents(t *testing.T) {
 	svc, cwd := ticket06Service(t, "")
-	handler, err := transport.New(svc, transport.Options{Token: "load-token"})
+	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "load-token"}))
 	require.NoError(t, err)
 	defer handler.Shutdown()
 	server := httptest.NewServer(handler)

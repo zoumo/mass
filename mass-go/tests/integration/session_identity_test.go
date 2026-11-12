@@ -92,7 +92,7 @@ func TestRPCCreateWaitsForIdentityAndReturnsRawID(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(c, "agent")
 	require.NoError(t, err)
-	h, err := transport.New(svc, transport.Options{Token: "test-token"})
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)

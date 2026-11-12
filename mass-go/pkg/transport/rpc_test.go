@@ -1,6 +1,7 @@
 package transport_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,7 @@ func newRPCServer(t *testing.T, opts transport.Options) (*transport.Server, *htt
 	if opts.Token == "" && !opts.LocalOnly {
 		opts.Token = "test-token"
 	}
+	opts = withTestWriteTimeout(opts)
 	server, err := transport.New(nil, opts)
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(server)
@@ -41,6 +43,18 @@ func newRPCServer(t *testing.T, opts transport.Options) (*transport.Server, *htt
 		httpServer.Close()
 	})
 	return server, httpServer
+}
+
+func TestRPCRequiresAssemblyWriteTimeout(t *testing.T) {
+	_, err := transport.New(nil, transport.Options{Token: "test-token"})
+	require.Error(t, err)
+}
+
+func withTestWriteTimeout(opts transport.Options) transport.Options {
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = time.Second
+	}
+	return opts
 }
 
 func rpcHeaders(token string, origin ...string) http.Header {
@@ -216,6 +230,29 @@ func TestRPCInitializeLifecycle(t *testing.T) {
 	sendText(t, conn, `{"jsonrpc":"2.0","method":"initialize"}`)
 	sendText(t, conn, `{"jsonrpc":"2.0","id":"plain","method":"unknown"}`)
 	requireRPCError(t, readRPC(t, conn), -32601, `"plain"`, "")
+}
+
+func TestRPCEmptyStringRequestIDIsAcceptedAndEchoed(t *testing.T) {
+	_, httpServer := newRPCServer(t, transport.Options{Token: "test-token"})
+	conn := dialRPC(t, httpServer, rpcHeaders("test-token"))
+
+	sendText(t, conn, `{"jsonrpc":"2.0","id":"","method":"initialize","params":{"protocolVersion":"1"}}`)
+	response := readRPC(t, conn)
+	require.Nil(t, response.Error)
+	require.Equal(t, `""`, string(response.ID))
+	require.Contains(t, string(response.Result), `"protocolVersion":"1"`)
+}
+
+func TestRPCDrainDoesNotWaitForUntouchedConnection(t *testing.T) {
+	server, httpServer := newRPCServer(t, transport.Options{Token: "test-token"})
+	conn := dialRPC(t, httpServer, rpcHeaders("test-token"))
+	t.Cleanup(func() { _ = conn.Close() })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	require.NoError(t, server.DrainAndClose(ctx))
+	require.Less(t, time.Since(started), time.Second)
 }
 
 func TestRPCUnsupportedVersionClosesConnection(t *testing.T) {

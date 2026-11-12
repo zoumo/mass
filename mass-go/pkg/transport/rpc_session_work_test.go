@@ -218,7 +218,7 @@ func newSessionWorkRPCFixture(t *testing.T) *sessionWorkRPCFixture {
 	})
 	require.NoError(t, err)
 
-	endpoint, err := transport.New(svc, transport.Options{Token: "test-token"})
+	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)
 	t.Cleanup(func() {

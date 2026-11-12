@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -87,13 +88,21 @@ func rpcEndpoint(serverURL string) string {
 // newHTTPClient binds WebSocket JSON-RPC client cleanup to the current test.
 func newHTTPClient(t *testing.T, serverURL, token string) *client.Client {
 	t.Helper()
-	c := client.New(rpcEndpoint(serverURL), token)
+	c, err := client.New(rpcEndpoint(serverURL), token, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		if err := c.Close(); err != nil {
 			t.Errorf("close RPC client: %v", err)
 		}
 	})
 	return c
+}
+
+func withTestWriteTimeout(opts transport.Options) transport.Options {
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = time.Second
+	}
+	return opts
 }
 
 type rawRPCResponse struct {

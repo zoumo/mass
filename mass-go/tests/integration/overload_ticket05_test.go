@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -110,13 +109,12 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			}
 			gate.id = refs["damaged"].SessionID
 			expectProcesses = true
-			h, err := transport.New(svc, transport.Options{Token: "synthetic"})
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "synthetic"}))
 			require.NoError(t, err)
 			defer h.Shutdown()
 			server := httptest.NewServer(h)
 			defer server.Close()
-			c := client.New(rpcEndpoint(server.URL), "synthetic")
-			defer c.Close()
+			c := newHTTPClient(t, server.URL, "synthetic")
 			observation, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			watch, err := c.Subscribe(observation, refs["healthy"])

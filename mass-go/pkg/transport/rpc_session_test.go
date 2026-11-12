@@ -176,7 +176,7 @@ func newSessionRPCFixture(t *testing.T, blockLoad bool) *sessionRPCFixture {
 		Spec:     resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}},
 	})
 	require.NoError(t, err)
-	endpoint, err := transport.New(svc, transport.Options{Token: "test-token"})
+	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)
 	fixture := &sessionRPCFixture{server: httpServer, svc: svc, store: st, driver: driver}
@@ -420,7 +420,7 @@ func (*blockingSessionAPI) ListSessions(resource.SessionQuery) (resource.Session
 
 func TestRPCSlowSessionCallDoesNotBlockReadLoop(t *testing.T) {
 	api := &blockingSessionAPI{entered: make(chan struct{}, 1), release: make(chan struct{})}
-	server, err := transport.New(api, transport.Options{Token: "test-token"})
+	server, err := transport.New(api, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	t.Cleanup(server.Shutdown)
 	httpServer := httptest.NewServer(server)
@@ -448,6 +448,50 @@ func TestRPCSlowSessionCallDoesNotBlockReadLoop(t *testing.T) {
 	require.Nil(t, slow.Error)
 	require.Equal(t, `"slow"`, string(slow.ID))
 	require.Contains(t, string(slow.Result), `"sessionId":"slow"`)
+}
+
+func TestRPCDrainWaitsForAdmittedCall(t *testing.T) {
+	api := &blockingSessionAPI{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	server, err := transport.New(api, withTestWriteTimeout(transport.Options{Token: "test-token"}))
+	require.NoError(t, err)
+	t.Cleanup(server.Shutdown)
+	httpServer := httptest.NewServer(server)
+	t.Cleanup(httpServer.Close)
+
+	conn := dialRPC(t, httpServer, rpcHeaders("test-token"))
+	sendText(t, conn, initializeMessage(`"init"`, "1"))
+	require.Nil(t, readRPC(t, conn).Error)
+
+	sendCall(t, conn, "slow", "session.create", `{"input":{"metadata":{"namespace":"demo","name":"slow"},"spec":{"runtimeRef":"agent","cwd":"/work"},"initialInput":{"content":[{"type":"text","text":"slow"}]}}}`)
+	select {
+	case <-api.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow create was not admitted")
+	}
+
+	drained := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		drained <- server.DrainAndClose(ctx)
+	}()
+	select {
+	case err := <-drained:
+		close(api.release)
+		t.Fatalf("DrainAndClose returned while an admitted call was still running: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(api.release)
+	slow := readRPC(t, conn)
+	require.Nil(t, slow.Error)
+	require.Equal(t, `"slow"`, string(slow.ID))
+	select {
+	case err := <-drained:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("DrainAndClose did not finish after the admitted call completed")
+	}
 }
 
 func TestRPCSessionLoadReturnsAcceptanceWhileNativeLoadContinues(t *testing.T) {

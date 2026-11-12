@@ -121,6 +121,7 @@ func newSubscriptionRPCFixture(t *testing.T, capacity int, opts transport.Option
 	if opts.Token == "" && !opts.LocalOnly {
 		opts.Token = "test-token"
 	}
+	opts = withTestWriteTimeout(opts)
 	server, err := transport.New(api, opts)
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(server)
@@ -153,6 +154,7 @@ func newNamedSubscriptionRPCFixture(
 	if opts.Token == "" && !opts.LocalOnly {
 		opts.Token = "test-token"
 	}
+	opts = withTestWriteTimeout(opts)
 	server, err := transport.New(api, opts)
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(server)

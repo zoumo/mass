@@ -30,7 +30,7 @@ SDK/testify pins. Current T06 replay results are recorded in
 | Historical opt-in recordings made with SDK `5edf8b62` | 4 | 0 | n/a for current pins |
 | Current-pin opt-in recording tests under the `e2e` tag and `MASS_RECORD=1` | 0 | 0 | 4 |
 | Official verification | n/a | n/a | n/a for consumer provenance |
-| Live MASS product E2E through HTTP/SSE with native providers | 0 | 0 | 2 providers |
+| Live MASS product E2E through WebSocket JSON-RPC with native providers | 0 | 0 | 2 providers |
 
 The four historical recording runs invoked the real Codex and Claude CLIs, their
 configured accounts, and `auto/deepseek-v4.1-flash-1017`; both permission cases
@@ -208,7 +208,7 @@ is disabled. The Codex permission scenario uses `approval_policy=on-request` and
 `sandbox_mode=read-only`, then answers the offered `allow-once` option for a
 harmless project-local write. Claude permission uses inline
 `permissions.ask: ["Bash"]` and answers the offered `allow-once` option through
-the public HTTP answer API. If the expected interaction is absent, the case is
+the public WebSocket `session.answer` API. If the expected interaction is absent, the case is
 unverified and no passing export is published.
 
 ## Claim boundary

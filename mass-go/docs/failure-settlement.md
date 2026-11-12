@@ -1,5 +1,9 @@
 # Go experimental failure settlement (Ticket05)
 
+> **Historical ticket record.** Transport references below describe the retired
+> HTTP/SSE experiment. The current product transport is WebSocket JSON-RPC; see
+> the [current implementation notes](../README.md).
+
 These choices implement the Go experiment against the read-only harness. Evidence
 uses the fixed agent-sdk-go SDK and its own strict synthetic Codex/Claude CLI
 subprocesses. No real account, model, tool execution or native durable recovery is

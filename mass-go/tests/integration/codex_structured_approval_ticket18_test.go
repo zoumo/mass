@@ -152,7 +152,7 @@ func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name, kind, rej
 	require.NoError(t, err)
 	require.Contains(t, string(identity), bin)
 	t.Logf("owned live peer identity: %s", identity)
-	handler, err := transport.New(svc, transport.Options{Token: "synthetic"})
+	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "synthetic"}))
 	require.NoError(t, err)
 	t.Cleanup(handler.Shutdown)
 	server := httptest.NewServer(handler)

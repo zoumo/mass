@@ -1,5 +1,10 @@
 # Independent stores and realtime acceptance
 
+> **Historical transport note.** This page records the storage/Broadcast
+> acceptance at harness v0.2.10, including the HTTP/SSE transport used at that
+> time. Current product suites use the CLI and WebSocket JSON-RPC; the
+> transport-specific commands below are historical evidence, not current usage.
+
 This describes the implemented storage/Broadcast scope approved at harness
 v0.2.10. The newer native-history load/replay contract is outside this delivery.
 Earlier ticket-specific documents describe their own implementation stage.
@@ -39,7 +44,8 @@ rtk proxy go test -race ./pkg/service -run 'TestSQLReplicaFailureNeverPublishesU
 rtk proxy go test -race ./tests/integration -run 'Test(File)?EntrypointSuite'
 ```
 
-Both entrypoint suites start the actual daemon and invoke the CLI, HTTP and SSE.
+Both entrypoint suites start the actual daemon and invoke the CLI, HTTP and SSE
+(the historical transport).
 They cover CRUD, identity/name addressing, live facts already queryable at receipt,
 multi-Runtime isolation and lifecycle. `TestMetadataRestartAndEventRebuild` adds
 unobserved execution, ordinary restart followed by event-SQL loss/rebuild, exact

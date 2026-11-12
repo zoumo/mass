@@ -405,7 +405,8 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		require.NoError(t, ctx.Err(), "daemon readiness exceeded flow deadline")
 	}
 	require.NotEmpty(t, ready.URL)
-	api := client.New(ready.URL, "")
+	api, err := client.New(ready.URL, "", client.Options{WriteTimeout: 10 * time.Second, SubscriptionQueueCapacity: 64})
+	require.NoError(t, err)
 	defer api.Close()
 	var rt resource.Runtime
 	runtimeStopped := false

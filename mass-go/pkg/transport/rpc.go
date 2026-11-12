@@ -77,13 +77,16 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stream, err := rpcwire.NewStream(socket, rpcwire.RoleServer, s.writeTimeout)
+	if err != nil {
+		_ = socket.Close()
+		return
+	}
 	ctx, cancel := context.WithCancel(s.life)
-	stream := rpcwire.NewStream(socket, rpcwire.RoleServer, s.writeTimeout)
 	rpcConnection := &rpcConnection{
 		api:           s.api,
 		serverVersion: s.serverVersion,
 		inflight:      map[string]struct{}{},
-		drained:       make(chan struct{}),
 		endpoint:      s,
 	}
 	connection := rpc2.NewConn(ctx, stream, &rpcHandler{connection: rpcConnection}, rpc2.SetLogger(rpcLogger{}))
@@ -162,10 +165,8 @@ func (s *rpcEndpoint) drain(ctx context.Context) error {
 	s.mu.Unlock()
 	for _, connection := range connections {
 		connection.shutdownSubscription(ctx)
-		select {
-		case <-connection.drained:
-		case <-ctx.Done():
-			return ctx.Err()
+		if err := connection.waitDrained(ctx); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -181,7 +182,7 @@ type rpcConnection struct {
 	disconnected     bool
 	subscription     *rpcSubscription
 	nextSubscription uint64
-	drained          chan struct{}
+	drainWaiters     []chan struct{}
 	endpoint         *rpcEndpoint
 }
 
@@ -323,25 +324,61 @@ func (c *rpcConnection) end(id string) {
 
 func (c *rpcConnection) maybeDrained() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.inflight) != 0 {
+	if !c.drainedLocked() {
+		c.mu.Unlock()
 		return
+	}
+	waiters := c.drainWaiters
+	c.drainWaiters = nil
+	c.mu.Unlock()
+	for _, waiter := range waiters {
+		close(waiter)
+	}
+}
+
+func (c *rpcConnection) drainedLocked() bool {
+	if c.disconnected {
+		return true
+	}
+	if len(c.inflight) != 0 {
+		return false
 	}
 	if c.subscription != nil {
 		select {
 		case <-c.subscription.done:
 		default:
-			return
+			return false
 		}
 	}
-	c.closeDrainedLocked()
+	return true
 }
 
-func (c *rpcConnection) closeDrainedLocked() {
+func (c *rpcConnection) waitDrained(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if c.drainedLocked() {
+		c.mu.Unlock()
+		return nil
+	}
+	waiter := make(chan struct{})
+	c.drainWaiters = append(c.drainWaiters, waiter)
+	c.mu.Unlock()
+
 	select {
-	case <-c.drained:
-	default:
-		close(c.drained)
+	case <-waiter:
+		return nil
+	case <-ctx.Done():
+		c.mu.Lock()
+		for i, candidate := range c.drainWaiters {
+			if candidate == waiter {
+				c.drainWaiters = append(c.drainWaiters[:i], c.drainWaiters[i+1:]...)
+				break
+			}
+		}
+		c.mu.Unlock()
+		return ctx.Err()
 	}
 }
 

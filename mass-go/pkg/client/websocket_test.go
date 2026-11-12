@@ -18,7 +18,7 @@ import (
 
 func newRPCTransport(t *testing.T) *httptest.Server {
 	t.Helper()
-	server, err := transport.New(nil, transport.Options{Token: "test-token", ServerVersion: "test-version"})
+	server, err := transport.New(nil, withTestWriteTimeout(transport.Options{Token: "test-token", ServerVersion: "test-version"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(server)
 	t.Cleanup(func() {
@@ -32,6 +32,20 @@ func websocketURL(server *httptest.Server) string {
 	return "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
 }
 
+func newTestClient(t *testing.T, url, token string) *client.Client {
+	t.Helper()
+	wsClient, err := client.New(url, token, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
+	require.NoError(t, err)
+	return wsClient
+}
+
+func withTestWriteTimeout(opts transport.Options) transport.Options {
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = time.Second
+	}
+	return opts
+}
+
 type initialized struct {
 	ProtocolVersion string `json:"protocolVersion"`
 	ServerInfo      struct {
@@ -42,7 +56,7 @@ type initialized struct {
 
 func TestClientInitialize(t *testing.T) {
 	httpServer := newRPCTransport(t)
-	wsClient := client.New(websocketURL(httpServer), "test-token")
+	wsClient := newTestClient(t, websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	var result initialized
@@ -58,12 +72,19 @@ func TestClientInitialize(t *testing.T) {
 	require.Equal(t, "already_initialized", rpcErr.Reason())
 }
 
+func TestClientRequiresAssemblyOptions(t *testing.T) {
+	_, err := client.New("ws://127.0.0.1:1/rpc", "test-token", client.Options{SubscriptionQueueCapacity: 1})
+	require.ErrorContains(t, err, "write timeout")
+	_, err = client.New("ws://127.0.0.1:1/rpc", "test-token", client.Options{WriteTimeout: time.Second})
+	require.ErrorContains(t, err, "queue capacity")
+}
+
 func TestClientLazyAndAuthentication(t *testing.T) {
 	httpServer := newRPCTransport(t)
-	lazy := client.New("ws://127.0.0.1:1/rpc", "test-token")
+	lazy := newTestClient(t, "ws://127.0.0.1:1/rpc", "test-token")
 	t.Cleanup(func() { _ = lazy.Close() })
 
-	unauthorized := client.New(websocketURL(httpServer), "wrong-token")
+	unauthorized := newTestClient(t, websocketURL(httpServer), "wrong-token")
 	t.Cleanup(func() { _ = unauthorized.Close() })
 	err := unauthorized.Initialize(t.Context(), nil, nil)
 	require.Error(t, err)
@@ -71,7 +92,7 @@ func TestClientLazyAndAuthentication(t *testing.T) {
 }
 
 func TestClientRejectsInvalidClientInfo(t *testing.T) {
-	wsClient := client.New("ws://127.0.0.1:1/rpc", "test-token")
+	wsClient := newTestClient(t, "ws://127.0.0.1:1/rpc", "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	err := wsClient.Initialize(t.Context(), &client.ClientInfo{Name: "test"}, nil)
 	require.Error(t, err)
@@ -79,7 +100,7 @@ func TestClientRejectsInvalidClientInfo(t *testing.T) {
 
 func TestClientCancellationAndCloseWakeWaiter(t *testing.T) {
 	httpServer := newHangingWebSocketServer(t)
-	wsClient := client.New(websocketURL(httpServer), "test-token")
+	wsClient := newTestClient(t, websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
@@ -111,7 +132,7 @@ func TestClientRejectsMalformedServerMessage(t *testing.T) {
 		}
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`[{"jsonrpc":"2.0","id":"a","result":null}]`))
 	})
-	wsClient := client.New(websocketURL(httpServer), "")
+	wsClient := newTestClient(t, websocketURL(httpServer), "")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	err := wsClient.Initialize(t.Context(), nil, nil)
@@ -127,7 +148,7 @@ func TestClientRejectsInvalidInitializeResult(t *testing.T) {
 		}
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"jsonrpc":"2.0","id":"0","result":{"protocolVersion":"2","serverInfo":{"name":"mass","version":"x"}}}`))
 	})
-	wsClient := client.New(websocketURL(httpServer), "")
+	wsClient := newTestClient(t, websocketURL(httpServer), "")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	err := wsClient.Initialize(t.Context(), nil, nil)

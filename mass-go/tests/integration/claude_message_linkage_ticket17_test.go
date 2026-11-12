@@ -48,7 +48,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 					assert.NoError(t, err)
 				}
 			})
-			h, err := transport.New(svc, transport.Options{LocalOnly: true})
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			t.Cleanup(h.Shutdown)
 			server := httptest.NewServer(h)

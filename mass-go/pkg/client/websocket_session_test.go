@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -147,7 +146,7 @@ func newTypedSessionServer(t *testing.T) (*httptest.Server, *typedSessionDriver,
 		Spec:     resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}},
 	})
 	require.NoError(t, err)
-	endpoint, err := transport.New(svc, transport.Options{Token: "test-token"})
+	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)
 	t.Cleanup(func() {
@@ -163,7 +162,7 @@ func newTypedSessionServer(t *testing.T) (*httptest.Server, *typedSessionDriver,
 
 func TestClientSessionLifecycleAndHistory(t *testing.T) {
 	httpServer, driver, st := newTypedSessionServer(t)
-	wsClient := client.New(websocketURL(httpServer), "test-token")
+	wsClient := newTestClient(t, websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	initial := runtime.Input{Content: []events.ContentBlock{events.Text("create input")}}
@@ -268,7 +267,7 @@ func TestClientSessionLifecycleAndHistory(t *testing.T) {
 
 func TestClientSessionValidatesReferencesAndBusinessErrors(t *testing.T) {
 	httpServer, _, _ := newTypedSessionServer(t)
-	wsClient := client.New(websocketURL(httpServer), "test-token")
+	wsClient := newTestClient(t, websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	for _, ref := range []resource.SessionRef{

@@ -16,6 +16,7 @@ func TestParseRequestProfile(t *testing.T) {
 		id   string
 	}{
 		{name: "string id", data: `{"jsonrpc":"2.0","id":"a","method":"initialize","params":{}}`, kind: Request, id: `"a"`},
+		{name: "empty string id", data: `{"jsonrpc":"2.0","id":"","method":"initialize"}`, kind: Request, id: `""`},
 		{name: "zero id", data: `{"jsonrpc":"2.0","id":0,"method":"initialize"}`, kind: Request, id: "0"},
 		{name: "max id", data: `{"jsonrpc":"2.0","id":9007199254740991,"method":"initialize"}`, kind: Request, id: "9007199254740991"},
 		{name: "notification", data: `{"jsonrpc":"2.0","method":"initialize"}`, kind: Notification},
@@ -25,7 +26,6 @@ func TestParseRequestProfile(t *testing.T) {
 		{name: "exponent id", data: `{"jsonrpc":"2.0","id":1e3,"method":"initialize"}`, code: -32600},
 		{name: "unsafe id", data: `{"jsonrpc":"2.0","id":9007199254740992,"method":"initialize"}`, code: -32600},
 		{name: "boolean id", data: `{"jsonrpc":"2.0","id":true,"method":"initialize"}`, code: -32600},
-		{name: "empty string id", data: `{"jsonrpc":"2.0","id":"","method":"initialize"}`, code: -32600},
 		{name: "batch", data: `[{"jsonrpc":"2.0","id":"a","method":"initialize"}]`, code: -32600},
 		{name: "wrong version", data: `{"jsonrpc":"1.0","id":"a","method":"initialize"}`, code: -32600, id: `"a"`},
 		{name: "duplicate key", data: `{"jsonrpc":"2.0","id":"a","id":"b","method":"initialize"}`, code: -32600},

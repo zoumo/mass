@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
@@ -66,13 +65,13 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	require.NoError(t, err)
 	_, err = svc.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic"}}})
 	require.NoError(t, err)
-	handler, err := transport.New(svc, transport.Options{Token: "fixture"})
+	handler, err := transport.New(svc, withServiceTestWriteTimeout(transport.Options{Token: "fixture"}))
 	require.NoError(t, err)
 	defer handler.Shutdown()
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	ref := resource.SessionRef{SessionID: "original"}
-	c := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "fixture")
+	c := newServiceTestClient(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "fixture")
 	defer c.Close()
 	sub, err := c.Subscribe(ctx, ref)
 	require.NoError(t, err)
@@ -162,12 +161,12 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	// Rebuild while consumers are registered: projection is independent of both
 	// handlers and the (empty) Runtime registry, not just a quiet startup path.
 	require.NoError(t, reopened.Reconcile())
-	readHandler, err := transport.New(queryOnly, transport.Options{Token: "fixture"})
+	readHandler, err := transport.New(queryOnly, withServiceTestWriteTimeout(transport.Options{Token: "fixture"}))
 	require.NoError(t, err)
 	defer readHandler.Shutdown()
 	readServer := httptest.NewServer(readHandler)
 	defer readServer.Close()
-	readClient := client.New("ws"+strings.TrimPrefix(readServer.URL, "http")+"/rpc", "fixture")
+	readClient := newServiceTestClient(t, "ws"+strings.TrimPrefix(readServer.URL, "http")+"/rpc", "fixture")
 	defer readClient.Close()
 	var restored store.HistoryPage
 	require.NoError(t, readClient.History(ctx, ref, store.HistoryQuery{Types: []string{"agent.message"}, Limit: 1}, &restored))

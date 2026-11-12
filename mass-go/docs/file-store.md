@@ -157,7 +157,7 @@ isolation, and a child killed during startup after recovery batches reach disk.
 Additional crash acceptance exits real subprocesses before/after event and
 progress statements, before/after SQL commit, and after Append completes but the
 caller loses its response. Injected transaction-commit errors and real recovery-intent removal failures seal
-the Store; reopen preserves the UUID exactly once. The HTTP/SSE regression aborts
+the Store; reopen preserves the UUID exactly once. The historical HTTP/SSE regression aborts
 a real disk SQLite progress update after the file append: subscribers receive an
 error, never the failed fact, and explicit Store/Service settlement retries the
 original UUID. Reconstruction/history inspection uses no Driver activation.

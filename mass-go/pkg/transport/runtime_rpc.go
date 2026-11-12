@@ -162,10 +162,13 @@ func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *
 }
 
 func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err error) {
-	// Service call failures are operation outcomes even when the original error
-	// has no narrower public classification. Protocol/shape failures never reach
-	// this path and remain distinct JSON-RPC errors.
-	public := PublicError(err)
+	// Only explicit Service outcomes are business errors. Unclassified Go
+	// failures are implementation errors and must stay redacted.
+	public, ok := publicError(err)
+	if !ok || public == nil {
+		replyInternalError(ctx, conn, id)
+		return
+	}
 	data, encodeErr := json.Marshal(public)
 	if encodeErr != nil {
 		replyInternalError(ctx, conn, id)

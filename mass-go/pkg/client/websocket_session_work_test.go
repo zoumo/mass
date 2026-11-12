@@ -216,7 +216,7 @@ func newTypedWorkFixture(t *testing.T) *typedWorkFixture {
 	})
 	require.NoError(t, err)
 
-	endpoint, err := transport.New(svc, transport.Options{Token: "test-token"})
+	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)
 	t.Cleanup(func() {
@@ -232,7 +232,7 @@ func newTypedWorkFixture(t *testing.T) *typedWorkFixture {
 
 func newInitializedWorkClient(t *testing.T, fixture *typedWorkFixture) *client.Client {
 	t.Helper()
-	wsClient := client.New(websocketURL(fixture.server), "test-token")
+	wsClient := newTestClient(t, websocketURL(fixture.server), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	require.NoError(t, wsClient.Initialize(t.Context(), &client.ClientInfo{Name: "test", Version: "1"}, nil))
 	return wsClient

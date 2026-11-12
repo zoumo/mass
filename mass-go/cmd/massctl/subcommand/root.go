@@ -37,9 +37,11 @@ func fileError() error {
 }
 
 type options struct {
-	url, output string
-	timeout     time.Duration
-	client      *client.Client
+	url, output       string
+	timeout           time.Duration
+	writeTimeout      time.Duration
+	subscriptionQueue int
+	client            *client.Client
 }
 
 // Run executes one command. It writes results to stdout and diagnostics to stderr.
@@ -90,6 +92,8 @@ func (o *options) command() *cobra.Command {
 	root.PersistentFlags().StringVar(&o.url, "url", envURL(), "MASS WebSocket endpoint (MASS_URL)")
 	root.PersistentFlags().StringVarP(&o.output, "output", "o", "human", "Output: human or json")
 	root.PersistentFlags().DurationVar(&o.timeout, "timeout", 30*time.Second, "Request timeout; 0 disables (watch: through ready only)")
+	root.PersistentFlags().DurationVar(&o.writeTimeout, "write-timeout", 10*time.Second, "WebSocket write deadline")
+	root.PersistentFlags().IntVar(&o.subscriptionQueue, "subscription-queue", 64, "Bounded local subscription queue capacity")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		if o.output != "human" && o.output != "json" {
 			return invalid("Output must be human or json")
@@ -97,7 +101,20 @@ func (o *options) command() *cobra.Command {
 		if o.timeout < 0 {
 			return invalid("Timeout must be nonnegative")
 		}
-		o.client = client.New(o.url, os.Getenv("MASS_TOKEN"))
+		if o.writeTimeout <= 0 {
+			return invalid("Write timeout must be positive")
+		}
+		if o.subscriptionQueue <= 0 {
+			return invalid("Subscription queue capacity must be positive")
+		}
+		wsClient, err := client.New(o.url, os.Getenv("MASS_TOKEN"), client.Options{
+			WriteTimeout:              o.writeTimeout,
+			SubscriptionQueueCapacity: o.subscriptionQueue,
+		})
+		if err != nil {
+			return invalid("Invalid client configuration")
+		}
+		o.client = wsClient
 		return nil
 	}
 	root.AddCommand(o.runtimeCommands(), o.sessionCommands(), &cobra.Command{Use: "version", Example: "  massctl version", Short: "Print client version", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

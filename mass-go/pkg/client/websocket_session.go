@@ -82,7 +82,7 @@ type historyQuery struct {
 
 // CreateSession creates a Session without sending an initial input.
 func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any) error {
-	return c.call(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
+	return c.callWork(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
 		Metadata: sessionMetadata{Namespace: v.Metadata.Namespace, Name: v.Metadata.Name},
 		Spec:     v.Spec,
 	}}, out)
@@ -90,7 +90,7 @@ func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any)
 
 // CreateSessionWithInput sends create-only input and preserves its receipt.
 func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionCreateInput, out any) error {
-	return c.call(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
+	return c.callWork(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
 		Metadata:     sessionMetadata{Namespace: v.Metadata.Namespace, Name: v.Metadata.Name},
 		Spec:         v.Spec,
 		InitialInput: v.InitialInput,
@@ -126,7 +126,7 @@ func (c *Client) ResumeSession(ctx context.Context, ref resource.SessionRef, out
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
-	return c.call(ctx, "session.resume", sessionResumeParams{Session: ref}, out)
+	return c.callWork(ctx, "session.resume", sessionResumeParams{Session: ref}, out)
 }
 
 // ResumeSessionWithInput resumes a Session and preserves the one-use receipt.
@@ -138,7 +138,7 @@ func (c *Client) ResumeSessionWithInput(ctx context.Context, ref resource.Sessio
 	if err != nil {
 		return err
 	}
-	return c.call(ctx, "session.resume", sessionResumeParams{
+	return c.callWork(ctx, "session.resume", sessionResumeParams{
 		Session: ref,
 		Input:   &sessionResumeInput{InitialInput: &copied},
 	}, out)
@@ -149,7 +149,7 @@ func (c *Client) CloseSession(ctx context.Context, ref resource.SessionRef, out 
 	if err := validateSessionRef(ref); err != nil {
 		return err
 	}
-	return c.call(ctx, "session.close", sessionRefParams{Session: ref}, out)
+	return c.callWork(ctx, "session.close", sessionRefParams{Session: ref}, out)
 }
 
 // SendPrompt submits one runtime Input and returns only observed acceptance evidence.
@@ -200,7 +200,7 @@ func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, ou
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return err
 	}
-	return c.call(ctx, "session.load", sessionLoadParams{Input: sessionLoadInput{
+	return c.callWork(ctx, "session.load", sessionLoadParams{Input: sessionLoadInput{
 		Metadata:   sessionMetadata{Namespace: input.Metadata.Namespace, Name: input.Metadata.Name},
 		RuntimeRef: input.RuntimeRef,
 		Cwd:        input.Cwd,
@@ -218,7 +218,7 @@ func (c *Client) CancelHistoryLoad(ctx context.Context, ref resource.SessionRef,
 	if loadID == "" || !utf8.ValidString(loadID) {
 		return invalid()
 	}
-	return c.call(ctx, "session.cancelLoad", sessionCancelLoadParams{Session: ref, LoadID: loadID}, out)
+	return c.callWork(ctx, "session.cancelLoad", sessionCancelLoadParams{Session: ref, LoadID: loadID}, out)
 }
 
 // History reads committed events only.

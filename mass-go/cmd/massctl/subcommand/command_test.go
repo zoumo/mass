@@ -275,6 +275,8 @@ func (s *CommandSuite) TestInvalidInputNeverDispatches() {
 		{"session", "answer", "a"},
 		{"completion"},
 		{"runtime", "create", "a", "--type", "codex", "--scenario", "x"},
+		{"--write-timeout", "0s", "version"},
+		{"--subscription-queue", "0", "version"},
 	}
 	for _, args := range cases {
 		s.Run(strings.Join(args, " "), func() {

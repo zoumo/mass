@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -60,7 +59,7 @@ func newTypedRuntimeServer(t *testing.T) (*httptest.Server, *blockingRuntimeDriv
 	st, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": blockingRuntimeFactory{driver}}))
-	endpoint, err := transport.New(svc, transport.Options{Token: "test-token"})
+	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)
 	t.Cleanup(func() {
@@ -86,7 +85,7 @@ func closeChannel(ch chan struct{}) {
 
 func TestClientRuntimeCRUDAndConcurrentQueries(t *testing.T) {
 	httpServer, driver := newTypedRuntimeServer(t)
-	wsClient := client.New(websocketURL(httpServer), "test-token")
+	wsClient := newTestClient(t, websocketURL(httpServer), "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 
 	var created resource.Runtime
@@ -158,7 +157,7 @@ func TestClientRuntimeCRUDAndConcurrentQueries(t *testing.T) {
 }
 
 func TestClientRuntimeRejectsInvalidNamesLocally(t *testing.T) {
-	wsClient := client.New("ws://127.0.0.1:1/rpc", "test-token")
+	wsClient := newTestClient(t, "ws://127.0.0.1:1/rpc", "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	for _, call := range []func() error{
 		func() error { return wsClient.GetRuntime(t.Context(), ".", nil) },

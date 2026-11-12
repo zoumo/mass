@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/zoumo/agent-sdk-go/agent"
 
@@ -23,6 +24,20 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
+
+func newServiceTestClient(t *testing.T, url, token string) *client.Client {
+	t.Helper()
+	c, err := client.New(url, token, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
+	require.NoError(t, err)
+	return c
+}
+
+func withServiceTestWriteTimeout(opts transport.Options) transport.Options {
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = time.Second
+	}
+	return opts
+}
 
 type workDriver struct {
 	runtime.Driver
@@ -226,12 +241,12 @@ func (s *SessionWorkSuite) TestNonJSONAnswersAndInvalidReferencesRejectedBeforeD
 }
 
 func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent() {
-	h, err := transport.New(s.svc, transport.Options{Token: "test-token"})
+	h, err := transport.New(s.svc, withServiceTestWriteTimeout(transport.Options{Token: "test-token"}))
 	s.Require().NoError(err)
 	s.T().Cleanup(h.Shutdown)
 	server := httptest.NewServer(h)
 	s.T().Cleanup(server.Close)
-	c := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
 	s.T().Cleanup(func() { s.Require().NoError(c.Close()) })
 	observed, cancelObserve := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelObserve()

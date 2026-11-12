@@ -10,7 +10,7 @@ metaStore:
   backend: sqlite # default when omitted; file is the other supported value
 ```
 
-Both Runtime and Session use that single backend. Unknown values, invalid field types, corrupt storage and unavailable selected storage fail startup. There is no fallback, dual write or implicit import. CLI and HTTP resource operations use the selected store through Service.
+Both Runtime and Session use that single backend. Unknown values, invalid field types, corrupt storage and unavailable selected storage fail startup. There is no fallback, dual write or implicit import. CLI and WebSocket JSON-RPC operations use the selected store through Service.
 
 SQLite stores full resources in `metadata-authority.sqlite`, with `.metadata-sqlite.json` identifying the authority layout. Preserve both as authoritative data; stop the writer before making a consistent backup. Neither file is a cache. A missing database with an existing marker fails closed; restore a verified authoritative backup. An interrupted first initialization can leave a marker or incomplete database and also fails closed, requiring explicit operator verification rather than automatic deletion. No resource JSONL/state copies are written in this mode.
 
@@ -22,4 +22,4 @@ Changing `metaStore.backend` is not migration. Opening SQLite over existing meta
 
 EventStore remains independently owned: its `history.sqlite` is a disposable event query replica, rebuilt from event files and identity/recovery materials. Rebuilding it must not delete or rebuild metadata authority. MetaStore can open, operate and close without EventStore, and vice versa. This does not provide a cross-store transaction or decide Session deletion/retention policy.
 
-Verification uses real temporary file/SQLite stores and synthetic Service/HTTP/CLI entrypoints; it does not establish real Agent/model behavior. Broadcast/async status-handler changes belong to later tickets.
+Verification uses real temporary file/SQLite stores and synthetic Service/WebSocket/CLI entrypoints; it does not establish real Agent/model behavior. Broadcast/async status-handler changes belong to later tickets.

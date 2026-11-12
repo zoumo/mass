@@ -38,7 +38,7 @@ type Server struct {
 }
 
 func New(api API, opts Options) (*Server, error) {
-	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") || opts.WriteTimeout < 0 {
+	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") || opts.WriteTimeout <= 0 {
 		return nil, Invalid()
 	}
 	ctx, cancel := context.WithCancel(context.Background())

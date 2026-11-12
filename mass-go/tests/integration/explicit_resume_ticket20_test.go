@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -161,13 +160,12 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 			before := wait(1)
 			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
-			h, err := transport.New(svc, transport.Options{LocalOnly: true})
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			t.Cleanup(h.Shutdown)
 			server := httptest.NewServer(h)
 			t.Cleanup(server.Close)
-			c := client.New(rpcEndpoint(server.URL), "")
-			t.Cleanup(func() { assert.NoError(t, c.Close()) })
+			c := newHTTPClient(t, server.URL, "")
 			observer, err := c.Subscribe(ctx(t), ref)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, observer.Close()) })
@@ -414,7 +412,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 	for _, kind := range []string{"claude", "codex"} {
 		t.Run(kind, func(t *testing.T) {
 			f := ticket20Setup(t, kind, "early-terminal")
-			h, err := transport.New(f.svc, transport.Options{LocalOnly: true})
+			h, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			t.Cleanup(h.Shutdown)
 			server := httptest.NewServer(h)
@@ -457,13 +455,12 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			durable, err := f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{Types: []string{"agent.message"}})
 			require.NoError(t, err)
 			require.Equal(t, before, durable)
-			h2, err := transport.New(f.svc, transport.Options{LocalOnly: true})
+			h2, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			t.Cleanup(h2.Shutdown)
 			server2 := httptest.NewServer(h2)
 			t.Cleanup(server2.Close)
-			emptyClient := client.New(rpcEndpoint(server2.URL), "")
-			t.Cleanup(func() { assert.NoError(t, emptyClient.Close()) })
+			emptyClient := newHTTPClient(t, server2.URL, "")
 			err = emptyClient.ResumeSession(ctx(t), f.ref, nil)
 			if kind == "claude" {
 				var public *runtime.OperationError
@@ -480,8 +477,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			_, err = f.svc.CloseSession(ctx(t), f.ref)
 			require.NoError(t, err)
 			// The generated client carries explicit input by ID as well as CLI's name route.
-			c := client.New(rpcEndpoint(server2.URL), "")
-			t.Cleanup(func() { assert.NoError(t, c.Close()) })
+			c := newHTTPClient(t, server2.URL, "")
 			var result resource.SessionResumed
 			err = c.ResumeSessionWithInput(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("second opt-in")}}, &result)
 			require.NoError(t, err)

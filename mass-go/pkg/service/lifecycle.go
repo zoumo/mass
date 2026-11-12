@@ -319,7 +319,11 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	}
 	if !run.driverStopped {
 		if err := run.driver.Stop(ctx); err != nil {
-			return r, err
+			return r, &runtime.OperationError{
+				Code:    "outcome_unknown",
+				Reason:  "runtime_stop_unconfirmed",
+				Message: "Runtime stop result unconfirmed; inspect state before further action",
+			}
 		}
 		run.driverStopped = true
 	}

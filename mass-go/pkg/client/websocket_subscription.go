@@ -16,8 +16,6 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-const subscriptionQueueCapacity = 64
-
 type subscribeResult struct {
 	SubscriptionID string `json:"subscriptionId"`
 }
@@ -73,7 +71,7 @@ func (c *Client) Subscribe(ctx context.Context, ref resource.SessionRef) (_ *Sub
 	subscription := &Subscription{
 		client:  c,
 		idReady: make(chan struct{}),
-		queue:   make(chan events.SessionEvent, subscriptionQueueCapacity),
+		queue:   make(chan events.SessionEvent, c.subscriptionQueueCapacity),
 		done:    make(chan struct{}),
 	}
 	conn, stream, cancel, err := c.dial(ctx, clientHandler{subscription: subscription})

@@ -211,7 +211,7 @@ func parseID(raw json.RawMessage, allowNull bool) (json.RawMessage, *ProfileErro
 		}
 	case strings.HasPrefix(text, `"`):
 		var value string
-		if json.Unmarshal(raw, &value) == nil && value != "" {
+		if json.Unmarshal(raw, &value) == nil {
 			return raw, nil
 		}
 	case text != "" && !strings.HasPrefix(text, "-") && !strings.ContainsAny(text, ".eE+"):

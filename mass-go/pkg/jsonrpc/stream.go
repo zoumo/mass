@@ -11,8 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const defaultWriteTimeout = 10 * time.Second
-
 // Stream adapts a WebSocket to jsonrpc2.ObjectStream with MASS validation.
 type Stream struct {
 	conn         *websocket.Conn
@@ -26,11 +24,14 @@ type Stream struct {
 }
 
 // NewStream creates a validated text-message stream.
-func NewStream(conn *websocket.Conn, role Role, writeTimeout time.Duration) *Stream {
-	if writeTimeout <= 0 {
-		writeTimeout = defaultWriteTimeout
+func NewStream(conn *websocket.Conn, role Role, writeTimeout time.Duration) (*Stream, error) {
+	if conn == nil {
+		return nil, errors.New("WebSocket connection is required")
 	}
-	return &Stream{conn: conn, role: role, writeTimeout: writeTimeout}
+	if writeTimeout <= 0 {
+		return nil, errors.New("write timeout must be positive")
+	}
+	return &Stream{conn: conn, role: role, writeTimeout: writeTimeout}, nil
 }
 
 // ReadObject reads and validates the next message before jsonrpc2 decodes it.

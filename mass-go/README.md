@@ -71,13 +71,17 @@ local: true
 
 Then run `bin/massd` without flags. Optional fields are `data` (an absolute
 owned directory), `tokenFile`, `tlsCert`, `tlsKey`, `allowedOrigins`,
-`prototypeAutoApprovePermissions`, and `sessionIdleTimeout`. Automatic permission
-approval is off by default.
+`prototypeAutoApprovePermissions`, `sessionIdleTimeout`, and `writeTimeout`.
+Automatic permission approval is off by default.
 `sessionIdleTimeout` accepts Go duration syntax such as `5s` or `10m`; its
 default is `10m`, and `0` disables automatic Session close. The matching
 `--session-idle-timeout` flag overrides the file. Negative or invalid durations
 are rejected before the daemon opens its stores. Automatic close releases
 idle Session connections without stopping their Runtime.
+`writeTimeout` and `--write-timeout` set the per-WebSocket-write deadline in Go
+duration units and default to `10s`. The value must be positive; zero, negative,
+or invalid values fail daemon assembly before it serves traffic. Omitting the
+YAML field uses the `--write-timeout` default, and the flag overrides the file.
 Existing data is not moved into the default directory. Legacy `state.json` snapshots
 are explicitly rejected; there is no automatic migration.
 
@@ -131,11 +135,18 @@ returns acceptance only; query the Session to follow native replay. Requests
 carrying an `Origin` header must match `allowedOrigins` exactly; native clients
 without `Origin` authenticate with `Authorization: Bearer`. The retired
 `/apis/v1` business routes have no aliases or redirects. The public Go client is
-`client.Client`, created with `client.New`. `Initialize` performs an explicit
-handshake, while typed Runtime and Session methods initialize lazily on first
-use. Each `Subscribe` call opens a separate WebSocket and returns only after the
-subscribe response; events arrive in order and terminate with
-`subscription.closed`.
+`client.Client`, created with
+`client.New(serverURL, token, client.Options{WriteTimeout: ..., SubscriptionQueueCapacity: ...})`.
+Both option fields are required and must be positive; `WriteTimeout` is a Go
+`time.Duration` per WebSocket write, and `SubscriptionQueueCapacity` is a
+SessionEvent count for each local subscription queue. There are no library
+defaults or compatibility aliases: omission or zero fails in `client.New` before
+I/O. The server-side `transport.New(..., transport.Options{WriteTimeout: ...})`
+and `jsonrpc.NewStream` use the same positive explicit timeout rule.
+`Initialize` performs an explicit handshake, while typed Runtime and Session
+methods initialize lazily on first use. Each `Subscribe` call opens a separate
+WebSocket and returns only after the subscribe response; events arrive in order
+and terminate with `subscription.closed`.
 
 `massctl <resource> <operation>` uses this WebSocket JSON-RPC contract. Run
 `massctl --help`, `massctl runtime --help`, or `massctl session --help` for the
@@ -152,6 +163,10 @@ failure or unknown result), 2 (invalid arguments), and 130 (interrupted wait).
 Ordinary requests default to 30 seconds; `--timeout 0` disables the timeout.
 Watch applies that timeout only through `subscription.ready`, then observes
 until explicitly closed or interrupted.
+`--write-timeout` is the per-WebSocket write deadline in Go duration units and
+defaults to `10s`; `--subscription-queue` is the local SessionEvent queue size
+and defaults to `64`. Both must be positive, and an invalid value fails argument
+validation before any request is sent.
 Neither timeout nor Ctrl-C cancels Agent work; requests are never retried.
 
 For Codex, explicitly create and start a Runtime, then create a Session without

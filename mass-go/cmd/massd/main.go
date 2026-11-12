@@ -39,6 +39,7 @@ type options struct {
 	Approve            bool             `mapstructure:"prototypeAutoApprovePermissions"`
 	Local              bool             `mapstructure:"local"`
 	SessionIdleTimeout time.Duration    `mapstructure:"sessionIdleTimeout"`
+	WriteTimeout       time.Duration    `mapstructure:"writeTimeout"`
 }
 
 func newCommand() *cobra.Command {
@@ -74,12 +75,16 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
 	f.StringSliceVar(&o.AllowedOrigins, "allowed-origin", nil, "allowed WebSocket Origin (repeatable)")
 	f.DurationVar(&o.SessionIdleTimeout, "session-idle-timeout", service.DefaultSessionIdleTimeout, "idle Session close timeout (0 disables)")
+	f.DurationVar(&o.WriteTimeout, "write-timeout", 10*time.Second, "WebSocket write deadline")
 	return cmd
 }
 
 func run(parent context.Context, o options) (result error) {
 	if o.SessionIdleTimeout < 0 {
 		return errors.New("session idle timeout must not be negative")
+	}
+	if o.WriteTimeout <= 0 {
+		return errors.New("write timeout must be positive")
 	}
 	host, _, err := net.SplitHostPort(o.Listen)
 	if err != nil {
@@ -120,12 +125,12 @@ func run(parent context.Context, o options) (result error) {
 	if err != nil {
 		return dataDirectoryError(err)
 	}
-	defer func() { result = errors.Join(result, meta.Close()) }()
 	history, err := eventfile.Open(dataDir, false)
 	if err != nil {
-		return dataDirectoryError(err)
+		return errors.Join(dataDirectoryError(err), meta.Close())
 	}
-	defer func() { result = errors.Join(result, history.Close()) }()
+	releaseStores := true
+	defer func() { result = errors.Join(result, closeStores(releaseStores, meta, history)) }()
 	var policy service.InteractionPolicy
 	if o.Approve {
 		policy = prototype.AutoApprovePermissions
@@ -136,11 +141,12 @@ func run(parent context.Context, o options) (result error) {
 	})
 	settled := false
 	defer func() {
-		if !settled {
-			ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
-			defer c()
-			result = errors.Join(result, svc.Shutdown(ctx))
+		if settled {
+			return
 		}
+		ok, err := settleService(svc, 10*time.Second)
+		releaseStores = releaseStores && ok
+		result = errors.Join(result, err)
 	}()
 	if err := svc.Prepare(parent); err != nil {
 		return err
@@ -152,7 +158,7 @@ func run(parent context.Context, o options) (result error) {
 	defer listener.Close()
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	handler, err := transport.New(svc, transport.Options{Token: token, LocalOnly: o.Local, AllowedOrigins: o.AllowedOrigins})
+	handler, err := transport.New(svc, transport.Options{Token: token, LocalOnly: o.Local, AllowedOrigins: o.AllowedOrigins, WriteTimeout: o.WriteTimeout})
 	if err != nil {
 		return err
 	}
@@ -187,10 +193,9 @@ func run(parent context.Context, o options) (result error) {
 	// Stop admission, settle Service final events while observations remain
 	// writable, drain those observations, then close HTTP and the Stores.
 	handler.CloseAdmission()
-	settleCtx, settleCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	settleErr := svc.Shutdown(settleCtx)
-	settleCancel()
-	settled = true
+	var settleErr error
+	settled, settleErr = settleService(svc, 10*time.Second)
+	releaseStores = releaseStores && settled
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	drainErr := handler.DrainAndClose(drainCtx)
 	drainCancel()
@@ -209,6 +214,30 @@ func run(parent context.Context, o options) (result error) {
 		serveErr = nil
 	}
 	return errors.Join(serveErr, settleErr, drainErr, httpErr)
+}
+
+func settleService(svc interface {
+	Shutdown(context.Context) error
+}, timeout time.Duration,
+) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err := svc.Shutdown(ctx)
+	return err == nil, err
+}
+
+// closeStores releases the single-writer data directory only after Service
+// settlement. On an abandoned settlement the process must keep ownership until
+// exit rather than let another instance take over unfinished work.
+func closeStores(release bool, stores ...interface{ Close() error }) error {
+	if !release {
+		return nil
+	}
+	var result error
+	for _, store := range stores {
+		result = errors.Join(result, store.Close())
+	}
+	return result
 }
 
 func canonicalDataDir(path string) (string, error) {

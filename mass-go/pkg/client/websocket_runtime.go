@@ -40,7 +40,7 @@ func (c *Client) CreateRuntime(ctx context.Context, v resource.Runtime, out any)
 		Metadata: runtimeCreateMetadata{Namespace: v.Metadata.Namespace, Name: v.Metadata.Name},
 		Spec:     v.Spec,
 	}}
-	return c.call(ctx, "runtime.create", params, out)
+	return c.callWork(ctx, "runtime.create", params, out)
 }
 
 // GetRuntime returns one persistent Runtime without side effects.
@@ -68,7 +68,7 @@ func (c *Client) UpdateRuntime(ctx context.Context, name string, spec resource.R
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.call(ctx, "runtime.update", runtimeUpdateParams{RuntimeRef: name, Spec: spec}, out)
+	return c.callWork(ctx, "runtime.update", runtimeUpdateParams{RuntimeRef: name, Spec: spec}, out)
 }
 
 // StartRuntime starts an unstarted Runtime and returns its current state.
@@ -76,7 +76,7 @@ func (c *Client) StartRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.call(ctx, "runtime.start", runtimeRefParams{RuntimeRef: name}, out)
+	return c.callWork(ctx, "runtime.start", runtimeRefParams{RuntimeRef: name}, out)
 }
 
 // StopRuntime waits for the Runtime's complete release and settlement.
@@ -84,7 +84,7 @@ func (c *Client) StopRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.call(ctx, "runtime.stop", runtimeRefParams{RuntimeRef: name}, out)
+	return c.callWork(ctx, "runtime.stop", runtimeRefParams{RuntimeRef: name}, out)
 }
 
 // DeleteRuntime removes a stopped, unreferenced Runtime.
@@ -92,7 +92,7 @@ func (c *Client) DeleteRuntime(ctx context.Context, name string) error {
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.call(ctx, "runtime.delete", runtimeRefParams{RuntimeRef: name}, nil)
+	return c.callWork(ctx, "runtime.delete", runtimeRefParams{RuntimeRef: name}, nil)
 }
 
 func decodeResult(raw json.RawMessage, out any) error {

@@ -81,7 +81,7 @@ func newRPCRuntimeFixture(t *testing.T, driver *rpcRuntimeDriver) *httptest.Serv
 	st, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": rpcRuntimeFactory{driver}}))
-	endpoint, err := transport.New(svc, transport.Options{Token: "test-token"})
+	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)
 	t.Cleanup(func() {
@@ -224,4 +224,32 @@ func requireServiceRPCError(t *testing.T, response rpcResponse, code, reason str
 	require.Equal(t, reason, operation.Reason)
 	require.NotEmpty(t, operation.Message)
 	require.Equal(t, operation.Message, response.Error.Message)
+}
+
+type internalErrorRPCAPI struct{ transport.API }
+
+func (*internalErrorRPCAPI) CreateRuntime(resource.Runtime) (resource.Runtime, error) {
+	return resource.Runtime{}, errors.New("private internal cause: token=must-not-leak")
+}
+
+func TestRPCUnclassifiedServiceErrorIsRedactedInternal(t *testing.T) {
+	server, err := transport.New(&internalErrorRPCAPI{}, withTestWriteTimeout(transport.Options{Token: "test-token"}))
+	require.NoError(t, err)
+	t.Cleanup(server.Shutdown)
+	httpServer := httptest.NewServer(server)
+	t.Cleanup(httpServer.Close)
+
+	conn := dialRPC(t, httpServer, rpcHeaders("test-token"))
+	sendText(t, conn, initializeMessage(`"init"`, "1"))
+	require.Nil(t, readRPC(t, conn).Error)
+
+	sendCall(t, conn, "internal", "runtime.create", `{"input":{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{}}}}`)
+	response := readRPC(t, conn)
+	require.NotNil(t, response.Error)
+	require.Equal(t, int64(-32603), response.Error.Code)
+	require.Equal(t, "Internal error", response.Error.Message)
+	require.Empty(t, response.Error.Data)
+	require.NotContains(t, string(response.Error.Data), "private")
+	require.NotContains(t, response.Error.Message, "private")
+	require.Equal(t, `"internal"`, string(response.ID))
 }

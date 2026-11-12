@@ -109,7 +109,7 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	server := httptest.NewServer(h)
 	t.Cleanup(func() {

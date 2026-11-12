@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
@@ -342,12 +341,12 @@ func (s *RuntimeStopSuite) TestFailureLeavesOtherRuntimeIndependent() {
 }
 
 func (s *RuntimeStopSuite) TestRPCStopRestartAndSafeDelete() {
-	h, err := transport.New(s.svc, transport.Options{Token: "test-token"})
+	h, err := transport.New(s.svc, withServiceTestWriteTimeout(transport.Options{Token: "test-token"}))
 	s.Require().NoError(err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	c := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
 	defer c.Close()
 	ctx := s.T().Context()
 	var public *runtime.OperationError

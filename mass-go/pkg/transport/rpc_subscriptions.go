@@ -103,8 +103,8 @@ func (c *rpcConnection) disconnect() {
 	c.mu.Lock()
 	c.disconnected = true
 	s := c.subscription
-	c.closeDrainedLocked()
 	c.mu.Unlock()
+	c.maybeDrained()
 	if s != nil {
 		s.abort()
 	}

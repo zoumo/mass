@@ -72,7 +72,7 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string) {
 	s.start("codex", scenario, s.st)
 	s.unknown = true
 	ref := s.open("unsupported")
-	handler, err := transport.New(s.svc, transport.Options{LocalOnly: true})
+	handler, err := transport.New(s.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	s.Require().NoError(err)
 	server := httptest.NewServer(handler)
 	defer server.Close()

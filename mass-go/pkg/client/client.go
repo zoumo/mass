@@ -30,12 +30,20 @@ type ClientInfo struct {
 	Version string `json:"version"`
 }
 
+// Options are required assembly choices for one client.
+type Options struct {
+	WriteTimeout              time.Duration
+	SubscriptionQueueCapacity int
+}
+
 // Client owns one ordinary RPC connection and any observations opened through it.
 // It is lazy: New performs no network I/O.
 type Client struct {
-	serverURL string
-	token     string
-	tlsConfig *tls.Config
+	serverURL                 string
+	token                     string
+	tlsConfig                 *tls.Config
+	writeTimeout              time.Duration
+	subscriptionQueueCapacity int
 
 	initMu sync.Mutex
 
@@ -55,12 +63,20 @@ func (c *Client) SetTLSClientConfig(config *tls.Config) {
 }
 
 // New creates a lazy JSON-RPC client without opening a connection.
-func New(serverURL, token string) *Client {
-	return &Client{
-		serverURL:    serverURL,
-		token:        token,
-		observations: map[*Subscription]struct{}{},
+func New(serverURL, token string, opts Options) (*Client, error) {
+	if opts.WriteTimeout <= 0 {
+		return nil, errors.New("client write timeout must be positive")
 	}
+	if opts.SubscriptionQueueCapacity <= 0 {
+		return nil, errors.New("client subscription queue capacity must be positive")
+	}
+	return &Client{
+		serverURL:                 serverURL,
+		token:                     token,
+		writeTimeout:              opts.WriteTimeout,
+		subscriptionQueueCapacity: opts.SubscriptionQueueCapacity,
+		observations:              map[*Subscription]struct{}{},
+	}, nil
 }
 
 // Initialize performs the complete side-effect-free MASS protocol handshake.
@@ -279,7 +295,11 @@ func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *r
 		return nil, nil, nil, err
 	}
 
-	stream := rpcwire.NewStream(socket, rpcwire.RoleClient, 0)
+	stream, err := rpcwire.NewStream(socket, rpcwire.RoleClient, c.writeTimeout)
+	if err != nil {
+		_ = socket.Close()
+		return nil, nil, nil, err
+	}
 	life, cancel := context.WithCancel(context.Background())
 	conn := rpc2.NewConn(life, stream, handler, rpc2.SetLogger(rpcLogger{}))
 	return conn, stream, cancel, nil
