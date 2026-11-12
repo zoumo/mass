@@ -180,6 +180,9 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 	}
 	call, known, paramsErr := c.prepareRuntimeCall(req.Method, req.Params)
 	if !known {
+		call, known, paramsErr = c.prepareSessionCall(req.Method, req.Params)
+	}
+	if !known {
 		c.end(key)
 		replyError(ctx, conn, req.ID, rpc2.CodeMethodNotFound, "Method not found", "")
 		return
@@ -189,7 +192,7 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 		replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
 		return
 	}
-	go c.dispatchRuntime(ctx, conn, req, key, call)
+	go c.dispatchCall(ctx, conn, req, key, call)
 }
 
 func (c *rpcConnection) begin(id string) bool {

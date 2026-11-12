@@ -15,7 +15,7 @@ import (
 
 var errInvalidRPCParams = errors.New("invalid JSON-RPC params")
 
-type runtimeCall func(context.Context) (any, error)
+type rpcCall func(context.Context) (any, error)
 
 type runtimeCreateRPCParams struct {
 	Input *runtimeCreateRPC `json:"input"`
@@ -35,11 +35,11 @@ type runtimeListRPCParams struct {
 	Query json.RawMessage `json:"query"`
 }
 
-func (c *rpcConnection) prepareRuntimeCall(method string, raw *json.RawMessage) (runtimeCall, bool, error) {
+func (c *rpcConnection) prepareRuntimeCall(method string, raw *json.RawMessage) (rpcCall, bool, error) {
 	switch method {
 	case "runtime.create":
 		var params runtimeCreateRPCParams
-		if err := decodeRuntimeParams(raw, &params); err != nil || params.Input == nil || params.Input.Metadata == nil || params.Input.Spec == nil {
+		if err := decodeRPCParams(raw, &params); err != nil || params.Input == nil || params.Input.Metadata == nil || params.Input.Spec == nil {
 			return nil, true, errInvalidRPCParams
 		}
 		input := params.Input
@@ -66,7 +66,7 @@ func (c *rpcConnection) prepareRuntimeCall(method string, raw *json.RawMessage) 
 
 	case "runtime.update":
 		var params runtimeUpdateRPCParams
-		if err := decodeRuntimeParams(raw, &params); err != nil || params.RuntimeRef == nil || params.Spec == nil {
+		if err := decodeRPCParams(raw, &params); err != nil || params.RuntimeRef == nil || params.Spec == nil {
 			return nil, true, errInvalidRPCParams
 		}
 		ref, spec := *params.RuntimeRef, *params.Spec
@@ -102,7 +102,7 @@ func (c *rpcConnection) prepareRuntimeCall(method string, raw *json.RawMessage) 
 	}
 }
 
-func decodeRuntimeParams(raw *json.RawMessage, out any) error {
+func decodeRPCParams(raw *json.RawMessage, out any) error {
 	if raw == nil {
 		return errInvalidRPCParams
 	}
@@ -115,7 +115,7 @@ func decodeRuntimeParams(raw *json.RawMessage, out any) error {
 
 func decodeRuntimeRef(raw *json.RawMessage) (string, error) {
 	var params runtimeRefRPCParams
-	if err := decodeRuntimeParams(raw, &params); err != nil || params.RuntimeRef == nil {
+	if err := decodeRPCParams(raw, &params); err != nil || params.RuntimeRef == nil {
 		return "", errInvalidRPCParams
 	}
 	return *params.RuntimeRef, nil
@@ -124,7 +124,7 @@ func decodeRuntimeRef(raw *json.RawMessage) (string, error) {
 func decodeRuntimeQuery(raw *json.RawMessage) (resource.RuntimeQuery, error) {
 	var params runtimeListRPCParams
 	if raw != nil {
-		if err := decodeRuntimeParams(raw, &params); err != nil {
+		if err := decodeRPCParams(raw, &params); err != nil {
 			return resource.RuntimeQuery{}, err
 		}
 	}
@@ -141,7 +141,7 @@ func decodeRuntimeQuery(raw *json.RawMessage) (resource.RuntimeQuery, error) {
 	return query, nil
 }
 
-func (c *rpcConnection) dispatchRuntime(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request, key string, call runtimeCall) {
+func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request, key string, call rpcCall) {
 	defer c.end(key)
 	if c.api == nil {
 		replyInternalError(ctx, conn, req.ID)

@@ -116,15 +116,21 @@ admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
 boundary; `/livez` and `/readyz` remain plain HTTP probes. The endpoint accepts
 the side-effect-free `initialize` method with MASS protocol version `"1"`, plus
 the `runtime.create`, `runtime.get`, `runtime.list`, `runtime.update`,
-`runtime.start`, `runtime.stop` and `runtime.delete` methods. Runtime methods use
+`runtime.start`, `runtime.stop`, `runtime.delete`, `session.create`,
+`session.get`, `session.list`, `session.resume`, `session.close`,
+`session.history`, `session.load` and `session.cancelLoad` methods. Methods use
 named params and return the same resource values and `OperationError` data as the
-Service. Slow Runtime calls dispatch asynchronously, so a query on the same
-connection can complete while a start or stop is still settling. Requests carrying
-an `Origin` header must match `allowedOrigins` exactly; native clients without
-`Origin` authenticate with `Authorization: Bearer`. The REST and SSE routes remain
-available until the CLI cutover ticket removes them. The temporary Go client is
-`client.NewWebSocket`; `WebSocketClient.Initialize` performs an explicit handshake,
-while typed Runtime methods initialize lazily on first use.
+Service. Session references are explicit `{sessionId}` or `{namespace,name}`
+unions; list queries retain the nested `page` object. Create and resume preserve
+an explicitly supplied one-use initial input receipt without persisting it.
+Slow Runtime and Session calls dispatch asynchronously, so a query on the same
+connection can complete while another call is still settling. `session.load`
+returns acceptance only; query the Session to follow native replay. Requests
+carrying an `Origin` header must match `allowedOrigins` exactly; native clients
+without `Origin` authenticate with `Authorization: Bearer`. The REST and SSE routes
+remain available until the CLI cutover ticket removes them. The temporary Go client
+is `client.NewWebSocket`; `WebSocketClient.Initialize` performs an explicit
+handshake, while typed Runtime and Session methods initialize lazily on first use.
 
 `massctl <resource> <operation>` uses the `/apis/v1` HTTP contract. Run
 `massctl --help`, `massctl runtime --help`, or `massctl session --help` for the
