@@ -46,7 +46,7 @@ func New(api API, opts Options) (*Server, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{api: api, options: opts, life: ctx, stop: cancel}
-	s.rpc = newRPCEndpoint(ctx, opts)
+	s.rpc = newRPCEndpoint(ctx, s.api, opts)
 	s.ready.Store(true)
 	router, _ := s.routes()
 	s.handler = router

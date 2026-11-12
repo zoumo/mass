@@ -21,6 +21,7 @@ const rpcHandshakeTimeout = 5 * time.Second
 
 type rpcEndpoint struct {
 	life          context.Context
+	api           API
 	writeTimeout  time.Duration
 	serverVersion string
 	origins       map[string]struct{}
@@ -30,7 +31,7 @@ type rpcEndpoint struct {
 	conns  map[*rpc2.Conn]context.CancelFunc
 }
 
-func newRPCEndpoint(life context.Context, opts Options) *rpcEndpoint {
+func newRPCEndpoint(life context.Context, api API, opts Options) *rpcEndpoint {
 	version := opts.ServerVersion
 	if version == "" {
 		version = "dev"
@@ -41,6 +42,7 @@ func newRPCEndpoint(life context.Context, opts Options) *rpcEndpoint {
 	}
 	return &rpcEndpoint{
 		life:          life,
+		api:           api,
 		writeTimeout:  opts.WriteTimeout,
 		serverVersion: version,
 		origins:       origins,
@@ -73,6 +75,7 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(s.life)
 	stream := rpcwire.NewStream(socket, rpcwire.RoleServer, s.writeTimeout)
 	connection := rpc2.NewConn(ctx, stream, &rpcHandler{connection: &rpcConnection{
+		api:           s.api,
 		serverVersion: s.serverVersion,
 		inflight:      map[string]struct{}{},
 	}}, rpc2.SetLogger(rpcLogger{}))
@@ -146,6 +149,7 @@ func (h *rpcHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Requ
 }
 
 type rpcConnection struct {
+	api           API
 	serverVersion string
 
 	mu          sync.Mutex
@@ -163,17 +167,29 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 		_ = conn.Close()
 		return
 	}
-	defer c.end(key)
 
 	if req.Method == "initialize" {
+		defer c.end(key)
 		c.initialize(ctx, conn, req)
 		return
 	}
 	if !c.isInitialized() {
+		c.end(key)
 		replyError(ctx, conn, req.ID, rpcwire.CodeProtocolState, "Connection is not initialized", "not_initialized")
 		return
 	}
-	replyError(ctx, conn, req.ID, rpc2.CodeMethodNotFound, "Method not found", "")
+	call, known, paramsErr := c.prepareRuntimeCall(req.Method, req.Params)
+	if !known {
+		c.end(key)
+		replyError(ctx, conn, req.ID, rpc2.CodeMethodNotFound, "Method not found", "")
+		return
+	}
+	if paramsErr != nil {
+		c.end(key)
+		replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
+		return
+	}
+	go c.dispatchRuntime(ctx, conn, req, key, call)
 }
 
 func (c *rpcConnection) begin(id string) bool {

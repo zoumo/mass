@@ -160,7 +160,7 @@ func TestRPCInitializeLifecycle(t *testing.T) {
 	sendText(t, conn, initializeMessage(`"again"`, rpcwire.Version))
 	requireRPCError(t, readRPC(t, conn), rpcwire.CodeProtocolState, `"again"`, "already_initialized")
 
-	sendText(t, conn, `{"jsonrpc":"2.0","id":"unknown","method":"runtime.get"}`)
+	sendText(t, conn, `{"jsonrpc":"2.0","id":"unknown","method":"runtime.missing"}`)
 	requireRPCError(t, readRPC(t, conn), -32601, `"unknown"`, "")
 
 	sendText(t, conn, `{"jsonrpc":"2.0","method":"initialize"}`)

@@ -16,6 +16,7 @@ import (
 	rpc2 "github.com/sourcegraph/jsonrpc2"
 
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 const rpcHandshakeTimeout = 5 * time.Second
@@ -31,11 +32,14 @@ type WebSocketClient struct {
 	serverURL string
 	token     string
 
-	mu     sync.Mutex
-	conn   *rpc2.Conn
-	stream *rpcwire.Stream
-	cancel context.CancelFunc
-	closed bool
+	initMu sync.Mutex
+
+	mu          sync.Mutex
+	conn        *rpc2.Conn
+	stream      *rpcwire.Stream
+	cancel      context.CancelFunc
+	initialized *rpc2.Conn
+	closed      bool
 }
 
 // NewWebSocket creates a lazy JSON-RPC client without opening a connection.
@@ -51,22 +55,30 @@ func (c *WebSocketClient) Initialize(ctx context.Context, clientInfo *ClientInfo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	conn, stream, err := c.connection(ctx)
 	if err != nil {
 		return err
 	}
+	return c.initializeConnection(ctx, conn, stream, clientInfo, out)
+}
 
+func (c *WebSocketClient) initializeConnection(ctx context.Context, conn *rpc2.Conn, stream *rpcwire.Stream, clientInfo *ClientInfo, out any) error {
 	params := rpcwire.InitializeParams{ProtocolVersion: rpcwire.Version}
 	if clientInfo != nil {
 		params.ClientInfo = &rpcwire.PeerInfo{Name: clientInfo.Name, Version: clientInfo.Version}
 	}
 	var raw json.RawMessage
-	if err = conn.Call(ctx, "initialize", params, &raw, rpc2.StringID()); err != nil {
+	if err := conn.Call(ctx, "initialize", params, &raw, rpc2.StringID()); err != nil {
 		return c.callError(ctx, stream, err)
 	}
 
 	var result rpcwire.Initialized
-	if err = rpcwire.DecodeStrict(raw, &result); err != nil {
+	if err := rpcwire.DecodeStrict(raw, &result); err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("invalid initialize result: %w", err)
 	}
@@ -74,10 +86,56 @@ func (c *WebSocketClient) Initialize(ctx context.Context, clientInfo *ClientInfo
 		_ = conn.Close()
 		return errors.New("invalid initialize result")
 	}
+	c.mu.Lock()
+	c.initialized = conn
+	c.mu.Unlock()
 	if out == nil {
 		return nil
 	}
 	return rpcwire.DecodeStrict(raw, out)
+}
+
+func (c *WebSocketClient) ensureInitialized(ctx context.Context) (*rpc2.Conn, *rpcwire.Stream, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	conn, stream, err := c.connection(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.mu.Lock()
+	ready := c.initialized == conn
+	c.mu.Unlock()
+	if ready {
+		return conn, stream, nil
+	}
+	if err := c.initializeConnection(ctx, conn, stream, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return conn, stream, nil
+}
+
+func (c *WebSocketClient) call(ctx context.Context, method string, params, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	conn, stream, err := c.ensureInitialized(ctx)
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err = conn.Call(ctx, method, params, &raw, rpc2.StringID()); err != nil {
+		return c.callError(ctx, stream, err)
+	}
+	if out == nil {
+		return nil
+	}
+	return decodeResult(raw, out)
 }
 
 // Close releases the connection and all pending calls.
@@ -89,7 +147,7 @@ func (c *WebSocketClient) Close() error {
 	}
 	c.closed = true
 	conn, cancel := c.conn, c.cancel
-	c.conn, c.stream, c.cancel = nil, nil, nil
+	c.conn, c.stream, c.cancel, c.initialized = nil, nil, nil, nil
 	c.mu.Unlock()
 
 	if cancel != nil {
@@ -158,6 +216,12 @@ func (c *WebSocketClient) callError(ctx context.Context, stream *rpcwire.Stream,
 	}
 	var rpcErr *rpc2.Error
 	if errors.As(err, &rpcErr) {
+		if rpcErr.Code == rpcwire.CodeServiceError && rpcErr.Data != nil && len(*rpcErr.Data) > 0 {
+			var operation runtime.OperationError
+			if json.Unmarshal(*rpcErr.Data, &operation) == nil && operation.Code != "" {
+				return &operation
+			}
+		}
 		response := &rpcwire.RPCError{Code: rpcErr.Code, Message: rpcErr.Message}
 		if rpcErr.Data != nil {
 			response.Data = append(response.Data, (*rpcErr.Data)...)
