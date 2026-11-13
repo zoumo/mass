@@ -74,6 +74,8 @@ namespace MASS.Design.Examples;
       payload: #{
         id: "tool_1",
         kind: "read",
+        toolName: "Read",
+        provider: "agent",
         title: "读取 README",
         status: "in_progress",
         rawInput: #{ path: "README.md" },
@@ -90,6 +92,8 @@ namespace MASS.Design.Examples;
       payload: #{
         id: "tool_1",
         kind: "read",
+        toolName: "Read",
+        provider: "agent",
         title: "读取 README",
         status: "completed",
         rawInput: #{ path: "README.md" },
@@ -139,21 +143,6 @@ namespace MASS.Design.Examples;
       },
       `namespace`: "default",
       eventId: "c89c43a2-5f95-48da-b992-40515585c108",
-    },
-    #{
-      sessionName: "demo",
-      sessionId: "s1",
-      itemId: "plan_1",
-      type: SessionEventType.agentPlan,
-      time: utcDateTime.fromISO("2026-10-16T10:00:08Z"),
-      payload: #{
-        planId: "plan_1",
-        entries: #[
-          #{ content: "检查 README", priority: "medium", status: "completed" }
-        ],
-      },
-      `namespace`: "default",
-      eventId: "c89c43a2-5f95-48da-b992-40515585c109",
     },
     #{
       sessionName: "demo",

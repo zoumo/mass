@@ -36,11 +36,17 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			st, err := file.Open(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
-			svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: t.TempDir()}}))
+			registry := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: t.TempDir()}})
+			svc := service.New(st, st, registry)
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				assert.NoError(t, svc.Shutdown(cleanup))
+				err := svc.Shutdown(cleanup)
+				if mode == "foreign-start" && err != nil {
+					assert.ErrorContains(t, err, "session_identity_mismatch")
+				} else {
+					assert.NoError(t, err)
+				}
 			})
 			h, err := transport.New(svc, transport.Options{LocalOnly: true})
 			require.NoError(t, err)
@@ -49,7 +55,8 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			t.Cleanup(server.Close)
 			c := newHTTPClient(t, server.URL, "")
 			evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
-			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence}}}})
+			config := t.TempDir()
+			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config}}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)
@@ -58,6 +65,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			opened, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "linked"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}})
 			require.NoError(t, err)
 			ref := resource.SessionRef{SessionID: opened.Status.SessionID}
+			prepareClaudeSavedSession(t, config, cwd, ref.SessionID)
 			// One subscription spans up to 16 inputs, not one ten-second call.
 			observationCtx, cancelObservation := context.WithTimeout(t.Context(), 17*10*time.Second)
 			t.Cleanup(cancelObservation)
@@ -67,6 +75,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, observer.Close()) })
 			var live []events.SessionEvent
+			forwardingGaps := 0
 			sendWith := func(text string, proven bool, submit func(*runtime.InputReceipt) error) {
 				t.Helper()
 				workCtx := ctx(t)
@@ -77,50 +86,33 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 				require.NoError(t, submit(&receipt))
 				require.NotEmpty(t, receipt.Submission)
 				seen := 0
-				startID := ""
+				sawContent := false
 				for {
 					e, err := observer.Next()
 					require.NoError(t, err)
-					require.NotEqual(t, "session.error", e.Type())
-					if proven && e.Type() == "session.state_update" {
-						meta := e.Meta["claude"].(map[string]any)
-						var native struct {
-							Type  string `json:"type"`
-							UUID  string `json:"user_message_uuid"`
-							Event struct {
-								Type    string `json:"type"`
-								Message struct {
-									ID string `json:"id"`
-								} `json:"message"`
-							} `json:"event"`
-						}
-						require.NoError(t, json.Unmarshal([]byte(meta["nativeRaw"].(string)), &native))
-						if native.Event.Type == "message_start" {
-							assert.Equal(t, receipt.Submission, native.UUID)
-							startID = native.Event.Message.ID
-						}
+					if e.Type() == "session.error" {
+						requireClaudeForwardingGap(t, e)
+						forwardingGaps++
 					}
 					if e.Type() == "agent.message" || e.Type() == "agent.thinking" || e.Type() == "agent.message_chunk" || e.Type() == "agent.thinking_chunk" {
+						sawContent = true
 						if strings.HasPrefix(text, "linkage-") {
 							seen++
 							meta := e.Meta["claude"].(map[string]any)
-							linked := proven && (text != "linkage-stopped-preview" || (e.Type() != "agent.message_chunk" && e.Type() != "agent.thinking_chunk"))
-							if linked {
-								require.NotEmpty(t, startID)
-								assert.Equal(t, startID, meta["responseId"])
-								assert.Equal(t, startID+":"+fmt.Sprint(meta["blockIndex"]), e.ItemID)
-								assert.Equal(t, receipt.Submission, meta["submission"], "native start/assistant ID equality proves ownership")
-								assert.Equal(t, "native_message_id", meta["attribution"])
-							} else {
-								assert.Equal(t, "unknown", meta["attribution"])
-								assert.NotContains(t, meta, "submission")
+							// Identity comes from the SDK's native response/block coordinates.
+							// Native UUIDs remain evidence; MASS must not add submission attribution.
+							require.NotEmpty(t, meta["responseId"])
+							item := fmt.Sprint(meta["responseId"]) + ":" + fmt.Sprint(meta["blockIndex"])
+							if parent, ok := meta["parentToolUseId"].(string); ok && parent != "" {
+								item = parent + ":" + item
 							}
-							var raw map[string]any
-							require.NoError(t, json.Unmarshal([]byte(meta["nativeRaw"].(string)), &raw))
-							if raw["type"] == "assistant" && proven {
-								assert.NotContains(t, raw, "user_message_uuid")
+							assert.Equal(t, item, e.ItemID)
+							assert.NotContains(t, meta, "submission")
+							assert.NotContains(t, meta, "attribution")
+							raw, ok := meta["raw"].(map[string]any)
+							require.True(t, ok, "SDK native JSON metadata must survive SSE")
+							if raw["type"] == "assistant" {
 								assert.Equal(t, meta["responseId"], raw["message"].(map[string]any)["id"])
-								assert.NotEqual(t, e.ItemID, raw["uuid"])
 								assert.Equal(t, fmt.Sprint(meta["blockIndex"]), fmt.Sprint(raw["message"].(map[string]any)["content"].([]any)[0].(map[string]any)["apiBlockIndex"]))
 							}
 						}
@@ -129,15 +121,16 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 							live = append(live, e)
 						}
 					}
-					if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
+					if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && sawContent {
 						break
 					}
 				}
+				require.LessOrEqual(t, forwardingGaps, 1)
 				if strings.HasPrefix(text, "linkage-") {
 					if text == "linkage-saturation" {
-						assert.Equal(t, 32, seen, "all native facts survive attribution saturation")
+						assert.Equal(t, 32, seen, "all native facts survive repeated response identities")
 					} else if proven {
-						assert.Equal(t, 4, seen, "both previews and complete thinking/text must be associated")
+						assert.Equal(t, 4, seen, "both previews and complete thinking/text retain SDK block identity")
 					} else {
 						assert.GreaterOrEqual(t, seen, 2)
 					}
@@ -152,6 +145,36 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			// A second known work makes prior-work conflicts independent of
 			// the first submission's special no-UUID native contract.
 			send("warmup-again", false)
+			if mode == "foreign-start" {
+				before, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+				require.NoError(t, err)
+				_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("linkage-" + mode)}})
+				require.NoError(t, err)
+				driver, err := registry.Get("agent")
+				require.NoError(t, err)
+				observation := driver.(interface {
+					SessionObservation(string) runtime.SessionObservation
+				}).SessionObservation(ref.SessionID)
+				select {
+				case <-observation.Done():
+				case <-ctx(t).Done():
+					t.Fatal("foreign session identity was not rejected")
+				}
+				require.ErrorContains(t, observation.Err(), "session_identity_mismatch")
+				after, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+				data, err := os.ReadFile(evidence)
+				require.NoError(t, err)
+				for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+					var input struct {
+						PID int `json:"pid"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(line), &input))
+					require.Eventually(t, func() bool { return errors.Is(syscall.Kill(input.PID, 0), syscall.ESRCH) }, 5*time.Second, 10*time.Millisecond)
+				}
+				return
+			}
 			send("linkage-"+mode, mode == "proof" || mode == "stopped-preview")
 			if mode == "saturation" {
 				// Public terminal observations pace the native flow without

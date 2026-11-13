@@ -63,7 +63,7 @@ func (s *generatedHTTPSuite) TestAllEventBranchesStreamAndGeneratedModelRoundTri
 		Events []json.RawMessage `json:"events"`
 	}
 	s.Require().NoError(json.Unmarshal(b, &examples))
-	s.Require().Len(examples.Events, 18)
+	s.Require().Len(examples.Events, 17)
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event:subscription.ready\r\ndata:{}\r\n\r\n")
@@ -96,4 +96,28 @@ func (s *generatedHTTPSuite) TestAllEventBranchesStreamAndGeneratedModelRoundTri
 	}
 	_, err = observer.Next()
 	s.Require().ErrorIs(err, io.EOF)
+}
+
+func (s *generatedHTTPSuite) TestGeneratedOpenAPIExcludesLegacyPlan() {
+	data, err := os.ReadFile("generated/openapi.json")
+	s.Require().NoError(err)
+	var doc struct {
+		Components struct {
+			Schemas map[string]struct {
+				OneOf []struct {
+					Properties struct {
+						Type struct {
+							Const string `json:"const"`
+						} `json:"type"`
+					} `json:"properties"`
+				} `json:"oneOf"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	s.Require().NoError(json.Unmarshal(data, &doc))
+	branches := doc.Components.Schemas["SessionEvent"].OneOf
+	s.Len(branches, 17)
+	for _, branch := range branches {
+		s.NotEqual("agent.plan", branch.Properties.Type.Const)
+	}
 }

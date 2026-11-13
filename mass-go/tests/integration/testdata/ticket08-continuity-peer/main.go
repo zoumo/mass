@@ -6,9 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	log, err := os.Create(os.Getenv("PEER_EVIDENCE"))
 	if err != nil {
 		panic(err)
@@ -24,11 +32,22 @@ func main() {
 	cwd, _ := os.Getwd()
 	id, link, n := "continuous", "", 0
 	claude := os.Getenv("PEER_KIND") == "claude"
+	if claude {
+		for _, arg := range os.Args[1:] {
+			if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+				id = value
+			}
+		}
+		if clipeer.AwaitingClaim() {
+			id = uuid.NewString()
+		}
+	}
 	notify := func(method string, p any) { send(map[string]any{"method": method, "params": p}) }
 	finish := func() {
 		if claude {
 			send(map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": fmt.Sprintf("complete-%d", n), "apiBlockIndex": 0}}}})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 		} else {
 			notify("item/completed", map[string]any{"threadId": id, "turnId": fmt.Sprintf("turn-%d", n), "item": map[string]any{"id": fmt.Sprintf("message-%d", n), "type": "agentMessage", "text": fmt.Sprintf("complete-%d", n)}, "completedAtMs": 1})
 			notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": fmt.Sprintf("turn-%d", n), "status": "completed", "items": []any{}}})
@@ -52,9 +71,14 @@ func main() {
 			}
 			if v["type"] == "control_request" {
 				r := v["request"].(map[string]any)
+				if reply, ok := clipeer.ClaimReply(v, id); ok {
+					send(reply)
+					continue
+				}
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 				if r["subtype"] == "initialize" {
 					send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd})
+					send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 				}
 				continue
 			}
@@ -81,6 +105,10 @@ func main() {
 			case "thread/start":
 				cwd = v["params"].(map[string]any)["cwd"].(string)
 				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+				notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
+				continue
+			case "thread/read":
+				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}})
 				continue
 			case "thread/unsubscribe":
 				respond(map[string]any{"status": "unsubscribed"})
@@ -102,7 +130,7 @@ func main() {
 			if claude {
 				send(map[string]any{"type": "control_request", "request_id": "permission-2", "user_message_uuid": link, "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "tool-2", "input": map[string]any{"command": "echo synthetic"}}})
 			} else {
-				send(map[string]any{"id": "permission-2", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-2", "itemId": "tool-2"}})
+				send(map[string]any{"id": "permission-2", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-2", "itemId": "tool-2", "startedAtMs": 3}})
 			}
 		} else {
 			finish()

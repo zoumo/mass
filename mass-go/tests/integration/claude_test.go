@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
@@ -53,7 +57,7 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			var observation *codexTurnObservation
 			if kind == "codex" {
 				observation = newCodexTurnObservation()
-				defer observation.releaseAll()
+				defer observation.releaseFacts()
 			}
 			svc, _, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
 			// The executable is still strictly synthetic. Only launch configuration
@@ -70,35 +74,44 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			sub, err := svc.SubscribeEvents(ref)
 			require.NoError(t, err)
 			defer sub.Close()
+			if kind == "codex" {
+				before, queryErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+				require.NoError(t, queryErr)
+				require.Empty(t, before.Events)
+				observation.releaseFacts()
+			}
 			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 			require.NoError(t, err)
 			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
 				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
-				observation.releaseInitial()
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 				require.Nil(t, receipt.Acceptance.NativeRecorded)
 			}
+			claudeRunning := false
 			for {
 				e, err := nextSubscription(sub, ctx(t))
 				require.NoError(t, err)
-				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil {
+					if kind == "claude" && *state.State == events.Running {
+						claudeRunning = true
+					}
+					if *state.State != events.Idle {
+						continue
+					}
 					if observation != nil {
 						work, observed := observation.work.Load(e.EventID)
 						require.True(t, observed, "public idle must match an observed Driver event UUID")
 						if work == "" {
-							// Opening idle has no submitted turn. Keep later native
-							// facts gated so it cannot accidentally satisfy history.
-							before, queryErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
-							require.NoError(t, queryErr)
-							require.Empty(t, before.Events)
-							observation.releaseRest()
 							continue
 						}
 						require.Equal(t, receipt.Submission, work, "terminal must belong to the accepted native turn")
 						require.Equal(t, "completed", state.StopReason)
+					} else if !claudeRunning {
+						// Wait for prompt execution before accepting Claude idle.
+						continue
 					}
 					break
 				}
@@ -120,7 +133,189 @@ func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	require.NoError(t, dec.Decode(&scenario))
+	normalizeClaudeVersion(scenario, kind)
+	ensureNativeReadyObservation(scenario, kind)
 	return writeNativeScenario(t, scenario)
+}
+
+func normalizeClaudeVersion(value any, kind string) {
+	if kind != "claude" {
+		return
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		if _, ok := typed["claude_code_version"]; ok {
+			typed["claude_code_version"] = nativeclaude.MinimumCLIVersion
+		}
+		for _, child := range typed {
+			normalizeClaudeVersion(child, kind)
+		}
+	case []any:
+		for _, child := range typed {
+			normalizeClaudeVersion(child, kind)
+		}
+	}
+}
+
+// The strict peers model the native wire, not the SDK adapter. A successful
+// zero-input open therefore needs an explicit native idle observation before
+// the first prompt. The production Service must not infer that observation
+// from the open response or from saved Session metadata.
+func ensureNativeReadyObservation(scenario map[string]any, kind string) {
+	frames, ok := scenario["frames"].([]any)
+	if !ok {
+		return
+	}
+	switch kind {
+	case "codex":
+		frames = ensureCodexReadyObservation(frames)
+	case "claude":
+		frames = ensureClaudeReadyObservation(frames)
+	}
+	for index, value := range frames {
+		if frame, ok := value.(map[string]any); ok {
+			frame["ordinal"] = index + 1
+		}
+	}
+	scenario["frames"] = frames
+}
+
+func ensureCodexReadyObservation(frames []any) []any {
+	openRequests := map[string]struct{}{}
+	expanded := make([]any, 0, len(frames)+2)
+	for index, value := range frames {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			expanded = append(expanded, value)
+			continue
+		}
+		expanded = append(expanded, frame)
+		if requestID, open := codexOpenRequestID(frame); open {
+			if requestID != "" {
+				openRequests[requestID] = struct{}{}
+			}
+			continue
+		}
+		responseID, ok := frameWireID(frame)
+		if !ok {
+			continue
+		}
+		if _, open := openRequests[responseID]; !open {
+			continue
+		}
+		delete(openRequests, responseID)
+		thread, ok := codexThread(frame)
+		if !ok {
+			continue
+		}
+		status, _ := thread["status"].(map[string]any)
+		if status == nil || status["type"] != "idle" {
+			continue
+		}
+		threadID, _ := thread["id"].(string)
+		if codexReadyBeforeInput(frames, index+1, threadID) {
+			continue
+		}
+		expanded = append(expanded, map[string]any{
+			"channel":   "protocol",
+			"direction": "s2c",
+			"epoch":     1,
+			"wire": map[string]any{
+				"method": "thread/status/changed",
+				"params": map[string]any{
+					"threadId": threadID,
+					"status":   map[string]any{"type": "idle"},
+				},
+			},
+		})
+	}
+	return expanded
+}
+
+func codexReadyBeforeInput(frames []any, start int, threadID string) bool {
+	for _, value := range frames[start:] {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		direction, _ := frame["direction"].(string)
+		if direction == "c2s" {
+			wire, _ := frame["wire"].(map[string]any)
+			method, _ := wire["method"].(string)
+			switch method {
+			case "turn/start":
+				return false
+			case "thread/start", "thread/resume", "thread/unsubscribe":
+				return false
+			}
+			continue
+		}
+		wire, _ := frame["wire"].(map[string]any)
+		method, _ := wire["method"].(string)
+		if method != "thread/status/changed" {
+			continue
+		}
+		params, _ := wire["params"].(map[string]any)
+		status, _ := params["status"].(map[string]any)
+		if params["threadId"] == threadID && status != nil && status["type"] == "idle" {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureClaudeReadyObservation(frames []any) []any {
+	expanded := make([]any, 0, len(frames)+4)
+	sessionID := ""
+	for index, value := range frames {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			expanded = append(expanded, value)
+			continue
+		}
+		expanded = append(expanded, frame)
+		data, _ := frame["data"].(map[string]any)
+		if data != nil && data["type"] == "user" && frame["direction"] == "client" && sessionID != "" {
+			expanded = append(expanded, map[string]any{"channel": "protocol", "direction": "server", "data": map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "running"}})
+		}
+		if data == nil || data["type"] != "system" || data["subtype"] != "init" {
+			continue
+		}
+		sessionID, _ = data["session_id"].(string)
+		if sessionID == "" || claudeReadyBeforeInput(frames, index+1, sessionID) {
+			continue
+		}
+		expanded = append(expanded, map[string]any{
+			"channel":   "protocol",
+			"direction": "server",
+			"data": map[string]any{
+				"type":       "system",
+				"subtype":    "session_state_changed",
+				"session_id": sessionID,
+				"state":      "idle",
+			},
+		})
+	}
+	return expanded
+}
+
+func claudeReadyBeforeInput(frames []any, start int, sessionID string) bool {
+	for _, value := range frames[start:] {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		data, _ := frame["data"].(map[string]any)
+		direction, _ := frame["direction"].(string)
+		if direction == "client" && data["type"] == "user" {
+			return false
+		}
+		if data["type"] == "system" && data["subtype"] == "session_state_changed" &&
+			data["session_id"] == sessionID && data["state"] == "idle" {
+			return true
+		}
+	}
+	return false
 }
 
 func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string) {
@@ -132,6 +327,8 @@ func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string)
 		require.True(t, os.IsNotExist(err))
 	})
 	// Only cwd values change. Native request matching remains strict.
+	normalizeCodexResumeInput(scenario)
+	normalizeCodexTurnInput(scenario)
 	var replace func(any)
 	replace = func(v any) {
 		switch value := v.(type) {
@@ -150,11 +347,184 @@ func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string)
 		}
 	}
 	replace(scenario)
+	expandCodexIdentityReads(scenario)
 	data, err := json.Marshal(scenario)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "scenario.json")
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 	return path, work
+}
+
+// normalizeCodexResumeInput reflects the SDK provider's explicit workspace on
+// resume. The placeholder is replaced with the test workspace immediately
+// afterwards, while the strict peer still verifies the complete request.
+func normalizeCodexResumeInput(scenario map[string]any) {
+	frames, _ := scenario["frames"].([]any)
+	for _, value := range frames {
+		frame, _ := value.(map[string]any)
+		if direction, _ := frame["direction"].(string); direction != "c2s" {
+			continue
+		}
+		wire, _ := frame["wire"].(map[string]any)
+		if method, _ := wire["method"].(string); method != "thread/resume" {
+			continue
+		}
+		params, _ := wire["params"].(map[string]any)
+		if params == nil {
+			params = map[string]any{}
+			wire["params"] = params
+		}
+		if _, exists := params["cwd"]; !exists {
+			params["cwd"] = "/synthetic"
+		}
+	}
+}
+
+// normalizeCodexTurnInput removes the empty annotation array emitted by the
+// pre-SDK adapter. Non-empty annotations remain part of the strict contract.
+func normalizeCodexTurnInput(scenario map[string]any) {
+	frames, _ := scenario["frames"].([]any)
+	for _, value := range frames {
+		frame, _ := value.(map[string]any)
+		if direction, _ := frame["direction"].(string); direction != "c2s" {
+			continue
+		}
+		wire, _ := frame["wire"].(map[string]any)
+		if method, _ := wire["method"].(string); method != "turn/start" {
+			continue
+		}
+		params, _ := wire["params"].(map[string]any)
+		input, _ := params["input"].([]any)
+		for _, value := range input {
+			block, _ := value.(map[string]any)
+			if elements, ok := block["text_elements"].([]any); ok && len(elements) == 0 {
+				delete(block, "text_elements")
+			}
+		}
+	}
+}
+
+// expandCodexIdentityReads adds the provider's metadata-only identity probe
+// after every authored Codex open. The read response is derived from the
+// preceding start or resume response, but remains explicit traffic consumed by
+// the strict scenario peer.
+func expandCodexIdentityReads(scenario map[string]any) {
+	frames, ok := scenario["frames"].([]any)
+	if !ok {
+		return
+	}
+	expanded := make([]any, 0, len(frames)+4)
+	openRequests := map[string]struct{}{}
+	for index := range frames {
+		frame, ok := frames[index].(map[string]any)
+		if !ok {
+			expanded = append(expanded, frames[index])
+			continue
+		}
+		expanded = append(expanded, frame)
+		if requestID, open := codexOpenRequestID(frame); open {
+			if requestID != "" {
+				openRequests[requestID] = struct{}{}
+			}
+			continue
+		}
+		responseID, _ := frameWireID(frame)
+		if _, open := openRequests[responseID]; !open {
+			continue
+		}
+		delete(openRequests, responseID)
+		thread, ok := codexThread(frame)
+		if !ok {
+			continue
+		}
+		if next, ok := frameWireMethodAt(frames, index+1); ok && next == "thread/read" {
+			continue
+		}
+		id := "sdk-thread-read-" + strconv.Itoa(index)
+		expanded = append(expanded,
+			map[string]any{
+				"channel":   "protocol",
+				"direction": "c2s",
+				"epoch":     1,
+				"wire": map[string]any{
+					"id":     id,
+					"method": "thread/read",
+					"params": map[string]any{
+						"threadId":     thread["id"],
+						"includeTurns": false,
+					},
+				},
+			},
+			map[string]any{
+				"channel":   "protocol",
+				"direction": "s2c",
+				"epoch":     1,
+				"wire": map[string]any{
+					"id":     id,
+					"result": map[string]any{"thread": thread},
+				},
+			},
+		)
+	}
+	for index, value := range expanded {
+		if frame, ok := value.(map[string]any); ok {
+			frame["ordinal"] = index + 1
+		}
+	}
+	scenario["frames"] = expanded
+}
+
+func codexOpenRequestID(frame map[string]any) (string, bool) {
+	direction, _ := frame["direction"].(string)
+	if direction != "c2s" {
+		return "", false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	method, _ := wire["method"].(string)
+	if method != "thread/start" && method != "thread/resume" {
+		return "", false
+	}
+	return fmt.Sprint(wire["id"]), true
+}
+
+func frameWireID(frame map[string]any) (string, bool) {
+	direction, _ := frame["direction"].(string)
+	if direction != "s2c" {
+		return "", false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	if wire == nil || wire["id"] == nil {
+		return "", false
+	}
+	return fmt.Sprint(wire["id"]), true
+}
+
+func codexThread(frame map[string]any) (map[string]any, bool) {
+	direction, _ := frame["direction"].(string)
+	if direction != "s2c" {
+		return nil, false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	result, _ := wire["result"].(map[string]any)
+	thread, ok := result["thread"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	id, _ := thread["id"].(string)
+	return thread, id != ""
+}
+
+func frameWireMethodAt(frames []any, index int) (string, bool) {
+	if index < 0 || index >= len(frames) {
+		return "", false
+	}
+	frame, ok := frames[index].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	method, ok := wire["method"].(string)
+	return method, ok
 }
 
 func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *runtime.Registry, string) {
@@ -206,7 +576,12 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				}
 				svc, _, dir := setup(t, policy)
 				r := openNative(t, svc, kind, scenarioMode, "demo")
-				require.Equal(t, kind+"-session", r.Status.SessionID)
+				if kind == "claude" {
+					_, err := uuid.Parse(r.Status.SessionID)
+					require.NoError(t, err)
+				} else {
+					require.Equal(t, kind+"-session", r.Status.SessionID)
+				}
 				ref := resource.SessionRef{SessionID: r.Status.SessionID}
 				before, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 				require.NoError(t, err)
@@ -223,16 +598,17 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				for {
 					e, err := nextSubscription(sub, ctx(t))
 					require.NoError(t, err)
-					if problem, ok := e.Payload().(events.SessionError); ok {
-						t.Fatalf("native session failure: %s %s", problem.Message, problem.Reason)
+					if _, ok := e.Payload().(events.SessionError); ok {
+						require.Equal(t, "claude", kind)
+						requireClaudeForwardingGap(t, e)
 					}
 					seen[e.Type()]++
 					if p, ok := e.Payload().(events.InteractionRequested); ok {
 						requests++
-						interaction = p.Interaction
+						interaction = string(p.Interaction)
 						require.False(t, e.Persistent())
 						if mode == "question" {
-							require.Equal(t, "form", p.Request.Kind)
+							require.Equal(t, events.InteractionForm, p.Request.Kind)
 							_, handled := prototype.AutoApprovePermissions(p)
 							require.False(t, handled, "question must not be auto-approved")
 							var content map[string]any
@@ -241,21 +617,21 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 							} else {
 								content = map[string]any{"answers": map[string]any{"format": map[string]any{"answers": []any{"json"}}}}
 							}
-							accepted, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": content})
+							accepted, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.NoError(t, err)
 							require.Equal(t, runtime.Yes(), accepted.Evidence.Sent)
 							require.Nil(t, accepted.Evidence.NativeAccepted)
-							_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": content})
+							_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.Error(t, err, "no double answer")
 						} else {
-							require.Equal(t, "permission", p.Request.Kind)
+							require.Equal(t, events.InteractionPermission, p.Request.Kind)
 							if mode == "manual" {
 								page, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 								require.NoError(t, err)
 								for _, event := range page.Events {
 									require.NotEqual(t, "agent.tool_result", event.Type(), "no automatic permission policy")
 								}
-								acceptance, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"})
+								acceptance, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"})
 								require.NoError(t, err)
 								require.Equal(t, runtime.Yes(), acceptance.Evidence.Sent)
 								require.Nil(t, acceptance.Evidence.NativeAccepted)
@@ -290,6 +666,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 					}
 				}
 				require.NotEmpty(t, interaction)
+				require.LessOrEqual(t, seen["session.error"], 1)
 				require.Positive(t, chunks)
 				if kind == "codex" && mode != "question" {
 					require.Equal(t, 2, requests)
@@ -325,8 +702,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 								require.Nil(t, p.Content)
 								require.Equal(t, "unavailable", p.Output.Availability)
 							case "value-1":
-								require.NotNil(t, p.RawOutput)
-								require.Nil(t, *p.RawOutput)
+								require.Nil(t, p.RawOutput, "SDK JSON codec maps explicit null to absent raw output")
 							case "value-2":
 								require.Empty(t, *p.RawOutput)
 								require.Equal(t, []events.ContentBlock{events.Text("")}, p.Content)
@@ -360,32 +736,57 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 	}
 }
 
-func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
+func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation() {
 	t := claudeSuite.T()
 	svc, reg, _ := setup(t, prototype.AutoApprovePermissions)
 	healthy := openNative(t, svc, "claude", "question", "healthy")
-	// Same native ID on a second process: reject only that new process.
-	_, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "duplicate"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: t.TempDir()}}})
-	require.Error(t, err)
+	second, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "second"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: healthy.Spec.Cwd}}})
+	require.NoError(t, err)
+	require.NotEqual(t, healthy.Status.SessionID, second.Status.SessionID)
+	_, err = uuid.Parse(second.Status.SessionID)
+	require.NoError(t, err)
+	_, err = svc.CloseSession(ctx(t), resource.SessionRef{SessionID: second.Status.SessionID})
+	require.NoError(t, err)
 	path, work := nativeScenario(t, "claude", "missing-disconnect")
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	missingStore, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
-	_, err = svc.StartRuntime(ctx(t), "missing")
+	missingReg := runtime.NewRegistry(map[string]runtime.Factory{
+		"claude": claude.Factory{RecoveryDir: t.TempDir()},
+	})
+	missing := service.NewWithPolicy(missingStore, missingStore, missingReg, prototype.AutoApprovePermissions)
+	t.Cleanup(func() {
+		if shutdownErr := missing.Shutdown(ctx(t)); shutdownErr != nil {
+			assert.ErrorContains(t, shutdownErr, "close_failed")
+		}
+		assert.NoError(t, missingStore.Close())
+	})
+	_, err = missing.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
-	wait, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-	_, err = svc.CreateSession(wait, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "missing"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: work}}})
-	require.ErrorContains(t, err, "outcome_unknown")
-	_, err = svc.GetSession(resource.SessionRef{Namespace: "default", Name: "missing"})
-	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = missing.StartRuntime(ctx(t), "missing")
+	require.NoError(t, err)
+	opened, err := missing.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "missing"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: work}}})
+	require.NoError(t, err)
+	_, err = uuid.Parse(opened.Status.SessionID)
+	require.NoError(t, err)
+	missingDriver, err := missingReg.Get("missing")
+	require.NoError(t, err)
+	observation := missingDriver.(interface {
+		SessionObservation(string) runtime.SessionObservation
+	}).SessionObservation(opened.Status.SessionID)
+	select {
+	case <-observation.Done():
+	case <-ctx(t).Done():
+		t.Fatal("native exit before init was not observed")
+	}
+	require.ErrorContains(t, observation.Err(), "session_terminated")
 	d, err := reg.Get("healthy")
 	require.NoError(t, err)
 	// Unsupported SDK options reject without starting a replacement process.
-	_, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "bad"}, runtime.SessionSpec{Cwd: work, SystemPrompt: "unsupported"})
+	_, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "bad"}, runtime.SessionSpec{Cwd: work, AdditionalDirs: []string{"/extra"}})
 	var rejected *runtime.OperationError
 	require.ErrorAs(t, err, &rejected)
 	require.Equal(t, "unsupported", rejected.Code)
-	require.Equal(t, "system_prompt_or_additional_dirs_unsupported", rejected.Reason)
+	require.Equal(t, "additional_dirs_unsupported", rejected.Reason)
 	ref := resource.SessionRef{SessionID: healthy.Status.SessionID}
 	sub, err := svc.SubscribeEvents(ref)
 	require.NoError(t, err)
@@ -396,7 +797,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
-			_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}})
+			_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}})
 			require.NoError(t, err)
 		}
 		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
@@ -404,7 +805,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 		}
 	}
 	require.NoError(t, svc.Shutdown(ctx(t)))
-	t.Log("PASS duplicate and missing init cleanup leave healthy Session usable; no hidden prompt or fabricated identity")
+	t.Log("PASS distinct assigned identities and native exit before init leave healthy Session usable")
 }
 
 func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
@@ -422,33 +823,60 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	full := map[string]messageObservation{}
 	fullCount := map[string]int{}
 	tools := map[string][]string{}
+	gaps := map[string]int{}
+	forwardingGaps := 0
+	workObserved := false
 	for {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
-		require.NotEqual(t, "session.error", e.Type(), "%+v", e.Payload())
 		switch p := e.Payload().(type) {
+		case events.SessionError:
+			require.False(t, e.Persistent())
+			if p.Reason == "native_relationship_gap" {
+				requireClaudeForwardingGap(t, e)
+				forwardingGaps++
+			} else {
+				gaps[p.Reason]++
+				workObserved = true
+			}
+
 		case events.ThinkingChunk:
+			workObserved = true
 			chunks[e.ItemID] = append(chunks[e.ItemID], observedMessage(t, e, p.Content, p.MessageID))
 		case events.MessageChunk:
+			workObserved = true
 			chunks[e.ItemID] = append(chunks[e.ItemID], observedMessage(t, e, p.Content, p.MessageID))
 		case events.AgentThinking:
+			workObserved = true
 			full[e.ItemID] = observedMessage(t, e, p.Content, p.MessageID)
 			fullCount[e.ItemID]++
 		case events.AgentMessage:
+			workObserved = true
 			full[e.ItemID] = observedMessage(t, e, p.Content, p.MessageID)
 			fullCount[e.ItemID]++
 		case events.ToolCall:
+			workObserved = true
 			tools[e.ItemID] = append(tools[e.ItemID], e.EventID)
 		case events.ToolResult:
+			workObserved = true
 			tools[e.ItemID] = append(tools[e.ItemID], e.EventID)
 		case events.StateUpdate:
-			if p.State != nil && *p.State == events.Idle {
+			if workObserved && p.State != nil && *p.State == events.Idle {
 				goto observed
 			}
 		}
 	}
 
 observed:
+	require.LessOrEqual(t, forwardingGaps, 1)
+	require.Equal(t, map[string]int{
+		"assistant_aborted":                   1,
+		"assistant_block_content_invalid":     3,
+		"assistant_block_coordinate_missing":  5,
+		"assistant_block_type_conflict":       1,
+		"assistant_response_identity_missing": 1,
+		"stream_block_type_conflict":          1,
+	}, gaps)
 	require.Equal(t, []messageObservation{{
 		content:  []events.ContentBlock{events.Text("think ")},
 		message:  "msg-block:0",
@@ -516,6 +944,14 @@ observed:
 			index:    6,
 			parent:   nil,
 		},
+		"msg-block:12": {
+			content: []events.ContentBlock{events.Text("visible after signature")},
+			message: "msg-block:12", response: "msg-block", index: 12,
+		},
+		"msg-invalid:0": {
+			content: []events.ContentBlock{events.Text("invalid envelope coordinate")},
+			message: "msg-invalid:0", response: "msg-invalid", index: 0,
+		},
 		"parent-tool:msg-block:0": {
 			content:  []events.ContentBlock{events.Text("child complete")},
 			message:  "parent-tool:msg-block:0",
@@ -527,7 +963,7 @@ observed:
 	for item, count := range fullCount {
 		require.Equal(t, 1, count, "duplicate full for %s", item)
 	}
-	for _, item := range []string{"msg-block:1", "msg-block:4", "msg-block:5", "msg-block:7", "msg-block:9", "msg-block:10", "msg-block:11", "msg-invalid:0"} {
+	for _, item := range []string{"msg-block:1", "msg-block:4", "msg-block:5", "msg-block:7", "msg-block:9", "msg-block:10", "msg-block:11"} {
 		require.NotContains(t, full, item)
 	}
 	for _, item := range []string{"msg-block:2", "msg-block:5", "msg-block:7", "msg-block:9", "msg-block:10", "msg-block:11", "msg-invalid:0", "unstarted-parent:msg-block:0"} {
@@ -565,10 +1001,10 @@ observed:
 		require.Equal(t, item, persisted[item].MessageID)
 	}
 	require.Equal(t, 2, persistedTools["tool-shared"])
-	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "visible after signature", "invalid coordinate", "invalid null coordinate", "invalid envelope coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
+	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "invalid coordinate", "invalid null coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
 		for _, payload := range persisted {
 			for _, block := range payload.Content {
-				require.NotEqual(t, forbidden, block.Text)
+				require.NotEqual(t, forbidden, events.TextOf(block))
 			}
 		}
 	}
@@ -613,12 +1049,10 @@ func TestClaudeLiveBlockStateCapacityFailsClosed(t *testing.T) {
 		"type": "stream_event", "session_id": sessionID,
 		"event": map[string]any{"type": "content_block_start", "index": claudeLiveBlockStateCapacity, "content_block": map[string]any{"type": "text", "text": ""}},
 	})
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
+	sub := runClaudeDriverScenario(t, sessionID, frames)
 	full := 0
 	reopened := false
-	requireClaudeObservationFailure(t, sub, func(event events.SessionEvent) {
+	requireClaudeObservationFailure(t, sub, "live_block_capacity", func(event events.SessionEvent) {
 		switch payload := event.Payload().(type) {
 		case events.AgentMessage:
 			if event.ItemID == "msg-capacity:0" {
@@ -627,7 +1061,7 @@ func TestClaudeLiveBlockStateCapacityFailsClosed(t *testing.T) {
 		case events.MessageChunk:
 			if event.ItemID == "msg-capacity:0" {
 				for _, block := range payload.Content {
-					reopened = reopened || block.Text == "reopened"
+					reopened = reopened || events.TextOf(block) == "reopened"
 				}
 			}
 		}
@@ -645,13 +1079,11 @@ func TestClaudeLiveLaneStateCapacityFailsClosed(t *testing.T) {
 			"event": map[string]any{"type": "message_start", "message": map[string]any{"id": "msg-lane-" + strconv.Itoa(index), "role": "assistant", "content": []any{}}},
 		})
 	}
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
-	requireClaudeObservationFailure(t, sub)
+	sub := runClaudeDriverScenario(t, sessionID, frames)
+	requireClaudeObservationFailure(t, sub, "live_block_lane_capacity")
 }
 
-func TestClaudeLiveAssistantFrameCapacityFailsClosed(t *testing.T) {
+func TestClaudeLiveAssistantFramesSuppressConflictingCompletedContent(t *testing.T) {
 	const sessionID = "frame-capacity-session"
 	frames := capacityFrames(sessionID)
 	frames = appendServerFrame(frames, map[string]any{
@@ -688,13 +1120,14 @@ func TestClaudeLiveAssistantFrameCapacityFailsClosed(t *testing.T) {
 		"type": "assistant", "session_id": sessionID, "uuid": "frame-overflow",
 		"message": map[string]any{"id": "msg-frame", "role": "assistant", "content": []any{}},
 	})
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
+	frames = appendServerFrame(frames, map[string]any{
+		"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle",
+	})
+	sub := runClaudeDriverScenario(t, sessionID, frames)
 	duplicateSurvived := false
 	fullCount := 0
 	duplicateFull := false
-	requireClaudeObservationFailure(t, sub, func(event events.SessionEvent) {
+	observe := func(event events.SessionEvent) {
 		switch payload := event.Payload().(type) {
 		case events.AgentMessage:
 			if event.ItemID != "msg-frame:0" {
@@ -702,17 +1135,40 @@ func TestClaudeLiveAssistantFrameCapacityFailsClosed(t *testing.T) {
 			}
 			fullCount++
 			for _, block := range payload.Content {
-				duplicateFull = duplicateFull || block.Text == "duplicate-full"
+				duplicateFull = duplicateFull || events.TextOf(block) == "duplicate-full"
 			}
 		case events.MessageChunk:
 			if event.ItemID != "msg-frame:1" {
 				return
 			}
 			for _, block := range payload.Content {
-				duplicateSurvived = duplicateSurvived || block.Text == "after-duplicate"
+				duplicateSurvived = duplicateSurvived || events.TextOf(block) == "after-duplicate"
 			}
 		}
-	})
+	}
+	diagnostics := 0
+	forwardingGaps := 0
+	read, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		event, err := sub.Next(read)
+		require.NoError(t, err)
+		observe(event)
+		if problem, ok := event.Payload().(events.SessionError); ok {
+			if problem.Reason == "native_relationship_gap" {
+				requireClaudeForwardingGap(t, event)
+				forwardingGaps++
+			} else {
+				require.Equal(t, "assistant_block_reopened", problem.Reason)
+				diagnostics++
+			}
+		}
+		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	require.Equal(t, 1, diagnostics)
+	require.Equal(t, 1, forwardingGaps)
 	require.True(t, duplicateSurvived, "a duplicate frame must stay suppressed at capacity without terminating observation")
 	require.Equal(t, 1, fullCount, "a duplicate frame must not emit a second full")
 	require.False(t, duplicateFull, "the duplicate full content must be ignored")
@@ -731,10 +1187,8 @@ func TestClaudeLiveToolBlockIdentityConflictFailsClosed(t *testing.T) {
 			"event": map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{}}},
 		})
 	}
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
-	requireClaudeObservationFailure(t, sub)
+	sub := runClaudeDriverScenario(t, sessionID, frames)
+	requireClaudeObservationFailure(t, sub, "conflicting_tool_block_identity")
 }
 
 func capacityFrames(sessionID string) []any {
@@ -749,10 +1203,10 @@ func capacityFrames(sessionID string) []any {
 			"response": map[string]any{"subtype": "success", "request_id": "init", "response": map[string]any{}},
 		}),
 		scenarioFrame(3, "server", map[string]any{
-			"type": "system", "subtype": "init", "session_id": sessionID, "cwd": "/synthetic", "model": "synthetic", "tools": []any{"Bash"},
+			"type": "system", "subtype": "init", "claude_code_version": nativeclaude.MinimumCLIVersion, "session_id": sessionID, "cwd": "/synthetic", "model": "synthetic", "tools": []any{"Bash"},
 		}),
 		scenarioFrame(4, "client", map[string]any{
-			"type": "user", "message": map[string]any{"role": "user", "content": "hello"}, "parent_tool_use_id": nil, "session_id": "",
+			"type": "user", "message": map[string]any{"role": "user", "content": "hello"}, "parent_tool_use_id": nil, "session_id": "", "priority": "next", "shouldQuery": true,
 		}),
 	}
 }
@@ -761,58 +1215,103 @@ func appendServerFrame(frames []any, data map[string]any) []any {
 	return append(frames, scenarioFrame(len(frames)+1, "server", data))
 }
 
-func runObservationFailureScenario(t *testing.T, name string, frames []any) *events.Subscription {
-	t.Helper()
-	path, work := writeNativeScenario(t, map[string]any{"version": 1, "provenance": "synthetic", "frames": frames})
-	svc := setupExpectedObservationFailure(t)
-	scenarioCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
-	require.NoError(t, err)
-	_, err = svc.StartRuntime(scenarioCtx, name)
-	require.NoError(t, err)
-	session, err := svc.CreateSession(scenarioCtx, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: name}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}})
-	require.NoError(t, err)
-	ref := resource.SessionRef{SessionID: session.Status.SessionID}
-	sub, err := svc.SubscribeEvents(ref)
-	require.NoError(t, err)
-	_, err = svc.SendPrompt(scenarioCtx, ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
-	require.NoError(t, err)
-	return sub
+type claudeDriverObservation struct {
+	events.Stream
+	observation runtime.SessionObservation
 }
 
-func setupExpectedObservationFailure(t *testing.T) *service.Service {
+func runClaudeDriverScenario(t *testing.T, name string, frames []any) claudeDriverObservation {
 	t.Helper()
-	dir := t.TempDir()
-	st, err := file.Open(dir, false)
+	scenario := map[string]any{"version": 1, "provenance": "synthetic", "frames": frames}
+	for _, value := range frames {
+		frame, ok := value.(map[string]any)
+		if !ok || frame["direction"] != "server" {
+			continue
+		}
+		data, ok := frame["data"].(map[string]any)
+		if ok && data["session_id"] == name {
+			data["session_id"] = "claude-session"
+		}
+	}
+	path, work := writeNativeScenario(t, scenario)
+	driver, err := (claude.Factory{RecoveryDir: t.TempDir()}).New(name, runtime.Config{"executable": claudeMock, "scenario": path})
 	require.NoError(t, err)
-	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	svc := service.NewWithPolicy(st, st, reg, prototype.AutoApprovePermissions)
+	stream, err := driver.Events()
+	require.NoError(t, err)
+	var opened runtime.DriverSession
 	t.Cleanup(func() {
-		require.ErrorContains(t, svc.Shutdown(ctx(t)), "observation terminated")
-		require.NoError(t, st.Close())
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			for {
+				if _, receiveErr := stream.Next(cleanup); receiveErr != nil {
+					return
+				}
+			}
+		}()
+		if opened.SessionID != "" {
+			if closeErr := driver.CloseSession(cleanup, opened.SessionID); closeErr != nil {
+				t.Errorf("close owned Claude session: %v", closeErr)
+			}
+		}
+		if stopErr := driver.Stop(cleanup); stopErr != nil {
+			t.Errorf("stop owned Claude driver: %v", stopErr)
+		}
+		cancel()
+		<-drained
 	})
-	return svc
+	_, err = driver.Start(ctx(t))
+	require.NoError(t, err)
+	opened, err = driver.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: name}, runtime.SessionSpec{Cwd: work})
+	require.NoError(t, err)
+	_, err = driver.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+	require.NoError(t, err)
+	return claudeDriverObservation{Stream: stream, observation: opened.Observation}
 }
 
-func requireClaudeObservationFailure(t *testing.T, sub *events.Subscription, observe ...func(events.SessionEvent)) {
+func requireClaudeObservationFailure(t *testing.T, stream claudeDriverObservation, reason string, observe ...func(events.SessionEvent)) {
 	t.Helper()
+	require.NotNil(t, stream.observation)
+	read, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	watcherDone := make(chan struct{})
+	defer func() {
+		cancel()
+		select {
+		case <-watcherDone:
+		case <-time.After(time.Second):
+			t.Error("Claude observation watcher cleanup did not finish")
+		}
+	}()
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-stream.observation.Done():
+			cancel()
+		case <-read.Done():
+		}
+	}()
 	for {
-		event, err := nextSubscription(sub, ctx(t))
-		require.NoError(t, err)
+		event, err := stream.Next(read)
+		if err != nil {
+			require.ErrorIs(t, err, context.Canceled, "the shared stream must remain open after one observation fails")
+			var operation *runtime.OperationError
+			require.ErrorAs(t, stream.observation.Err(), &operation)
+			require.Equal(t, reason, operation.Reason)
+			break
+		}
 		for _, observe := range observe {
 			observe(event)
 		}
-		switch payload := event.Payload().(type) {
-		case events.SessionError:
-			require.Equal(t, "native_observation_failed", payload.Reason)
-			return
-		case events.StateUpdate:
-			if payload.State != nil && *payload.State == events.Idle {
-				t.Fatal("capacity exhaustion reached idle without terminating observation")
-			}
+		if payload, ok := event.Payload().(events.StateUpdate); ok && payload.State != nil && *payload.State == events.Idle {
+			t.Fatal("native observation failure reached idle")
 		}
 	}
+	healthy, stop := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer stop()
+	_, err := stream.Next(healthy)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "session failure must not terminate the shared Driver stream")
 }
 
 func scenarioFrame(ordinal int, direction string, data any) map[string]any {

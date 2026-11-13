@@ -177,7 +177,7 @@ func TestProjectionDamageRebuildPreservesAuthorityAndReadonlyCleanup(t *testing.
 	for _, damage := range []string{"missing", "corrupt", "stale", "sql-only", "incompatible"} {
 		t.Run(damage, func(t *testing.T) {
 			st, dir := open(t)
-			one := event(t, "native", "one", events.ToolCall{ID: "one", Kind: "execute", RawInput: map[string]any{"number": json.Number("9007199254740993"), "null": nil}})
+			one := event(t, "native", "one", events.ToolCall{ID: "one", Kind: events.ToolKindExecute, ToolName: "shell", Provider: events.ToolProviderAgent, RawInput: map[string]any{"number": json.Number("9007199254740993"), "null": nil}})
 			two := event(t, "native", "two", events.AgentMessage{MessageID: "two", Content: []events.ContentBlock{events.Text("complete payload")}})
 			_, err := st.Append("native", []events.SessionEvent{one, two})
 			require.NoError(t, err)

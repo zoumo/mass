@@ -7,50 +7,55 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 // TestClaudeDriverTestPeer is a synthetic CLI. The launcher records argv; this
-// peer completes initialize, publishes one system/init identity, and never
-// calls a model.
+// peer completes initialize and claim_session, reports the identity it
+// assigned, and never calls a model.
 func TestClaudeDriverTestPeer(t *testing.T) {
 	if os.Getenv("MASS_CLAUDE_DRIVER_PEER") != "1" {
 		return
+	}
+	answerVersionProbe()
+	if !slices.Contains(os.Args[1:], "--await-claim") {
+		os.Exit(3)
 	}
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadBytes('\n')
 	if err != nil {
 		os.Exit(2)
 	}
-	var initialize struct {
-		Type      string `json:"type"`
-		RequestID string `json:"request_id"`
-		Request   struct {
-			Subtype string `json:"subtype"`
-		} `json:"request"`
-	}
+	var initialize controlFrame
 	if json.Unmarshal(line, &initialize) != nil || initialize.Type != "control_request" || initialize.Request.Subtype != "initialize" || initialize.RequestID == "" {
 		os.Exit(3)
 	}
 	enc := json.NewEncoder(os.Stdout)
-	if err := enc.Encode(map[string]any{
-		"type": "control_response",
-		"response": map[string]any{
-			"subtype":    "success",
-			"request_id": initialize.RequestID,
-			"response":   map[string]any{},
-		},
-	}); err != nil {
+	if err := controlSuccess(enc, initialize.RequestID, map[string]any{}); err != nil {
+		os.Exit(6)
+	}
+	line, err = reader.ReadBytes('\n')
+	if err != nil {
+		os.Exit(2)
+	}
+	var claim controlFrame
+	if json.Unmarshal(line, &claim) != nil || claim.Type != "control_request" || claim.Request.Subtype != "claim_session" || claim.RequestID == "" || claim.Request.CWD == "" {
+		os.Exit(3)
+	}
+	sessionID := uuid.NewString()
+	if err := claimSuccess(enc, claim, sessionID); err != nil {
 		os.Exit(6)
 	}
 	if err := enc.Encode(map[string]any{
-		"type": "system", "subtype": "init", "session_id": "native-session",
-		"cwd": os.Getenv("MASS_CLAUDE_DRIVER_CWD"), "model": "synthetic", "tools": []any{},
+		"type": "system", "subtype": "init", "session_id": sessionID,
+		"cwd": claim.Request.CWD, "model": "synthetic", "tools": []any{},
 	}); err != nil {
 		os.Exit(7)
 	}
@@ -68,7 +73,7 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 		"#!/bin/sh\n"+
 			": > \"$MASS_CLAUDE_DRIVER_CAPTURE\"\n"+
 			"for arg in \"$@\"; do printf '%s\\0' \"$arg\" >> \"$MASS_CLAUDE_DRIVER_CAPTURE\"; done\n"+
-			"exec "+shellQuote(executable)+" -test.run '^TestClaudeDriverTestPeer$'\n",
+			"exec "+shellQuote(executable)+" -test.run '^TestClaudeDriverTestPeer$' -- \"$@\"\n",
 	), 0o700))
 
 	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
@@ -114,13 +119,18 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 	}
 	session, err := driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "demo"}, runtime.SessionSpec{Cwd: cwd, MCPServers: &servers})
 	require.NoError(t, err)
-	require.Equal(t, "native-session", session.SessionID)
+	require.NotEmpty(t, session.SessionID)
 	t.Cleanup(func() { _ = driver.CloseSession(context.Background(), session.SessionID) })
 
 	data, err := os.ReadFile(capture)
 	require.NoError(t, err)
 	argv := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
-	require.Contains(t, argv, "--strict-mcp-config")
+	require.NotContains(t, argv, "--strict-mcp-config")
+	require.Contains(t, argv, "--await-claim")
+	for _, arg := range argv {
+		require.False(t, strings.HasPrefix(arg, "--resume"), "new sessions must not resume")
+		require.False(t, strings.HasPrefix(arg, "--session-id="), "claimed sessions must not assign an identity")
+	}
 	var raw string
 	for _, arg := range argv {
 		if value, ok := strings.CutPrefix(arg, "--mcp-config="); ok {

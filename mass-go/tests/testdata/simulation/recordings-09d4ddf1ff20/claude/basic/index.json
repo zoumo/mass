@@ -1,0 +1,60 @@
+{
+  "provider": "claude",
+  "case": "basic",
+  "provenance": "consumer",
+  "recordedAt": "2026-11-13T09:18:09Z",
+  "sourceSession": "mass-record-claude-153315685/session",
+  "exportPath": "tests/testdata/simulation/recordings-09d4ddf1ff20/claude/basic/material",
+  "sha256": {
+    "manifest.json": "a2f83b12ff6f67566e0088cd24c01dfa23b2092426f33a532175f34edccd6322",
+    "material.json": "25da1e9d856fb3b1015bb6fe56995a46bc684b3cd384fb3ba2a20fe93174d72d",
+    "plan.json": "3b63398a8c991f9fba7d18428b296a1bce49e13f1027cc1b341ff66e92a997a2",
+    "raw/manifest.json": "6aa7df5f82ac3dfa442d9b566ce3e68cec5b2de6c178470bdf0df1a8f9ec1ff3",
+    "raw/raw.jsonl": "e2b4b546a8d2fb1dbcfa2117b5b01504530d4e98e2866cc8d214ef2e84263ce8",
+    "raw/stderr.raw": "09b1eaa3ba7f497d554db3d67dc7d4a10da3319014db4b04457db9806284728c",
+    "raw/transport.json": "916db8a684d8d34993d24776dbd1ba549081ed0946d250a63461e484f5fc3a41"
+  },
+  "versions": {
+    "claude": "2.1.293 (Claude Code)",
+    "claudeModel": "auto/deepseek-v4.1-flash-1017",
+    "mass": "d7197757166efe8f3c93b25cec9831ae1f2dbcde",
+    "massWorktree": "M mass-go/go.mod\n M mass-go/go.sum\n M mass-go/internal/recordingtest/claude.go\n M mass-go/internal/recordingtest/codex.go\n M mass-go/internal/recordingtest/gate.go\n M mass-go/internal/recordingtest/registry.go\n M mass-go/internal/recordingtest/versions.go\n M mass-go/internal/testpeer/build.go\n?? mass-go/internal/recordingtest/claude_capture.go",
+    "sdk": "v0.0.0-20261113030733-09d4ddf1ff20",
+    "testify": "v0.2.1"
+  },
+  "toolSHA256": {
+    "claude": "27d4e9aeb2335156c7859edb6e13f35c884fa09915fea2f9b8305f4b52aeaaa0",
+    "massd": "e41e5a51bfcdfac5397961043be72c97fe2f23685b5219672d0439032132e2b5",
+    "testify": "bb38ef7a6e0fca47b6a3bde344c7c0aac2e2e08758629abf3d6848e7d0d76cb2"
+  },
+  "claudePath": "claude",
+  "claudeAuthMethod": "oauth_token",
+  "claudeAPIProvider": "firstParty",
+  "prompt": "Reply with one short greeting. Do not use tools or inspect files.",
+  "project": "/var/tmp/mass-record-claude-153315685/project",
+  "facts": {
+    "sessionId": "c9486160-3061-4924-ade7-7ad598bb546d",
+    "state": "idle",
+    "accepted": true,
+    "input": {
+      "sent": true,
+      "nativeAccepted": null
+    },
+    "events": [
+      {
+        "kind": "agent.message",
+        "text": "Hello! How can I help you today?"
+      }
+    ],
+    "streamKinds": [
+      "session.error",
+      "session.state_update",
+      "session.available_commands_update",
+      "session.error",
+      "agent.message_chunk",
+      "agent.message",
+      "session.usage_update",
+      "session.state_update"
+    ]
+  }
+}

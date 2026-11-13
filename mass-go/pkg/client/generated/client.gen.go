@@ -20,6 +20,24 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for ConfigChangeId.
+const (
+	Effort ConfigChangeId = "effort"
+	Model  ConfigChangeId = "model"
+)
+
+// Valid indicates whether the value is a known member of the ConfigChangeId enum.
+func (e ConfigChangeId) Valid() bool {
+	switch e {
+	case Effort:
+		return true
+	case Model:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HistoryLoadStatusPhase.
 const (
 	HistoryLoadStatusPhaseAccepted        HistoryLoadStatusPhase = "accepted"
@@ -95,27 +113,27 @@ func (e HistoryReplayPhase) Valid() bool {
 	}
 }
 
-// Defines values for InteractionClosedOutcome.
+// Defines values for InteractionClosedPayloadOutcome.
 const (
-	InteractionClosedOutcomeAnswered  InteractionClosedOutcome = "answered"
-	InteractionClosedOutcomeCancelled InteractionClosedOutcome = "cancelled"
-	InteractionClosedOutcomeCompleted InteractionClosedOutcome = "completed"
-	InteractionClosedOutcomeExpired   InteractionClosedOutcome = "expired"
-	InteractionClosedOutcomeFailed    InteractionClosedOutcome = "failed"
+	InteractionClosedPayloadOutcomeAnswered  InteractionClosedPayloadOutcome = "answered"
+	InteractionClosedPayloadOutcomeCancelled InteractionClosedPayloadOutcome = "cancelled"
+	InteractionClosedPayloadOutcomeCompleted InteractionClosedPayloadOutcome = "completed"
+	InteractionClosedPayloadOutcomeExpired   InteractionClosedPayloadOutcome = "expired"
+	InteractionClosedPayloadOutcomeFailed    InteractionClosedPayloadOutcome = "failed"
 )
 
-// Valid indicates whether the value is a known member of the InteractionClosedOutcome enum.
-func (e InteractionClosedOutcome) Valid() bool {
+// Valid indicates whether the value is a known member of the InteractionClosedPayloadOutcome enum.
+func (e InteractionClosedPayloadOutcome) Valid() bool {
 	switch e {
-	case InteractionClosedOutcomeAnswered:
+	case InteractionClosedPayloadOutcomeAnswered:
 		return true
-	case InteractionClosedOutcomeCancelled:
+	case InteractionClosedPayloadOutcomeCancelled:
 		return true
-	case InteractionClosedOutcomeCompleted:
+	case InteractionClosedPayloadOutcomeCompleted:
 		return true
-	case InteractionClosedOutcomeExpired:
+	case InteractionClosedPayloadOutcomeExpired:
 		return true
-	case InteractionClosedOutcomeFailed:
+	case InteractionClosedPayloadOutcomeFailed:
 		return true
 	default:
 		return false
@@ -137,111 +155,6 @@ func (e MCPServerType) Valid() bool {
 	case Sse:
 		return true
 	case Stdio:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for OutputAvailability.
-const (
-	Provided    OutputAvailability = "provided"
-	Unavailable OutputAvailability = "unavailable"
-)
-
-// Valid indicates whether the value is a known member of the OutputAvailability enum.
-func (e OutputAvailability) Valid() bool {
-	switch e {
-	case Provided:
-		return true
-	case Unavailable:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for OutputCompleteness.
-const (
-	OutputCompletenessRetained  OutputCompleteness = "retained"
-	OutputCompletenessTruncated OutputCompleteness = "truncated"
-	OutputCompletenessUnknown   OutputCompleteness = "unknown"
-)
-
-// Valid indicates whether the value is a known member of the OutputCompleteness enum.
-func (e OutputCompleteness) Valid() bool {
-	switch e {
-	case OutputCompletenessRetained:
-		return true
-	case OutputCompletenessTruncated:
-		return true
-	case OutputCompletenessUnknown:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PermissionOptionKind.
-const (
-	AllowAlways  PermissionOptionKind = "allow_always"
-	AllowOnce    PermissionOptionKind = "allow_once"
-	RejectAlways PermissionOptionKind = "reject_always"
-	RejectOnce   PermissionOptionKind = "reject_once"
-)
-
-// Valid indicates whether the value is a known member of the PermissionOptionKind enum.
-func (e PermissionOptionKind) Valid() bool {
-	switch e {
-	case AllowAlways:
-		return true
-	case AllowOnce:
-		return true
-	case RejectAlways:
-		return true
-	case RejectOnce:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PlanEntryPriority.
-const (
-	High   PlanEntryPriority = "high"
-	Low    PlanEntryPriority = "low"
-	Medium PlanEntryPriority = "medium"
-)
-
-// Valid indicates whether the value is a known member of the PlanEntryPriority enum.
-func (e PlanEntryPriority) Valid() bool {
-	switch e {
-	case High:
-		return true
-	case Low:
-		return true
-	case Medium:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PlanEntryStatus.
-const (
-	PlanEntryStatusCompleted  PlanEntryStatus = "completed"
-	PlanEntryStatusInProgress PlanEntryStatus = "in_progress"
-	PlanEntryStatusPending    PlanEntryStatus = "pending"
-)
-
-// Valid indicates whether the value is a known member of the PlanEntryStatus enum.
-func (e PlanEntryStatus) Valid() bool {
-	switch e {
-	case PlanEntryStatusCompleted:
-		return true
-	case PlanEntryStatusInProgress:
-		return true
-	case PlanEntryStatusPending:
 		return true
 	default:
 		return false
@@ -275,102 +188,186 @@ func (e RuntimeStatusState) Valid() bool {
 	}
 }
 
-// Defines values for StateUpdatePreviousState.
+// Defines values for StateUpdatePayloadPreviousState.
 const (
-	StateUpdatePreviousStateIdle           StateUpdatePreviousState = "idle"
-	StateUpdatePreviousStateRequiresAction StateUpdatePreviousState = "requires_action"
-	StateUpdatePreviousStateRunning        StateUpdatePreviousState = "running"
+	StateUpdatePayloadPreviousStateIdle           StateUpdatePayloadPreviousState = "idle"
+	StateUpdatePayloadPreviousStateRequiresAction StateUpdatePayloadPreviousState = "requires_action"
+	StateUpdatePayloadPreviousStateRunning        StateUpdatePayloadPreviousState = "running"
 )
 
-// Valid indicates whether the value is a known member of the StateUpdatePreviousState enum.
-func (e StateUpdatePreviousState) Valid() bool {
+// Valid indicates whether the value is a known member of the StateUpdatePayloadPreviousState enum.
+func (e StateUpdatePayloadPreviousState) Valid() bool {
 	switch e {
-	case StateUpdatePreviousStateIdle:
+	case StateUpdatePayloadPreviousStateIdle:
 		return true
-	case StateUpdatePreviousStateRequiresAction:
+	case StateUpdatePayloadPreviousStateRequiresAction:
 		return true
-	case StateUpdatePreviousStateRunning:
+	case StateUpdatePayloadPreviousStateRunning:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for StateUpdateState.
+// Defines values for StateUpdatePayloadState.
 const (
-	StateUpdateStateIdle           StateUpdateState = "idle"
-	StateUpdateStateRequiresAction StateUpdateState = "requires_action"
-	StateUpdateStateRunning        StateUpdateState = "running"
+	StateUpdatePayloadStateIdle           StateUpdatePayloadState = "idle"
+	StateUpdatePayloadStateRequiresAction StateUpdatePayloadState = "requires_action"
+	StateUpdatePayloadStateRunning        StateUpdatePayloadState = "running"
 )
 
-// Valid indicates whether the value is a known member of the StateUpdateState enum.
-func (e StateUpdateState) Valid() bool {
+// Valid indicates whether the value is a known member of the StateUpdatePayloadState enum.
+func (e StateUpdatePayloadState) Valid() bool {
 	switch e {
-	case StateUpdateStateIdle:
+	case StateUpdatePayloadStateIdle:
 		return true
-	case StateUpdateStateRequiresAction:
+	case StateUpdatePayloadStateRequiresAction:
 		return true
-	case StateUpdateStateRunning:
+	case StateUpdatePayloadStateRunning:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ToolCallStatus.
+// Defines values for ToolCallPayloadKind.
 const (
-	ToolCallStatusCompleted  ToolCallStatus = "completed"
-	ToolCallStatusDeclined   ToolCallStatus = "declined"
-	ToolCallStatusFailed     ToolCallStatus = "failed"
-	ToolCallStatusInProgress ToolCallStatus = "in_progress"
-	ToolCallStatusPending    ToolCallStatus = "pending"
-	ToolCallStatusUnknown    ToolCallStatus = "unknown"
+	ToolCallPayloadKindDelete     ToolCallPayloadKind = "delete"
+	ToolCallPayloadKindEdit       ToolCallPayloadKind = "edit"
+	ToolCallPayloadKindExecute    ToolCallPayloadKind = "execute"
+	ToolCallPayloadKindFetch      ToolCallPayloadKind = "fetch"
+	ToolCallPayloadKindMove       ToolCallPayloadKind = "move"
+	ToolCallPayloadKindOther      ToolCallPayloadKind = "other"
+	ToolCallPayloadKindRead       ToolCallPayloadKind = "read"
+	ToolCallPayloadKindSearch     ToolCallPayloadKind = "search"
+	ToolCallPayloadKindSwitchMode ToolCallPayloadKind = "switch_mode"
+	ToolCallPayloadKindThink      ToolCallPayloadKind = "think"
 )
 
-// Valid indicates whether the value is a known member of the ToolCallStatus enum.
-func (e ToolCallStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the ToolCallPayloadKind enum.
+func (e ToolCallPayloadKind) Valid() bool {
 	switch e {
-	case ToolCallStatusCompleted:
+	case ToolCallPayloadKindDelete:
 		return true
-	case ToolCallStatusDeclined:
+	case ToolCallPayloadKindEdit:
 		return true
-	case ToolCallStatusFailed:
+	case ToolCallPayloadKindExecute:
 		return true
-	case ToolCallStatusInProgress:
+	case ToolCallPayloadKindFetch:
 		return true
-	case ToolCallStatusPending:
+	case ToolCallPayloadKindMove:
 		return true
-	case ToolCallStatusUnknown:
+	case ToolCallPayloadKindOther:
+		return true
+	case ToolCallPayloadKindRead:
+		return true
+	case ToolCallPayloadKindSearch:
+		return true
+	case ToolCallPayloadKindSwitchMode:
+		return true
+	case ToolCallPayloadKindThink:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ToolResultStatus.
+// Defines values for ToolCallPayloadStatus.
 const (
-	ToolResultStatusCompleted  ToolResultStatus = "completed"
-	ToolResultStatusDeclined   ToolResultStatus = "declined"
-	ToolResultStatusFailed     ToolResultStatus = "failed"
-	ToolResultStatusInProgress ToolResultStatus = "in_progress"
-	ToolResultStatusPending    ToolResultStatus = "pending"
-	ToolResultStatusUnknown    ToolResultStatus = "unknown"
+	ToolCallPayloadStatusCompleted  ToolCallPayloadStatus = "completed"
+	ToolCallPayloadStatusDeclined   ToolCallPayloadStatus = "declined"
+	ToolCallPayloadStatusFailed     ToolCallPayloadStatus = "failed"
+	ToolCallPayloadStatusInProgress ToolCallPayloadStatus = "in_progress"
+	ToolCallPayloadStatusPending    ToolCallPayloadStatus = "pending"
+	ToolCallPayloadStatusUnknown    ToolCallPayloadStatus = "unknown"
 )
 
-// Valid indicates whether the value is a known member of the ToolResultStatus enum.
-func (e ToolResultStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the ToolCallPayloadStatus enum.
+func (e ToolCallPayloadStatus) Valid() bool {
 	switch e {
-	case ToolResultStatusCompleted:
+	case ToolCallPayloadStatusCompleted:
 		return true
-	case ToolResultStatusDeclined:
+	case ToolCallPayloadStatusDeclined:
 		return true
-	case ToolResultStatusFailed:
+	case ToolCallPayloadStatusFailed:
 		return true
-	case ToolResultStatusInProgress:
+	case ToolCallPayloadStatusInProgress:
 		return true
-	case ToolResultStatusPending:
+	case ToolCallPayloadStatusPending:
 		return true
-	case ToolResultStatusUnknown:
+	case ToolCallPayloadStatusUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ToolResultPayloadKind.
+const (
+	ToolResultPayloadKindDelete     ToolResultPayloadKind = "delete"
+	ToolResultPayloadKindEdit       ToolResultPayloadKind = "edit"
+	ToolResultPayloadKindExecute    ToolResultPayloadKind = "execute"
+	ToolResultPayloadKindFetch      ToolResultPayloadKind = "fetch"
+	ToolResultPayloadKindMove       ToolResultPayloadKind = "move"
+	ToolResultPayloadKindOther      ToolResultPayloadKind = "other"
+	ToolResultPayloadKindRead       ToolResultPayloadKind = "read"
+	ToolResultPayloadKindSearch     ToolResultPayloadKind = "search"
+	ToolResultPayloadKindSwitchMode ToolResultPayloadKind = "switch_mode"
+	ToolResultPayloadKindThink      ToolResultPayloadKind = "think"
+)
+
+// Valid indicates whether the value is a known member of the ToolResultPayloadKind enum.
+func (e ToolResultPayloadKind) Valid() bool {
+	switch e {
+	case ToolResultPayloadKindDelete:
+		return true
+	case ToolResultPayloadKindEdit:
+		return true
+	case ToolResultPayloadKindExecute:
+		return true
+	case ToolResultPayloadKindFetch:
+		return true
+	case ToolResultPayloadKindMove:
+		return true
+	case ToolResultPayloadKindOther:
+		return true
+	case ToolResultPayloadKindRead:
+		return true
+	case ToolResultPayloadKindSearch:
+		return true
+	case ToolResultPayloadKindSwitchMode:
+		return true
+	case ToolResultPayloadKindThink:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ToolResultPayloadStatus.
+const (
+	ToolResultPayloadStatusCompleted  ToolResultPayloadStatus = "completed"
+	ToolResultPayloadStatusDeclined   ToolResultPayloadStatus = "declined"
+	ToolResultPayloadStatusFailed     ToolResultPayloadStatus = "failed"
+	ToolResultPayloadStatusInProgress ToolResultPayloadStatus = "in_progress"
+	ToolResultPayloadStatusPending    ToolResultPayloadStatus = "pending"
+	ToolResultPayloadStatusUnknown    ToolResultPayloadStatus = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ToolResultPayloadStatus enum.
+func (e ToolResultPayloadStatus) Valid() bool {
+	switch e {
+	case ToolResultPayloadStatusCompleted:
+		return true
+	case ToolResultPayloadStatusDeclined:
+		return true
+	case ToolResultPayloadStatusFailed:
+		return true
+	case ToolResultPayloadStatusInProgress:
+		return true
+	case ToolResultPayloadStatusPending:
+		return true
+	case ToolResultPayloadStatusUnknown:
 		return true
 	default:
 		return false
@@ -381,7 +378,6 @@ func (e ToolResultStatus) Valid() bool {
 const (
 	ListHistoryByNameOrIDParamsTypesAgentMessage                   ListHistoryByNameOrIDParamsTypes = "agent.message"
 	ListHistoryByNameOrIDParamsTypesAgentMessageChunk              ListHistoryByNameOrIDParamsTypes = "agent.message_chunk"
-	ListHistoryByNameOrIDParamsTypesAgentPlan                      ListHistoryByNameOrIDParamsTypes = "agent.plan"
 	ListHistoryByNameOrIDParamsTypesAgentThinking                  ListHistoryByNameOrIDParamsTypes = "agent.thinking"
 	ListHistoryByNameOrIDParamsTypesAgentThinkingChunk             ListHistoryByNameOrIDParamsTypes = "agent.thinking_chunk"
 	ListHistoryByNameOrIDParamsTypesAgentToolCall                  ListHistoryByNameOrIDParamsTypes = "agent.tool_call"
@@ -404,8 +400,6 @@ func (e ListHistoryByNameOrIDParamsTypes) Valid() bool {
 	case ListHistoryByNameOrIDParamsTypesAgentMessage:
 		return true
 	case ListHistoryByNameOrIDParamsTypesAgentMessageChunk:
-		return true
-	case ListHistoryByNameOrIDParamsTypesAgentPlan:
 		return true
 	case ListHistoryByNameOrIDParamsTypesAgentThinking:
 		return true
@@ -504,7 +498,6 @@ func (e ListSessionsParamsState) Valid() bool {
 const (
 	ListHistoryByIDParamsTypesAgentMessage                   ListHistoryByIDParamsTypes = "agent.message"
 	ListHistoryByIDParamsTypesAgentMessageChunk              ListHistoryByIDParamsTypes = "agent.message_chunk"
-	ListHistoryByIDParamsTypesAgentPlan                      ListHistoryByIDParamsTypes = "agent.plan"
 	ListHistoryByIDParamsTypesAgentThinking                  ListHistoryByIDParamsTypes = "agent.thinking"
 	ListHistoryByIDParamsTypesAgentThinkingChunk             ListHistoryByIDParamsTypes = "agent.thinking_chunk"
 	ListHistoryByIDParamsTypesAgentToolCall                  ListHistoryByIDParamsTypes = "agent.tool_call"
@@ -527,8 +520,6 @@ func (e ListHistoryByIDParamsTypes) Valid() bool {
 	case ListHistoryByIDParamsTypesAgentMessage:
 		return true
 	case ListHistoryByIDParamsTypesAgentMessageChunk:
-		return true
-	case ListHistoryByIDParamsTypesAgentPlan:
 		return true
 	case ListHistoryByIDParamsTypesAgentThinking:
 		return true
@@ -586,12 +577,12 @@ type AgentThinking struct {
 
 // AvailableCommand defines model for AvailableCommand.
 type AvailableCommand struct {
-	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+	Description string `json:"description"`
+	Name        string `json:"name"`
 }
 
-// AvailableCommandsUpdate defines model for AvailableCommandsUpdate.
-type AvailableCommandsUpdate struct {
+// AvailableCommandsUpdatePayload defines model for AvailableCommandsUpdatePayload.
+type AvailableCommandsUpdatePayload struct {
 	AvailableCommands []AvailableCommand `json:"availableCommands"`
 }
 
@@ -607,6 +598,15 @@ type CancelReceipt struct {
 	Target *string `json:"target,omitempty"`
 }
 
+// ConfigChange defines model for ConfigChange.
+type ConfigChange struct {
+	Id    ConfigChangeId `json:"id"`
+	Value string         `json:"value"`
+}
+
+// ConfigChangeId defines model for ConfigChange.Id.
+type ConfigChangeId string
+
 // ConfigOption defines model for ConfigOption.
 type ConfigOption = rawjson.RawMessage
 
@@ -617,8 +617,8 @@ type ConfigOptionGroup struct {
 	Options []ConfigOptionValue `json:"options"`
 }
 
-// ConfigOptionUpdate defines model for ConfigOptionUpdate.
-type ConfigOptionUpdate struct {
+// ConfigOptionUpdatePayload defines model for ConfigOptionUpdatePayload.
+type ConfigOptionUpdatePayload struct {
 	ConfigOptions []ConfigOption `json:"configOptions"`
 }
 
@@ -627,6 +627,12 @@ type ConfigOptionValue struct {
 	Description *string `json:"description,omitempty"`
 	Name        string  `json:"name"`
 	Value       string  `json:"value"`
+}
+
+// ConfigReceipt defines model for ConfigReceipt.
+type ConfigReceipt struct {
+	Acceptance Acceptance   `json:"acceptance"`
+	Change     ConfigChange `json:"change"`
 }
 
 // ContentBlock defines model for ContentBlock.
@@ -682,8 +688,14 @@ type HistoryReplayCurrentState string
 // HistoryReplayPhase defines model for HistoryReplay.Phase.
 type HistoryReplayPhase string
 
-// InfoUpdate defines model for InfoUpdate.
-type InfoUpdate = rawjson.RawMessage
+// InfoUpdatePayload defines model for InfoUpdatePayload.
+type InfoUpdatePayload = rawjson.RawMessage
+
+// InitialSessionConfig defines model for InitialSessionConfig.
+type InitialSessionConfig struct {
+	Effort *string `json:"effort,omitempty"`
+	Model  *string `json:"model,omitempty"`
+}
 
 // Input defines model for Input.
 type Input struct {
@@ -693,18 +705,19 @@ type Input struct {
 // InputReceipt defines model for InputReceipt.
 type InputReceipt struct {
 	Acceptance Acceptance `json:"acceptance"`
+	Result     string     `json:"result"`
 	Submission string     `json:"submission"`
 }
 
-// InteractionClosed defines model for InteractionClosed.
-type InteractionClosed struct {
-	Interaction string                   `json:"interaction"`
-	Outcome     InteractionClosedOutcome `json:"outcome"`
-	Reason      *string                  `json:"reason,omitempty"`
+// InteractionClosedPayload defines model for InteractionClosedPayload.
+type InteractionClosedPayload struct {
+	Interaction string                          `json:"interaction"`
+	Outcome     InteractionClosedPayloadOutcome `json:"outcome"`
+	Reason      *string                         `json:"reason,omitempty"`
 }
 
-// InteractionClosedOutcome defines model for InteractionClosed.Outcome.
-type InteractionClosedOutcome string
+// InteractionClosedPayloadOutcome defines model for InteractionClosedPayload.Outcome.
+type InteractionClosedPayloadOutcome string
 
 // InteractionReceipt defines model for InteractionReceipt.
 type InteractionReceipt struct {
@@ -715,8 +728,8 @@ type InteractionReceipt struct {
 // InteractionRequest defines model for InteractionRequest.
 type InteractionRequest = rawjson.RawMessage
 
-// InteractionRequested defines model for InteractionRequested.
-type InteractionRequested struct {
+// InteractionRequestedPayload defines model for InteractionRequestedPayload.
+type InteractionRequestedPayload struct {
 	Blocking    bool               `json:"blocking"`
 	Interaction string             `json:"interaction"`
 	Request     InteractionRequest `json:"request"`
@@ -769,47 +782,12 @@ type OperationError struct {
 	Reason  string `json:"reason"`
 }
 
-// Output defines model for Output.
-type Output struct {
-	Availability OutputAvailability `json:"availability"`
-	Completeness OutputCompleteness `json:"completeness"`
-	Truncation   *Truncation        `json:"truncation,omitempty"`
-}
-
-// OutputAvailability defines model for Output.Availability.
-type OutputAvailability string
-
-// OutputCompleteness defines model for Output.Completeness.
-type OutputCompleteness string
-
 // PermissionOption defines model for PermissionOption.
 type PermissionOption struct {
-	Kind     PermissionOptionKind `json:"kind"`
-	Name     string               `json:"name"`
-	OptionId string               `json:"optionId"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	OptionId string `json:"optionId"`
 }
-
-// PermissionOptionKind defines model for PermissionOption.Kind.
-type PermissionOptionKind string
-
-// Plan defines model for Plan.
-type Plan struct {
-	Entries []PlanEntry `json:"entries"`
-	PlanId  string      `json:"planId"`
-}
-
-// PlanEntry defines model for PlanEntry.
-type PlanEntry struct {
-	Content  string            `json:"content"`
-	Priority PlanEntryPriority `json:"priority"`
-	Status   PlanEntryStatus   `json:"status"`
-}
-
-// PlanEntryPriority defines model for PlanEntry.Priority.
-type PlanEntryPriority string
-
-// PlanEntryStatus defines model for PlanEntry.Status.
-type PlanEntryStatus string
 
 // ProbeStatus defines model for ProbeStatus.
 type ProbeStatus struct {
@@ -898,8 +876,8 @@ type SessionCreated struct {
 	Status              SessionStatus `json:"status"`
 }
 
-// SessionError defines model for SessionError.
-type SessionError struct {
+// SessionErrorPayload defines model for SessionErrorPayload.
+type SessionErrorPayload struct {
 	Message string  `json:"message"`
 	Reason  *string `json:"reason,omitempty"`
 }
@@ -914,6 +892,7 @@ type SessionFeatures struct {
 
 // SessionLoad defines model for SessionLoad.
 type SessionLoad struct {
+	Config     *InitialSessionConfig `json:"config,omitempty"`
 	Cwd        string                `json:"cwd"`
 	Features   *SessionFeatures      `json:"features,omitempty"`
 	McpServers *[]MCPServer          `json:"mcpServers,omitempty"`
@@ -950,6 +929,7 @@ type SessionResumed struct {
 // SessionSpec defines model for SessionSpec.
 type SessionSpec struct {
 	AdditionalDirs nullable.Nullable[[]string] `json:"additionalDirs,omitempty"`
+	Config         *InitialSessionConfig       `json:"config,omitempty"`
 	Cwd            string                      `json:"cwd"`
 	Features       *SessionFeatures            `json:"features,omitempty"`
 	McpServers     *[]MCPServer                `json:"mcpServers,omitempty"`
@@ -969,22 +949,22 @@ type SessionStatus struct {
 	State             string             `json:"state"`
 }
 
-// StateUpdate defines model for StateUpdate.
-type StateUpdate struct {
+// StateUpdatePayload defines model for StateUpdatePayload.
+type StateUpdatePayload struct {
 	Error *struct {
 		Code    rawjson.RawMessage `json:"code,omitempty"`
 		Message string             `json:"message"`
 	} `json:"error,omitempty"`
-	PreviousState nullable.Nullable[StateUpdatePreviousState] `json:"previousState"`
-	State         nullable.Nullable[StateUpdateState]         `json:"state"`
-	StopReason    *string                                     `json:"stopReason,omitempty"`
+	PreviousState nullable.Nullable[StateUpdatePayloadPreviousState] `json:"previousState"`
+	State         nullable.Nullable[StateUpdatePayloadState]         `json:"state"`
+	StopReason    *string                                            `json:"stopReason,omitempty"`
 }
 
-// StateUpdatePreviousState defines model for StateUpdate.PreviousState.
-type StateUpdatePreviousState string
+// StateUpdatePayloadPreviousState defines model for StateUpdatePayload.PreviousState.
+type StateUpdatePayloadPreviousState string
 
-// StateUpdateState defines model for StateUpdate.State.
-type StateUpdateState string
+// StateUpdatePayloadState defines model for StateUpdatePayload.State.
+type StateUpdatePayloadState string
 
 // ThinkingChunk defines model for ThinkingChunk.
 type ThinkingChunk struct {
@@ -993,51 +973,66 @@ type ThinkingChunk struct {
 	Phase     *string        `json:"phase,omitempty"`
 }
 
-// ToolCall defines model for ToolCall.
-type ToolCall struct {
-	Content             *[]ContentBlock    `json:"content,omitempty"`
-	DurationMs          *float64           `json:"durationMs,omitempty"`
-	ExitCode            *int32             `json:"exitCode,omitempty"`
-	Id                  string             `json:"id"`
-	InputRepresentation *string            `json:"inputRepresentation,omitempty"`
-	Kind                string             `json:"kind"`
-	Name                *string            `json:"name,omitempty"`
-	Output              *Output            `json:"output,omitempty"`
-	Phase               *string            `json:"phase,omitempty"`
-	RawInput            rawjson.RawMessage `json:"rawInput"`
-	RawOutput           rawjson.RawMessage `json:"rawOutput,omitempty"`
-	Status              *ToolCallStatus    `json:"status,omitempty"`
-	Title               *string            `json:"title,omitempty"`
+// ToolCallPayload defines model for ToolCallPayload.
+type ToolCallPayload struct {
+	Content             *[]ContentBlock        `json:"content,omitempty"`
+	DurationMs          *float64               `json:"durationMs,omitempty"`
+	ExitCode            *int32                 `json:"exitCode,omitempty"`
+	Id                  string                 `json:"id"`
+	InputRepresentation *string                `json:"inputRepresentation,omitempty"`
+	Kind                ToolCallPayloadKind    `json:"kind"`
+	Output              *ToolOutput            `json:"output,omitempty"`
+	Phase               *string                `json:"phase,omitempty"`
+	Provider            string                 `json:"provider"`
+	RawInput            rawjson.RawMessage     `json:"rawInput"`
+	RawOutput           rawjson.RawMessage     `json:"rawOutput,omitempty"`
+	Status              *ToolCallPayloadStatus `json:"status,omitempty"`
+	Title               *string                `json:"title,omitempty"`
+	ToolName            string                 `json:"toolName"`
 }
 
-// ToolCallStatus defines model for ToolCall.Status.
-type ToolCallStatus string
+// ToolCallPayloadKind defines model for ToolCallPayload.Kind.
+type ToolCallPayloadKind string
 
-// ToolChunk defines model for ToolChunk.
-type ToolChunk struct {
+// ToolCallPayloadStatus defines model for ToolCallPayload.Status.
+type ToolCallPayloadStatus string
+
+// ToolChunkPayload defines model for ToolChunkPayload.
+type ToolChunkPayload struct {
 	Content []ContentBlock `json:"content"`
 	Id      string         `json:"id"`
 }
 
-// ToolResult defines model for ToolResult.
-type ToolResult struct {
-	Content             *[]ContentBlock    `json:"content,omitempty"`
-	DurationMs          *float64           `json:"durationMs,omitempty"`
-	ExitCode            *int32             `json:"exitCode,omitempty"`
-	Id                  string             `json:"id"`
-	InputRepresentation *string            `json:"inputRepresentation,omitempty"`
-	Kind                string             `json:"kind"`
-	Name                *string            `json:"name,omitempty"`
-	Output              *Output            `json:"output,omitempty"`
-	Phase               *string            `json:"phase,omitempty"`
-	RawInput            rawjson.RawMessage `json:"rawInput,omitempty"`
-	RawOutput           rawjson.RawMessage `json:"rawOutput,omitempty"`
-	Status              ToolResultStatus   `json:"status"`
-	Title               *string            `json:"title,omitempty"`
+// ToolOutput defines model for ToolOutput.
+type ToolOutput struct {
+	Availability string      `json:"availability"`
+	Completeness string      `json:"completeness"`
+	Truncation   *Truncation `json:"truncation,omitempty"`
 }
 
-// ToolResultStatus defines model for ToolResult.Status.
-type ToolResultStatus string
+// ToolResultPayload defines model for ToolResultPayload.
+type ToolResultPayload struct {
+	Content             *[]ContentBlock         `json:"content,omitempty"`
+	DurationMs          *float64                `json:"durationMs,omitempty"`
+	ExitCode            *int32                  `json:"exitCode,omitempty"`
+	Id                  string                  `json:"id"`
+	InputRepresentation *string                 `json:"inputRepresentation,omitempty"`
+	Kind                ToolResultPayloadKind   `json:"kind"`
+	Output              *ToolOutput             `json:"output,omitempty"`
+	Phase               *string                 `json:"phase,omitempty"`
+	Provider            string                  `json:"provider"`
+	RawInput            rawjson.RawMessage      `json:"rawInput,omitempty"`
+	RawOutput           rawjson.RawMessage      `json:"rawOutput,omitempty"`
+	Status              ToolResultPayloadStatus `json:"status"`
+	Title               *string                 `json:"title,omitempty"`
+	ToolName            string                  `json:"toolName"`
+}
+
+// ToolResultPayloadKind defines model for ToolResultPayload.Kind.
+type ToolResultPayloadKind string
+
+// ToolResultPayloadStatus defines model for ToolResultPayload.Status.
+type ToolResultPayloadStatus string
 
 // Truncation defines model for Truncation.
 type Truncation struct {
@@ -1045,8 +1040,8 @@ type Truncation struct {
 	RetainedBytes int64  `json:"retainedBytes"`
 }
 
-// UsageUpdate defines model for UsageUpdate.
-type UsageUpdate struct {
+// UsageUpdatePayload defines model for UsageUpdatePayload.
+type UsageUpdatePayload struct {
 	Cost *struct {
 		Amount   float32 `json:"amount"`
 		Currency string  `json:"currency"`
@@ -1125,6 +1120,9 @@ type CancelByNameOrIDJSONRequestBody = CancelByNameOrIDBody
 // CloseSessionByNameOrIDJSONRequestBody defines body for CloseSessionByNameOrID for application/json ContentType.
 type CloseSessionByNameOrIDJSONRequestBody = LifecycleByNameOrIDBody
 
+// SetSessionConfigByNameOrIDJSONRequestBody defines body for SetSessionConfigByNameOrID for application/json ContentType.
+type SetSessionConfigByNameOrIDJSONRequestBody = ConfigChange
+
 // CancelHistoryLoadByNameOrIDJSONRequestBody defines body for CancelHistoryLoadByNameOrID for application/json ContentType.
 type CancelHistoryLoadByNameOrIDJSONRequestBody = HistoryLoadCancel
 
@@ -1160,6 +1158,9 @@ type CancelByIDJSONRequestBody = CancelByIDBody
 
 // CloseSessionByIDJSONRequestBody defines body for CloseSessionByID for application/json ContentType.
 type CloseSessionByIDJSONRequestBody = LifecycleByIDBody
+
+// SetSessionConfigByIDJSONRequestBody defines body for SetSessionConfigByID for application/json ContentType.
+type SetSessionConfigByIDJSONRequestBody = ConfigChange
 
 // CancelHistoryLoadByIDJSONRequestBody defines body for CancelHistoryLoadByID for application/json ContentType.
 type CancelHistoryLoadByIDJSONRequestBody = HistoryLoadCancel
@@ -1265,6 +1266,14 @@ type ClientInterface interface {
 	// CloseSessionByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request.
 	// Takes a body of the `application/json` content type.
 	CloseSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSessionConfigByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request,
+	// with any type of body and a specified content type.
+	SetSessionConfigByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSessionConfigByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request.
+	// Takes a body of the `application/json` content type.
+	SetSessionConfigByNameOrID(ctx context.Context, namespace string, nameOrID string, body SetSessionConfigByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListHistoryByNameOrID performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events (the `ListHistoryByNameOrID` operationId) request.
 	ListHistoryByNameOrID(ctx context.Context, namespace string, nameOrID string, params *ListHistoryByNameOrIDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1383,6 +1392,14 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	CloseSessionByID(ctx context.Context, sessionId string, body CloseSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SetSessionConfigByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request,
+	// with any type of body and a specified content type.
+	SetSessionConfigByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSessionConfigByID performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request.
+	// Takes a body of the `application/json` content type.
+	SetSessionConfigByID(ctx context.Context, sessionId string, body SetSessionConfigByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListHistoryByID performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
 	ListHistoryByID(ctx context.Context, sessionId string, params *ListHistoryByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1487,6 +1504,34 @@ func (c *Client) CloseSessionByNameOrIDWithBody(ctx context.Context, namespace s
 // Takes a body of the `application/json` content type.
 func (c *Client) CloseSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCloseSessionByNameOrIDRequest(c.Server, namespace, nameOrID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSessionConfigByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) SetSessionConfigByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSessionConfigByNameOrIDRequestWithBody(c.Server, namespace, nameOrID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSessionConfigByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) SetSessionConfigByNameOrID(ctx context.Context, namespace string, nameOrID string, body SetSessionConfigByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSessionConfigByNameOrIDRequest(c.Server, namespace, nameOrID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1924,6 +1969,34 @@ func (c *Client) CloseSessionByID(ctx context.Context, sessionId string, body Cl
 	return c.Client.Do(req)
 }
 
+// SetSessionConfigByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) SetSessionConfigByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSessionConfigByIDRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSessionConfigByID performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) SetSessionConfigByID(ctx context.Context, sessionId string, body SetSessionConfigByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSessionConfigByIDRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListHistoryByID performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
 func (c *Client) ListHistoryByID(ctx context.Context, sessionId string, params *ListHistoryByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListHistoryByIDRequest(c.Server, sessionId, params)
@@ -2218,6 +2291,60 @@ func NewCloseSessionByNameOrIDRequestWithBody(server string, namespace string, n
 	}
 
 	operationPath := fmt.Sprintf("/apis/v1/namespaces/%s/sessions/%s/close", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSetSessionConfigByNameOrIDRequest calls the generic SetSessionConfigByNameOrID builder with application/json body
+func NewSetSessionConfigByNameOrIDRequest(server string, namespace string, nameOrID string, body SetSessionConfigByNameOrIDJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSessionConfigByNameOrIDRequestWithBody(server, namespace, nameOrID, "application/json", bodyReader)
+}
+
+// NewSetSessionConfigByNameOrIDRequestWithBody constructs an http.Request for the SetSessionConfigByNameOrID method, with any body, and a specified content type
+func NewSetSessionConfigByNameOrIDRequestWithBody(server string, namespace string, nameOrID string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "nameOrID", nameOrID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/apis/v1/namespaces/%s/sessions/%s/config", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3233,6 +3360,53 @@ func NewCloseSessionByIDRequestWithBody(server string, sessionId string, content
 	return req, nil
 }
 
+// NewSetSessionConfigByIDRequest calls the generic SetSessionConfigByID builder with application/json body
+func NewSetSessionConfigByIDRequest(server string, sessionId string, body SetSessionConfigByIDJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSessionConfigByIDRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewSetSessionConfigByIDRequestWithBody constructs an http.Request for the SetSessionConfigByID method, with any body, and a specified content type
+func NewSetSessionConfigByIDRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sessionId", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/apis/v1/sessions/%s/config", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListHistoryByIDRequest constructs an http.Request for the ListHistoryByID method
 func NewListHistoryByIDRequest(server string, sessionId string, params *ListHistoryByIDParams) (*http.Request, error) {
 	var err error
@@ -3685,6 +3859,16 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CloseSessionByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseSessionByNameOrIDResponse, error)
 
+	// SetSessionConfigByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SetSessionConfigByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionConfigByNameOrIDResponse, error)
+
+	// SetSessionConfigByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	SetSessionConfigByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body SetSessionConfigByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionConfigByNameOrIDResponse, error)
+
 	// ListHistoryByNameOrIDWithResponse performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events (the `ListHistoryByNameOrID` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3839,6 +4023,16 @@ type ClientWithResponsesInterface interface {
 	// CloseSessionByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CloseSessionByIDWithResponse(ctx context.Context, sessionId string, body CloseSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseSessionByIDResponse, error)
+
+	// SetSessionConfigByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SetSessionConfigByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionConfigByIDResponse, error)
+
+	// SetSessionConfigByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	SetSessionConfigByIDWithResponse(ctx context.Context, sessionId string, body SetSessionConfigByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionConfigByIDResponse, error)
 
 	// ListHistoryByIDWithResponse performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
 	//
@@ -4312,6 +4506,145 @@ func (r CloseSessionByNameOrIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CloseSessionByNameOrIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetSessionConfigByNameOrIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConfigReceipt
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OperationError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OperationError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *OperationError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *OperationError
+	// JSON405 the response for an HTTP 405 `application/json` response
+	JSON405 *OperationError
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *OperationError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *OperationError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *OperationError
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *OperationError
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OperationError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *OperationError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *OperationError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *OperationError
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *OperationError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON200() *ConfigReceipt {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON400() *OperationError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON401() *OperationError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON403() *OperationError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON404() *OperationError {
+	return r.JSON404
+}
+
+// GetJSON405 returns the response for an HTTP 405 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON405() *OperationError {
+	return r.JSON405
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON406() *OperationError {
+	return r.JSON406
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON409() *OperationError {
+	return r.JSON409
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON415() *OperationError {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON422() *OperationError {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON429() *OperationError {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON500() *OperationError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON503() *OperationError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSON504() *OperationError {
+	return r.JSON504
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r SetSessionConfigByNameOrIDResponse) GetJSONDefault() *OperationError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSessionConfigByNameOrIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSessionConfigByNameOrIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSessionConfigByNameOrIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSessionConfigByNameOrIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6966,6 +7299,145 @@ func (r CloseSessionByIDResponse) ContentType() string {
 	return ""
 }
 
+type SetSessionConfigByIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConfigReceipt
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OperationError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OperationError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *OperationError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *OperationError
+	// JSON405 the response for an HTTP 405 `application/json` response
+	JSON405 *OperationError
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *OperationError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *OperationError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *OperationError
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *OperationError
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OperationError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *OperationError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *OperationError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *OperationError
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *OperationError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON200() *ConfigReceipt {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON400() *OperationError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON401() *OperationError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON403() *OperationError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON404() *OperationError {
+	return r.JSON404
+}
+
+// GetJSON405 returns the response for an HTTP 405 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON405() *OperationError {
+	return r.JSON405
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON406() *OperationError {
+	return r.JSON406
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON409() *OperationError {
+	return r.JSON409
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON415() *OperationError {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON422() *OperationError {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON429() *OperationError {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON500() *OperationError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON503() *OperationError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSON504() *OperationError {
+	return r.JSON504
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r SetSessionConfigByIDResponse) GetJSONDefault() *OperationError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSessionConfigByIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSessionConfigByIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSessionConfigByIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSessionConfigByIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListHistoryByIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8126,6 +8598,28 @@ func (c *ClientWithResponses) CloseSessionByNameOrIDWithResponse(ctx context.Con
 	return ParseCloseSessionByNameOrIDResponse(rsp)
 }
 
+// SetSessionConfigByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetSessionConfigByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionConfigByNameOrIDResponse, error) {
+	rsp, err := c.SetSessionConfigByNameOrIDWithBody(ctx, namespace, nameOrID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSessionConfigByNameOrIDResponse(rsp)
+}
+
+// SetSessionConfigByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config (the `SetSessionConfigByNameOrID` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetSessionConfigByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body SetSessionConfigByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionConfigByNameOrIDResponse, error) {
+	rsp, err := c.SetSessionConfigByNameOrID(ctx, namespace, nameOrID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSessionConfigByNameOrIDResponse(rsp)
+}
+
 // ListHistoryByNameOrIDWithResponse performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events (the `ListHistoryByNameOrID` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -8465,6 +8959,28 @@ func (c *ClientWithResponses) CloseSessionByIDWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseCloseSessionByIDResponse(rsp)
+}
+
+// SetSessionConfigByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetSessionConfigByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionConfigByIDResponse, error) {
+	rsp, err := c.SetSessionConfigByIDWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSessionConfigByIDResponse(rsp)
+}
+
+// SetSessionConfigByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/config (the `SetSessionConfigByID` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetSessionConfigByIDWithResponse(ctx context.Context, sessionId string, body SetSessionConfigByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionConfigByIDResponse, error) {
+	rsp, err := c.SetSessionConfigByID(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSessionConfigByIDResponse(rsp)
 }
 
 // ListHistoryByIDWithResponse performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
@@ -8863,6 +9379,130 @@ func ParseCloseSessionByNameOrIDResponse(rsp *http.Response) (*CloseSessionByNam
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON405 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetSessionConfigByNameOrIDResponse parses an HTTP response from a SetSessionConfigByNameOrIDWithResponse call
+func ParseSetSessionConfigByNameOrIDResponse(rsp *http.Response) (*SetSessionConfigByNameOrIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSessionConfigByNameOrIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConfigReceipt
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11247,6 +11887,130 @@ func ParseCloseSessionByIDResponse(rsp *http.Response) (*CloseSessionByIDRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON405 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetSessionConfigByIDResponse parses an HTTP response from a SetSessionConfigByIDWithResponse call
+func ParseSetSessionConfigByIDResponse(rsp *http.Response) (*SetSessionConfigByIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSessionConfigByIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConfigReceipt
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

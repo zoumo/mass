@@ -15,7 +15,6 @@ enum SessionEventType {
   agentMessageChunk: "agent.message_chunk",
   agentThinkingChunk: "agent.thinking_chunk",
   agentToolCallChunk: "agent.tool_call_chunk",
-  agentPlan: "agent.plan",
   sessionStateUpdate: "session.state_update",
   sessionError: "session.error",
   sessionInfoUpdate: "session.info_update",
@@ -35,9 +34,9 @@ model SessionEventBase<Type extends SessionEventType = SessionEventType> {
     nativeParentId?: string;
   };
 
-  /** adapter 创建统一事件时生成一次 UUID；同一事件发布、持久保存与重试保持不变。
+  /** 实时分支原样使用 SDK agent.Event 的 UUID；同一事件发布、持久保存与重试保持不变。
    * 仅用于唯一标识，不表示顺序，不替代分页游标；暂不做原生事件去重。
-   * 不承诺重新接收同一原生通知时恢复为相同 UUID。 */
+   * session.history_replay 控制事件由 MASS 在显式 load 生命周期中生成一次。 */
   @minLength(1)
   @format("uuid")
   eventId: string;
@@ -51,7 +50,7 @@ model SessionEventBase<Type extends SessionEventType = SessionEventType> {
   sessionId: string;
   type: Type;
 
-  /** adapter 优先使用原始事件时间；缺失时由 adapter 生成，Service/Store 不改写。 */
+  /** 实时分支原样使用 SDK agent.Event 的时间；Service/Store 不改写。 */
   time: utcDateTime;
 
   /** 条目事件提供；预览与完整事实相同，工具调用与结果共享条目身份。 */
@@ -68,7 +67,7 @@ model SessionEventOf<Type extends SessionEventType, Payload extends {}>
   payload: Payload;
 }
 
-/** 消息、工具与计划均需条目身份；会话事件不虚构 itemId。 */
+/** 消息与工具均需条目身份；会话事件不虚构 itemId。 */
 model ItemSessionEventOf<
   Type extends SessionEventType,
   Payload extends {}
@@ -113,7 +112,6 @@ union SessionEvent {
     SessionEventType.agentToolCallChunk,
     ToolChunkEventPayload
   >,
-  agentPlan: ItemSessionEventOf<SessionEventType.agentPlan, PlanEventPayload>,
   sessionStateUpdate: SessionEventOf<
     SessionEventType.sessionStateUpdate,
     SessionStateEventPayload
@@ -182,10 +180,32 @@ alias ToolStatus =
   | "declined"
   | "unknown";
 
+/** SDK 的封闭动作分类；与具体 provider 的工具名独立。 */
+alias ToolKind =
+  | "read"
+  | "edit"
+  | "delete"
+  | "move"
+  | "search"
+  | "execute"
+  | "think"
+  | "fetch"
+  | "switch_mode"
+  | "other";
+
 /** 调用与结果共有的可选描述和实际输出；不包装 ContentBlock。 */
 model ToolEventFields {
   id: string;
-  name?: string;
+  kind: ToolKind;
+
+  /** SDK 工具身份；不使用旧 MASS name 字段。 */
+  @minLength(1)
+  toolName: string;
+
+  /** agent、dynamic、mcp 或非空 mcp:<server>。 */
+  @minLength(1)
+  provider: string;
+
   title?: string;
   phase?: string;
   inputRepresentation?: string;
@@ -210,13 +230,11 @@ model ToolEventFields {
 }
 
 model ToolCallEventPayload extends ToolEventFields {
-  kind: string;
   rawInput: unknown;
   status?: ToolStatus;
 }
 
 model ToolResultEventPayload extends ToolEventFields {
-  kind: string;
   status: ToolStatus;
   rawInput?: unknown;
 }
@@ -225,15 +243,6 @@ model ToolResultEventPayload extends ToolEventFields {
 model ToolChunkEventPayload {
   id: string;
   content: ContentBlock[];
-}
-
-model PlanEventPayload {
-  planId: string;
-  entries: {
-    content: string;
-    priority: "low" | "medium" | "high";
-    status: "pending" | "in_progress" | "completed";
-  }[];
 }
 
 /** adapter 只报告工作观察，不决定 Service 的打开或 close 状态。

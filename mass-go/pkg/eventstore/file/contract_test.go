@@ -43,9 +43,9 @@ func (fileSuite *FileSuite) TestHistoryIdentityPaginationAndRestart() {
 	t := fileSuite.T()
 	s, dir := open(t)
 	input := event(t, "native", "user", events.UserMessage{MessageID: "user", Content: []events.ContentBlock{events.Text("hello")}})
-	call := event(t, "native", "tool", events.ToolCall{ID: "tool", Kind: "execute", RawInput: map[string]any{"n": json.Number("9007199254740993"), "nil": nil}})
+	call := event(t, "native", "tool", events.ToolCall{ID: "tool", Kind: events.ToolKindExecute, ToolName: "shell", Provider: events.ToolProviderAgent, RawInput: map[string]any{"n": json.Number("9007199254740993"), "nil": nil}})
 	null := any(nil)
-	result := event(t, "native", "tool", events.ToolResult{ID: "tool", Kind: "execute", Status: "completed", RawOutput: &null})
+	result := event(t, "native", "tool", events.ToolResult{ID: "tool", Kind: events.ToolKindExecute, ToolName: "shell", Provider: events.ToolProviderAgent, Status: "completed", RawOutput: &null})
 	answer := event(t, "native", "message", events.AgentMessage{MessageID: "message", Content: []events.ContentBlock{events.Text("full")}})
 	records := []events.SessionEvent{input, call, result, answer}
 	p, err := s.Append("native", records)

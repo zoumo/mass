@@ -9,8 +9,8 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-// ContentBlock has private union fields and a custom JSON codec. Describe that
-// wire union in the transport registry, without coupling domain values to Huma.
+// The SDK content union has a custom JSON codec. Describe that wire union in
+// the transport registry without coupling domain values to Huma.
 func registerWorkSchemas(r huma.Registry) {
 	object := func(properties map[string]*huma.Schema, required ...string) *huma.Schema {
 		return &huma.Schema{Type: "object", Properties: properties, Required: required, AdditionalProperties: false}
@@ -55,13 +55,20 @@ func registerWorkSchemas(r huma.Registry) {
 		}
 		branches = append(branches, object(props, required...))
 	}
-	schema := r.Schema(reflect.TypeFor[events.ContentBlock](), false, "")
-	*schema = huma.Schema{OneOf: branches, Discriminator: &huma.Discriminator{PropertyName: "type"}}
-	schema.PrecomputeMessages()
+	registerContentBlockSchema(r, branches)
 	input := r.Schema(reflect.TypeFor[runtime.Input](), false, "")
 	minimum := 1
-	input.Properties["content"].MinItems = &minimum
-	input.Properties["content"].Nullable = false
+	input.Type = "object"
+	input.Properties = map[string]*huma.Schema{
+		"content": {
+			Type:     "array",
+			Items:    contentBlockRef(),
+			MinItems: &minimum,
+			Nullable: false,
+		},
+	}
+	input.Required = []string{"content"}
+	input.AdditionalProperties = false
 	input.PrecomputeMessages()
 
 	// Document the effective schema default without letting Huma inject it before
@@ -70,4 +77,21 @@ func registerWorkSchemas(r huma.Registry) {
 	features := r.Schema(reflect.TypeFor[runtime.SessionFeatures](), false, "")
 	features.Properties["agentQuestions"].Default = true
 	features.PrecomputeMessages()
+}
+
+func contentBlockRef() *huma.Schema {
+	return &huma.Schema{Ref: "#/components/schemas/ContentBlock"}
+}
+
+func registerContentBlockSchema(r huma.Registry, branches []*huma.Schema) *huma.Schema {
+	// Bind the SDK struct type before replacing its reflected shape with its
+	// custom JSON wire schema. Later Input reflection must resolve this name.
+	r.Schema(reflect.TypeFor[events.ContentBlock](), true, "")
+	schema := &huma.Schema{
+		OneOf:         branches,
+		Discriminator: &huma.Discriminator{PropertyName: "type"},
+	}
+	schema.PrecomputeMessages()
+	r.Map()["ContentBlock"] = schema
+	return schema
 }

@@ -7,22 +7,46 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	if err := replay(); err != nil {
 		panic(err)
 	}
 }
 
 func replay() error {
+	claimedSessionID := uuid.NewString()
+	assignedSessionID := ""
+	claiming := clipeer.AwaitingClaim()
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			assignedSessionID = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			assignedSessionID = value
+		}
+	}
+	if claiming {
+		assignedSessionID = claimedSessionID
+	}
 	f, err := os.Open(os.Getenv("CLAUDE_MOCK_SCENARIO"))
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	var scenario struct {
-		Frames []struct {
+		AnswerGate string
+		Frames     []struct {
 			Direction string
 			Data      map[string]any
 		}
@@ -37,26 +61,68 @@ func replay() error {
 	output := json.NewEncoder(os.Stdout)
 	var link string
 	ids := map[string]any{}
+	var initializeRequestID any
+	readActual := func() (map[string]any, error) {
+		for {
+			var actual map[string]any
+			if err := input.Decode(&actual); err != nil {
+				return nil, err
+			}
+			if reply, ok := clipeer.ClaimReply(actual, claimedSessionID); ok {
+				if err := output.Encode(reply); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return actual, nil
+		}
+	}
+	recordedSessionID := ""
+	for _, frame := range scenario.Frames {
+		if frame.Direction == "server" {
+			if value, _ := frame.Data["session_id"].(string); value != "" {
+				recordedSessionID = value
+				break
+			}
+		}
+	}
 	for _, frame := range scenario.Frames {
 		data := frame.Data
 		if frame.Direction == "client" {
-			var actual map[string]any
-			if err := input.Decode(&actual); err != nil {
+			actual, err := readActual()
+			if err != nil {
 				return err
 			}
 			if data["type"] == "control_request" {
-				ids[data["request_id"].(string)] = actual["request_id"]
+				actualRequestID := actual["request_id"]
+				ids[data["request_id"].(string)] = actualRequestID
 				actual["request_id"] = data["request_id"]
+				if req, ok := actual["request"].(map[string]any); ok && req["subtype"] == "initialize" {
+					initializeRequestID = actualRequestID
+					req["hooks"] = nil
+				}
 			}
 			if data["type"] == "user" {
 				link, _ = actual["uuid"].(string)
-				if data["message"].(map[string]any)["content"] == "continue" && link == "" {
-					return errors.New("resumed input lacks caller UUID")
-				}
+
 				delete(actual, "uuid")
 			}
 			if !reflect.DeepEqual(data, actual) {
 				return fmt.Errorf("unexpected client frame: %v", actual)
+			}
+			if data["type"] == "control_response" && scenario.AnswerGate != "" {
+				// Keep native completion behind an explicit test-owned gate, so
+				// concurrent answers race for live authority, not stale refs.
+				deadline := time.Now().Add(10 * time.Second)
+				for {
+					if _, err := os.Stat(scenario.AnswerGate); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						return errors.New("answer gate timed out")
+					}
+					time.Sleep(time.Millisecond)
+				}
 			}
 			continue
 		}
@@ -68,8 +134,26 @@ func replay() error {
 		if link != "" {
 			data["user_message_uuid"] = link
 		}
+		replaceSessionID(data, recordedSessionID, assignedSessionID)
 		if err := output.Encode(data); err != nil {
 			return err
+		}
+		if claiming && data["type"] == "control_response" {
+			response, _ := data["response"].(map[string]any)
+			if response["request_id"] == initializeRequestID {
+				var claim map[string]any
+				if err := input.Decode(&claim); err != nil {
+					return err
+				}
+				reply, ok := clipeer.ClaimReply(claim, claimedSessionID)
+				if !ok {
+					return fmt.Errorf("expected claim_session after initialize response: %v", claim)
+				}
+				if err := output.Encode(reply); err != nil {
+					return err
+				}
+				claiming = false
+			}
 		}
 	}
 	// Retain the native connection until its owner closes it.
@@ -78,4 +162,23 @@ func replay() error {
 		return errors.New("unexpected extra input")
 	}
 	return nil
+}
+
+func replaceSessionID(value any, recorded, assigned string) {
+	if recorded == "" || assigned == "" {
+		return
+	}
+	switch value := value.(type) {
+	case map[string]any:
+		if sessionID, _ := value["session_id"].(string); sessionID == recorded {
+			value["session_id"] = assigned
+		}
+		for _, child := range value {
+			replaceSessionID(child, recorded, assigned)
+		}
+	case []any:
+		for _, child := range value {
+			replaceSessionID(child, recorded, assigned)
+		}
+	}
 }

@@ -161,6 +161,23 @@ func TestClaudeRebindsControlRequestsAndSettlesCancellation(t *testing.T) {
 	}, "\n"), output)
 }
 
+func TestClaudeUsesAssignedSessionForRecordedPlaceholder(t *testing.T) {
+	const assigned = "11111111-1111-4111-8111-111111111111"
+	directions := []scenario.Direction{scenario.ServerToClient, scenario.ServerToClient}
+	wires := []string{
+		`{"type":"system","subtype":"init","session_id":"claude-session","cwd":"/synthetic"}`,
+		`{"type":"system","subtype":"session_state_changed","session_id":"foreign-session","state":"idle"}`,
+	}
+	var output bytes.Buffer
+	err := Run(context.Background(), scripted("claude", directions, wires), scenario.Limits{}, strings.NewReader(""), &output, assigned)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"11111111-1111-4111-8111-111111111111","cwd":"/synthetic"}`,
+		wires[1],
+		"",
+	}, "\n"), output.String())
+}
+
 func TestClaudeStrictFailures(t *testing.T) {
 	request := `{"type":"control_request","request_id":"old","request":{"request_id":"literal"}}`
 	response := `{"type":"control_response","response":{"request_id":"old","payload":{"request_id":"literal"}}}`

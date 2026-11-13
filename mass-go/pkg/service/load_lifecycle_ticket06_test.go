@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
@@ -54,19 +55,25 @@ func (d *ticket06FaultDriver) LoadSession(_ context.Context, id string, a runtim
 	return nil
 }
 
-func (d *ticket06FaultDriver) OpenSession(_ context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *ticket06FaultDriver) OpenSession(ctx context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	b := &ticket06FaultBinding{id: a.SessionName, address: a, source: events.NewSource()}
 	d.mu.Lock()
 	d.bindings[b.id] = b
 	d.mu.Unlock()
+	if err := d.state(ctx, b, events.Idle); err != nil {
+		return runtime.DriverSession{}, err
+	}
 	return runtime.DriverSession{SessionID: b.id, Source: b.source}, nil
 }
 
-func (d *ticket06FaultDriver) ResumeSession(_ context.Context, id string, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *ticket06FaultDriver) ResumeSession(ctx context.Context, id string, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	b := &ticket06FaultBinding{id: id, address: a, source: events.NewSource()}
 	d.mu.Lock()
 	d.bindings[id] = b
 	d.mu.Unlock()
+	if err := d.state(ctx, b, events.Idle); err != nil {
+		return runtime.DriverSession{}, err
+	}
 	return runtime.DriverSession{SessionID: id, Source: b.source}, nil
 }
 
@@ -93,7 +100,29 @@ func (d *ticket06FaultDriver) marker(ctx context.Context, b *ticket06FaultBindin
 		b.readDone = true
 		d.mu.Unlock()
 	}
-	return d.emit(ctx, b, "", p, true)
+	if err := d.emit(ctx, b, "", p, true); err != nil {
+		return err
+	}
+	if phase == "native_completed" {
+		return d.state(ctx, b, events.Idle)
+	}
+	return nil
+}
+
+// This peer returns idle once a load reaches its native terminal and after each
+// prompt so lifecycle and delivery behavior can be observed independently.
+func (d *ticket06FaultDriver) state(ctx context.Context, b *ticket06FaultBinding, state events.SessionState) error {
+	e, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   b.address.Namespace,
+		SessionName: b.address.SessionName,
+		SessionID:   b.id,
+		Time:        time.Now().UTC(),
+	}, events.StateUpdate{State: &state}, b.source)
+	if err != nil {
+		return err
+	}
+	return d.pipe.Send(ctx, e)
 }
 
 func (d *ticket06FaultDriver) CancelHistoryLoad(ctx context.Context, id, loadID string) error {
@@ -147,8 +176,13 @@ func (d *ticket06FaultDriver) SendPrompt(ctx context.Context, id string, _ runti
 	if closed {
 		return runtime.InputReceipt{}, runtime.FailedPrecondition("native connection closed")
 	}
-	err := d.emit(ctx, b, "live-fact", events.AgentMessage{MessageID: "live-fact", Content: []events.ContentBlock{events.Text("healthy live work")}}, false)
-	return runtime.InputReceipt{Submission: "live-turn", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, err
+	if err := d.emit(ctx, b, "live-fact", events.AgentMessage{MessageID: "live-fact", Content: []events.ContentBlock{events.Text("healthy live work")}}, false); err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	if err := d.state(ctx, b, events.Idle); err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	return runtime.InputReceipt{Submission: "live-turn", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 func (d *ticket06FaultDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 
@@ -220,7 +254,7 @@ func TestTicket06CompletedLoadCancelCannotTouchLiveWork(t *testing.T) {
 	_, err = svc.SendPrompt(ticket06FaultContext(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("second live input")}})
 	require.NoError(t, err, "rejected load cancellation must leave subsequent live work usable")
 	records := ticket06FaultHistory(t, svc, ref, 3)
-	require.Equal(t, "healthy live work", records[2].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "healthy live work", events.TextOf(records[2].Payload().(events.AgentMessage).Content[0]))
 	r, err := svc.GetSession(ref)
 	require.NoError(t, err)
 	require.Equal(t, "completed", r.Status.HistoryLoad.Phase)
@@ -337,7 +371,7 @@ func TestTicket06CancelPagingRetainsPartialHistoryAndHealthyPeer(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond)
 	after := ticket06FaultHistory(t, svc, ref, 1)
 	require.Equal(t, before[0].EventID, after[0].EventID)
-	require.Equal(t, "retained first page", after[0].Payload().(events.UserMessage).Content[0].Text)
+	require.Equal(t, "retained first page", events.TextOf(after[0].Payload().(events.UserMessage).Content[0]))
 	_, err = svc.SendPrompt(ticket06FaultContext(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("not a complete import")}})
 	require.Error(t, err)
 	_, err = svc.CreateSession(ticket06FaultContext(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "healthy"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}})
@@ -346,7 +380,7 @@ func TestTicket06CancelPagingRetainsPartialHistoryAndHealthyPeer(t *testing.T) {
 	_, err = svc.SendPrompt(ticket06FaultContext(t), peer, runtime.Input{Content: []events.ContentBlock{events.Text("continue healthy peer")}})
 	require.NoError(t, err)
 	records := ticket06FaultHistory(t, svc, peer, 1)
-	require.Equal(t, "healthy live work", records[0].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "healthy live work", events.TextOf(records[0].Payload().(events.AgentMessage).Content[0]))
 }
 
 type ticket06DrainGate struct {
@@ -431,7 +465,7 @@ func TestTicket06CancelDuringLocalDrainPreservesAdmittedHistory(t *testing.T) {
 			}, 3*time.Second, 10*time.Millisecond)
 			records := ticket06FaultHistory(t, svc, ref, 2)
 			require.Equal(t, first[0].EventID, records[0].EventID)
-			require.Equal(t, "second admitted fact", records[1].Payload().(events.AgentMessage).Content[0].Text)
+			require.Equal(t, "second admitted fact", events.TextOf(records[1].Payload().(events.AgentMessage).Content[0]))
 			require.Equal(t, receipt.LoadID, records[1].Replay.LoadID)
 			r, err = svc.GetSession(ref)
 			require.NoError(t, err)

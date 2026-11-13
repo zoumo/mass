@@ -274,6 +274,16 @@ func TestSessionCreateClassifiesDriverRejectionBeforeResourceRelease(t *testing.
 	}
 }
 
+func TestHistoryLegacySchemaReturnsUnsupported(t *testing.T) {
+	a := &recordingAPI{err: &events.LegacyEventSchemaError{EventType: "agent.plan"}}
+	w := request(server(t, a), "GET", "/apis/v1/sessions/a%2Fb/events", "")
+	require.Equal(t, 422, w.Code, w.Body.String())
+	var got runtime.OperationError
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(t, "unsupported", got.Code)
+	require.Equal(t, "legacy_event_schema", got.Reason)
+}
+
 func (serverSuite *ServerSuite) TestSessionFeaturesPreserveFieldPresence() {
 	for _, test := range []struct {
 		name, features string

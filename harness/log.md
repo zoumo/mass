@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-10
+
+- **统一事件收敛到 agent-sdk-go**：经负责人授权，MASS live SessionEvent 的 type、payload、eventId、time、itemId、`_meta` 与工具 `toolName/provider/kind` 以 SDK `agent.Event` 为唯一真相源；MASS relay 只补 namespace/sessionName、Source、历史 replay 和持久化分类。删除 `agent.plan`，工具旧 `name` wire 与计划类型均为公开 breaking change；内容块与输入直接使用 SDK 类型，InputReceipt 增加 SDK 四态 result。同步 Runtime 事件合同、共享模型与示例，接口修订为 v0.3.0。
+
 ## 2026-11-08
 
 - **增加 Runtime Session 默认配置**：经负责人授权，RuntimeSpec 顶层增加 `features` 与 `mcpServers`，不放入类型专属 `config`。Runtime 启动、Driver 构造和 registry 配置校验不消费默认值；Service 在 createSession、resumeSession 与 loadSession 时读取当前 Runtime spec，与 Session 显式值合并后交给 Driver。features 按同名字段覆盖，MCP server 按名称整体覆盖并保持 Runtime 顺序，新名称按 Session 顺序追加；Session 空 MCP 列表表示无覆盖，不清空 Runtime 默认项。合并结果为 nil 时保留 provider ambient，非 nil（含空列表）是本次完整 server 集合：Claude 使用 strict MCP configuration，Codex 要求隔离且不含 ambient `mcp_servers` 的 `CODEX_HOME`。远端 URL、秘密引用和 transport 字段采用公共安全约束。Session spec 只保存显式值，不复制合并结果。Runtime 更新对下一次 Session 打开操作生效，已打开 Session 不热更新。同步 Runtime/Service、load、架构、HTTP、存储、massctl 与合同入口，接口修订为 v0.2.20。
@@ -136,3 +140,7 @@
 - **事件处理器**：进程内按 Session 构造并串行处理，支持登记、关闭、停用与显式启用；业务消费与核心持久提交分离，不提供可靠业务重放。
 - **开发规范**：语言无关编码原则与测试验收要求独立维护在 principles/；远端认证、秘密、原生身份与资源所有权要求随 Runtime 维护。
 - **删除过时内容**：删除旧文档来源清单、被替代的设计记录及 HTTP/存储格式摘录，移除对前一版文档目录的引用。HTTP 与持久化绑定仅保留当前要求和真实待决项。
+
+## 2026-11-11 主 Session 配置
+
+按人类批准的配置语义增加初始 model/effort、瞬态单项 setter 与原运行责任合同，同步 TypeSpec、HTTP/存储及 CLI 映射。setter 不持久、恢复请求初始值；设计批准不代表实现或运行验收通过。

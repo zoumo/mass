@@ -8,6 +8,11 @@ namespace MASS.Design;
  * 公共调用者无需先取得 Runtime 实例或内部运行凭证。
  */
 interface SessionService {
+  /** 当前运行瞬态单项更新；原运行接纳/在途责任及错误见配置合同。 */
+  setSessionConfig(session: SessionRef, change: ConfigChange):
+    | ConfigReceipt
+    | OperationError;
+
   /** 新空目标异步恢复同一原生会话并回放；可选 features/mcpServers 是本次显式覆盖，
    * 与当前 Runtime Session 默认值合并后交给 Driver。先建接收绑定，完成本地提交/分发后可直接输入。
    * 接受不等于存在或完成，结果查询 Session.status.historyLoad；普通 resume 不回放。 */

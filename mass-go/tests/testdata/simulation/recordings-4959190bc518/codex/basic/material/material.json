@@ -1,0 +1,24 @@
+{
+  "files": {
+    "config/sessions/2026/11/11/rollout-2026-11-11T17-51-49-01a1ca05-54bb-7842-b715-bc7dfceb7428.jsonl": "2554430b307d8f7b19261a6a6363e3ca2cd0583dd31c7af19ee266ed06a6c511",
+    "manifest.json": "a236d23411a8d4fe5b947875038883711857d9122012ebb96aae449cc1b9d8db",
+    "plan.json": "5c18f0404ebbd7325597ee5b611fe06cdc1941d3ff47b181f5cc740e3b71b5b7",
+    "raw/manifest.json": "d3324cc4637f9b777b181f3d3541fe1e4db500a2448ffe01b8970367bf71de60",
+    "raw/raw.jsonl": "ccafe94dcb972b9ba9cd9375afae30b5b0aa73eb6fb80e07d3287f6cb386c9b0",
+    "raw/stderr.raw": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "raw/transport.json": "b2f9a34752a7ca9be650c664ad8b4774f6c1b5ddaac09b4ca153f46e039c37e0",
+    "report.json": "58147e0f66718a085ae4a596ceff366ee8f2bf753e571900d01166e4facb1d41"
+  },
+  "id": "50194530555049c8e6a258fa3b85ebb5",
+  "kind": "capture",
+  "action": "record",
+  "provenance": "consumer",
+  "path": "/private/var/tmp/mass-record-codex-3589059373/session/materials/50194530555049c8e6a258fa3b85ebb5",
+  "planSHA256": "5c18f0404ebbd7325597ee5b611fe06cdc1941d3ff47b181f5cc740e3b71b5b7",
+  "manifestSHA256": "a236d23411a8d4fe5b947875038883711857d9122012ebb96aae449cc1b9d8db",
+  "recordingSHA256": "ccafe94dcb972b9ba9cd9375afae30b5b0aa73eb6fb80e07d3287f6cb386c9b0",
+  "connections": [
+    "main"
+  ],
+  "createdAt": "2026-11-11T09:52:14.625339Z"
+}

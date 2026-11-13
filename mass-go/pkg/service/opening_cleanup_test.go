@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -27,7 +28,7 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 	dir := t.TempDir()
 	peer := filepath.Join(dir, "peer")
 	pidFile := filepath.Join(dir, "pid")
-	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\nexit 1\n"), 0o700))
+	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\nexit 1\n"), 0o700))
 	st, err := file.Open(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
@@ -45,7 +46,9 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 		InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("hello")}},
 	})
 	require.Error(t, err)
-	require.ErrorContains(t, err, "initialize", "release classification must retain the native failure")
+	var nativeFailure *nativeclaude.Error
+	require.ErrorAs(t, err, &nativeFailure, "release classification must retain the native failure")
+	require.Equal(t, "initialize", nativeFailure.Op)
 	require.Empty(t, created.Status.SessionID)
 	require.Nil(t, created.InitialInputReceipt)
 	t.Logf("opening failure preserved: %v", err)
@@ -75,7 +78,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 					if mode == "timeout" {
 						ending = "echo ready > '" + ready + "'\nwhile read -r request; do :; done\n"
 					}
-					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\n"+ending), 0o700))
+					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\n"+ending), 0o700))
 				}
 				var factory runtime.Factory = claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}
 				if kind == "codex" {
@@ -132,7 +135,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
 	dir := t.TempDir()
 	peer, ready, pidFile := filepath.Join(dir, "peer"), filepath.Join(dir, "ready"), filepath.Join(dir, "pid")
-	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\necho ready > '"+ready+"'\nwhile read -r request; do :; done\n"), 0o700))
+	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\necho ready > '"+ready+"'\nwhile read -r request; do :; done\n"), 0o700))
 	st, err := file.Open(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })

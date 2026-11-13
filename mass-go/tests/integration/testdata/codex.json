@@ -15,6 +15,9 @@
           "clientInfo": {
             "name": "mass",
             "version": "2"
+          },
+          "capabilities": {
+            "experimentalApi": true
           }
         }
       }
@@ -52,8 +55,7 @@
         "id": 92,
         "method": "thread/start",
         "params": {
-          "cwd": "/synthetic",
-          "ephemeral": false
+          "cwd": "/synthetic"
         }
       }
     },
@@ -96,6 +98,21 @@
     {
       "ordinal": 6,
       "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "thread/status/changed",
+        "params": {
+          "threadId": "codex-session",
+          "status": {
+            "type": "idle"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
       "direction": "c2s",
       "epoch": 1,
       "wire": {
@@ -114,7 +131,7 @@
       }
     },
     {
-      "ordinal": 7,
+      "ordinal": 8,
       "channel": "protocol",
       "direction": "s2c",
       "epoch": 1,
@@ -144,7 +161,7 @@
           }
         }
       },
-      "ordinal": 8
+      "ordinal": 9
     },
     {
       "channel": "protocol",
@@ -168,7 +185,7 @@
           "completedAtMs": 1792458123000
         }
       },
-      "ordinal": 9
+      "ordinal": 10
     },
     {
       "channel": "protocol",
@@ -183,7 +200,7 @@
           "delta": "preview "
         }
       },
-      "ordinal": 10
+      "ordinal": 11
     },
     {
       "channel": "protocol",
@@ -198,7 +215,7 @@
           "delta": "only"
         }
       },
-      "ordinal": 11
+      "ordinal": 12
     },
     {
       "channel": "protocol",
@@ -220,7 +237,7 @@
           "startedAtMs": 1792458123000
         }
       },
-      "ordinal": 12
+      "ordinal": 13
     },
     {
       "channel": "protocol",
@@ -244,7 +261,7 @@
           "completedAtMs": 1792458123000
         }
       },
-      "ordinal": 13
+      "ordinal": 14
     },
     {
       "channel": "protocol",
@@ -263,7 +280,7 @@
           "completedAtMs": 1792458123000
         }
       },
-      "ordinal": 14
+      "ordinal": 15
     },
     {
       "channel": "protocol",
@@ -280,7 +297,7 @@
           }
         }
       },
-      "ordinal": 15
+      "ordinal": 16
     },
     {
       "direction": "c2s",
@@ -293,7 +310,7 @@
           "threadId": "codex-session"
         }
       },
-      "ordinal": 16
+      "ordinal": 17
     },
     {
       "direction": "s2c",
@@ -305,7 +322,7 @@
           "status": "unsubscribed"
         }
       },
-      "ordinal": 17
+      "ordinal": 18
     },
     {
       "direction": "s2c",
@@ -317,7 +334,7 @@
           "threadId": "codex-session"
         }
       },
-      "ordinal": 18
+      "ordinal": 19
     }
   ]
 }

@@ -44,7 +44,7 @@ HTTP、CLI 与进程内调用都进入 RuntimeService 或 SessionService。Servi
 
 Service 决定业务前置条件、操作顺序、资源状态与失败补偿。MetaStore 提供资源 CRUD、唯一性约束、筛选分页及内置 generation 维护，EventStore 提供历史批量追加、读取和 syncedEventId 同步进度；RuntimeRegistry 提供配置校验和 Driver 构造，RuntimeDriver 提供实际运行能力；当前运行的查找、登记与移除统一由 Service 负责。Events 提供每 Session 一个 EventBroadcast，只管实时 Handler，Subscription 由队列 Handler 封装；历史直接由 Service 调用 EventStore，不进入 Broadcast；存储不启动 Agent，Runtime 不读取公共资源目录。
 
-暂不提供 JSON Patch。公共 updateRuntime 接收完整 RuntimeSpec，Service 校验后向 MetaStore.update 提交完整资源并携带读取快照的 resourceVersion；冲突后的重新读取与业务判断由 Service 负责。Session 尚无公共配置更新方法，本次不新增。
+暂不提供 JSON Patch。公共 updateRuntime 接收完整 RuntimeSpec，Service 校验后向 MetaStore.update 提交完整资源并携带读取快照的 resourceVersion；冲突后的重新读取与业务判断由 Service 负责。Session 提供当前运行的单项瞬态 setSessionConfig；不更新持久 spec，规则见 [配置合同](../runtime/session-config.md)。
 
 Service 不能用普通“先查再写”代替 Store 的原子唯一性检查或配置修订分配。创建 Session 成功后保存失败时，由 Service 协调 Driver 清理并保留未知结果责任；Store 事务不能包含外部 Agent 副作用。
 
@@ -143,7 +143,7 @@ SessionStatus.state 使用 [SessionState](../../shared/states.tsp)，替换原�
 
 ### Session close
 
-SessionService.closeSession 从任意状态接纳，包括 `opening`、`idle`、`running`、`requires_action`、`closing`、`offline` 和 `unknown`。接纳后立即建立关闭栅栏：新的 prompt、answer、cancel 和 resume 被拒绝，get、list、history、watch 等只读操作继续可用。关闭与已接纳业务操作、resume 和其他 close 使用同一 Session 操作序列；先被接纳的一方保留其目标，close 随后接管清理。close 不撤销已经产生的外部副作用，也不声称此前工作成功完成。[^idle-session-close]
+SessionService.closeSession 从任意状态接纳，包括 `opening`、`idle`、`running`、`requires_action`、`closing`、`offline` 和 `unknown`。接纳后立即建立关闭栅栏：新的 prompt、answer、cancel、setSessionConfig 和 resume 被拒绝，get、list、history、watch 等只读操作继续可用。关闭与已接纳业务操作、resume 和其他 close 使用同一 Session 操作序列；先被接纳的一方保留其目标，close 随后接管清理。close 不撤销已经产生的外部副作用，也不声称此前工作成功完成。[^idle-session-close]
 
 对需要调用 SDK 的 close 尝试，唯一成功条件是 Driver 对底层 SDK Session close 返回成功；再次 close 已 `offline` 的 Session 直接成功，对无当前 SDK 句柄的 `unknown` Session 则只完成 MASS 内部清理。SDK close 成功即表示 MASS 接受本次 native close，即使 Codex 原生 thread 可能由 provider 继续处理，或 Claude SDK 内部以自己的方式结束进程；MASS 不额外 interrupt、等待工作终止、强杀、按 PID 清理或探测后端健康。成功后 Service 仍须结算已接纳 delivery、history commit 和实时发布责任，清除当前运行版本、能力和实际功能，保留身份、历史与恢复材料，之后才写入 `offline`。SDK close 已成功但这些 MASS 内部责任尚未结算或结算失败时，Session 保持 `closing`、返回错误，并在后续显式 close 中继续结算，不能先公开 `offline`。close 不删除 Session，也不停止所属 Runtime；关闭最后一个 Session 后 Runtime 仍保持 `running`。
 
@@ -225,7 +225,7 @@ barrier、排空证明或其他协调手段可作为 Service 的 internal seam�
 
 ## Session spec 与 agentrun 的参考关系
 
-SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDirs、features 和 mcpServers 上增加 runtimeRef。路径按 Agent 所在环境解释；额外目录不代表授权。systemPrompt 是配置，创建与恢复不隐式发送业务输入。features 是持久的功能请求，字段省略时继承当前 Runtime 默认值或 schema 默认值；Driver 返回实际生效值，Session.status.effectiveFeatures 记录本次运行的实际值。mcpServers 是本次 Session 的显式覆盖项，打开时与当前 Runtime 默认列表按名称合并。请求开启但 Driver 不支持时降级为 false；其他显式不支持的选项必须报错。Session spec 只保存显式值，不写回合并结果。
+SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDirs、config、features 和 mcpServers 上增加 runtimeRef。路径按 Agent 所在环境解释；额外目录不代表授权。systemPrompt 是配置，创建与恢复不隐式发送业务输入。features 是持久的功能请求，字段省略时继承当前 Runtime 默认值或 schema 默认值；Driver 返回实际生效值，Session.status.effectiveFeatures 记录本次运行的实际值。mcpServers 是本次 Session 的显式覆盖项，打开时与当前 Runtime 默认列表按名称合并。请求开启但 Driver 不支持时降级为 false；其他显式不支持的选项必须报错。Session spec 只保存显式值，不写回合并结果。
 
 字段沿用此前 agentrun 参考讨论，bundleDir 与私有恢复材料由运行时实现管理；不加入无约束 _meta 或 permissions。MCP 使用受约束的 mcpServers 值，不接受任意透传 map。SessionService 当前没有 updateSession 或 deleteSession，close 保留身份和历史。Runtime 的 Session 默认值设置不属于更新 Session spec。
 
@@ -278,3 +278,5 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 ## 显式 load
 
 [异步 load](load.md)纳管已知原生 sessionId 的保留历史，只接受新空目标。先完成唯一预留和 Service 接收绑定，再调用 Driver；异步结果由 Session.status.historyLoad 查询。原生完成与本地提交/分发完成分别结算，失败保留部分历史并拒绝重复导入。load 复用原生 resume，成功保留同一恢复运行，完成本地结算后直接启用输入；普通 resume 不导入历史。加载中及失败时拒绝输入，旧交互永不复活。
+
+主 Session 的初始 `config.model/effort`、瞬态 setter、原运行在途责任及错误以[配置合同](../runtime/session-config.md)为准。初始值保存在 Session spec，create/resume/load 传给 SDK；setter 不持久，close/resume 重新请求初始值。可变配置不参与恢复身份验证。

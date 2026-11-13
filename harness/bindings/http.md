@@ -113,6 +113,7 @@ RuntimeSpec 的 `features` 与 `mcpServers` 位于 spec 顶层，不属于 `conf
 | `GET {session}` | 查询资源 | 200，Session 资源 |
 | `POST {session}/resume` | 恢复原 Session，可选 SessionResume 新显式输入 | 200，SessionResumed |
 | `POST {session}/close` | 从任意状态 close Session | 200，Session 资源 |
+| `POST {session}/config` | 当前运行瞬态单项配置，不更新 spec | 200，ConfigReceipt |
 | `POST {session}/inputs` | 提交输入 | 200，输入回执 |
 | `POST {session}/interactions/{interaction64}/answer` | 提交交互答案 | 200，回答回执 |
 | `POST {session}/cancel` | 请求取消当前工作 | 200，取消回执 |
@@ -197,6 +198,7 @@ Cache-Control: no-cache, no-store, no-transform
 | not_found | 404 | 路由或目标资源不存在 |
 | already_exists | 409 | 名称或唯一身份冲突 |
 | conflict | 409 | 当前状态、在途操作、引用或交互结算阻止操作 |
+| native_rejected | 422 | SDK 明确的原生拒绝，保留 reason |
 | unsupported | 422 | 已识别的业务操作或类型能力不支持 |
 | resource_exhausted | 429 | 实际资源耗尽；此映射不要求 HTTP 预设容量或速率阈值 |
 | unavailable | 503 | 服务、依赖或订阅当前不可用，且未产生本次副作用 |
@@ -262,3 +264,17 @@ HTTP v1 确定以上路由、JSON、状态码、授权入口与 SSE 形式，遵
 ## 异步原生 load
 
 `POST /apis/v1/sessions/load` 按 [load](../modules/service/load.md)接纳新空目标，202 只证明后台责任已建立，不证明原生存在、同一会话已恢复、读取穷尽或本地分发完成。最终 completed 后无需额外 resume 即可在原会话输入；不以释放成功运行连接作为完成条件。Location 指向该 Session 的既有查询路径，后续 GET 读取 status.historyLoad；无新增通用 Operation 查询。请求超时/断开不取消已接纳 load，不自动重试。`POST {session}/history-load/cancel` 携带原 loadId，取消尚未本地完成的 load 并释放本次恢复连接；最终清理查询状态。已完成 load 拒绝该旧取消请求，后续运行使用普通 cancel 或 close；不取消其他客户端工作。SSE 沿既有 Broadcast 只观察之后事件，不保证 load 响应与订阅就绪之间无缝补历史。HTTP 202 接纳后发生的 not_found/unsupported/身份错误记录在 historyLoad.error，不改写为成功或新建。
+
+## 主 Session 配置
+
+create 的 spec 与 load 顶层支持可选 `config: {model?: string, effort?: string}`。
+省略/空对象/空字符串按 SDK 省略；null、非字符串、NUL 或非法编码在副作用前拒绝。
+非空值原样传递并持久保存为初始配置，resume 不提供临时覆盖。
+
+`POST /apis/v1/sessions/{sessionId}/config` 与
+`POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/config` 使用既有寻址规则，
+body 为 ConfigChange，200 直接返回 `{change:{id,value}, acceptance:{sent?,nativeAccepted?,nativeRecorded?}}`。
+setter 瞬态且不自动激活，不等待 idle、不重试；完整生命周期见[配置合同](../modules/runtime/session-config.md)。
+`native_rejected` 映射 422；错误继续只返回 `{code,reason,message}`，不增加失败 receipt。
+其余 invalid_argument=400、unsupported=422、conflict=409、deadline_exceeded=504、outcome_unknown=500
+遵守既有错误规则；成功不是配置已生效的证明。

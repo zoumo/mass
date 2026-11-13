@@ -1,7 +1,7 @@
 # Claude continuous input: attribution boundary
 
 This implementation uses the fixed SDK
-`v0.0.0-20261106173112-83036ea07a0c`. No native TurnID is created.
+`v0.0.0-20261110170013-efcb24caac28`. No native TurnID is created.
 
 ## What the receipt proves
 

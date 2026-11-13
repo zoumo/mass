@@ -10,7 +10,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
 	"github.com/zoumo/mass/mass-go/internal/testpeer/scenario"
@@ -37,7 +42,26 @@ func run(args []string) int {
 			break
 		}
 	}
-	_ = native // Native startup arguments are declarations, never executed.
+	if slices.Contains(native, "--version") {
+		fmt.Fprintln(os.Stdout, nativeclaude.MinimumCLIVersion+" (Claude Code)")
+		return exitOK
+	}
+	assignedSessionID := ""
+	claimSession := false
+	for _, arg := range native {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			assignedSessionID = value
+		}
+		if arg == "--await-claim" {
+			claimSession = true
+		}
+	}
+	if claimSession {
+		// The synthetic CLI assigns the identity a real spare would obtain from
+		// claim_session; scripted session_id and cwd placeholders follow that
+		// binding.
+		assignedSessionID = uuid.NewString()
+	}
 
 	fs := flag.NewFlagSet("mass-testpeer", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -80,7 +104,16 @@ func run(args []string) int {
 	_ = os.Stdin.SetReadDeadline(deadline)
 	_ = os.Stdout.SetWriteDeadline(deadline)
 
-	err = replay.Run(ctx, document, limits, os.Stdin, os.Stdout)
+	if claimSession {
+		cwd, cwdErr := os.Getwd()
+		if cwdErr != nil {
+			fmt.Fprintln(os.Stderr, "mass-testpeer:", cwdErr)
+			return exitConfiguration
+		}
+		err = replay.RunClaim(ctx, document, limits, os.Stdin, os.Stdout, assignedSessionID, cwd)
+	} else {
+		err = replay.Run(ctx, document, limits, os.Stdin, os.Stdout, assignedSessionID)
+	}
 	if err == nil {
 		if *receipt != "" {
 			err = writeReceipt(ctx, *receipt, *provider, document)

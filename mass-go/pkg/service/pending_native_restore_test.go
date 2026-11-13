@@ -18,8 +18,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -30,25 +32,40 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-// The native peer accepts the explicit resume input but withholds identity.
-// Fresh create establishes real adapter recovery material and durable facts.
+const pendingRestoreSessionID = "19191919-1919-4191-8191-191919191919"
+
+// The native peer withholds resume identity before any input can be sent.
+// Fresh create establishes adapter recovery material and durable facts.
 func TestPendingNativeRestorePeer(t *testing.T) {
 	dir := os.Getenv("MASS_PENDING_RESTORE_PEER")
 	if dir == "" {
 		return
 	}
+	answerSyntheticClaudeVersion()
+	sessionID := pendingRestoreSessionID
 	resumed := false
+	claiming := false
 	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--resume=") {
-			if arg != "--resume=restore-original" {
-				os.Exit(5)
-			}
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			sessionID = value
 			resumed = true
+		}
+		if arg == "--await-claim" {
+			claiming = true
 		}
 	}
 	phase := "create"
 	if resumed {
 		phase = "resume"
+	}
+	if claiming {
+		if resumed {
+			os.Exit(3)
+		}
+		sessionID = uuid.NewString()
 	}
 	must := func(err error) {
 		if err != nil {
@@ -75,36 +92,75 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 	cwd, err := os.Getwd()
 	must(err)
 	init := func() {
-		send(map[string]any{"type": "system", "subtype": "init", "session_id": "restore-original", "cwd": cwd})
+		send(map[string]any{
+			"type": "system", "subtype": "init", "session_id": sessionID,
+			"cwd": cwd, "claude_code_version": nativeclaude.MinimumCLIVersion,
+		})
 	}
-	resumeInput := make(chan string, 1)
+	var identityMu sync.Mutex
+	identityReleased := false
+	claimed := false
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var v map[string]any
 		must(json.Unmarshal(scan.Bytes(), &v))
 		if v["type"] == "control_request" {
 			r := v["request"].(map[string]any)
-			if r["subtype"] != "initialize" {
+			switch r["subtype"] {
+			case "initialize":
+				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
+				mark("ack", "initialize acknowledged")
+				if resumed {
+					go func() {
+						for {
+							if _, e := os.Stat(filepath.Join(dir, "release-init")); e == nil {
+								identityMu.Lock()
+								init()
+								identityReleased = true
+								identityMu.Unlock()
+								return
+							}
+							time.Sleep(5 * time.Millisecond)
+						}
+					}()
+				} else if !claiming {
+					mark("unexpected", "create did not await claim")
+					os.Exit(11)
+				}
+				continue
+			case "claim_session":
+				if resumed || !claiming || claimed {
+					mark("unexpected", "unexpected claim_session")
+					os.Exit(12)
+				}
+				claimCWD, _ := r["cwd"].(string)
+				if claimCWD == "" {
+					mark("unexpected", "claim_session has no cwd")
+					os.Exit(13)
+				}
+				send(map[string]any{
+					"type": "control_response",
+					"response": map[string]any{
+						"subtype":    "success",
+						"request_id": v["request_id"],
+						"response": map[string]any{
+							"status":     "ok",
+							"session_id": sessionID,
+							"cwd":        claimCWD,
+						},
+					},
+				})
+				claimed = true
+				mark("claim", "claim_session acknowledged")
+				identityMu.Lock()
+				init()
+				identityReleased = true
+				identityMu.Unlock()
+				continue
+			default:
 				mark("unexpected", "non-initialize control")
 				os.Exit(3)
 			}
-			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
-			mark("ack", "initialize acknowledged")
-			if resumed {
-				go func() {
-					uuid := <-resumeInput
-					for {
-						if _, e := os.Stat(filepath.Join(dir, "release-init")); e == nil {
-							init()
-							send(map[string]any{"type": "assistant", "session_id": "restore-original", "user_message_uuid": uuid, "message": map[string]any{"id": "resume-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "resume answer", "apiBlockIndex": 0}}}})
-							send(map[string]any{"type": "result", "subtype": "success", "session_id": "restore-original", "user_message_uuid": uuid, "uuid": "resume-result"})
-							return
-						}
-						time.Sleep(5 * time.Millisecond)
-					}
-				}()
-			}
-			continue
 		}
 		if v["type"] != "user" {
 			mark("unexpected", "unexpected input or replay")
@@ -120,8 +176,17 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 				mark("unexpected", "duplicate resume input")
 				os.Exit(9)
 			}
+			identityMu.Lock()
+			released := identityReleased
+			identityMu.Unlock()
+			if !released {
+				mark("unexpected", "input before native identity")
+				os.Exit(10)
+			}
 			mark("input", "one explicit resume input")
-			resumeInput <- v["uuid"].(string)
+			send(map[string]any{"type": "assistant", "session_id": sessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "resume-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "resume answer", "apiBlockIndex": 0}}}})
+			send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "user_message_uuid": v["uuid"], "uuid": "resume-result"})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 			continue
 		}
 		if content != "explicit original input" {
@@ -133,9 +198,9 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			os.Exit(7)
 		}
 		mark("input", "one explicit input")
-		init()
-		send(map[string]any{"type": "assistant", "session_id": "restore-original", "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer", "apiBlockIndex": 0}}}})
-		send(map[string]any{"type": "result", "subtype": "success", "session_id": "restore-original", "user_message_uuid": v["uuid"], "uuid": "first-result"})
+		send(map[string]any{"type": "assistant", "session_id": sessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer", "apiBlockIndex": 0}}}})
+		send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "user_message_uuid": v["uuid"], "uuid": "first-result"})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 	}
 	mark("eof", "stdin closed")
 	os.Exit(0)
@@ -192,7 +257,8 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		defer cancel()
 		assert.NoError(t, svc.Shutdown(cleanup))
 	})
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": map[string]any{"MASS_PENDING_RESTORE_PEER": dir}}}})
+	configDir := filepath.Join(dir, "claude-config")
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": map[string]any{"MASS_PENDING_RESTORE_PEER": dir, "CLAUDE_CONFIG_DIR": configDir}}}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -201,14 +267,21 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	created, err := svc.CreateSessionWithInput(ctx, resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "pending"}, Spec: resource.SessionSpec{RuntimeRef: "pending", SessionSpec: runtime.SessionSpec{Cwd: dir}}, InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("explicit original input")}}})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: created.Status.SessionID}
-	require.Equal(t, "restore-original", ref.SessionID)
+	_, err = uuid.Parse(ref.SessionID)
+	require.NoError(t, err)
+	require.NotEqual(t, pendingRestoreSessionID, ref.SessionID)
+	projectDir := filepath.Join(configDir, "projects", "pending")
+	require.NoError(t, os.MkdirAll(projectDir, 0o700))
+	transcript, err := json.Marshal(map[string]any{"type": "user", "sessionId": ref.SessionID, "cwd": dir, "message": map[string]any{"role": "user", "content": "saved original input"}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, ref.SessionID+".jsonl"), append(transcript, '\n'), 0o600))
 	var before store.HistoryPage
 	require.Eventually(t, func() bool {
 		before, err = svc.ListHistoryEvents(ref, store.HistoryQuery{Types: []string{"agent.message"}})
 		r, e := svc.GetSession(ref)
 		return err == nil && e == nil && r.Status.State == events.Idle && len(before.Events) == 1
 	}, 5*time.Second, 10*time.Millisecond)
-	require.Equal(t, "durable original answer", before.Events[0].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "durable original answer", events.TextOf(before.Events[0].Payload().(events.AgentMessage).Content[0]))
 	closed, err := svc.CloseSession(ctx, ref)
 	require.NoError(t, err)
 	require.Equal(t, events.SessionState("offline"), closed.Status.State)
@@ -224,13 +297,13 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	require.Eventually(t, func() bool {
 		select {
 		case e := <-resumed:
-			t.Fatalf("resume returned before the explicit input was observed: %v", e)
+			t.Fatalf("resume returned before native identity was released: %v", e)
 		default:
 		}
 		_, ackErr := os.Stat(filepath.Join(dir, "resume-ack"))
-		_, inputErr := os.Stat(filepath.Join(dir, "resume-input"))
-		return ackErr == nil && inputErr == nil
-	}, 5*time.Second, 10*time.Millisecond, "restore must accept initialize and explicit input")
+		return ackErr == nil
+	}, 5*time.Second, 10*time.Millisecond, "restore must acknowledge initialize while withholding identity")
+	require.NoFileExists(t, filepath.Join(dir, "resume-input"), "resume input must wait for native identity")
 	data, err := os.ReadFile(filepath.Join(dir, "resume-pid"))
 	require.NoError(t, err)
 	pid, err := strconv.Atoi(string(data))
@@ -255,8 +328,12 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "release-init"), nil, 0o600))
 		require.Eventually(t, func() bool {
 			current, e := svc.GetSession(ref)
-			return e == nil && current.Status.AppliedGeneration != 0
-		}, 5*time.Second, 10*time.Millisecond, "original detached owner must accept late init without replacement resume")
+			if e != nil || current.Status.AppliedGeneration == 0 || current.Status.State != events.Idle {
+				return false
+			}
+			history, e := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+			return e == nil && len(history.Events) == len(before.Events)+1
+		}, 5*time.Second, 10*time.Millisecond, "original detached owner must send the one input after late identity and persist its answer")
 	}
 	stop, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()
@@ -284,13 +361,17 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	if mode == "caller-abandon-only" {
 		require.Len(t, after.Events, len(before.Events)+1)
 		require.Equal(t, before.Events, after.Events[:len(before.Events)], "history identity/order/content must survive canceled restore")
-		require.Equal(t, "resume answer", after.Events[len(before.Events)].Payload().(events.AgentMessage).Content[0].Text)
+		require.Equal(t, "resume answer", events.TextOf(after.Events[len(before.Events)].Payload().(events.AgentMessage).Content[0]))
 	} else {
 		require.Equal(t, before, after, "history identity/order/content must survive canceled restore")
 	}
 	require.ErrorIs(t, syscall.Kill(pid, 0), syscall.ESRCH)
 	require.FileExists(t, filepath.Join(dir, "resume-eof"))
-	require.FileExists(t, filepath.Join(dir, "resume-input"))
+	if mode == "caller-abandon-only" {
+		require.FileExists(t, filepath.Join(dir, "resume-input"))
+	} else {
+		require.NoFileExists(t, filepath.Join(dir, "resume-input"), "stopped pending identity must not dispatch input")
+	}
 	require.NoFileExists(t, filepath.Join(dir, "resume-unexpected"))
 	opened, err := os.ReadFile(filepath.Join(dir, "opened"))
 	require.NoError(t, err)
@@ -514,7 +595,7 @@ func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, page.Events, 1, "late accepted fact must drain before Stop success, including explicit cleanup retry")
 			require.Equal(t, "19191919-1919-4191-8191-191919191919", page.Events[0].EventID)
-			require.Equal(t, "accepted late restore fact", page.Events[0].Payload().(events.AgentMessage).Content[0].Text)
+			require.Equal(t, "accepted late restore fact", events.TextOf(page.Events[0].Payload().(events.AgentMessage).Content[0]))
 			require.Equal(t, int32(1), d.resumeCalls.Load(), "no replacement native restore")
 			require.Zero(t, d.promptCalls.Load(), "no native input dispatch while stopping or stopped")
 		})

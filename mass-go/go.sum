@@ -1,3 +1,5 @@
+github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
+github.com/Masterminds/semver/v3 v3.5.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/RaveNoX/go-jsoncommentstrip v1.0.0/go.mod h1:78ihd09MekBnJnxpICcwzCMzGrKSKYe4AqU6PDYYpjk=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0 h1:axGnT1gRIfimI7gJifB699GoE/oq+F2MU7Dml6nw9rQ=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0/go.mod h1:lvDnEdqiQrp0O42VQGgmlKpxL1AP2+08jFMw88y4klk=
@@ -75,10 +77,10 @@ github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
-github.com/zoumo/agent-sdk-go v0.0.0-20261106173112-83036ea07a0c h1:rZoSAQnhL5+oIG4Xj5OteO4umfPVRbWlOmdSPW2bnTU=
-github.com/zoumo/agent-sdk-go v0.0.0-20261106173112-83036ea07a0c/go.mod h1:rP2Upnb1SVcwShay05v6ycxALiLnaoGdVr0LgQuRX68=
-github.com/zoumo/agent-sdk-testify v0.0.0-20261105165039-e4799fe3484c h1:F9xPzJqnO2VKQvYwnz/r7O6WoMbv/S2lHCe2ovAYB44=
-github.com/zoumo/agent-sdk-testify v0.0.0-20261105165039-e4799fe3484c/go.mod h1:yPx7HTYxq8lm5ljTWGcrhRp2J5SmCPSD9iqdRIdnNqc=
+github.com/zoumo/agent-sdk-go v0.0.0-20261113030733-09d4ddf1ff20 h1:N84FF6QUmUU/xFlvA74gf/xktWVxVoXhXbQS8J4RqMA=
+github.com/zoumo/agent-sdk-go v0.0.0-20261113030733-09d4ddf1ff20/go.mod h1:dRhSskQB7VUUkutXXahdpPByPxFxL42SiUYxjYxvgo4=
+github.com/zoumo/agent-sdk-testify v0.2.1 h1:D7ErGvcrZRiVITKWGQXM8IY0htqtHfLs5X+lCdzOnxE=
+github.com/zoumo/agent-sdk-testify v0.2.1/go.mod h1:XqC5i1y/g7tl3V0iA21J/8IUN8e7eXMYw0dykwkG/tY=
 github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a h1:Hyb0V2EaZhrmAh/kEl4Cxi1p3uAmSXAI2ZCL9xLbUWY=
 github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a/go.mod h1:bBk2oZ4wN9zgq+9H2bObmGW7vVEetcJV1M/AvieZUN0=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=

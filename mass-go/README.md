@@ -7,7 +7,7 @@ Executable assembly lives under `cmd/`; CLI and other library modules live under
 
 ## Layered verification
 
-From the repository root, with Go 1.26.9 and pinned dependencies already cached:
+From the repository root, with Go 1.26.10 and pinned dependencies already cached:
 
 ```sh
 # Package-local unit tests
@@ -46,13 +46,11 @@ SDK probe passes are reported separately and do not stand in for this suite.
 `prototype-go` remains the focused entrypoint demonstration, and
 `acceptance-sdk-go` remains the cross-capability selector.
 
-Claude creation can return `unknown` after its synthetic init: identity alone is
-not an idle/work-state proof. Claude supports serial same-connection input only
-when native linkage proves the preceding work completed. Unlinked or conflicting
-results leave work attribution unknown and fence later input; caller UUIDs are
-not invented native TurnIDs. Synthetic echo-positive tests do not prove a real
-Claude CLI echoes linkage. Resume checks retained identity/history and explicit
-init evidence, not real-model persistence. See [layered acceptance](docs/acceptance.md).
+Claude creation can return `unknown` after init: identity alone does not prove
+idle state. The Claude Driver uses the SDK agent Provider and Session, including
+its message, block, tool, interaction and state conversion. Input receipts retain
+the SDK `applied_best_effort` result without upgrading native acceptance.
+See [layered acceptance](docs/acceptance.md).
 
 ## Daemon and CLI
 
@@ -162,10 +160,11 @@ bin/massctl session resume review -n demo --text 'continue after close'
 ```
 
 Both drivers currently accept text input; Claude requires exactly one text block.
-Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
-`systemPrompt` to native base instructions and rejects `additionalDirs`.
-Claude resume requires explicit `--text` or `--input-file` so native init can
-prove the original ID and cwd; zero-input Claude resume fails before opening.
+Both drivers append `systemPrompt` to provider defaults through SDK
+`AdditionalSystemPrompt` and reject `additionalDirs` before dispatch.
+Claude resume supports zero input and requires an explicit absolute
+`env.CLAUDE_CONFIG_DIR`. The SDK verifies CLI version, retained transcript and
+live identity. Optional initial input is submitted after that verification.
 These command examples describe supported interfaces, not proof of real CLI/model
 execution. Authentication, real native recovery, accounts and models must be
 validated separately in owned test directories. Permission auto-approval remains
@@ -175,21 +174,72 @@ the HTTP answer API. This CLI version deliberately has no answer command.
 ### Consumer recording and replay
 
 From the repository root, run `make test-simulation-go` (or its compatibility
-alias `make recording-gate-go`) to replay the four
-exported Codex and Claude basic and permission cases through a running MASS
-daemon and its public HTTP/SSE API. The target forces `MASS_RECORD=0` and runs
-the artifact, receipt and credential audits with the replays. Codex uses a
-separate input operation; Claude uses create-with-initial-input because its CLI
-emits native session identity only after the first user frame. Claude assertions
-require a successful local input receipt with no invented native acceptance. The
-permission cases answer the actual recorded `allow-once` option through the HTTP
-answer API and compare the native request, answer receipt, state, event order,
-history and successful tool result. Missing, altered or incompletely consumed
-material fails the test. The mock route must be `executor=external-sdk`,
-`target=replay`, `provenance=consumer`, and the replay receipt must show
-`nativeLaunched=false`. These are consumer materials; official verification does
-not apply. Exact hashes, status and recording commands are in
-[consumer recording acceptance](docs/recording-acceptance.md).
+alias `make recording-gate-go`) to replay the four exported Codex and Claude
+basic and permission cases through a running MASS daemon and its public
+HTTP/SSE API. The target forces `MASS_RECORD=0` and runs the artifact, receipt
+and credential audits with the replays. The mock route must be
+`executor=external-sdk`, `target=replay`, `provenance=consumer`, and the replay
+receipt must show `nativeLaunched=false`.
+
+The active cases come from the current Codex suite
+`recordings-4959190bc518` and the Claude suite
+`recordings-09d4ddf1ff20`. The Claude cases were re-recorded on November 13,
+2026 with Claude CLI `2.1.293`, SDK `09d4ddf1ff20`, and testify `v0.2.1`, then
+passed two strict replays before publication. All four active replays pass at
+the current pins. The older `recordings/` exports retain their original bytes
+and hashes for audit provenance but are no longer active replay evidence. See
+[current-pin recording acceptance](docs/codex-current-pin-recording.md) and the
+[historical snapshot](docs/recording-acceptance.md).
+
+### Real Agent preflight and diagnosis
+
+Before starting a long recording, check the selected native executable and, only
+when its prerequisites are present, send one no-tool model request. Run this
+from `mass-go/`; the output directory must be absolute and must not already
+exist. A model is never read from personal settings:
+
+```sh
+go run ./cmd/mass-record-diagnose \
+  --provider codex \
+  --executable /absolute/path/to/native/codex \
+  --model gpt-6.1-sol \
+  --output /var/tmp/new-mass-diagnosis-codex
+
+go run ./cmd/mass-record-diagnose \
+  --provider codex \
+  --executable /absolute/path/to/native/codex \
+  --model gpt-6.1-sol \
+  --output /var/tmp/new-mass-diagnosis-codex-smoke \
+  --smoke
+```
+
+The first form performs only metadata checks: target path, SHA-256, format,
+version, provider-specific command help, and redacted authentication status.
+Each command has a 10 second limit and the whole preflight has a 60 second
+limit. `--smoke` is an explicit real-model opt-in with its own 60 second limit;
+it reports `ready` only after a successful native completion and assistant
+message. ACK, process start, or non-empty stderr do not establish readiness.
+Without `--smoke`, status is `preflight_only`, not `ready`.
+
+Use `--model` or set `MASS_RECORD_MODEL`; otherwise the report is a blocker.
+`MASS_RECORD_DIAGNOSTICS` may select an external evidence directory. A
+recording otherwise keeps `diagnosis.json` plus `daemon.log`, config, data, and
+any partial native material in its private `/var/tmp/mass-record-*` scratch
+directory. Reports include the last entered stage, stage and flow budgets,
+the owned daemon PID, redacted stderr paths and hashes, retained artifact
+hashes, redacted native stderr copies, SDK cleanup, listener release, and
+process/process-group readback. A recording flow has a 12 minute budget;
+runtime and daemon cleanup each have an additional 15 second budget. Every
+flow receives a new context, including each strict replay.
+Authentication command output and secret-like values are not retained.
+
+Claude recording additionally requires native CLI 2.1.293 or later, as enforced
+by the current SDK resume gate. Claude smoke uses the user setting source only
+to make OAuth available, passes an explicit model and no tools, and does not
+take a default model from personal settings. A CLI that starts but fails
+`--version`, a missing model, or an unauthenticated CLI produces a specific
+blocker and stops before any model request. Diagnostics never modify the native
+executable, personal configuration, SDK version gate, or an existing export.
 
 Real recording requires an authenticated Codex CLI and explicit opt-in.
 `MASS_RECORD_MODEL` selects one model slug for both providers; the checked-in
@@ -226,7 +276,7 @@ as private because testify stages authentication there. The output contains
 native session metadata; inspect it before sharing outside the repository.
 
 Claude recording uses the same lifecycle and exports to
-`tests/testdata/simulation/recordings/claude/<case>/`:
+`tests/testdata/simulation/recordings-09d4ddf1ff20/claude/<case>/`:
 
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
@@ -240,6 +290,8 @@ MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
 
 Set `MASS_RECORD_CLAUDE_BASIC_OUTPUT` or
 `MASS_RECORD_CLAUDE_PERMISSION_OUTPUT` to publish to another absolute path.
+Claude opens with `--await-claim`; MASS does not pass `--session-id` and takes
+the native identity returned by `claim_session`.
 The permission wrapper supplies only the inline `permissions.ask: ["Bash"]`
 setting and answers the offered `allow-once` option through MASS. Testify
 isolates `HOME` during `prepare`; if Claude authentication is stored in
@@ -251,16 +303,21 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261106173112-83036ea07a0c`,
-source commit `83036ea07a0c`, without a local replacement. The external
-`agent-sdk-testify` tool is pinned to `v0.0.0-20261105165039-e4799fe3484c` for
-consumer recording and replay and is not a production dependency.
-The checked-in consumer fixtures remain bound to their recording SDK
-`v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not
-rewritten to the current runtime pin.
+The runtime SDK is pinned to `v0.0.0-20261113030733-09d4ddf1ff20`,
+source commit `09d4ddf1`, without a local replacement. The external
+`agent-sdk-testify` tool is pinned to `v0.2.1` for consumer recording and
+replay and is not a production dependency.
+The active Claude fixtures are bound to the current SDK and testify pins. The
+current Codex suite and the historical `recordings/` exports retain their
+original recording versions; that provenance is intentionally not rewritten.
 Codex shares one native Client across its Sessions; Claude owns one native
-process per Session. Each Session has one Receive consumer for native events
-and original request capabilities. SDK observations do not establish Agent state.
+process per Session. Claude has one SDK Events consumer through MASS agentrelay;
+live event identity, payload and metadata come from the SDK.
+An unexpected relay EOF fails only its original Session binding; it does not
+end a shared Runtime stream or synthesize an agent state event.
+The SDK exposes `OpenOptions.Config` and optional `ConfigController.SetConfig`;
+MASS exposes initial model/effort configuration and transient single-value updates
+through Service, HTTP, client and massctl; see the configuration examples below.
 Codex input receipts retain the native turn ID and acceptance; Claude receipts
 prove only a complete local write, not native acceptance or recording.
 
@@ -279,7 +336,7 @@ Runtime `spec` separately accepts Session defaults:
 | Field | Behavior |
 | --- | --- |
 | `features` | Session feature defaults; currently accepts `agentQuestions`. |
-| `mcpServers` | Session MCP defaults. Each item requires `name` and `type` (`stdio`, `http` or `sse`) plus the fields for that transport. |
+| `mcpServers` | Session MCP defaults. Each item requires `name` and `type` plus the transport fields. The runtime SDK supports `stdio` and `http`; `sse` is rejected. |
 
 `features` merges by field and `mcpServers` merges by server name: a Session
 value overrides the Runtime value with the same name, and a Session-only name is
@@ -297,7 +354,7 @@ For example, a Runtime may be created with:
 {
   "metadata": {"name": "agent"},
   "spec": {
-    "type": "codex",
+    "type": "claude",
     "config": {"executable": "/absolute/path/to/agent"},
     "features": {"agentQuestions": false},
     "mcpServers": [{
@@ -316,26 +373,17 @@ input accepts them as top-level request fields. `stdio` servers use `command`,
 `headers`; `envHeaders` and `bearerTokenEnvVar` are HTTP-only. Remote URLs must
 use HTTPS, except HTTP on loopback, and must not contain userinfo credentials.
 Sensitive header/env entries use `${ENV_VAR}` references rather than literal
-secrets. Codex supports `stdio` and `http`, and its MCP names cannot contain
-dots. Claude supports all three transports but not `cwd`, `envHeaders` or
-`bearerTokenEnvVar`. A non-nil merged list is the complete set of MCP servers:
-Claude uses strict MCP configuration, while Codex requires an explicit,
-existing absolute `env.CODEX_HOME` distinct from ambient configuration whose
-`config.toml`, when present, contains no `mcp_servers` at any level; arrange
-authentication in that isolated home. Codex thread create, resume and history
-load also mark the Session cwd and its ancestors untrusted so a project
-`.codex/config.toml` cannot supply additional MCP servers. A nil list leaves
-provider ambient MCP behavior unchanged. MCP configuration does not connect or
-health-check a server at Session open.
+secrets. The unified SDK supports only `stdio` and `http`; `sse` is rejected.
+Claude supports `stdio` and `http`, and rejects `sse`, `cwd`, `envHeaders` and
+`bearerTokenEnvVar`. Claude follows the SDK target CLI merge behavior; an empty
+list does not disable ambient servers.
 
-Codex does not expand `${ENV_VAR}` inside literal headers or stdio environment
-values. The adapter maps simple header references to `env_http_headers`, maps
-`Authorization: Bearer ${ENV_VAR}` to `bearer_token_env_var`, and resolves
-remaining references, including scheme-prefixed and inline values, from the
-Runtime process environment immediately before opening the thread. Missing,
-empty, or malformed references and unsafe header values fail before native
-Session creation; resolved values are never returned in public errors or
-persisted by MASS.
+Codex supports `stdio` and Streamable HTTP through the SDK. MASS resolves
+`${ENV_VAR}` references and passes the final server list to the SDK for open,
+resume and load. The SDK generates per-server native configuration; Codex applies
+its field-level merge with ambient configuration. Omitted and empty lists leave
+ambient servers enabled. MASS does not create a second merge or isolation layer.
+MCP configuration does not connect or health-check a server at Session open.
 
 Validation does not open credentials or history. Offline tests launch only MASS's
 `internal/testpeer` strict scenario binary via temporary launchers, with an explicit
@@ -343,8 +391,8 @@ scenario and no real-agent fallback. They do not prove real CLI startup,
 authentication, model behavior or native history availability.
 Both providers support explicit asynchronous retained-main-history load followed
 by input on the verified resumed connection. Ordinary resume does not import
-history. Claude continuation still requires actual native linkage for completion;
-unlinked observations remain unknown. See [history loading](#retained-history-load)
+history. Claude continuation state follows SDK events; a result frame alone does
+not establish idle state. See [history loading](#retained-history-load)
 and [Claude source/cleanup limits](docs/claude-history-load.md).
 
 Existing Session commands use `NAME -n NAMESPACE` or a raw global `SESSION_ID`
@@ -530,3 +578,40 @@ production readiness or real Agent execution.
 
 The six-ticket scenario matrix, commit map and evidence guide are in
 [acceptance](docs/acceptance.md).
+
+T06 upgrade details, validation results, and remaining harness differences are in
+[SDK upgrade acceptance](docs/sdk-latest-sync.md). Session `systemPrompt` appends
+caller instructions to provider defaults via SDK `AdditionalSystemPrompt`;
+MASS repeats the complete value on every open, resume, and load resume.
+
+## 初始主 Session 配置
+
+`session create` 与 `session load` 支持 `--model VALUE`、`--effort VALUE`，HTTP 对应
+create 的 `spec.config` 与 load 顶层 `config: {model?, effort?}`。值按 provider 原生字面量
+传给 SDK；省略、空对象或空字符串表示不指定，不解释为重置。null、非字符串、NUL、
+非法编码在原生副作用前拒绝。Runtime 不提供 model/effort 默认值。
+
+初始显式配置保存在 Session spec；close/resume 时重新请求这些值，保持原生 ID/cwd，
+load 保存本次显式配置并在同一恢复连接上继续输入。旧 spec 省略 config 保持可读，
+不迁移个人数据。初始配置不是当前生效值的观察。
+
+`massctl session set-config TARGET --id model|effort --value VALUE` 对当前在线主 Session
+逐项调用 SDK `ConfigController.SetConfig`。带 `-n NAMESPACE` 时 TARGET 是名称，省略时是全局 ID；
+HTTP 对应 `POST {session}/config`，body 为 `{id,value}`。值必须非空、有效 UTF-8 且无 NUL；
+字面值原样发送，重复值仍请求原生。接口不支持时明确返回 unsupported，不新增 capability flag。
+
+setter 是瞬态操作，不更新 spec、generation 或 appliedGeneration，不缓存生效值或合成配置事件。
+close/resume 后重新请求保存的初始配置。它不等待 idle，不与 prompt 隐式排序，不自动重试；
+需要先 model、再 effort、再输入的调用者须逐次等回执。close/stop 封闭新请求，已接纳调用由原运行结算。
+
+成功 JSON 直接返回 `{change,acceptance}`，接受证据保留缺失/false/true；回执不证明当前 turn 已切换。
+Go Service/Driver 直接复用 SDK `ConfigChange` / `ConfigReceipt`，失败也保留 receipt 与 error。
+HTTP 失败仅返回 `{code,reason,message}`：native_rejected/unsupported 为 422，conflict 为 409，
+outcome_unknown 为 500，确定未发送的 deadline_exceeded 为 504；远端失败不提供失败 receipt。
+配置错误适配层仅在 SDK 返回 `unavailable/set_config_failed`、receipt 明确 `sent=false`，
+且原错误链可用 `errors.Is(err, context.DeadlineExceeded)` 确认 deadline 时，将公开 code
+映射为 `deadline_exceeded`。SDK reason、完整原错误链及 receipt 原样保留；`sent=true` 或缺失、
+明确原生拒绝、不支持及派发未知均不套用该映射。调用者放弃等待仍返回未知，不用晚到回执改写。
+
+此路径的聚焦离线 race 验证覆盖两个 provider 的原生协议/argv、持久 round-trip、
+resume/load、load 后输入及非法值拒绝。未运行真实 Agent 或全量验收；完整证据由 ticket 报告记录。

@@ -135,7 +135,15 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 			}
 			tools[key] = retainedTool{name: name}
 			item = key
-			payload = events.ToolCall{ID: key, Name: name, Kind: "other", RawInput: input, Status: "unknown"}
+			identity := claudeToolIdentityFor(name)
+			payload = events.ToolCall{
+				ID:       key,
+				Kind:     identity.kind,
+				ToolName: identity.toolName,
+				Provider: identity.provider,
+				RawInput: input,
+				Status:   "unknown",
+			}
 		case "tool_result":
 			key, _ := b["tool_use_id"].(string)
 			tool, exists := tools[key]
@@ -148,7 +156,15 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 			tool.completed = true
 			tools[key] = tool
 			value, present := b["content"]
-			p := events.ToolResult{ID: key, Name: tool.name, Kind: "other", Status: "completed", Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
+			identity := claudeToolIdentityFor(tool.name)
+			p := events.ToolResult{
+				ID:       key,
+				Kind:     identity.kind,
+				ToolName: identity.toolName,
+				Provider: identity.provider,
+				Status:   "completed",
+				Output:   &events.Output{Availability: "unavailable", Completeness: "unknown"},
+			}
 			if bad, exists := b["is_error"]; exists {
 				flag, ok := bad.(bool)
 				if !ok {

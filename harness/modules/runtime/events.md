@@ -19,9 +19,9 @@ sources:
 
 ## 职责归属
 
-Runtime 拥有 SessionEvent、事件类型及各自绑定的 payload，adapter 将原生事件转换为这套统一模型。Service 在 openSession/resumeSession 时传入 DriverSessionAddress，adapter 固定 namespace/sessionName 与原运行的绑定，获得真实 sessionId 后补齐事件。Driver.events() 只交付名称与身份完整的 SessionEvent；Service 核对已有绑定后协调持久提交与发布，不补写或猜测缺失名称，也不另建半完整事件模型。Runtime 不查询 MetaStore，不导入 Service 资源 DTO。
+Runtime 拥有 SessionEvent 信封，事件 type 与 payload 以 SDK `agent.Event` 为唯一真相源。SDK Provider/Session 产生的实时事件先交给每个 Session 唯一的 MASS relay；relay 原样保留 SDK 的 eventId、sessionId、time、itemId、type、payload 与 `_meta`，只补 namespace、sessionName 和 MASS Source。Service 在 openSession/resumeSession 时传入 DriverSessionAddress，adapter 固定名称与原运行的绑定。Driver.events() 只交付名称与身份完整的 SessionEvent；Service 核对已有绑定后协调持久提交与发布，不补写或猜测缺失名称，也不另建半完整事件模型。Runtime 不查询 MetaStore，不导入 Service 资源 DTO。
 
-adapter 优先从原始事件取得 time，缺失时自己生成；Service 与 EventStore 保留该值，不用接收或存储时间替换。eventId 则由 adapter 在创建统一 SessionEvent 时生成一次 UUID，不直接复用原生消息、条目或工具 ID。同一事件的发布、持久保存与失败重试使用原 UUID，不能在每次 append 重试时重新生成。
+实时 SessionEvent 的 eventId、time、itemId 和 type 来自 SDK `agent.Event`，relay 与 Service 不得重生成、替换或按接收时间覆盖；同一事件的发布、持久保存与失败重试使用该原 UUID。`session.history_replay` 是 MASS 专属控制事件，不属于 SDK live event 联合，由 MASS 在显式 load 生命周期中生成并保持一次 UUID。
 
 ## Driver 事件流
 
@@ -70,9 +70,9 @@ EventStore 使用不透明游标分页，getSyncProgress 返回最后同步的 s
 | namespace | Session 的 namespace，直接保存 |
 | sessionName | Session 的 metadata.name，直接保存 |
 | sessionId | 全局唯一的原生会话身份 |
-| eventId | adapter 创建事件时生成的 UUID；同一事件重试保持不变，仅标识身份 |
+| eventId | SDK 实时事件提供的 UUID；relay 与重试不得重生成 |
 | type | Base 内统一声明的 SessionEventType |
-| time | adapter 使用原始时间，缺失时生成；重试与同步不改写 |
+| time | SDK 实时事件提供；relay、重试与同步不得改写 |
 | itemId | 条目事件提供的不透明身份；不解析成原生坐标 |
 | replay | 显式 load 的历史来源，loadId 及可证明原生记录/parent ID；不是当前运行控制上下文 |
 | _meta | 顶层可选扩展 map，键为 string，值可以是任意类型，即 Record<unknown>，对应 Go map[string]any |
@@ -91,10 +91,9 @@ SessionEvent 是按 type 判别的联合，每个分支固定 type 与对应 pay
 | session.history_replay | HistoryReplayPayload：loadId、原生读取阶段及保留范围，可选错误 | 否 |
 | user.message / agent.message / agent.thinking | MessageEventPayload：messageId、完整 content，可选 phase | 是 |
 | agent.message_chunk / agent.thinking_chunk | MessageEventPayload：messageId、本次追加 content | 否 |
-| agent.tool_call | ToolCallEventPayload：id、kind、完整 rawInput 与可选描述 | 是 |
-| agent.tool_result | ToolResultEventPayload：id、kind、status 与可选实际输出 | 是 |
+| agent.tool_call | ToolCallEventPayload：id、SDK toolName/provider/kind、完整 rawInput 与可选描述 | 是 |
+| agent.tool_result | ToolResultEventPayload：id、SDK toolName/provider/kind、status 与可选实际输出 | 是 |
 | agent.tool_call_chunk | ToolChunkEventPayload：id、本次追加 content | 否 |
-| agent.plan | PlanEventPayload：planId、entries | 否 |
 | session.state_update | SessionStateEventPayload：previousState、state，可选 stopReason/error | 否 |
 | session.error | SessionErrorEventPayload：message，可选 reason | 否 |
 | session.info_update | SessionInfoEventPayload：title 或 updatedAt 至少一个 | 否 |
@@ -104,15 +103,15 @@ SessionEvent 是按 type 判别的联合，每个分支固定 type 与对应 pay
 | session.interaction_requested | InteractionRequestedEventPayload：interaction、request、blocking | 否 |
 | session.interaction_closed | InteractionClosedEventPayload：interaction、outcome，可选 reason | 否 |
 
-TypeSpec 检查 type/payload 配对、相应必填字段和普通条目事件的 itemId。它不证明业务事实真实、ID 属于原运行或工具已执行，也不自动验证全部业务不变量；这些仍由 adapter、Service、Store 各自校验。
+TypeSpec 检查 type/payload 配对、相应必填字段和普通条目事件的 itemId。它不证明业务事实真实、ID 属于原运行或工具已执行，也不自动验证全部业务不变量；这些仍由 SDK、relay、Service、Store 各自校验。SDK 已取消 `agent.plan`，MASS live 联合不再产生或接受该类型。
 
-条目相关的消息、工具与计划事件提供 itemId。预览与完整事实使用相同 itemId；工具调用和结果共享 itemId，但具有不同 eventId，不能按 itemId 覆盖历史。会话更新无需虚构 itemId。统一模型不代表全部事件都进入历史；EventStore 只接收表中五种持久类型，并校验 eventId、sessionId 与名称归属。
+条目相关的消息与工具事件提供 itemId。预览与完整事实使用相同 itemId；工具调用和结果共享 itemId，但具有不同 eventId，不能按 itemId 覆盖历史。会话更新无需虚构 itemId。统一模型不代表全部事件都进入历史；EventStore 只接收表中五种持久类型，并校验 eventId、sessionId 与名称归属。
 
 ## 内容与工具语义
 
-消息、思考、工具结果及其增量内容统一直接使用共享 ContentBlock[]；不增加工具专属的 type=content/content 包装。数组顺序保持原内容顺序，适配原生事件时直接转换为内容块，不先包装再要求消费者解包。具体结构见 [ContentBlock](../../shared/content-blocks.md)：采用 ACP 的 text/image/audio/resource/resource_link 五种类型，不增加 json 或公共 Base。message 与 thinking 在数据结构和处理规则上相同，只由事件 type 区分消息与思考的含义。二者都由 itemId/messageId 定位条目，chunk 与完整消息沿用相同身份；同一条目内部可以包含多个独立 ContentBlock，均按数组与事件交付顺序处理，不为 thinking 单独引入块坐标、通道或合并规则。
+消息、思考、工具结果及其增量内容统一直接使用 SDK 的 `agent.ContentBlock[]`；MASS 通过类型别名复用，不维护第二套解析器或工具专属的 type=content/content 包装。数组顺序保持 SDK 内容顺序，不先包装再要求消费者解包。具体结构见 [ContentBlock](../../shared/content-blocks.md)：采用 ACP 的 text/image/audio/resource/resource_link 五种类型，不增加 json 或公共 Base。message 与 thinking 在数据结构和处理规则上相同，只由事件 type 区分消息与思考的含义。二者都由 itemId/messageId 定位条目，chunk 与完整消息沿用相同身份；同一条目内部可以包含多个独立 ContentBlock，均按数组与事件交付顺序处理，不为 thinking 单独引入块坐标、通道或合并规则。
 
-工具的 rawInput/rawOutput 是工具自身的动态业务值，TypeSpec 以 unknown 表达；不是额外的原生协议封装或恢复证据。工具 content 与消息 content 使用同一内容块数组，工具字段仍允许缺省以表达未提供内容。ToolEventFields 的 output 表达 availability、completeness 和可选 truncation；没有观察到的输出不伪造成空输出，显式 null、空字符串和字段缺失保持区别。JSON 预览采用直接内容块。
+工具的 `toolName/provider/kind` 是 SDK 必填身份，旧 MASS `name` 字段不再兼容；provider 为 agent、dynamic、mcp 或 `mcp:<server>`，kind 使用 SDK 的十种动作分类。rawInput/rawOutput 是工具自身的动态业务值，TypeSpec 以 unknown 表达；不是额外的原生协议封装或恢复证据。工具 content 与消息 content 使用同一内容块数组，工具字段仍允许缺省以表达未提供内容。ToolEventFields 的 output 表达 availability、completeness 和可选 truncation；没有观察到的输出不伪造成空输出，显式 null、空字符串和字段缺失保持区别。JSON 预览采用直接内容块。
 
 调用参数完整不证明工具已经开始执行。completed、failed、declined 需要实际结果证据，否则使用 unknown。未提供输出时 availability=unavailable、completeness=unknown，不补 rawOutput/content；明确提供的空字符串仍是 provided。truncated 必须有已知截断证据并提供 retainedBytes，omittedBytes 只有确知时提供。retained 不承诺无限输出归档。
 
@@ -122,11 +121,11 @@ TypeSpec 检查 type/payload 配对、相应必填字段和普通条目事件的
 
 MASS 不跨事件积累 delta，不在内存重建完整消息，也不把 delta 同步到历史；只允许交付所需的有界队列。显示端若需要累积展示，由显示端自行负责。完整事件只来自原生完整观察，仍按原完整内容保存；只有 delta 而无完整事实的 adapter 本轮只提供实时预览，不靠消息结束、取消或断线拼出完整历史。这样不承诺仅流式输出的 Agent 一定有完整消息历史。
 
-完整消息与预览是同一条目的两种观察；完整消息到达时，显示端可用完整观察结束预览，但 MASS 不生成替换型 chunk。计划、可用命令和配置列表是独立通知，各自遵守自身快照语义；“增量追加”不表示把这些列表持续拼接。
+完整消息与预览是同一条目的两种观察；完整消息到达时，显示端可用完整观察结束预览，但 MASS 不生成替换型 chunk。可用命令和配置列表是独立通知，各自遵守自身快照语义；“增量追加”不表示把这些列表持续拼接。
 
 ## 状态投影
 
-参考 agentrun 的工作开始/结束驱动与终态保护，继续使用已经确认的 SessionState。共享枚举位于 shared/states.tsp，Runtime 不依赖 Service 资源模型。adapter 将原生工作开始、结束和需要行动的事实转换为 session.state_update，state/previousState 只取 idle、running、requires_action 或 null（未知），不直接报告 Service 拥有的 opening 或 closing。
+参考 agentrun 的工作开始/结束驱动与终态保护，继续使用已经确认的 SessionState。共享枚举位于 shared/states.tsp，Runtime 不依赖 Service 资源模型。SDK Provider 将原生工作开始、结束和需要行动的事实统一为 session.state_update；relay 原样保留该 payload。state/previousState 只取 idle、running、requires_action 或 null（未知），不直接报告 Service 拥有的 opening 或 closing。
 
 | 事实 | 状态投影与生命周期限制 |
 |---|---|
@@ -147,7 +146,7 @@ Service 在交付前完成上游来源与业务路由校验；实时 Broadcast �
 
 ## JSON 实例预览
 
-可直接阅读 [event-examples.json](event-examples.json)，包含全部 18 种事件各一例。示例值维护在 [event-examples.tsp](event-examples.tsp) 的 @example 中，工具先编译检查其类型，再导出 JSON；JSON 文件为生成产物，不直接手改。
+可直接阅读 [event-examples.json](event-examples.json)，包含全部 17 种事件各一例。示例值维护在 [event-examples.tsp](event-examples.tsp) 的 @example 中，工具先编译检查其类型，再导出 JSON；JSON 文件为生成产物，不直接手改。
 
 ```sh
 rtk proxy npm run examples --prefix harness/typespec

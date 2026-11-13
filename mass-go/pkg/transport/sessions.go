@@ -15,7 +15,7 @@ import (
 type HistoryQuery struct {
 	After string   `query:"after"`
 	Limit int      `query:"limit" minimum:"1" default:"100"`
-	Types []string `query:"types,explode" nullable:"false" minItems:"1" enum:"user.message,agent.message,agent.thinking,agent.tool_call,agent.tool_result,agent.message_chunk,agent.thinking_chunk,agent.tool_call_chunk,agent.plan,session.state_update,session.error,session.info_update,session.config_option_update,session.available_commands_update,session.usage_update,session.interaction_requested,session.interaction_closed"`
+	Types []string `query:"types,explode" nullable:"false" minItems:"1" enum:"user.message,agent.message,agent.thinking,agent.tool_call,agent.tool_result,agent.message_chunk,agent.thinking_chunk,agent.tool_call_chunk,session.state_update,session.error,session.info_update,session.config_option_update,session.available_commands_update,session.usage_update,session.interaction_requested,session.interaction_closed"`
 }
 type historyByID struct {
 	SessionIDPath
@@ -50,6 +50,7 @@ func (q HistoryQuery) query() (store.HistoryQuery, error) {
 func (s *Server) registerSessions(api huma.API) {
 	s.registerSessionIdentity(api)
 	s.registerSessionWork(api)
+	s.registerSessionConfig(api)
 	s.registerSessionRecovery(api)
 	s.registerSessionLoad(api)
 	registerEventSchemas(api.OpenAPI().Components.Schemas)

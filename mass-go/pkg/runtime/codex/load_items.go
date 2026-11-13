@@ -86,15 +86,33 @@ func (d *Driver) loadItem(h *nativeLoad, id string, entry ct.ThreadItemEntry, pa
 		name, _ := item["tool"].(string)
 		input := item["arguments"]
 		outputKey := "result"
-		toolKind := "other"
+		toolKind := events.ToolKindOther
+		provider := events.ToolProviderDynamic
+		toolName := name
 		if kind == "commandExecution" {
-			name = "shell"
-			toolKind = "execute"
+			toolName = "commandExecution"
+			toolKind = events.ToolKindExecute
+			provider = events.ToolProviderAgent
 			input = map[string]any{"command": item["command"], "cwd": item["cwd"]}
 			outputKey = "aggregatedOutput"
 		}
 		if kind == "dynamicToolCall" {
 			outputKey = "contentItems"
+			provider = events.ToolProviderDynamic
+			if toolName == "" {
+				toolName = "dynamicToolCall"
+			}
+		}
+		if kind == "mcpToolCall" {
+			server, _ := item["server"].(string)
+			if server == "" {
+				provider = events.ToolProviderMCP
+			} else {
+				provider = events.ToolProvider("mcp:" + server)
+			}
+			if toolName == "" {
+				toolName = "mcpToolCall"
+			}
 		}
 		status := "unknown"
 		switch item["status"] {
@@ -147,14 +165,35 @@ func (d *Driver) loadItem(h *nativeLoad, id string, entry ct.ThreadItemEntry, pa
 			}
 			duration = &v
 		}
-		call := events.ToolCall{ID: itemID, Name: name, Kind: toolKind, RawInput: input, RawOutput: output, Status: status, ExitCode: exit, DurationMs: duration, Output: coverage}
+		call := events.ToolCall{
+			ID:         itemID,
+			Kind:       toolKind,
+			ToolName:   toolName,
+			Provider:   provider,
+			RawInput:   input,
+			RawOutput:  output,
+			Status:     status,
+			ExitCode:   exit,
+			DurationMs: duration,
+			Output:     coverage,
+		}
 		if err := emit(call); err != nil {
 			return err
 		}
 		if !present || value == nil {
 			return nil
 		}
-		result := events.ToolResult{ID: itemID, Name: name, Kind: toolKind, Status: status, RawOutput: output, ExitCode: exit, DurationMs: duration, Output: coverage}
+		result := events.ToolResult{
+			ID:         itemID,
+			Kind:       toolKind,
+			ToolName:   toolName,
+			Provider:   provider,
+			Status:     status,
+			RawOutput:  output,
+			ExitCode:   exit,
+			DurationMs: duration,
+			Output:     coverage,
+		}
 		if text, ok := value.(string); ok {
 			result.Content = []events.ContentBlock{events.Text(text)}
 		}

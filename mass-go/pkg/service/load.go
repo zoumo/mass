@@ -47,7 +47,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return resource.SessionLoadAccepted{}, err
 	}
-	if err := validateSessionConfig(runtime.SessionSpec{Features: input.Features, MCPServers: input.MCPServers}); err != nil {
+	if err := validateSessionConfig(runtime.SessionSpec{Cwd: input.Cwd, Config: input.Config, Features: input.Features, MCPServers: input.MCPServers}); err != nil {
 		return resource.SessionLoadAccepted{}, err
 	}
 	s.mu.Lock()
@@ -59,6 +59,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	run.admission.RLock()
 	defer run.admission.RUnlock()
 	spec, err := s.resolveSessionSpec(run, runtime.SessionSpec{
+		Config:     input.Config,
 		Cwd:        input.Cwd,
 		Features:   input.Features,
 		MCPServers: input.MCPServers,
@@ -102,7 +103,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	load := &historyLoad{id: uuid.NewString(), cancel: cancel, done: make(chan struct{}), cleanupDone: make(chan struct{}), deliveryFailed: make(chan struct{})}
 	load.status = resource.HistoryLoadStatus{LoadID: load.id, Phase: "accepted"}
 	initial := load.status
-	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Cwd: input.Cwd, Features: input.Features, MCPServers: input.MCPServers}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
+	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Config: input.Config, Cwd: input.Cwd, Features: input.Features, MCPServers: input.MCPServers}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
 	r, err = s.meta.CreateSession(r)
 	if err != nil {
 		// A lost write acknowledgement is not permission to repeat acceptance.
@@ -304,7 +305,15 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 		}
 	}
 	failed := h.status.Error != nil
+	completed := h.complete.Load()
 	h.mu.Unlock()
+	if completed {
+		if observer, ok := run.driver.(interface {
+			SessionObservation(string) runtime.SessionObservation
+		}); ok {
+			s.watchObservation(run, l, runtime.DriverSession{SessionID: e.SessionID, Source: e.Source(), Observation: observer.SessionObservation(e.SessionID)})
+		}
+	}
 	if err != nil {
 		s.failLoad(run, l, "failed", err)
 	} else if failed {

@@ -47,6 +47,7 @@ type RuntimeService interface {
 	StartRuntime(context.Context, string) (resource.Runtime, error)
 }
 type SessionService interface {
+	SetSessionConfig(context.Context, resource.SessionRef, runtime.ConfigChange) (runtime.ConfigReceipt, error)
 	ResolveSession(namespace, nameOrID string) (resource.SessionRef, error)
 	CreateSession(context.Context, resource.Session) (resource.Session, error)
 	CreateSessionWithInput(context.Context, resource.SessionCreateInput) (resource.SessionCreated, error)
@@ -91,11 +92,17 @@ type opening struct {
 	events    []events.SessionEvent
 	err       error
 	done      chan struct{}
+	doneOnce  sync.Once
 	abandoned bool
 	native    runtime.DriverSession
 	requested resource.Session
 	released  bool
 }
+
+func (o *opening) finish() {
+	o.doneOnce.Do(func() { close(o.done) })
+}
+
 type delivery struct {
 	event   events.SessionEvent
 	barrier chan struct{}
@@ -198,7 +205,7 @@ func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef
 	if err = decoder.Decode(&answer); err != nil {
 		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid JSON answer")
 	}
-	return sessionWork(ctx, s, ref, false, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
+	return sessionWork(ctx, s, ref, false, false, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
 		evidence, err := run.driver.AnswerInteraction(owner, id, interaction, answer)
 		return runtime.InteractionReceipt{Interaction: interaction, Evidence: evidence}, err
 	})
@@ -472,7 +479,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	if _, err := s.meta.GetSession(resource.SessionRef{Namespace: a.Namespace, Name: a.SessionName}); !errors.Is(err, store.ErrNotFound) {
 		removePending()
 		cancel()
-		close(op.done)
+		op.finish()
 		if err == nil {
 			err = store.ErrConflict
 		}
@@ -484,7 +491,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		defer close(op.done)
+		defer op.finish()
 		defer cancel()
 		var receipt *runtime.InputReceipt
 		value, err := func() (resource.Session, error) {
@@ -573,6 +580,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			creationErr := l.err
 			s.mu.Unlock()
 			go s.process(run, l)
+			s.watchObservation(run, l, native)
 			if abandoned {
 				cleanup := s.settleAbandoned(run, l)
 				if cleanup == nil {
@@ -580,6 +588,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				}
 				return resource.Session{}, errors.Join(errors.New("outcome_unknown: late creation closed by original owner"), cleanup)
 			}
+			op.finish()
 			if creationErr != nil {
 				return resource.Session{}, creationErr
 			}
@@ -627,25 +636,11 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if resolveErr != nil {
 		return runtime.InputReceipt{}, resolveErr
 	}
-	ref = resource.SessionRef{SessionID: r.Status.SessionID}
-	if len(input.Content) == 0 {
-		return runtime.InputReceipt{}, runtime.InvalidArgument("empty input")
+	input, err := runtime.CopyInput(input)
+	if err != nil {
+		return runtime.InputReceipt{}, err
 	}
-	content := make([]events.ContentBlock, len(input.Content))
-	for i, block := range input.Content {
-		if err := block.Validate(); err != nil {
-			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
-		}
-		raw, err := json.Marshal(block)
-		if err != nil {
-			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
-		}
-		if err = json.Unmarshal(raw, &content[i]); err != nil {
-			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
-		}
-	}
-	input.Content = content
-	return sessionWork(ctx, s, ref, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, false, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
 		return run.driver.SendPrompt(owner, id, input)
 	})
 }
@@ -920,10 +915,10 @@ func (s *Service) process(run *runBinding, l *lane) {
 					if l.interactions == nil {
 						l.interactions = map[string]struct{}{}
 					}
-					l.interactions[payload.Interaction] = struct{}{}
+					l.interactions[string(payload.Interaction)] = struct{}{}
 				}
 			case events.InteractionClosed:
-				delete(l.interactions, payload.Interaction)
+				delete(l.interactions, string(payload.Interaction))
 			}
 		}
 		s.scheduleIdleLocked(run, l)
@@ -969,7 +964,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 			s.mu.Unlock()
 			if allowed {
 				if answer, handled := s.policy(request); handled {
-					if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, request.Interaction, answer); err != nil {
+					if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, string(request.Interaction), answer); err != nil {
 						s.fail(l, err)
 					}
 				}
@@ -1020,7 +1015,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // Cancel targets the original lane and remains available during drain. A receipt
 // records only dispatch/acknowledgment; native termination must still be observed.
 func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
-	return sessionWork(ctx, s, ref, true, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
+	return sessionWork(ctx, s, ref, true, true, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
 		return run.driver.Cancel(owner, id)
 	})
 }

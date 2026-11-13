@@ -117,6 +117,69 @@ func (s *CommandSuite) TestWatchJSONOutputRemainsOneEventPerLine() {
 	s.Contains(stderr.String(), "subscription.ready")
 }
 
+func (s *CommandSuite) TestWatchJSONPreservesToolIdentityAcrossFrames() {
+	events := []string{
+		`{"eventId":"10000000-0000-4000-8000-000000000001","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:00Z","itemId":"tool_1","type":"agent.tool_call","payload":{"id":"tool_1","kind":"read","toolName":"Read","provider":"agent","status":"in_progress","rawInput":{"path":"README.md"}}}`,
+		`{"eventId":"10000000-0000-4000-8000-000000000002","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:01Z","itemId":"tool_1","type":"agent.tool_result","payload":{"id":"tool_1","kind":"read","toolName":"Read","provider":"agent","status":"completed","rawInput":{"path":"README.md"},"content":[{"type":"text","text":"hello"}]}}`,
+	}
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: subscription.ready\ndata: {}\n\n")
+		for _, event := range events {
+			_, _ = fmt.Fprintf(w, "event: session.event\ndata: %s\n\n", event)
+		}
+		_, _ = fmt.Fprint(w, "event: subscription.closed\ndata: {}\n\n")
+	}))
+	defer h.Close()
+
+	var out, stderr bytes.Buffer
+	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-ojson", "session", "watch", "test"}, strings.NewReader(""), &out, &stderr), stderr.String())
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	s.Require().Len(lines, len(events))
+	for i, line := range lines {
+		s.JSONEq(events[i], line)
+		var decoded struct {
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
+		}
+		s.Require().NoError(json.Unmarshal([]byte(line), &decoded))
+		s.Equal("Read", decoded.Payload["toolName"])
+		s.Equal("agent", decoded.Payload["provider"])
+		s.NotContains(decoded.Payload, "name")
+	}
+	s.Contains(stderr.String(), "subscription.ready")
+}
+
+func (s *CommandSuite) TestWatchRejectsLegacyEventSchemaDistinctly() {
+	for name, event := range map[string]string{
+		"plan":          `{"eventId":"10000000-0000-4000-8000-000000000001","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:00Z","type":"agent.plan","payload":{"title":"legacy"}}`,
+		"tool identity": `{"eventId":"10000000-0000-4000-8000-000000000002","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:00Z","itemId":"tool_1","type":"agent.tool_call","payload":{"id":"tool_1","kind":"read","name":"Read","rawInput":{"path":"README.md"}}}`,
+	} {
+		s.Run(name, func() {
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprintf(w, "event: subscription.ready\ndata: {}\n\nevent: session.event\ndata: %s\n\n", event)
+			}))
+			defer h.Close()
+
+			var out, stderr bytes.Buffer
+			s.Equal(1, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-ojson", "session", "watch", "test"}, strings.NewReader(""), &out, &stderr), stderr.String())
+			s.Empty(out.String())
+			var public map[string]string
+			for line := range strings.SplitSeq(stderr.String(), "\n") {
+				var candidate map[string]string
+				if json.Unmarshal([]byte(line), &candidate) == nil && candidate["reason"] == "legacy_event_schema" {
+					public = candidate
+					break
+				}
+			}
+			s.Require().NotNil(public, stderr.String())
+			s.Equal("unsupported", public["code"])
+			s.Equal("legacy_event_schema", public["reason"])
+		})
+	}
+}
+
 func (s *CommandSuite) TestUpdatePreservesTypeAndConfigFlagsOrReplacesCompleteConfig() {
 	for _, input := range [][]string{{"--executable", "new"}, {"--config-json", `{"executable":"new","large":9007199254740993}`}} {
 		s.Run(strings.Join(input, " "), func() {

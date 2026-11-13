@@ -12,8 +12,16 @@ model SessionInput {
   content: ContentBlock[];
 }
 
+/** SDK StartOrSteer 的四态结果；不把 best-effort 升级为已纳入当前工作或已完成。 */
+alias InputResult =
+  | "applied_current_work"
+  | "applied_new_work"
+  | "applied_best_effort"
+  | "not_applied";
+
 model InputReceipt {
   submission: SubmissionRef;
+  result: InputResult;
   acceptance: AcceptanceEvidence;
 }
 

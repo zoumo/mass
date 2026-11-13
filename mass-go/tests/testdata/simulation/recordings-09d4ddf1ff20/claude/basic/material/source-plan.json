@@ -1,0 +1,9 @@
+{
+  "agentType": "claude",
+  "caseId": "mass-claude-basic",
+  "cliVersion": "2.1.293 (Claude Code)",
+  "driverProfile": "consumer",
+  "model": "auto/deepseek-v4.1-flash-1017",
+  "project": "/var/tmp/mass-record-claude-153315685/project",
+  "version": 1
+}

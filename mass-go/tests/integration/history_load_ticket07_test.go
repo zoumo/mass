@@ -159,16 +159,21 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 	observer, err := c.Observe(ctx(t), ref)
 	require.NoError(t, err)
 	defer observer.Close()
+	var submissions []string
 	for _, text := range []string{"one", "two"} {
 		var receipt runtime.InputReceipt
 		require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, &receipt))
 		require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
 		require.Nil(t, receipt.Acceptance.NativeAccepted)
+		submissions = append(submissions, receipt.Submission)
+		messageObserved := false
 		for {
 			e, nextErr := observer.Next()
 			require.NoError(t, nextErr)
-			meta := decodeClaudeMeta(t, e)
-			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && meta.Submission == receipt.Submission && meta.Attribution == "user_message_uuid" {
+			if e.Type() == "agent.message" {
+				messageObserved = true
+			}
+			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && messageObserved {
 				break
 			}
 		}
@@ -183,8 +188,11 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 	}
 	require.Equal(t, records[0]["pid"], records[1]["pid"])
 	require.Equal(t, records[1]["pid"], records[2]["pid"])
-	require.NotEmpty(t, records[1]["uuid"])
-	require.NotEqual(t, records[1]["uuid"], records[2]["uuid"])
+	require.Equal(t, "input", records[1]["event"])
+	require.InDelta(t, 1, records[1]["input"], 0)
+	require.Equal(t, "input", records[2]["event"])
+	require.InDelta(t, 2, records[2]["input"], 0)
+	require.NotEqual(t, submissions[0], submissions[1])
 	require.Contains(t, records[0]["args"], "--resume="+claudeLoadID)
 	var canceled resource.HistoryLoadStatus
 	require.Error(t, c.CancelHistoryLoad(ctx(t), ref, accepted.LoadID, &canceled))
@@ -470,7 +478,7 @@ func ticket07StatusWithin(t *testing.T, url string, ref resource.SessionRef, pha
 	return r
 }
 
-func TestTicket07ClaudeUnlinkedNativeResultRemainsUnknown(t *testing.T) {
+func TestTicket07ClaudeUnlinkedNativeResultUsesSDKState(t *testing.T) {
 	_, url, cwd, _ := ticket07HTTP(t, "unlinked", ticket07Rows())
 	_, ref := ticket07Load(t, url, cwd)
 	ticket07Status(t, url, ref, "completed")
@@ -479,28 +487,30 @@ func TestTicket07ClaudeUnlinkedNativeResultRemainsUnknown(t *testing.T) {
 	require.NoError(t, err)
 	defer observer.Close()
 	var receipt runtime.InputReceipt
-	require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("ordinary unlinked response")}}, &receipt))
-	for {
-		e, err := observer.Next()
-		require.NoError(t, err)
-		if p, ok := e.Payload().(events.StateUpdate); ok && p.StopReason == "work_attribution_unknown" {
-			require.Nil(t, p.State)
-			break
+	for range 2 {
+		require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("ordinary unlinked response")}}, &receipt))
+		sawMessage := false
+		for {
+			e, err := observer.Next()
+			require.NoError(t, err)
+			if e.Type() == "agent.message" {
+				sawMessage = true
+				meta := e.Meta["claude"].(map[string]any)
+				require.NotContains(t, meta, "submission")
+				require.NotContains(t, meta, "attribution")
+				raw := meta["raw"].(map[string]any)
+				require.NotContains(t, raw, "user_message_uuid")
+			}
+			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
+				require.True(t, sawMessage, "SDK must preserve the native message before settlement")
+				require.NotEqual(t, "work_attribution_unknown", p.StopReason, "MASS must not recreate its removed attribution state machine")
+				break
+			}
 		}
 	}
 	var r resource.Session
 	require.NoError(t, c.GetSession(ctx(t), ref, &r))
-	require.Equal(t, events.Unknown, r.Status.State)
-	require.Error(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("not readmitted")}}, &receipt))
-	var cancel runtime.CancelReceipt
-	require.NoError(t, c.Cancel(ctx(t), ref, &cancel))
-	for {
-		e, err := observer.Next()
-		require.NoError(t, err)
-		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
-			break
-		}
-	}
+	require.Equal(t, events.Idle, r.Status.State)
 }
 
 func TestTicket07ClaudeInvalidSourcesAndPartialUnsupportedHistory(t *testing.T) {
@@ -776,7 +786,7 @@ func TestTicket07ClaudeCrossReadDriftOrPageCancellation(t *testing.T) {
 			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{Limit: 1000}, &p))
 			require.NotEmpty(t, p.Events)
 			require.Equal(t, "row-000", p.Events[0].Replay.NativeRecordID)
-			require.Equal(t, "retained-000", p.Events[0].Payload().(events.AgentMessage).Content[0].Text, "committed facts are not reread or repaired")
+			require.Equal(t, "retained-000", events.TextOf(p.Events[0].Payload().(events.AgentMessage).Content[0]), "committed facts are not reread or repaired")
 			if mode == "cancel" {
 				var healthy resource.Session
 				require.NoError(t, c.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "healthy"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}}, &healthy))

@@ -1,31 +1,43 @@
-# Consumer recording acceptance
+# Historical consumer recording acceptance
+
+This page preserves the earlier four-case recording and T05/T06 acceptance
+snapshot. Its version, status and command descriptions are historical.
+For the November 11, 2026 current-pin Codex DeepSeek suite, active selection,
+focused offline acceptance and recording options, see
+[current Codex recording acceptance](codex-current-pin-recording.md).
 
 This page records the offline consumer-recording gate for the Go implementation.
 It does not change the [harness contracts](../../harness/index.md).
 
 The runtime SDK is pinned to `github.com/zoumo/agent-sdk-go
-v0.0.0-20261106173112-83036ea07a0c`, source `83036ea07a0c`, without a local
+v0.0.0-20261110170013-efcb24caac28`, source `efcb24ca`, without a local
 `replace`. The checked-in exports remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; replay does not rewrite that provenance.
 `github.com/zoumo/agent-sdk-testify` is pinned to
-`v0.0.0-20261105165039-e4799fe3484c` as a test-only tool. The four exports were
-recorded at MASS HEAD `eb3a6e8ce93e2dbd05dcdaf4b2c1daae5ac36a2e` with
+`v0.1.2` as a test-only tool. The four historical
+exports were recorded at MASS HEAD
+`eb3a6e8ce93e2dbd05dcdaf4b2c1daae5ac36a2e` with
 `auto/deepseek-v4.1-flash-1017`; the then-dirty worktree is recorded in each
-`index.json`.
+`index.json`. Their recording-period compatibility does not extend to the T05
+SDK/testify pins. Current T06 replay results are recorded in
+[SDK upgrade acceptance](sdk-latest-sync.md).
 
 ## Status
 
 | Evidence | Passed | Failed | Unverified |
 | --- | ---: | ---: | ---: |
-| Consumer replay: Codex/Claude basic and permission | 4 | 0 | 0 |
-| Opt-in E2E recording tests under the `e2e` tag and `MASS_RECORD=1` | 4 | 0 | 0 |
+| Consumer replay: Codex/Claude basic and permission at T05 pins | 0 | 4 | 0 |
+| Historical opt-in recordings made with SDK `5edf8b62` | 4 | 0 | n/a for current pins |
+| Current-pin opt-in recording tests under the `e2e` tag and `MASS_RECORD=1` | 0 | 0 | 4 |
 | Official verification | n/a | n/a | n/a for consumer provenance |
 | Live MASS product E2E through HTTP/SSE with native providers | 0 | 0 | 2 providers |
 
-The four recording runs invoked the real Codex and Claude CLIs, their configured
-accounts and `auto/deepseek-v4.1-flash-1017`; both permission cases executed the
-approved tool. The offline gate result is still reproducible consumer replay, not
-a live MASS product E2E result or official verification.
+The four historical recording runs invoked the real Codex and Claude CLIs, their
+configured accounts, and `auto/deepseek-v4.1-flash-1017`; both permission cases
+executed the approved tool at that time. They are retained as provenance, not
+reported as current-pin compatibility. At the T05 validation, real recording was not executed because no owned
+authenticated CLI session was available. See the T06 report for current CLI
+availability; no current-pin real recording result is claimed.
 
 ## Offline simulation gate
 
@@ -43,9 +55,26 @@ cd mass-go && MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off \
 ```
 
 The four replay tests and the artifact, receipt, credential-audit and
-failure-injection tests run here. The real recording tests are in
-`tests/e2e`, behind the `e2e` build tag, and cannot be selected by this target.
+failure-injection tests run here. The real recording tests are in `tests/e2e`,
+behind the `e2e` build tag, and cannot be selected by this target.
 `make recording-gate-go` is a compatibility alias.
+
+Historical T05 gate result: FAIL. The artifact, receipt, credential-audit,
+selection, and mutation-only audit tests passed. All four historical strict
+replays failed before MASS could complete the recorded exchange:
+
+| Case | Failure | Protocol change |
+| --- | --- | --- |
+| `codex/basic` | `unavailable: provider_start_failed` | Current SDK initialize includes `capabilities.experimentalApi`; the recording does not. Strict replay reports a client mismatch at the first frame. |
+| `codex/permission` | `unavailable: provider_start_failed` | Same Codex initialize drift. |
+| `claude/basic` | `unavailable: initialize_wait_failed` | The recording sends the first user frame at ordinal 5 and `system init` at ordinal 7. Current provider `Open` waits for init before returning, so replay cannot reach ordinal 7. |
+| `claude/permission` | `unavailable: initialize_wait_failed` | Same Claude ordering drift. |
+
+`TestRecordingRejectsIncompleteExecution` also failed because its setup required
+the Codex basic replay to succeed. This was a consequence of the stale fixture,
+not a second protocol fault. New current-pin recordings replaced the active
+selection without editing raw frames, order, provenance, or version metadata in
+place; see [current-pin recording acceptance](codex-current-pin-recording.md).
 
 The gate enforces:
 
@@ -189,9 +218,11 @@ unverified and no passing export is published.
 - Replay launches the testify external-sdk route, not a native Agent. The route
   and receipt checks prove `target=replay`, `provenance=consumer` and
   `nativeLaunched=false`.
-- Replay proves MASS policy and public API behavior for these four recorded
-  exchanges. It does not prove authentication, current model behavior, native
-  tool execution, native history durability or provider-wide compatibility.
+- A passing replay would prove MASS policy and public API behavior for the
+  recorded exchanges at the matching SDK protocol. The current four cases do
+  not pass and provide no current-pin behavior proof. Replay never proves
+  authentication, current model behavior, native tool execution, native history
+  durability or provider-wide compatibility.
 - Claude input receipts prove a complete local write; they do not invent native
   acceptance. Permission answers use the actual offered option ID and record
   `nativeAccepted=null`.

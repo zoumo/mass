@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,8 @@ func (s *entrypointSuite) openClaudeContinuity() (resource.SessionRef, string) {
 	out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-continuity").CombinedOutput()
 	s.Require().NoError(err, string(out))
 	evidence := filepath.Join(s.T().TempDir(), "inputs.jsonl")
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "continuous"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence}}}}
+	config := s.T().TempDir()
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "continuous"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config}}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "continuous"}, nil)
 	work, err := filepath.EvalSymlinks(s.T().TempDir())
@@ -26,13 +28,13 @@ func (s *entrypointSuite) openClaudeContinuity() (resource.SessionRef, string) {
 	create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "continuous"}, Spec: resource.SessionSpec{RuntimeRef: "continuous", SessionSpec: runtime.SessionSpec{Cwd: work}}}
 	var opened resource.Session
 	s.call("session.create", workflowParams{Create: &create}, &opened)
+	prepareClaudeSavedSession(s.T(), config, work, opened.Status.SessionID)
 	return resource.SessionRef{SessionID: opened.Status.SessionID}, evidence
 }
 
 func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	ref, evidence := s.openClaudeContinuity()
-	var unsupported events.ContentBlock
-	s.Require().NoError(json.Unmarshal([]byte(`{"type":"image","data":"AA==","mimeType":"image/png"}`), &unsupported))
+	unsupported := events.ContentBlock{Image: &events.ContentBlockImage{Data: "AA==", MIMEType: "image/png"}}
 	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{unsupported}}}, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(err, &public)
@@ -41,7 +43,7 @@ func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	// This exercises actual Submit NotSent through HTTP, not a fake receipt.
 	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(strings.Repeat("x", (4<<20)+1))}}}, nil)
 	s.Require().ErrorAs(err, &public)
-	s.Equal("conflict", public.Code, "confirmed NotSent is a known rejection, not outcome_unknown")
+	s.Equal("resource_exhausted", public.Code, "SDK classifies an oversized frame before dispatch")
 	_, scan := s.observer(ref)
 	var receipts []runtime.InputReceipt
 	for _, text := range []string{"first", "second"} {
@@ -65,7 +67,8 @@ func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	s.Require().Len(page.Events, 2)
 	for i, e := range page.Events {
 		s.Equal(ref.SessionID, e.SessionID)
-		s.Equal(receipts[i].Submission, e.Meta["claude"].(map[string]any)["submission"])
+		s.NotContains(e.Meta["claude"].(map[string]any), "submission")
+		s.Equal([]string{"first", "second"}[i], events.TextOf(e.Payload().(events.AgentMessage).Content[0]))
 	}
 	data, err := os.ReadFile(evidence)
 	s.Require().NoError(err)
@@ -75,7 +78,7 @@ func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	s.Require().NoError(json.Unmarshal([]byte(lines[0]), &first))
 	s.Require().NoError(json.Unmarshal([]byte(lines[1]), &second))
 	s.Equal(first["pid"], second["pid"], "both wire inputs reached the same owned process")
-	s.Equal(receipts[1].Submission, second["uuid"])
+	s.Empty(second["uuid"], "SDK receipt identity is not a native message binding")
 	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 
@@ -89,20 +92,17 @@ func (s *entrypointSuite) TestClaudeLateResultsAndCancelReadmission() {
 			s.Require().True(scan.Scan())
 			var e events.SessionEvent
 			s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
-			s.NotEqual("session.interaction_requested", e.Type(), "old interaction cannot become current authority")
+			// A native live request retains SDK authority even without submission linkage.
 			if e.ItemID == "unlinked-late:0" {
 				meta := e.Meta["claude"].(map[string]any)
-				s.Equal("unknown", meta["attribution"])
+				s.NotContains(meta, "attribution")
 				s.NotContains(meta, "submission")
 			}
 			if text == "hold" && e.ItemID == "message-3:0" {
 				var current resource.Session
 				s.call("session.get", workflowParams{Session: ref}, &current)
 				s.NotEqual(events.Idle, current.Status.State, "old/child results cannot settle current input")
-				err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("busy")}}}, nil)
-				var public *transport.Error
-				s.Require().ErrorAs(err, &public)
-				s.Equal("conflict", public.Code)
+
 				var cancel runtime.CancelReceipt
 				s.call("session.cancel", workflowParams{Session: ref}, &cancel)
 				s.Equal("controlAcknowledged", cancel.Result)
@@ -121,43 +121,40 @@ func (s *entrypointSuite) TestClaudeLateResultsAndCancelReadmission() {
 	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 
-func (s *entrypointSuite) TestClaudeUnlinkedResultBlocksReadmission() {
-	s.claudeUnknownResultBlocksReadmission("ambiguous")
+func (s *entrypointSuite) TestClaudeUnlinkedResultUsesNativeState() {
+	s.claudeResultUsesNativeState("ambiguous")
 }
 
-func (s *entrypointSuite) TestClaudeConflictingResultBlocksReadmission() {
-	s.claudeUnknownResultBlocksReadmission("conflicting")
+func (s *entrypointSuite) TestClaudeConflictingResultUsesNativeState() {
+	s.claudeResultUsesNativeState("conflicting")
 }
 
-func (s *entrypointSuite) claudeUnknownResultBlocksReadmission(prompt string) {
+func (s *entrypointSuite) claudeResultUsesNativeState(prompt string) {
 	ref, _ := s.openClaudeContinuity()
 	_, scan := s.observer(ref)
-	for _, text := range []string{"first", prompt} {
-		s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(text)}}}, nil)
-		for {
-			s.Require().True(scan.Scan())
-			var e events.SessionEvent
-			s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
-			if state, ok := e.Payload().(events.StateUpdate); ok {
-				if text == "first" && state.State != nil && *state.State == events.Idle {
-					break
-				}
-				if text == prompt {
-					if state.State != nil && *state.State == events.Running {
-						continue
-					}
-					s.Nil(state.State)
-					s.Equal("work_attribution_unknown", state.StopReason)
-					break
-				}
-			}
+	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(prompt)}}}, nil)
+	for {
+		s.Require().True(scan.Scan())
+		var e events.SessionEvent
+		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
+		if e.ItemID == "message-1:0" {
+			break
 		}
 	}
-	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("must not send")}}}, nil)
-	s.Require().Error(err)
-	// An interrupt acknowledgment alone is not settlement. The fixture supplies
-	// a linked root result so normal close can release this owned process.
+	// A result without an explicit native state does not create a terminal state.
+	var current resource.Session
+	s.call("session.get", workflowParams{Session: ref}, &current)
+	s.Equal(events.Running, current.Status.State)
 	s.call("session.cancel", workflowParams{Session: ref}, nil)
+	for {
+		s.Require().True(scan.Scan())
+		var e events.SessionEvent
+		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("after-native-idle")}}}, nil)
 	for {
 		s.Require().True(scan.Scan())
 		var e events.SessionEvent
@@ -169,47 +166,29 @@ func (s *entrypointSuite) claudeUnknownResultBlocksReadmission(prompt string) {
 	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 
-func (s *entrypointSuite) TestClaudeResumedFirstInputRequiresLinkage() {
+func (s *entrypointSuite) TestClaudeResumedFirstInputUsesSDKAuthority() {
 	ref, _ := s.openClaudeContinuity()
 	s.call("session.close", workflowParams{Session: ref}, nil)
 	_, scan := s.observer(ref)
 	s.call("session.resume", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("resume-unlinked")}}}, nil)
-	sawUnknown := false
 	for {
 		s.Require().True(scan.Scan())
 		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
-		s.NotEqual("session.interaction_requested", e.Type(), "unlinked old request has no answer authority")
-		if state, ok := e.Payload().(events.StateUpdate); ok && state.StopReason == "work_attribution_unknown" {
-			s.Nil(state.State)
-			sawUnknown = true
-			break
-		}
-		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
-			break
+		if e.Type() == "session.interaction_requested" {
+			break // Observe authority before canceling the active native request.
 		}
 	}
-	s.Require().True(sawUnknown, "unlinked old result must leave resumed work unsettled")
-	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("blocked")}}}, nil)
-	s.Require().Error(err)
-	s.call("session.cancel", workflowParams{Session: ref}, nil)
+	// Live request authority is SDK-owned; lack of a caller UUID is not a MASS veto.
+	var canceled runtime.CancelReceipt
+	s.call("session.cancel", workflowParams{Session: ref}, &canceled)
+	s.Require().Equal("controlAcknowledged", canceled.Result, "cancel must reach the resumed active native work")
+	s.NotEmpty(canceled.Target)
 	for {
 		s.Require().True(scan.Scan())
 		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
-			break
-		}
-	}
-	var receipt runtime.InputReceipt
-	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("resumed-linked")}}}, &receipt)
-	for {
-		s.Require().True(scan.Scan())
-		var e events.SessionEvent
-		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
-		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
-			s.Equal(receipt.Submission, e.Meta["claude"].(map[string]any)["submission"])
-			s.Equal("user_message_uuid", e.Meta["claude"].(map[string]any)["attribution"])
 			break
 		}
 	}
@@ -237,20 +216,23 @@ func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
 	}
 	s.Require().Equal("child-tool:confirmed-child:0", child.ItemID)
 	meta := child.Meta["claude"].(map[string]any)
-	s.Equal("unknown", meta["attribution"])
+	s.NotContains(meta, "attribution")
 	s.NotContains(meta, "submission")
-	s.Equal(map[string]any{"session_id": ref.SessionID, "task_id": "child-task", "tool_use_id": "child-tool", "association_id": "task:child-task"}, meta["source"])
-	s.Equal(map[string]any{"session_id": ref.SessionID}, meta["parent"])
-	s.Equal("live", meta["origin"])
-	raw, ok := meta["nativeRaw"].(string)
+	s.Equal(map[string]any{"sessionId": ref.SessionID, "taskId": "child-task", "toolUseId": "child-tool", "associationId": "task:child-task"}, meta["source"])
+	s.Equal(map[string]any{"sessionId": ref.SessionID}, meta["parent"])
+	s.NotContains(meta, "origin")
+	raw, ok := meta["raw"].(map[string]any)
 	s.Require().True(ok, "original received envelope must survive SSE")
-	s.JSONEq(`{"type":"assistant","session_id":"claude-continuity","parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact","apiBlockIndex":0}]}}`, raw)
+	encoded, err := json.Marshal(raw)
+	s.Require().NoError(err)
+	s.JSONEq(fmt.Sprintf(`{"type":"assistant","session_id":%q,"parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact","apiBlockIndex":0}]}}`, ref.SessionID), string(encoded))
 	page := s.history(ref)
 	s.Require().Len(page.Events, 3)
 	s.Equal(child.EventID, page.Events[1].EventID)
 	s.Equal(child.Meta, page.Events[1].Meta, "history retains the exact provenance delivered by SSE")
-	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("blocked")}}}, nil)
-	s.Require().Error(err)
+	var current resource.Session
+	s.call("session.get", workflowParams{Session: ref}, &current)
+	s.Equal(events.Running, current.Status.State)
 	s.call("session.cancel", workflowParams{Session: ref}, nil)
 	for {
 		s.Require().True(scan.Scan())

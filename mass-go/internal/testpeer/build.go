@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-const SDKVersion = "v0.0.0-20261106173112-83036ea07a0c"
+const SDKVersion = "v0.0.0-20261113030733-09d4ddf1ff20"
 
 // TestifyVersion pins the consumer recording/replay tool, not a runtime dependency.
-const TestifyVersion = "v0.0.0-20261105165039-e4799fe3484c"
+const TestifyVersion = "v0.2.1"
 
 // Build binds a provider to MASS's owned strict scenario peer. The scenario is
 // an explicit test-launch environment input, never a default or a real-agent

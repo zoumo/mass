@@ -9,9 +9,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	evidence := os.Getenv("EVIDENCE")
 	pid := strconv.Itoa(os.Getpid())
 	if err := os.WriteFile(filepath.Join(evidence, "pid-"+pid), []byte(pid), 0o600); err != nil {
@@ -48,7 +55,7 @@ func runCodex(send func(any)) {
 		notify("item/completed", map[string]any{"threadId": id, "turnId": "turn-" + id, "completedAtMs": 3, "item": map[string]any{"id": item, "type": "agentMessage", "text": "complete " + item}})
 	}
 	request := func(id, name string) {
-		send(map[string]any{"id": name, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-" + id, "itemId": name, "command": "never executed", "cwd": os.Getenv("PROJECT"), "availableDecisions": []any{"accept", "decline"}}})
+		send(map[string]any{"id": name, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-" + id, "itemId": name, "command": "never executed", "cwd": os.Getenv("PROJECT"), "startedAtMs": 3, "availableDecisions": []any{"accept", "decline"}}})
 	}
 	scan := bufio.NewScanner(os.Stdin)
 	opened := 0
@@ -81,10 +88,13 @@ func runCodex(send func(any)) {
 			}
 			cwds[id] = v.Params["cwd"]
 			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			reply(map[string]any{"thread": thread(v.Params["threadId"].(string))})
 		case "thread/resume":
-			reply(map[string]any{"thread": thread(v.Params["threadId"].(string)), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			id := v.Params["threadId"].(string)
+			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/turns/list":
 			reply(map[string]any{"data": []any{map[string]any{"id": "saved-turn", "status": "completed", "items": []any{}, "itemsView": "full"}}, "nextCursor": nil})
 		case "thread/items/list":
@@ -120,11 +130,20 @@ func runCodex(send func(any)) {
 }
 
 func runClaude(send func(any), cwd string) {
-	id := "claude-" + filepath.Base(cwd)
+	id := "22222222-2222-4222-8222-222222222222"
+	if filepath.Base(cwd) == "healthy" {
+		id = "33333333-3333-4333-8333-333333333333"
+	}
 	for _, arg := range os.Args[1:] {
 		if resumed, ok := strings.CutPrefix(arg, "--resume="); ok {
 			id = resumed
 		}
+		if assigned, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			id = assigned
+		}
+	}
+	if clipeer.AwaitingClaim() {
+		id = uuid.NewString()
 	}
 	var link string
 	fact := func(item string) {
@@ -132,6 +151,7 @@ func runClaude(send func(any), cwd string) {
 	}
 	result := func() {
 		send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "user_message_uuid": link, "uuid": "result-" + link})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 	}
 	request := func(name string) {
 		send(map[string]any{"type": "control_request", "request_id": name, "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": name, "input": map[string]any{"command": "never executed"}}})
@@ -145,9 +165,14 @@ func runClaude(send func(any), cwd string) {
 		switch v["type"] {
 		case "control_request":
 			r := v["request"].(map[string]any)
+			if reply, ok := clipeer.ClaimReply(v, id); ok {
+				send(reply)
+				continue
+			}
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 			if r["subtype"] == "initialize" {
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd, "tools": []any{}})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 			}
 			if r["subtype"] == "interrupt" {
 				fact("cancel-final")
@@ -155,7 +180,7 @@ func runClaude(send func(any), cwd string) {
 			}
 		case "user":
 			link, _ = v["uuid"].(string)
-			send(map[string]any{"type": "stream_event", "session_id": id, "user_message_uuid": link, "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "active", "role": "assistant", "content": []any{}}}})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "running"})
 			if filepath.Base(cwd) == "active" {
 				request("current")
 				fact("before-close")

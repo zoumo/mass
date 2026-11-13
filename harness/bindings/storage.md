@@ -58,3 +58,7 @@ Session 解析、事件归属校验和跨模块操作顺序由 Service 负责；
 本轮确认模块、权威选择及写入方向；具体布局与格式版本、文件持久屏障与掉电强度、半写恢复、准确等价比较、增量投影校验、游标期限、后端迁移和跨模块删除结算需继续定义。此页不把设计更新宣告为已完成实现。
 
 [^split-direction]: 当前人类请求明确授权更新 harness、spec 与 tickets，先不继续实现。
+
+## Session 主配置
+
+Session spec 可保存初始显式 `config.model/effort` 字符串。旧记录省略 config 保持可读，不自动迁移个人数据。在线 setter 不保存回执、当前值或恢复材料，不修改 spec/generation/appliedGeneration；恢复重新请求初始值。可变配置不参与 ID/cwd/账号与数据归属的恢复身份比较。详见[配置合同](../modules/runtime/session-config.md)。

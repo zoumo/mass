@@ -25,25 +25,33 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-// This subprocess is a synthetic native protocol peer, not a model. It never
-// emits system/init and never disconnects voluntarily after initialize.
+// This subprocess is a synthetic native protocol peer, not a model. It
+// acknowledges initialize but withholds the claim response so the SDK cannot
+// confirm native identity.
 func TestPendingNativeCreatePeer(t *testing.T) {
 	dir := os.Getenv("MASS_PENDING_CREATE_PEER")
 	if dir == "" {
 		return
 	}
+	answerSyntheticClaudeVersion()
+	claiming := false
+	for _, arg := range os.Args[1:] {
+		if arg == "--await-claim" {
+			claiming = true
+		}
+	}
+	if !claiming {
+		os.Exit(3)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		os.Exit(2)
 	}
 	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	initialized := false
+	claimed := false
 	for scanner.Scan() {
-		var frame struct {
-			Type    string `json:"type"`
-			ID      string `json:"request_id"`
-			Request struct {
-				Subtype string `json:"subtype"`
-			} `json:"request"`
-		}
+		var frame syntheticClaudeControlFrame
 		if os.Getenv("MASS_PENDING_EXPLICIT") == "true" && json.Unmarshal(scanner.Bytes(), &frame) == nil && frame.Type == "user" {
 			var input struct {
 				Message struct {
@@ -61,13 +69,35 @@ func TestPendingNativeCreatePeer(t *testing.T) {
 			}
 			continue
 		}
-		if json.Unmarshal(scanner.Bytes(), &frame) != nil || frame.Type != "control_request" || frame.Request.Subtype != "initialize" {
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil || frame.Type != "control_request" {
 			_ = os.WriteFile(filepath.Join(dir, "unexpected-input"), scanner.Bytes(), 0o600)
 			os.Exit(3)
 		}
-		_, _ = fmt.Fprintf(os.Stdout, `{"type":"control_response","response":{"subtype":"success","request_id":%q,"response":{}}}`+"\n", frame.ID)
-		if err := os.WriteFile(filepath.Join(dir, "initialized"), []byte("acknowledged; no native identity"), 0o600); err != nil {
-			os.Exit(4)
+		switch frame.Request.Subtype {
+		case "initialize":
+			if initialized {
+				os.Exit(4)
+			}
+			if err := encoder.Encode(map[string]any{
+				"type": "control_response",
+				"response": map[string]any{
+					"subtype": "success", "request_id": frame.RequestID, "response": map[string]any{},
+				},
+			}); err != nil {
+				os.Exit(5)
+			}
+			initialized = true
+		case "claim_session":
+			if !initialized || claimed || frame.Request.CWD == "" {
+				os.Exit(6)
+			}
+			claimed = true
+			if err := os.WriteFile(filepath.Join(dir, "claiming"), []byte("claim_session received; identity withheld"), 0o600); err != nil {
+				os.Exit(7)
+			}
+		default:
+			_ = os.WriteFile(filepath.Join(dir, "unexpected-input"), scanner.Bytes(), 0o600)
+			os.Exit(3)
 		}
 	}
 	_ = os.WriteFile(filepath.Join(dir, "stdin-closed"), []byte("EOF"), 0o600)
@@ -129,10 +159,10 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				pid, err = strconv.Atoi(string(data))
 				require.NoError(t, err)
 				t.Logf("resource ledger: native peer pid=%d started", pid)
-				require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "initialized")); return err == nil }, 5*time.Second, 10*time.Millisecond)
-				if explicit {
-					require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "explicit-input")); return err == nil }, 5*time.Second, 10*time.Millisecond)
-				}
+				require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "claiming")); return err == nil }, 5*time.Second, 10*time.Millisecond)
+				// Provider.Open must confirm the claimed native identity before MASS
+				// dispatches explicit initial input. This peer withholds that response.
+				require.NoFileExists(t, filepath.Join(dir, "explicit-input"))
 				abandon()
 				select {
 				case err := <-created:
@@ -155,11 +185,7 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				require.ErrorIs(t, syscall.Kill(pid, 0), syscall.ESRCH, "product stop must reap the native process")
 				require.FileExists(t, filepath.Join(dir, "stdin-closed"))
 				require.NoFileExists(t, filepath.Join(dir, "unexpected-input"))
-				if explicit {
-					require.FileExists(t, filepath.Join(dir, "explicit-input"))
-				} else {
-					require.NoFileExists(t, filepath.Join(dir, "explicit-input"))
-				}
+				require.NoFileExists(t, filepath.Join(dir, "explicit-input"), "no input may cross the unconfirmed native identity gate")
 				r, err := svc.GetRuntime("pending")
 				require.NoError(t, err)
 				require.Equal(t, "stopped", r.Status.State)

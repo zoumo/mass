@@ -285,7 +285,7 @@ func TestTicket08CloseRevokesQueuedAuthorityAndDrains(t *testing.T) {
 				require.NoError(t, deadline.Err())
 			}
 			for _, p := range []events.InteractionRequested{current, queued} {
-				answerErr := c.Answer(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil)
+				answerErr := c.Answer(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil)
 				var public *transport.Error
 				require.ErrorAs(t, answerErr, &public)
 				require.Equal(t, "conflict", public.Code, "valid old answer must be rejected by lifecycle authority, not malformed input")
@@ -326,7 +326,7 @@ func TestTicket08CloseRevokesQueuedAuthorityAndDrains(t *testing.T) {
 				require.True(t, seen[facts[id]], "fact must be published before retiring binding")
 			}
 			for _, p := range []events.InteractionRequested{current, queued} {
-				answerErr := c.Answer(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil)
+				answerErr := c.Answer(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil)
 				var public *transport.Error
 				require.ErrorAs(t, answerErr, &public)
 				require.Equal(t, "conflict", public.Code, "valid old answer must be rejected by lifecycle authority, not malformed input")

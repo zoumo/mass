@@ -37,7 +37,7 @@ func (s *SessionWorkSuite) TestHistoryHTTPFilteringAndIndependentCursors() {
 	defer sub.Close()
 	facts := []events.SessionEvent{
 		s.fact("first", events.AgentMessage{MessageID: "first", Content: []events.ContentBlock{events.Text("first")}}),
-		s.fact("second", events.ToolCall{ID: "second", Kind: "execute", RawInput: json.Number("9007199254740993")}),
+		s.fact("second", events.ToolCall{ID: "second", Kind: events.ToolKindExecute, ToolName: "shell", Provider: events.ToolProviderAgent, RawInput: json.Number("9007199254740993")}),
 		s.fact("third", events.AgentMessage{MessageID: "third", Content: []events.ContentBlock{events.Text("third")}}),
 	}
 	for _, e := range facts {
@@ -307,7 +307,7 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 		Events []events.SessionEvent `json:"events"`
 	}
 	s.Require().NoError(json.Unmarshal(data, &examples))
-	s.Require().Len(examples.Events, 18)
+	s.Require().Len(examples.Events, 17)
 	// Replay markers require an accepted load and verified start, not an ordinary open.
 	accepted, err := s.svc.LoadSession(context.Background(), resource.SessionLoad{Metadata: resource.Metadata{Namespace: "one", Name: "replay"}, RuntimeRef: "agent", Cwd: "/remote", SessionID: "model-replay"})
 	s.Require().NoError(err)

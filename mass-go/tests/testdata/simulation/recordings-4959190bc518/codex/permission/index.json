@@ -1,0 +1,203 @@
+{
+  "provider": "codex",
+  "case": "permission",
+  "provenance": "consumer",
+  "recordedAt": "2026-11-11T09:55:37Z",
+  "sourceSession": "mass-record-codex-permission-1081652419/session",
+  "exportPath": "tests/testdata/simulation/recordings-4959190bc518/codex/permission/material",
+  "sha256": {
+    "manifest.json": "d943acc8fac701c68b2c7291f1357b60d7c052059d8d5b2858dec27a87aa87f6",
+    "material.json": "42693768afdb51afa7a3fce447e90b51bfba97738476482595dcef87515e5919",
+    "plan.json": "ed64f0c23471eca47da50babbd014961b966229dae1344a39af345fb70fdb6e8",
+    "raw/manifest.json": "4294f4322ad20a4e4c32c290e3460fb754af094fee4b7091b473be134fa03e01",
+    "raw/raw.jsonl": "e73db3687a6f6ac60912ab7dbf41f0197ffeeddb43d42576bc1589065afd06ec",
+    "raw/stderr.raw": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "raw/transport.json": "9ca8ed32d27e1802478fbd4fa7b9bd8b4919b1a28dea9b353ea30b529f66a555"
+  },
+  "versions": {
+    "codex": "codex-cli 0.166.0",
+    "mass": "12e5cf2cb77a740cf8251d77fe64d66ca76ee664",
+    "massWorktree": "M mass-go/internal/recordingtest/codex.go\n?? mass-go/internal/recordingtest/codex_capture.go\n?? mass-go/tests/testdata/simulation/recordings-4959190bc518/",
+    "sdk": "v0.0.0-20261111031457-4959190bc518",
+    "testify": "v0.1.3-0.20261111025559-1f8db14a50e1"
+  },
+  "toolSHA256": {
+    "codex": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+    "massd": "af5d441244e6ad9dd5e01d86ed3446f93388323ffdcd469eb9c115eb43182ca7",
+    "testify": "e160b68e4abf8332f4e13e0e1c12da1893bfb4f68e76b16d5900bf110100eebb"
+  },
+  "codexPath": "codex",
+  "prompt": "Use the shell tool to execute this exact command in the current project: `printf mass-approved \u003e permission-proof.txt`. The command writes only that project-local file. Do not use apply_patch, do not read other files, and do not just describe the command. Then report the command exit status.",
+  "project": "/var/tmp/mass-record-codex-permission-1081652419/project",
+  "nativeConfig": [
+    "model_provider=\"magpie\"",
+    "model_providers.magpie={name=\"magpie\",base_url=\"http://127.0.0.1:3425/v1\",wire_api=\"responses\",requires_openai_auth=true}"
+  ],
+  "facts": {
+    "sessionId": "01a1ca08-6323-7412-9286-1dba43a17823",
+    "state": "idle",
+    "accepted": true,
+    "events": [
+      {
+        "kind": "user.message",
+        "text": "Use the shell tool to execute this exact command in the current project: `printf mass-approved \u003e permission-proof.txt`. The command writes only that project-local file. Do not use apply_patch, do not read other files, and do not just describe the command. Then report the command exit status."
+      },
+      {
+        "kind": "agent.thinking"
+      },
+      {
+        "kind": "agent.message",
+        "text": "\n\n"
+      },
+      {
+        "kind": "agent.tool_call",
+        "text": "/bin/zsh -lc 'printf mass-approved \u003e permission-proof.txt'",
+        "toolCallId": "call_7c404087e2ec4cbc9158d136"
+      },
+      {
+        "kind": "agent.tool_result",
+        "toolCallId": "call_7c404087e2ec4cbc9158d136",
+        "status": "completed",
+        "exitCode": 0
+      },
+      {
+        "kind": "agent.message",
+        "text": "Command exited with status `0`."
+      }
+    ],
+    "streamKinds": [
+      "session.state_update",
+      "session.state_update",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.error",
+      "user.message",
+      "session.error",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking_chunk",
+      "agent.thinking",
+      "agent.message_chunk",
+      "agent.message",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.state_update",
+      "agent.tool_call",
+      "session.state_update",
+      "session.interaction_requested",
+      "session.interaction_closed",
+      "session.state_update",
+      "session.state_update",
+      "agent.tool_result",
+      "session.error",
+      "session.error",
+      "session.usage_update",
+      "agent.message_chunk",
+      "agent.message",
+      "session.usage_update",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.state_update"
+    ],
+    "permission": {
+      "interaction": "codex-2c7859ef-b182-4cdd-84da-84956823c266",
+      "request": {
+        "kind": "permission",
+        "toolCallId": "call_7c404087e2ec4cbc9158d136",
+        "title": "Approve command execution",
+        "options": [
+          {
+            "optionId": "allow-once",
+            "name": "Allow once",
+            "kind": "allow_once"
+          },
+          {
+            "optionId": "native-decision-1",
+            "name": "Allow and apply the proposed execution policy",
+            "kind": "allow_always"
+          },
+          {
+            "optionId": "cancel",
+            "name": "Cancel",
+            "kind": "reject_once"
+          }
+        ]
+      },
+      "stateBeforeAnswer": "requires_action",
+      "answer": {
+        "optionId": "allow-once",
+        "sent": true,
+        "nativeAccepted": null
+      },
+      "stateAfterAnswer": "running",
+      "completed": true,
+      "closed": true
+    }
+  }
+}

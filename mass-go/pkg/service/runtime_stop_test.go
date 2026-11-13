@@ -545,10 +545,12 @@ func (s *RuntimeStopSuite) assertStopRetainsOverflow(recovered bool) {
 		}
 		return nil
 	}
-	c, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err = s.svc.StopRuntime(c, "agent")
-	s.Require().Error(err)
+	// Keep history blocked until the original stop observes the overflow.
+	// Caller timeout alone does not prove the reader filled the lane queue.
+	s.Require().ErrorContains(err, "runtime_delivery_unsettled")
 	release()
 	_, err = s.svc.StopRuntime(context.Background(), "agent")
 	s.Require().Error(err)

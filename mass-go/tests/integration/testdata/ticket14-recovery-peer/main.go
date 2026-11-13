@@ -9,11 +9,18 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
-const sessionID = "14141414-1414-4141-8141-141414141414"
+var sessionID = "14141414-1414-4141-8141-141414141414"
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	dir := os.Getenv("PEER_DIR")
 	cwd, err := os.Getwd()
 	must(err)
@@ -46,18 +53,28 @@ func main() {
 	resumed := false
 	for _, arg := range os.Args[1:] {
 		resumed = resumed || strings.HasPrefix(arg, "--resume=")
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			sessionID = value
+		}
 	}
-	waitResumeInput := resumed && os.Getenv("RESUME_INPUT_MODE") != "" && len(saved) == 1
+	if clipeer.AwaitingClaim() {
+		sessionID = uuid.NewString()
+	}
+	mode := os.Getenv("RESUME_INPUT_MODE")
 	init := func() {
 		id, work := sessionID, cwd
-		if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") == "wrong-id" {
+		if resumed && mode == "wrong-id" {
 			id = "20202020-2020-4020-8020-202020202020"
 		}
-		if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") == "wrong-cwd" {
+		if resumed && mode == "wrong-cwd" {
 			work = filepath.Dir(cwd)
 		}
 		log("init", map[string]any{"sessionId": id, "cwd": work})
 		send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": work})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 	}
 	thread := func() map[string]any {
 		return map[string]any{"id": sessionID, "sessionId": sessionID, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
@@ -70,8 +87,12 @@ func main() {
 			if v["type"] == "control_request" {
 				r := v["request"].(map[string]any)
 				log(r["subtype"].(string), nil)
+				if reply, ok := clipeer.ClaimReply(v, sessionID); ok {
+					send(reply)
+					continue
+				}
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
-				if r["subtype"] == "initialize" && resumed && !waitResumeInput {
+				if r["subtype"] == "initialize" && !(resumed && mode == "hold-init") {
 					init()
 				}
 				continue
@@ -89,7 +110,7 @@ func main() {
 			log("input", map[string]any{"text": text, "content": content, "sessionId": sessionID, "submission": v["uuid"]})
 			n := save(text)
 			uid, aid := fmt.Sprintf("user-%d", n), fmt.Sprintf("answer-%d", n)
-			path := os.Getenv("SAVED_TRANSCRIPT")
+			path := filepath.Join(os.Getenv("SAVED_TRANSCRIPT_DIR"), sessionID+".jsonl")
 			f, e := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 			must(e)
 			var parent any
@@ -105,23 +126,10 @@ func main() {
 				must(json.NewEncoder(f).Encode(row))
 			}
 			must(f.Close())
-			if !resumed {
-				init()
-				resumed = true
-			}
-			if waitResumeInput && strings.HasPrefix(os.Getenv("RESUME_INPUT_MODE"), "wrong-") {
-				// Keep the mismatch as the first identity-bearing frame; a preceding
-				// result would correctly anchor the SDK's root and fence a foreign init.
-				init()
-				waitResumeInput = false
-			}
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "running"})
 			send(map[string]any{"type": "assistant", "session_id": sessionID, "user_message_uuid": v["uuid"], "message": rows[1]["message"]})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": v["uuid"]})
-			if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") != "no-init" {
-				// Deliberately complete before init/receipt to test buffered terminal facts.
-				init()
-				waitResumeInput = false
-			}
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 			continue
 		}
 		method, _ := v["method"].(string)
@@ -138,6 +146,7 @@ func main() {
 				panic("replacement thread")
 			}
 			reply(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": sessionID, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			reply(map[string]any{"thread": thread()})
 		case "thread/turns/list":

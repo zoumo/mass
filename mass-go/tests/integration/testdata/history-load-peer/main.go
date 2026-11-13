@@ -109,7 +109,7 @@ func main() {
 		if resumes > 0 {
 			stage = "resume"
 		}
-		if reads > 1 {
+		if reads > 2 {
 			stage = "after"
 		}
 		if parts := strings.Split(mode, ":"); len(parts) == 3 && parts[1] == stage {
@@ -201,6 +201,7 @@ func main() {
 			}
 			requireProjectIsolation(v.Params)
 			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			send(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": "native-thread", "status": map[string]any{"type": "idle"}}})
 		case "thread/turns/list":
 			if v.Params["cursor"] == nil {
 				passes++

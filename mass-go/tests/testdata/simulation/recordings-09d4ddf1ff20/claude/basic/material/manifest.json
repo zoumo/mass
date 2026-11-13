@@ -1,0 +1,45 @@
+{
+  "captureStatus": "complete",
+  "credentialScan": "pass",
+  "files": {
+    "history/runtime/config/projects/-private-var-tmp-mass-record-claude-153315685-project/c9486160-3061-4924-ade7-7ad598bb546d.jsonl": "27c7430f95c23875711d1bedf674f20851100f61e69f5392930f949cc63cbde1",
+    "plan.json": "3b63398a8c991f9fba7d18428b296a1bce49e13f1027cc1b341ff66e92a997a2",
+    "raw/manifest.json": "6aa7df5f82ac3dfa442d9b566ce3e68cec5b2de6c178470bdf0df1a8f9ec1ff3",
+    "raw/raw.jsonl": "e2b4b546a8d2fb1dbcfa2117b5b01504530d4e98e2866cc8d214ef2e84263ce8",
+    "raw/stderr.raw": "09b1eaa3ba7f497d554db3d67dc7d4a10da3319014db4b04457db9806284728c",
+    "raw/transport.json": "916db8a684d8d34993d24776dbd1ba549081ed0946d250a63461e484f5fc3a41",
+    "report.json": "58147e0f66718a085ae4a596ceff366ee8f2bf753e571900d01166e4facb1d41",
+    "source-plan.json": "1520e918f487e3f15d517b2137b09359f194af3da02f08ec85b84db324c63e84"
+  },
+  "materialFormatVersion": 3,
+  "native": {
+    "args": [
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--input-format",
+      "stream-json",
+      "--permission-prompt-tool",
+      "stdio",
+      "--include-partial-messages",
+      "--model=auto/deepseek-v4.1-flash-1017",
+      "--await-claim"
+    ],
+    "cwd": "/private/var/tmp/mass-record-claude-153315685/session/runtime/executions/2751a1470cd3d4fbc259a24b6e22085c/workspace",
+    "executable": "/private/var/tmp/mass-record-claude-153315685/native-claude",
+    "sha256": "9f43251cc30ec73e586689359c4345b5fc5b1d01aeb4f08f2d79524edd889a3b",
+    "version": "2.1.293 (Claude Code)"
+  },
+  "planSHA256": "3b63398a8c991f9fba7d18428b296a1bce49e13f1027cc1b341ff66e92a997a2",
+  "provenance": "consumer",
+  "proxyVersion": "v0.2.1",
+  "recordingFormat": {
+    "name": "agent-mock-jsonl",
+    "transport": "stdio-jsonl",
+    "version": 1
+  },
+  "runSHA256": "916db8a684d8d34993d24776dbd1ba549081ed0946d250a63461e484f5fc3a41",
+  "schemaVersion": 1,
+  "sourcePlanSHA256": "1520e918f487e3f15d517b2137b09359f194af3da02f08ec85b84db324c63e84",
+  "status": "captured"
+}

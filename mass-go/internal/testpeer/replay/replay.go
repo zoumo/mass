@@ -18,11 +18,27 @@ var ErrDisconnected = errors.New("scripted disconnect")
 // Run keeps transport mechanics separate from the two native ID contracts.
 // Reads and writes are strict: exactly one client frame per recorded c2s frame,
 // no extra client byte after the script, and no unfinished request.
-func Run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer) (err error) {
+func Run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, sessionIDs ...string) (err error) {
+	assignedSessionID := ""
+	if len(sessionIDs) > 0 {
+		assignedSessionID = sessionIDs[0]
+	}
+	return run(ctx, document, limits, input, output, assignedSessionID, "")
+}
+
+// RunClaim is Run for a synthetic Claude CLI started with --await-claim. The
+// peer answers the SDK's claim_session request with claimSessionID before
+// handing the next scripted client frame to the strict replay engine, and
+// reports claimCWD for the synthetic working-directory placeholder.
+func RunClaim(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, claimSessionID, claimCWD string) error {
+	return run(ctx, document, limits, input, output, claimSessionID, claimCWD)
+}
+
+func run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, assignedSessionID, claimCWD string) (err error) {
 	if ctx == nil || document == nil || input == nil || output == nil {
 		return errors.New("context, document and protocol streams required")
 	}
-	a, err := newAdapter(document.Provider)
+	a, err := newAdapter(document.Provider, assignedSessionID)
 	if err != nil {
 		return err
 	}
@@ -31,7 +47,12 @@ func Run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 		return err
 	}
 	p := peerIO{input: bufio.NewReader(input), output: output, limits: limits}
+	if claimCWD != "" {
+		p.claimSessionID = assignedSessionID
+		p.claimCWD = claimCWD
+	}
 	var ordinal int64
+	initializeRequestID := ""
 	defer func() {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = errors.Join(ctxErr, err)
@@ -63,17 +84,34 @@ func Run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 			if err != nil {
 				return err
 			}
+			if stringMember(member(actual, "request"), "subtype") == "initialize" {
+				initializeRequestID = stringMember(actual, "request_id")
+			}
 			if _, err = a.client(frame.Wire, actual); err != nil {
 				return err
 			}
 		} else {
+			wire := frame.Wire
+			if p.claimCWD != "" {
+				wire, err = replaceSyntheticCWD(wire, p.claimCWD)
+				if err != nil {
+					return err
+				}
+			}
 			var emitted rawjson.Value
-			emitted, err = a.server(frame.Wire)
+			emitted, err = a.server(wire)
 			if err != nil {
 				return err
 			}
 			if err := p.write(emitted.Raw()); err != nil {
 				return err
+			}
+			if p.claimSessionID != "" && initializeRequestID != "" &&
+				stringMember(emitted, "type") == "control_response" &&
+				stringMember(member(emitted, "response"), "request_id") == initializeRequestID {
+				if err := p.claim(); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -96,10 +134,36 @@ type peerIO struct {
 	input                 *bufio.Reader
 	output                io.Writer
 	limits                scenario.Limits
+	claimSessionID        string
+	claimCWD              string
 	readBytes, writeBytes int64
 }
 
 func (p *peerIO) read() (rawjson.Value, error) {
+	return p.readFrame()
+}
+
+func (p *peerIO) claim() error {
+	value, err := p.readFrame()
+	if err != nil {
+		return err
+	}
+	reply, claimed, err := claimExchange(value, p.claimSessionID)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return errors.New("expected claim_session after initialize")
+	}
+	p.claimCWD = stringMember(member(member(reply, "response"), "response"), "cwd")
+	p.claimSessionID = ""
+	if err := p.write(reply.Raw()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *peerIO) readFrame() (rawjson.Value, error) {
 	var line []byte
 	for {
 		part, err := p.input.ReadSlice('\n')

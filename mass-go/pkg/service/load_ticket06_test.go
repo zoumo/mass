@@ -99,7 +99,7 @@ func TestLoadAcceptedBeforeNativeReadAndOutlivesRequest(t *testing.T) {
 	page, err := svc.ListHistoryEvents(resource.SessionRef{SessionID: "native"}, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 1)
-	require.Equal(t, "saved input", page.Events[0].Payload().(events.UserMessage).Content[0].Text)
+	require.Equal(t, "saved input", events.TextOf(page.Events[0].Payload().(events.UserMessage).Content[0]))
 	loaded, err := svc.GetSession(resource.SessionRef{SessionID: "native"})
 	require.NoError(t, err)
 	require.NotNil(t, loaded.Status.EffectiveFeatures)

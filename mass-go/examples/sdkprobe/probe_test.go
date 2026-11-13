@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	claude "github.com/zoumo/agent-sdk-go/claude"
@@ -248,7 +249,7 @@ func (probeSuite *ProbeSuite) TestClaude() {
 		probeSuite.Run(mode, func() {
 			t := probeSuite.T()
 			ctx := deadline(t)
-			c, err := claude.Open(ctx, claude.SessionOptions{CLIPath: bins["claude"], WorkDir: workDir(t), Env: []string{"CLAUDE_MOCK_SCENARIO=" + scenario(t, "claude-"+mode)}})
+			c, err := claude.Open(ctx, claude.SessionOptions{CLIPath: bins["claude"], WorkDir: workDir(t), ClaimSession: mode != "no-identity", Env: []string{"CLAUDE_MOCK_SCENARIO=" + scenario(t, "claude-"+mode)}})
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				require.NoError(t, c.Close())
@@ -258,6 +259,7 @@ func (probeSuite *ProbeSuite) TestClaude() {
 					t.Error("Claude still active after Close")
 				}
 			})
+			wantSessionID := "claude-session"
 			if mode == "no-identity" {
 				// No system init is scripted until real input. Observe absence without
 				// sending an empty prompt or manufacturing an identifier.
@@ -275,18 +277,22 @@ func (probeSuite *ProbeSuite) TestClaude() {
 				require.Empty(t, id)
 				t.Log("PASS no-input missing identity explicitly observed; creation must fail if identity is required")
 			} else {
+				claimed, known := c.SessionID()
+				require.True(t, known, "claim_session must bind the native identity before Open returns")
+				require.NoError(t, uuid.Validate(claimed))
+				wantSessionID = claimed
 				for {
 					event, err := c.Receive(ctx)
 					require.NoError(t, err)
 					if value := event.Event; value != nil && value.Type == "system" && value.Subtype == "init" {
-						require.Equal(t, "claude-session", value.SessionID)
+						require.Equal(t, claimed, value.SessionID)
 						break
 					}
 				}
 				id, known := c.SessionID()
 				require.True(t, known)
-				require.Equal(t, "claude-session", id)
-				t.Log("PASS no-input native system init identity: claude-session (synthetic only)")
+				require.Equal(t, claimed, id)
+				t.Log("PASS no-input claimed native identity: <synthetic UUID>")
 			}
 			submission, err := c.Submit(ctx, claude.Input{Text: "hello"})
 			require.NoError(t, err)
@@ -323,7 +329,7 @@ func (probeSuite *ProbeSuite) TestClaude() {
 					continue
 				}
 				if value.Type == "assistant" || value.Type == "user" || value.Type == "result" {
-					require.Equal(t, "claude-session", value.SessionID)
+					require.Equal(t, wantSessionID, value.SessionID)
 				}
 				if value.Type == "assistant" && value.Assistant != nil {
 					for _, block := range value.Assistant.Content.Blocks {
@@ -338,7 +344,7 @@ func (probeSuite *ProbeSuite) TestClaude() {
 					}
 				}
 				if value.Type == "user" && value.User != nil {
-					require.JSONEq(t, `{"type":"user","session_id":"claude-session","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"synthetic output"}]}}`, string(value.Raw))
+					require.JSONEq(t, fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"synthetic output"}]}}`, wantSessionID), string(value.Raw))
 					seen["tool-result"] = true
 				}
 				if value.Result != nil {

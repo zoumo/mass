@@ -8,9 +8,16 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	log, err := os.OpenFile(os.Getenv("LOAD_EVIDENCE"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		panic(err)
@@ -19,14 +26,19 @@ func main() {
 	record := json.NewEncoder(log)
 	write := json.NewEncoder(os.Stdout)
 	id := os.Getenv("LOAD_ID")
-	resumed := false
-	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--resume=") {
-			resumed = true
-		}
+	if id == "" {
+		id = "88888888-8888-4888-8888-888888888888"
 	}
-	if !resumed {
-		id = "33333333-3333-4333-8333-333333333333"
+	if clipeer.AwaitingClaim() {
+		id = uuid.NewString()
+	}
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			id = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			id = value
+		}
 	}
 	cwd, _ := os.Getwd()
 	evidence := func(v any) {
@@ -45,6 +57,7 @@ func main() {
 	n := 0
 	result := func() {
 		send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 	}
 	frames := make(chan map[string]any)
 	eof := make(chan struct{})
@@ -84,6 +97,10 @@ func main() {
 	for v := range frames {
 		if v["type"] == "control_request" {
 			r := v["request"].(map[string]any)
+			if reply, ok := clipeer.ClaimReply(v, id); ok {
+				send(reply)
+				continue
+			}
 			if r["subtype"] == "initialize" && os.Getenv("LOAD_MODE") == "startup" {
 				if !await() {
 					return
@@ -101,7 +118,8 @@ func main() {
 				if os.Getenv("LOAD_MODE") == "identity" {
 					observed = "22222222-2222-4222-8222-222222222222"
 				}
-				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd})
+				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd, "claude_code_version": clipeer.VersionNumber})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": observed, "state": "idle"})
 			case "interrupt":
 				result()
 			}
@@ -112,7 +130,7 @@ func main() {
 		}
 		n++
 		link, _ = v["uuid"].(string)
-		evidence(map[string]any{"event": "input", "pid": os.Getpid(), "uuid": link, "input": n})
+		evidence(map[string]any{"event": "input", "pid": os.Getpid(), "uuid": link, "input": n, "priority": v["priority"], "shouldQuery": v["shouldQuery"]})
 		m := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained process", "apiBlockIndex": 0}}}}
 		if os.Getenv("LOAD_MODE") == "unlinked" {
 			delete(m, "user_message_uuid")
@@ -120,6 +138,7 @@ func main() {
 		send(m)
 		if os.Getenv("LOAD_MODE") == "unlinked" {
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": id})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 		} else {
 			result()
 		}

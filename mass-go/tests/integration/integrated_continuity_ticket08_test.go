@@ -80,12 +80,12 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 					if p, ok := e.Payload().(events.InteractionRequested); ok {
 						require.Equal(t, 2, n, "only the middle input needs approval")
 						var answer runtime.InteractionReceipt
-						require.Error(t, c.Answer(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "not-offered"}, &answer))
+						require.Error(t, c.Answer(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "not-offered"}, &answer))
 						valid := map[string]any{"outcome": "selected", "optionId": "allow-once"}
-						require.NoError(t, c.Answer(ctx(t), ref, p.Interaction, valid, &answer))
+						require.NoError(t, c.Answer(ctx(t), ref, string(p.Interaction), valid, &answer))
 						require.Equal(t, runtime.Yes(), answer.Evidence.Sent)
 						require.Nil(t, answer.Evidence.NativeAccepted)
-						require.Error(t, c.Answer(ctx(t), ref, p.Interaction, valid, nil), "consumed authority cannot be reused")
+						require.Error(t, c.Answer(ctx(t), ref, string(p.Interaction), valid, nil), "consumed authority cannot be reused")
 						answered = true
 					}
 					if p, ok := e.Payload().(events.AgentMessage); ok {

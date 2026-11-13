@@ -8,6 +8,8 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/zoumo/agent-sdk-go/agent"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
@@ -53,14 +55,23 @@ type Address struct {
 	SessionName string `json:"sessionName"`
 }
 type SessionSpec struct {
-	Cwd            string           `json:"cwd"`
-	SystemPrompt   string           `json:"systemPrompt,omitempty"`
-	AdditionalDirs []string         `json:"additionalDirs,omitempty"`
-	Features       *SessionFeatures `json:"features,omitempty"`
-	MCPServers     *[]MCPServer     `json:"mcpServers,omitempty"`
+	Config         *InitialSessionConfig `json:"config,omitempty"`
+	Cwd            string                `json:"cwd"`
+	SystemPrompt   string                `json:"systemPrompt,omitempty"`
+	AdditionalDirs []string              `json:"additionalDirs,omitempty"`
+	Features       *SessionFeatures      `json:"features,omitempty"`
+	MCPServers     *[]MCPServer          `json:"mcpServers,omitempty"`
+}
+
+// SessionObservation reports termination of the sole SDK event relay.
+// This lifecycle signal never carries or synthesizes agent events.
+type SessionObservation interface {
+	Done() <-chan struct{}
+	Err() error
 }
 
 type DriverSession struct {
+	Observation         SessionObservation
 	SessionID           string
 	Capabilities        Capabilities
 	EffectiveFeatures   SessionFeatures
@@ -68,9 +79,19 @@ type DriverSession struct {
 	InitialInputReceipt *InputReceipt
 }
 
-type Input struct {
-	Content []events.ContentBlock `json:"content"`
+type Input = agent.Input
+
+// Configuration values and receipts retain the SDK contract in Go.
+type (
+	ConfigChange  = agent.ConfigChange
+	ConfigReceipt = agent.ConfigReceipt
+)
+
+// SessionConfigDriver is optional; custom Drivers need not implement it.
+type SessionConfigDriver interface {
+	SetSessionConfig(context.Context, string, ConfigChange) (ConfigReceipt, error)
 }
+
 type Acceptance struct {
 	Sent           *bool `json:"sent,omitempty"`
 	NativeAccepted *bool `json:"nativeAccepted,omitempty"`
@@ -85,8 +106,9 @@ func Bool(value bool) *bool {
 }
 
 type InputReceipt struct {
-	Submission string     `json:"submission"`
-	Acceptance Acceptance `json:"acceptance"`
+	Submission string            `json:"submission"`
+	Result     agent.InputResult `json:"result"`
+	Acceptance Acceptance        `json:"acceptance"`
 }
 type InteractionReceipt struct {
 	Interaction string     `json:"interaction"`

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -175,6 +176,13 @@ func requestError(err error, op string) error {
 	var v *runtime.OperationError
 	if errors.As(err, &v) {
 		return &failure{v, 1}
+	}
+	if errors.Is(err, events.ErrLegacyEventSchema) {
+		return &failure{&runtime.OperationError{
+			Code:    "unsupported",
+			Reason:  "legacy_event_schema",
+			Message: "Stored event schema is not supported",
+		}, 1}
 	}
 	code, reason, message := "unavailable", "request_failed", "Request failed"
 	switch op {

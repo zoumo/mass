@@ -32,24 +32,15 @@
     {
       "ordinal": 3,
       "channel": "protocol",
-      "direction": "client",
+      "direction": "server",
       "data": {
-        "type": "user",
-        "message": {
-          "role": "user",
-          "content": [
-            {
-              "type": "text",
-              "text": "hello"
-            },
-            {
-              "type": "text",
-              "text": "second block"
-            }
-          ]
-        },
-        "parent_tool_use_id": null,
-        "session_id": ""
+        "type": "system",
+        "subtype": "init",
+        "claude_code_version": "2.1.258",
+        "session_id": "claude-session",
+        "cwd": "/synthetic",
+        "model": "synthetic",
+        "tools": []
       }
     },
     {
@@ -58,15 +49,40 @@
       "direction": "server",
       "data": {
         "type": "system",
-        "subtype": "init",
+        "subtype": "session_state_changed",
         "session_id": "claude-session",
-        "cwd": "/synthetic",
-        "model": "synthetic",
-        "tools": []
+        "state": "idle"
       }
     },
     {
       "ordinal": 5,
+      "channel": "protocol",
+      "direction": "client",
+      "data": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "hello"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "priority": "next",
+        "shouldQuery": true
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "session_state_changed",
+        "session_id": "claude-session",
+        "state": "running"
+      }
+    },
+    {
+      "ordinal": 7,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -86,7 +102,7 @@
       }
     },
     {
-      "ordinal": 6,
+      "ordinal": 8,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -95,6 +111,17 @@
         "session_id": "claude-session",
         "is_error": false,
         "result": "explicit first answer"
+      }
+    },
+    {
+      "ordinal": 9,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "session_state_changed",
+        "session_id": "claude-session",
+        "state": "idle"
       }
     }
   ]

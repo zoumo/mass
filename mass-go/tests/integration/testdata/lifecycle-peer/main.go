@@ -9,9 +9,17 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	pidPath := os.Getenv("PEER_PID")
 	if os.Getenv("PEER_CONTROL") == "overload" {
 		pidPath += "." + strconv.Itoa(os.Getpid())
@@ -31,6 +39,7 @@ func main() {
 		return
 	}
 	threads, interrupts := 0, 0
+	threadCwds := map[string]any{}
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var v struct {
@@ -40,6 +49,11 @@ func main() {
 		}
 		if err := json.Unmarshal(scan.Bytes(), &v); err != nil {
 			panic(err)
+		}
+		// The SDK owns answers to server requests. A response has no method and
+		// must not be mistaken for an unexpected native request.
+		if v.Method == "" {
+			continue
 		}
 		respond := func(result any) { send(map[string]any{"id": v.ID, "result": result}) }
 		switch v.Method {
@@ -52,7 +66,12 @@ func main() {
 			if threads == 2 {
 				id = "damaged"
 			}
+			threadCwds[id] = v.Params["cwd"]
 			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": v.Params["cwd"], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": v.Params["cwd"], "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
+		case "thread/read":
+			id := v.Params["threadId"].(string)
+			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": threadCwds[id], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}})
 		case "thread/unsubscribe":
 			status := "unsubscribed"
 			if v.Params["threadId"] == "damaged" && os.Getenv("PEER_CONTROL") != "overload" {
@@ -85,10 +104,10 @@ func main() {
 				continue
 			}
 			if id == "damaged" {
-				notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": turnID, "status": "completed", "items": []any{}}})
 				for i := range 160 {
 					notify("item/completed", map[string]any{"threadId": id, "turnId": turnID, "item": map[string]any{"id": fmt.Sprintf("final-%d", i), "type": "agentMessage", "text": "accepted before close"}, "completedAtMs": 1})
 				}
+				notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": turnID, "status": "completed", "items": []any{}}})
 				send(map[string]any{"id": "queued-question", "method": "item/tool/requestUserInput", "params": map[string]any{"threadId": id, "turnId": turnID, "itemId": "late-question", "questions": []any{map[string]any{"id": "format", "header": "Format", "question": "Which format?", "isOther": false, "isSecret": false, "options": []any{map[string]any{"label": "json", "description": "JSON"}}}}}})
 				// Malformed supported notification: the original protocol failure
 				// must remain separate from the unknown unsubscribe result.
@@ -113,13 +132,21 @@ func main() {
 }
 
 func claude(send func(any)) {
-	sessionID := "claude-session"
-	if os.Getenv("PEER_CONTROL") == "overload" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			panic(err)
+	sessionID := "77777777-7777-4777-8777-777777777777"
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
 		}
-		sessionID = "claude-" + filepath.Base(cwd)
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			sessionID = value
+		}
+	}
+	if clipeer.AwaitingClaim() {
+		sessionID = uuid.NewString()
 	}
 	interrupts := 0
 	scan := bufio.NewScanner(os.Stdin)
@@ -129,12 +156,14 @@ func claude(send func(any)) {
 			ID      string `json:"request_id"`
 			Request struct {
 				Subtype string `json:"subtype"`
+				CWD     string `json:"cwd"`
 			} `json:"request"`
 		}
 		if err := json.Unmarshal(scan.Bytes(), &v); err != nil {
 			panic(err)
 		}
 		if v.Type == "user" {
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "running"})
 			send(map[string]any{"type": "stream_event", "session_id": sessionID, "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "active", "role": "assistant", "content": []any{}}}})
 			if os.Getenv("PEER_CONTROL") == "write-failure" {
 				closedInput(func() {
@@ -143,17 +172,19 @@ func claude(send func(any)) {
 			}
 			if os.Getenv("PEER_CONTROL") == "overload" {
 				n := 1
-				if sessionID == "claude-damaged" {
+				if filepath.Base(cwd) == "damaged" {
 					n = 160
 				}
 				for i := range n {
 					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "complete synthetic fact", "apiBlockIndex": 0}}}})
 				}
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 				continue
 			}
 			if os.Getenv("PEER_CONTROL") == "eof" {
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 				for i := range 160 {
 					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "accepted before EOF", "apiBlockIndex": 0}}}})
 				}
@@ -168,6 +199,13 @@ func claude(send func(any)) {
 		}
 		if v.Type != "control_request" {
 			panic("unexpected Claude frame")
+		}
+		if v.Request.Subtype == "claim_session" {
+			if v.Request.CWD == "" {
+				panic("claim_session has no working directory")
+			}
+			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v.ID, "response": map[string]any{"status": "ok", "session_id": sessionID, "cwd": v.Request.CWD}}})
+			continue
 		}
 		if v.Request.Subtype == "interrupt" {
 			interrupts++
@@ -186,7 +224,8 @@ func claude(send func(any)) {
 			if err != nil {
 				panic(err)
 			}
-			send(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
+			send(map[string]any{"type": "system", "subtype": "init", "claude_code_version": clipeer.VersionNumber, "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 		}
 	}
 }

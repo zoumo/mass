@@ -122,6 +122,9 @@ func (c *Client) UpdateRuntime(ctx context.Context, name string, spec resource.R
 }
 
 func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any) error {
+	if err := v.Spec.Config.Validate(); err != nil {
+		return err
+	}
 	spec, err := generatedValue[generated.SessionSpec](v.Spec)
 	if err != nil {
 		return err
@@ -132,6 +135,9 @@ func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any)
 
 // CreateSessionWithInput sends create-only input without persisting replay configuration.
 func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionCreateInput, out any) error {
+	if err := v.Spec.Config.Validate(); err != nil {
+		return err
+	}
 	body, err := generatedValue[generated.SessionCreate](v)
 	if err != nil {
 		return err
@@ -141,6 +147,9 @@ func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionC
 
 // LoadSession returns acceptance only; it never waits for replay or retries.
 func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, out any) error {
+	if err := input.Config.Validate(); err != nil {
+		return err
+	}
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return err
 	}
@@ -256,7 +265,7 @@ func (c *Client) Cancel(ctx context.Context, ref resource.SessionRef, out any) e
 
 func (c *Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
 	for _, block := range input.Content {
-		if err := block.Validate(); err != nil {
+		if err := events.ValidateContentBlock(block); err != nil {
 			return invalid()
 		}
 	}
@@ -308,4 +317,21 @@ func (c *Client) History(ctx context.Context, ref resource.SessionRef, q store.H
 
 func invalid() *runtime.OperationError {
 	return &runtime.OperationError{Code: "invalid_argument", Reason: "invalid_request", Message: "Invalid request"}
+}
+
+// SetSessionConfig sends one transient change exactly once. It never retries.
+func (c *Client) SetSessionConfig(ctx context.Context, ref resource.SessionRef, change runtime.ConfigChange, out any) error {
+	if _, err := SessionPath(ref); err != nil {
+		return err
+	}
+	if err := change.Validate(); err != nil {
+		return invalid()
+	}
+	body := generated.ConfigChange{Id: generated.ConfigChangeId(change.ID), Value: change.Value}
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
+		if ref.SessionID != "" {
+			return generated.NewSetSessionConfigByIDRequest(c.url, ref.SessionID, body)
+		}
+		return generated.NewSetSessionConfigByNameOrIDRequest(c.url, ref.Namespace, ref.Name, body)
+	})
 }

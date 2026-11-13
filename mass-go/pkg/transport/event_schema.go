@@ -54,7 +54,7 @@ func registerEventSchemas(r huma.Registry) {
 		switch kind {
 		case "permission":
 			p["toolCallId"], p["title"] = text(), text()
-			p["content"] = array(r.Schema(reflect.TypeFor[events.ContentBlock](), true, ""))
+			p["content"] = array(contentBlockRef())
 			p["options"] = array(r.Schema(reflect.TypeFor[events.PermissionOption](), true, ""))
 			one := 1
 			p["options"].MinItems = &one
@@ -76,7 +76,7 @@ func registerEventSchemas(r huma.Registry) {
 		kind    string
 		payload events.Payload
 	}{
-		{"session.history_replay", events.HistoryReplay{}}, {"user.message", events.UserMessage{}}, {"agent.message", events.AgentMessage{}}, {"agent.thinking", events.AgentThinking{}}, {"agent.message_chunk", events.MessageChunk{}}, {"agent.thinking_chunk", events.ThinkingChunk{}}, {"agent.tool_call", events.ToolCall{}}, {"agent.tool_result", events.ToolResult{}}, {"agent.tool_call_chunk", events.ToolChunk{}}, {"agent.plan", events.Plan{}}, {"session.state_update", events.StateUpdate{}}, {"session.error", events.SessionError{}}, {"session.info_update", events.InfoUpdate{}}, {"session.config_option_update", events.ConfigOptionUpdate{}}, {"session.available_commands_update", events.AvailableCommandsUpdate{}}, {"session.usage_update", events.UsageUpdate{}}, {"session.interaction_requested", events.InteractionRequested{}}, {"session.interaction_closed", events.InteractionClosed{}},
+		{"session.history_replay", events.HistoryReplay{}}, {"user.message", events.UserMessage{}}, {"agent.message", events.AgentMessage{}}, {"agent.thinking", events.AgentThinking{}}, {"agent.message_chunk", events.MessageChunk{}}, {"agent.thinking_chunk", events.ThinkingChunk{}}, {"agent.tool_call", events.ToolCall{}}, {"agent.tool_result", events.ToolResult{}}, {"agent.tool_call_chunk", events.ToolChunk{}}, {"session.state_update", events.StateUpdate{}}, {"session.error", events.SessionError{}}, {"session.info_update", events.InfoUpdate{}}, {"session.config_option_update", events.ConfigOptionUpdate{}}, {"session.available_commands_update", events.AvailableCommandsUpdate{}}, {"session.usage_update", events.UsageUpdate{}}, {"session.interaction_requested", events.InteractionRequested{}}, {"session.interaction_closed", events.InteractionClosed{}},
 	}
 	base := r.Schema(reflect.TypeFor[events.EventBase](), false, "")
 	for _, branch := range branchesByType {
@@ -88,6 +88,9 @@ func registerEventSchemas(r huma.Registry) {
 				f.Nullable = false
 			}
 		}
+		if content := payload.Properties["content"]; content != nil {
+			content.Items = contentBlockRef()
+		}
 		switch kind {
 		case "session.history_replay":
 			payload.Properties["phase"] = enum("started", "native_completed", "failed", "canceled")
@@ -98,6 +101,20 @@ func registerEventSchemas(r huma.Registry) {
 			if f := payload.Properties["status"]; f != nil {
 				*f = *enum("pending", "in_progress", "completed", "failed", "declined", "unknown")
 			}
+			payload.Properties["kind"] = enum(
+				string(events.ToolKindRead),
+				string(events.ToolKindEdit),
+				string(events.ToolKindDelete),
+				string(events.ToolKindMove),
+				string(events.ToolKindSearch),
+				string(events.ToolKindExecute),
+				string(events.ToolKindThink),
+				string(events.ToolKindFetch),
+				string(events.ToolKindSwitchMode),
+				string(events.ToolKindOther),
+			)
+			payload.Properties["toolName"] = &huma.Schema{Type: "string", MinLength: new(1)}
+			payload.Properties["provider"] = &huma.Schema{Type: "string", MinLength: new(1)}
 		case "session.state_update":
 			for _, name := range []string{"state", "previousState"} {
 				payload.Properties[name] = enum("idle", "running", "requires_action")
@@ -111,6 +128,7 @@ func registerEventSchemas(r huma.Registry) {
 		case "session.usage_update":
 			payload.Properties["cost"] = object(map[string]*huma.Schema{"amount": {Type: "number"}, "currency": text()}, "amount", "currency")
 		}
+		payload.PrecomputeMessages()
 		props := map[string]*huma.Schema{}
 		maps.Copy(props, base.Properties)
 		props["eventId"] = &huma.Schema{Type: "string", Format: "uuid"}

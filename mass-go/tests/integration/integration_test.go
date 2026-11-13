@@ -158,18 +158,14 @@ func ctx(t *testing.T) context.Context {
 
 func scenario(t *testing.T) (string, string) {
 	t.Helper()
-	work := t.TempDir()
 	data, err := os.ReadFile("testdata/codex.json")
 	require.NoError(t, err)
-	quoted, err := json.Marshal(work)
-	require.NoError(t, err)
-	data = bytes.ReplaceAll(data, []byte(`"/synthetic"`), quoted)
-	var compact bytes.Buffer
-	require.NoError(t, json.Compact(&compact, data))
-	data = compact.Bytes()
-	path := filepath.Join(t.TempDir(), "scenario.json")
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	return path, work
+	var fixture map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&fixture))
+	ensureNativeReadyObservation(fixture, "codex")
+	return writeNativeScenario(t, fixture)
 }
 
 func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
@@ -268,12 +264,12 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 			require.NoError(t, json.Unmarshal(raw, &meta))
 		}
 		if event.Type() == "user.message" {
-			var native map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal(meta["native"], &native))
-			require.JSONEq(t, `"turn-1"`, string(native["turnId"]))
+			var codexMeta map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(meta["codex"], &codexMeta))
+			require.JSONEq(t, `"turn-1"`, string(codexMeta["turnId"]))
 		}
 		// Only native provenance is opaque; sibling metadata must not expose work association.
-		delete(meta, "native")
+		delete(meta, "codex")
 		if meta != nil {
 			envelope["_meta"], err = json.Marshal(meta)
 			require.NoError(t, err)
@@ -306,7 +302,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 		}
 		if chunk, ok := event.Payload().(events.MessageChunk); ok {
 			require.Equal(t, "message-1", event.ItemID)
-			chunks = append(chunks, chunk.Content[0].Text)
+			chunks = append(chunks, events.TextOf(chunk.Content[0]))
 		}
 		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil {
 			if *state.State == events.Running {
@@ -319,7 +315,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	}
 	require.Equal(t, []string{"preview ", "only"}, chunks)
 	require.Len(t, persisted, 4)
-	require.Equal(t, "complete answer", persisted[3].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "complete answer", events.TextOf(persisted[3].Payload().(events.AgentMessage).Content[0]))
 	page, err := svc.ListHistoryEvents(id, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 4)

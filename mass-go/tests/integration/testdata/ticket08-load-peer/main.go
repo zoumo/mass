@@ -6,9 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	if os.Getenv("LOAD_PROVIDER") == "claude" {
 		claude()
 		return
@@ -66,6 +71,7 @@ func main() {
 			}
 			record("resumed", map[string]any{"id": v.Params["threadId"]})
 			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": "native-thread", "status": map[string]any{"type": "idle"}})
 		case "thread/turns/list":
 			respond(map[string]any{"data": []any{map[string]any{"id": "saved", "status": "completed", "items": []any{}, "itemsView": "full"}}, "nextCursor": nil})
 		case "thread/items/list":
@@ -82,7 +88,7 @@ func main() {
 			record("input", map[string]any{"turn": turn})
 			respond(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress", "items": []any{}}})
 			notify("turn/started", map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress", "items": []any{}}})
-			send(map[string]any{"id": "approval-" + turn, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "native-thread", "turnId": turn, "itemId": "tool-" + turn}})
+			send(map[string]any{"id": "approval-" + turn, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "native-thread", "turnId": turn, "itemId": "tool-" + turn, "startedAtMs": 3}})
 		case "":
 			turn := fmt.Sprintf("live-%d", n)
 			if v.ID != "approval-"+turn || v.Result["decision"] != "accept" {

@@ -45,12 +45,19 @@ func claude() {
 	complete := func() {
 		message := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained connection", "apiBlockIndex": 0}}}}
 		result := map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link}
-		if os.Getenv("LOAD_MODE") == "unlinked" {
+		if link == "" || os.Getenv("LOAD_MODE") == "unlinked" {
 			delete(message, "user_message_uuid")
 			delete(result, "user_message_uuid")
 		}
 		send(message)
 		send(result)
+		state := "idle"
+		if os.Getenv("LOAD_MODE") == "unlinked" {
+			// A result alone has no state authority. Keep native work running
+			// until an explicit interrupt produces a native idle observation.
+			state = "running"
+		}
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": state})
 	}
 
 	scan := bufio.NewScanner(os.Stdin)
@@ -67,13 +74,18 @@ func claude() {
 			case "initialize":
 				cwd, _ := os.Getwd()
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 			case "interrupt":
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "user_message_uuid": link})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 			}
 		case "user":
 			n++
 			link, _ = v["uuid"].(string)
-			record("input", map[string]any{"uuid": link, "input": n})
+			if v["priority"] != "next" || v["shouldQuery"] != true {
+				panic("missing native start-or-steer options")
+			}
+			record("input", map[string]any{"uuid": link, "input": n, "content": v["message"].(map[string]any)["content"]})
 			send(map[string]any{"type": "control_request", "user_message_uuid": link, "request_id": fmt.Sprintf("approval-%d", n), "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "input": map[string]any{"command": "echo synthetic"}, "tool_use_id": fmt.Sprintf("tool-live-%d", n)}})
 		case "control_response":
 			response := v["response"].(map[string]any)

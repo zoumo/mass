@@ -112,11 +112,14 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text(input)}})
 	require.NoError(t, err)
 	message := false
+	forwardingGaps := 0
 	for {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.SessionError); ok {
-			t.Fatalf("session failed: %s %s", p.Message, p.Reason)
+			require.Equal(t, "native_relationship_gap", p.Reason)
+			requireClaudeForwardingGap(t, e)
+			forwardingGaps++
 		}
 		if e.Type() == "agent.message" {
 			message = true
@@ -125,6 +128,7 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 			break
 		}
 	}
+	require.LessOrEqual(t, forwardingGaps, 1)
 }
 
 func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() {
@@ -325,12 +329,16 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	path, work := nativeScenario(t, "claude", "basic")
 	resumePath, _ := nativeScenario(t, "claude", "lifecycle-resume")
 	replaceWorkspace(t, resumePath, work)
+	const sessionID = "11111111-1111-4111-8111-111111111111"
+	path = replaceClaudeScenarioSessionID(t, path, sessionID)
+	resumePath = replaceClaudeScenarioSessionID(t, resumePath, sessionID)
+	configDir := t.TempDir()
 	// Use one executable across cold recovery; resumed frames echo the
 	// dynamic caller UUID while preserving every retained baseline frame.
 	bin := filepath.Join(t.TempDir(), "claude-linked-replay")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 	require.NoError(t, err, string(out))
-	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path}}
+	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path, "env": map[string]any{"CLAUDE_CONFIG_DIR": configDir}}}
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
@@ -338,11 +346,12 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	original, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "n", Name: "claude"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: original.Status.SessionID}
+	prepareClaudeSavedSession(t, configDir, work, ref.SessionID)
 	finishInput(t, svc, ref, "hello")
 	history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.NotEmpty(t, history.Events)
-	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath}
+	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath, "env": map[string]any{"CLAUDE_CONFIG_DIR": configDir}}
 	_, err = svc.UpdateRuntime("agent", spec)
 	require.NoError(t, err)
 	_, err = svc.StopRuntime(ctx(t), "agent")
@@ -403,7 +412,7 @@ func (lifecycleSuite *LifecycleSuite) TestCloseResumeKeepsObserversAndIdentity()
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.AgentMessage); ok {
-			require.Equal(t, "new answer", p.Content[0].Text)
+			require.Equal(t, "new answer", events.TextOf(p.Content[0]))
 			message = true
 		}
 		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && message {

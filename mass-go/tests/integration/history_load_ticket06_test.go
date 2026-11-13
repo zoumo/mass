@@ -95,30 +95,48 @@ func TestTicket06CodexPagedLoadAndSameConnectionInput(t *testing.T) {
 	require.Error(t, err, "stale cancellation must not close continued work")
 }
 
-func TestTicket06CodexLoadUsesExplicitMCPIsolation(t *testing.T) {
-	svc, cwd := ticket06Service(t, "", map[string]any{
-		"CODEX_HOME":                    t.TempDir(),
-		"LOAD_EXPECT_PROJECT_ISOLATION": "1",
-	})
-	empty := []runtime.MCPServer{}
+func TestTicket06CodexLoadPassesEffectiveMCPToSDK(t *testing.T) {
+	evidence := filepath.Join(t.TempDir(), "mcp-peer.jsonl")
+	svc, cwd := ticket06Service(t, "", map[string]any{"LOAD_EVIDENCE": evidence})
+	defaults := []runtime.MCPServer{
+		{Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server"},
+		{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/runtime"},
+	}
+	override := []runtime.MCPServer{{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/session", Headers: map[string]string{"X-Scope": "session"}}}
 	current, err := svc.GetRuntime("agent")
 	require.NoError(t, err)
-	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{
-		Type: current.Spec.Type, Config: current.Spec.Config, MCPServers: &empty,
+	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: current.Spec.Type, Config: current.Spec.Config, MCPServers: &defaults})
+	require.NoError(t, err)
+	accepted, err := svc.LoadSession(ctx(t), resource.SessionLoad{
+		Metadata: resource.Metadata{Namespace: "one", Name: "mcp"}, RuntimeRef: "agent", Cwd: cwd, SessionID: "native-thread", MCPServers: &override,
 	})
 	require.NoError(t, err)
-	_, err = svc.LoadSession(ctx(t), resource.SessionLoad{
-		Metadata:   resource.Metadata{Namespace: "one", Name: "isolated"},
-		RuntimeRef: "agent",
-		Cwd:        cwd,
-		SessionID:  "native-thread",
-	})
-	require.NoError(t, err)
-	ref := resource.SessionRef{SessionID: "native-thread"}
+	ref := resource.SessionRef{SessionID: accepted.Session.Status.SessionID}
 	require.Eventually(t, func() bool {
-		r, err := svc.GetSession(ref)
-		return err == nil && r.Status.HistoryLoad.Phase == "completed"
+		r, getErr := svc.GetSession(ref)
+		return getErr == nil && r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase == "completed"
 	}, 5*time.Second, time.Millisecond)
+	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continue")}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		page, listErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+		return listErr == nil && len(page.Events) == 4
+	}, time.Second, time.Millisecond)
+	resumePID, inputPID := 0, 0
+	for _, call := range ticket12Calls(t, evidence) {
+		switch call.Method {
+		case "thread/resume":
+			resumePID = call.PID
+			require.Equal(t, map[string]any{
+				"mcp_servers.local":  map[string]any{"command": "/mcp-server"},
+				"mcp_servers.remote": map[string]any{"url": "https://example.invalid/session", "http_headers": map[string]any{"X-Scope": "session"}},
+			}, call.Params["config"], "Runtime defaults and Session overrides reach SDK/native resume as the final list")
+		case "turn/start":
+			inputPID = call.PID
+		}
+	}
+	require.Positive(t, resumePID)
+	require.Equal(t, resumePID, inputPID, "continued input uses the native connection resumed for MCP load")
 }
 
 func TestTicket06RetainsFiveContentKindsAndToolOutputPresence(t *testing.T) {
@@ -154,7 +172,7 @@ func TestTicket06RetainsFiveContentKindsAndToolOutputPresence(t *testing.T) {
 	require.Equal(t, "partial", *results["truncated-output"].RawOutput)
 	require.Contains(t, results, "mcp")
 	require.Contains(t, results, "dynamic")
-	require.Equal(t, "retained thought", page.Events[2].Payload().(events.AgentThinking).Content[0].Text)
+	require.Equal(t, "retained thought", events.TextOf(page.Events[2].Payload().(events.AgentThinking).Content[0]))
 	require.Equal(t, []any{"separate summary"}, page.Events[2].Meta["native"].(map[string]any)["item"].(map[string]any)["summary"])
 }
 

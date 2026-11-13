@@ -1,0 +1,68 @@
+{
+  "provider": "codex",
+  "case": "basic",
+  "provenance": "consumer",
+  "recordedAt": "2026-11-11T09:52:16Z",
+  "sourceSession": "mass-record-codex-3589059373/session",
+  "exportPath": "tests/testdata/simulation/recordings-4959190bc518/codex/basic/material",
+  "sha256": {
+    "manifest.json": "a236d23411a8d4fe5b947875038883711857d9122012ebb96aae449cc1b9d8db",
+    "material.json": "a00c55e1ec8894c42051cecf5e5855a2751b698cef086ab0c1ae3ed7ffee59f9",
+    "plan.json": "5c18f0404ebbd7325597ee5b611fe06cdc1941d3ff47b181f5cc740e3b71b5b7",
+    "raw/manifest.json": "d3324cc4637f9b777b181f3d3541fe1e4db500a2448ffe01b8970367bf71de60",
+    "raw/raw.jsonl": "ccafe94dcb972b9ba9cd9375afae30b5b0aa73eb6fb80e07d3287f6cb386c9b0",
+    "raw/stderr.raw": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "raw/transport.json": "b2f9a34752a7ca9be650c664ad8b4774f6c1b5ddaac09b4ca153f46e039c37e0"
+  },
+  "versions": {
+    "codex": "codex-cli 0.166.0",
+    "mass": "12e5cf2cb77a740cf8251d77fe64d66ca76ee664",
+    "massWorktree": "M mass-go/internal/recordingtest/codex.go\n?? mass-go/internal/recordingtest/codex_capture.go",
+    "sdk": "v0.0.0-20261111031457-4959190bc518",
+    "testify": "v0.1.3-0.20261111025559-1f8db14a50e1"
+  },
+  "toolSHA256": {
+    "codex": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+    "massd": "af5d441244e6ad9dd5e01d86ed3446f93388323ffdcd469eb9c115eb43182ca7",
+    "testify": "e160b68e4abf8332f4e13e0e1c12da1893bfb4f68e76b16d5900bf110100eebb"
+  },
+  "codexPath": "codex",
+  "prompt": "Reply with one short greeting. Do not use tools or inspect files.",
+  "project": "/var/tmp/mass-record-codex-3589059373/project",
+  "nativeConfig": [
+    "model_provider=\"magpie\"",
+    "model_providers.magpie={name=\"magpie\",base_url=\"http://127.0.0.1:3425/v1\",wire_api=\"responses\",requires_openai_auth=true}"
+  ],
+  "facts": {
+    "sessionId": "01a1ca05-54bb-7842-b715-bc7dfceb7428",
+    "state": "idle",
+    "accepted": true,
+    "events": [
+      {
+        "kind": "user.message",
+        "text": "Reply with one short greeting. Do not use tools or inspect files."
+      },
+      {
+        "kind": "agent.message",
+        "text": "Hello! Ready when you are."
+      }
+    ],
+    "streamKinds": [
+      "session.state_update",
+      "session.state_update",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.error",
+      "user.message",
+      "agent.message_chunk",
+      "agent.message",
+      "session.usage_update",
+      "session.error",
+      "session.error",
+      "session.error",
+      "session.state_update"
+    ]
+  }
+}

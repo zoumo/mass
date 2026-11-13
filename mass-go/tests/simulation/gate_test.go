@@ -14,6 +14,10 @@ func TestRecordingAuditRejectsInvalidCaseSelection(t *testing.T) {
 	recordingtest.RunAuditRejectsInvalidCaseSelection(t)
 }
 
+func TestRecordingAuditRejectsInvalidRegistry(t *testing.T) {
+	recordingtest.RunAuditRejectsInvalidRegistry(t)
+}
+
 func TestRecordingAuditRejectsInvalidArtifacts(t *testing.T) {
 	recordingtest.RunAuditRejectsInvalidArtifacts(t)
 }

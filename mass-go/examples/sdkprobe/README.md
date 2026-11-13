@@ -6,7 +6,7 @@
 rtk proxy sh -c 'cd mass-go && GOWORK=off GOPROXY=off go test -count=1 -v ./examples/sdkprobe'
 ```
 
-需要 Go 1.26.9、`go` 与 `ps` 在 PATH，且 mass-go 的依赖已缓存。缺缓存依赖时报告未执行；离线验收不自动下载或安装。探针校验 SDK 固定版本 `github.com/zoumo/agent-sdk-go@v0.0.0-20261106173112-83036ea07a0c` 和工具固定版本 `github.com/zoumo/agent-sdk-testify@v0.0.0-20261105165039-e4799fe3484c`，并拒绝任一 replace。探针从消费模块构建 MASS 自有的 `internal/testpeer`，经临时 launcher 启动这些严格合成场景；不构建已从最新 SDK 删除的 `tools/agent-sdk-testify protocol mock`。场景先压缩为单行原生 JSON，保持 JSONL 协议帧。两个 provider 均使用 Open/Submit 和唯一 Receive 消费者；没有修改 SDK 或调用真实 Agent。
+需要 Go 1.26.10、`go` 与 `ps` 在 PATH，且 mass-go 的依赖已缓存。缺缓存依赖时报告未执行；离线验收不自动下载或安装。探针校验 SDK 固定版本 `github.com/zoumo/agent-sdk-go@v0.0.0-20261113030733-09d4ddf1ff20` 和工具固定版本 `github.com/zoumo/agent-sdk-testify@v0.2.1`，并拒绝任一 replace。探针从消费模块构建 MASS 自有的 `internal/testpeer`，经临时 launcher 启动这些严格合成场景；不构建已从最新 SDK 删除的 `tools/agent-sdk-testify protocol mock`。场景先压缩为单行原生 JSON，保持 JSONL 协议帧。两个 provider 均使用 Open/Submit 和唯一 Receive 消费者；没有修改 SDK 或调用真实 Agent。
 
 子进程 Env 仅含显式 `CODEX_MOCK_SCENARIO` / `CLAUDE_MOCK_SCENARIO`，工作目录为临时目录。不会启动真实 Agent、读取账户或调用模型。所有场景标注 `provenance: synthetic`；工具输出只是场景数据，工具命令不会执行。
 

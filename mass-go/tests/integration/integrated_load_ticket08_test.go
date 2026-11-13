@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 func ticket08Daemon(t *testing.T) *entrypointSuite {
@@ -135,7 +135,7 @@ func ticket08Loaded(t *testing.T, kind, mode string) (*entrypointSuite, resource
 	s.Require().False(loaded.Status.HistoryLoad.CleanupCompleted)
 	s.NotEqual(events.RequiresAction, loaded.Status.State)
 	if kind == "claude" {
-		s.Equal(events.Unknown, loaded.Status.State)
+		s.Contains([]events.SessionState{events.Unknown, events.Idle}, loaded.Status.State, "only a native observation can establish idle after load")
 	}
 	page := s.history(ref)
 	s.Require().Len(page.Events, 2)
@@ -165,8 +165,9 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 			var e events.SessionEvent
 			s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 			s.Nil(e.Replay)
-			if p, ok := e.Payload().(events.SessionError); ok {
-				s.Require().Fail("unexpected native/session failure", "%+v", p)
+			if _, ok := e.Payload().(events.SessionError); ok {
+				s.Require().Equal("claude", kind)
+				requireClaudeForwardingGap(t, e)
 			}
 			if _, ok := e.Payload().(events.AgentMessage); ok {
 				received = true
@@ -175,23 +176,25 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 			if kind == "claude" {
 				if _, ok := e.Payload().(events.AgentMessage); ok {
 					meta, _ := e.Meta["claude"].(map[string]any)
-					s.Require().Equal(receipt.Submission, meta["submission"])
-					s.Require().Equal("user_message_uuid", meta["attribution"])
+					s.NotContains(meta, "userMessageUuid", "the SDK does not attach its receipt UUID to native input")
+					s.NotContains(meta, "submission")
+					s.NotContains(meta, "attribution")
 				}
 			}
 			if request, ok := e.Payload().(events.InteractionRequested); ok {
 				s.False(answered)
 				s.Contains(request.Request.ToolCallID, "tool-live-")
 				var answer runtime.InteractionReceipt
-				s.call("session.answer", workflowParams{Session: ref, Interaction: request.Interaction, Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, &answer)
+				s.call("session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, &answer)
 				s.Equal(runtime.Yes(), answer.Evidence.Sent)
 				answered = true
 			}
 			if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
 				if kind == "claude" {
 					meta, _ := e.Meta["claude"].(map[string]any)
-					s.Equal(receipt.Submission, meta["submission"])
-					s.Equal("user_message_uuid", meta["attribution"])
+					s.Equal("idle", meta["nativeState"])
+					s.NotContains(meta, "submission")
+					s.NotContains(meta, "attribution")
 				}
 				break
 			}
@@ -212,7 +215,7 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 	ticket08Released(t, s, ref, kind, evidence, receipts)
 }
 
-func TestTicket08ClaudeLoadUnlinkedResultBlocksReadmission(t *testing.T) {
+func TestTicket08ClaudeLoadUnlinkedResultUsesNativeState(t *testing.T) {
 	s, ref, evidence := ticket08Loaded(t, "claude", "unlinked")
 	_, scan := s.observer(ref)
 	var receipt runtime.InputReceipt
@@ -225,41 +228,42 @@ func TestTicket08ClaudeLoadUnlinkedResultBlocksReadmission(t *testing.T) {
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 		s.Nil(e.Replay)
 		if request, ok := e.Payload().(events.InteractionRequested); ok {
-			s.call("session.answer", workflowParams{Session: ref, Interaction: request.Interaction, Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, nil)
+			s.call("session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, nil)
 			answered = true
 		}
 		if _, ok := e.Payload().(events.AgentMessage); ok {
 			meta, _ := e.Meta["claude"].(map[string]any)
-			s.Require().Equal("unknown", meta["attribution"])
+			s.NotContains(meta, "attribution")
 			s.NotContains(meta, "submission")
+			s.NotContains(meta, "userMessageUuid")
 			unknownMessage = true
 			unknown = e
 		}
 		if state, ok := e.Payload().(events.StateUpdate); ok {
-			if state.State != nil && (*state.State == events.Running || *state.State == events.RequiresAction) {
+			if !unknownMessage {
 				continue
 			}
-			s.Require().Nil(state.State, "an unlinked result must not settle current work")
-			s.Equal("work_attribution_unknown", state.StopReason)
+			s.Require().NotNil(state.State, "the peer supplies explicit native state after the result")
+			s.Equal(events.Running, *state.State, "an unlinked result cannot override native running state")
+			s.NotEqual("work_attribution_unknown", state.StopReason)
+			meta := e.Meta["claude"].(map[string]any)
+			s.Equal("running", meta["nativeState"])
 			break
 		}
 	}
 	s.True(answered)
 	s.True(unknownMessage)
 	var current resource.Session
-	s.call("session.get", workflowParams{Session: ref}, &current)
-	s.Equal(events.Unknown, current.Status.State)
-	err := workflowHTTP(newHTTPClient(t, s.url, ""), ctx(t), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("must not dispatch")}}}, nil)
-	s.Require().Error(err)
-	var public *transport.Error
-	s.Require().ErrorAs(err, &public)
-	s.Equal("conflict", public.Code)
+	s.Require().Eventually(func() bool {
+		s.call("session.get", workflowParams{Session: ref}, &current)
+		return current.Status.State == events.Running
+	}, 5*time.Second, time.Millisecond, "only the native state observation establishes running")
 	page := s.history(ref)
 	s.Require().Len(page.Events, 3)
 	s.Equal(unknown.EventID, page.Events[2].EventID)
 	s.Nil(page.Events[2].Replay)
 	meta, _ := page.Events[2].Meta["claude"].(map[string]any)
-	s.Equal("unknown", meta["attribution"])
+	s.NotContains(meta, "attribution")
 	s.NotContains(meta, "submission")
 	s.call("session.cancel", workflowParams{Session: ref}, nil)
 	for {
@@ -267,6 +271,7 @@ func TestTicket08ClaudeLoadUnlinkedResultBlocksReadmission(t *testing.T) {
 		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			s.Equal("idle", e.Meta["claude"].(map[string]any)["nativeState"])
 			break
 		}
 	}
@@ -284,11 +289,13 @@ func ticket08Released(t *testing.T, s *entrypointSuite, ref resource.SessionRef,
 	require.NoError(t, err)
 	t.Logf("synthetic native lifecycle: %s", b)
 	type record struct {
-		Event string   `json:"event"`
-		PID   int      `json:"pid"`
-		UUID  string   `json:"uuid"`
-		Turn  string   `json:"turn"`
-		Args  []string `json:"args"`
+		Event   string   `json:"event"`
+		PID     int      `json:"pid"`
+		UUID    string   `json:"uuid"`
+		Turn    string   `json:"turn"`
+		Args    []string `json:"args"`
+		Input   int      `json:"input"`
+		Content string   `json:"content"`
 	}
 	var records []record
 	for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
@@ -313,8 +320,12 @@ func ticket08Released(t *testing.T, s *entrypointSuite, ref resource.SessionRef,
 	for i, r := range receipts {
 		input, answer := records[2+i*2], records[3+i*2]
 		if kind == "claude" {
-			require.Equal(t, r.Submission, input.UUID)
+			require.NoError(t, uuid.Validate(r.Submission))
+			require.Empty(t, input.UUID, "SDK receipt identity must not be invented on the native wire")
 			require.Equal(t, input.UUID, answer.UUID)
+			require.Equal(t, i+1, input.Input)
+			require.Equal(t, input.Input, answer.Input)
+			require.NotEmpty(t, input.Content)
 		} else {
 			require.Equal(t, r.Submission, input.Turn)
 			require.Equal(t, input.Turn, answer.Turn)
