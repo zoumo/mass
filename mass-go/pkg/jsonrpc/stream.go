@@ -82,9 +82,15 @@ func (s *Stream) ReadObject(out any) error {
 
 // WriteObject marshals and writes one text message under the shared write lock.
 func (s *Stream) WriteObject(object any) error {
+	if err := ValidateLossless(object); err != nil {
+		return err
+	}
 	data, err := json.Marshal(object)
 	if err != nil {
 		return err
+	}
+	if !utf8.Valid(data) || !validJSONStringEscapes(data) {
+		return ErrLossyJSON
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()

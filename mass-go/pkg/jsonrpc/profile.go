@@ -80,14 +80,35 @@ func Parse(data []byte, role Role) (Message, *ProfileError) {
 	_, hasMethod := object["method"]
 	_, hasResult := object["result"]
 	_, hasError := object["error"]
+	var message Message
+	var profileErr *ProfileError
 	switch {
 	case hasMethod && !hasResult && !hasError:
-		return parseRequest(object, role)
+		message, profileErr = parseRequest(object, role)
 	case !hasMethod && (hasResult || hasError):
-		return parseResponse(object, role)
+		message, profileErr = parseResponse(object, role)
 	default:
 		return Message{}, invalidRequest(object, role)
 	}
+	if profileErr != nil {
+		return Message{}, profileErr
+	}
+	if !validJSONStringEscapes(data) {
+		if message.Kind == Response {
+			return Message{}, &ProfileError{
+				Code:     -32600,
+				Message:  "Invalid Request",
+				ID:       message.ID,
+				Suppress: true,
+			}
+		}
+		profileErr = invalidRequest(object, role)
+		if message.Kind == Notification {
+			profileErr.Suppress = true
+		}
+		return Message{}, profileErr
+	}
+	return message, nil
 }
 
 func parseRequest(object map[string]json.RawMessage, role Role) (Message, *ProfileError) {
@@ -265,7 +286,7 @@ func parseID(raw json.RawMessage, allowNull bool) (json.RawMessage, *ProfileErro
 		}
 	case strings.HasPrefix(text, `"`):
 		var value string
-		if json.Unmarshal(raw, &value) == nil {
+		if validJSONStringEscapes(raw) && json.Unmarshal(raw, &value) == nil {
 			return raw, nil
 		}
 	case text != "" && !strings.HasPrefix(text, "-") && !strings.ContainsAny(text, ".eE+"):

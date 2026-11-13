@@ -110,6 +110,101 @@ func TestParseNotificationSuppressesInvalidUnicodeEscapeError(t *testing.T) {
 	require.True(t, err.Suppress)
 }
 
+func TestParseRejectsInvalidUnicodeEscapesAcrossMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     string
+		role     Role
+		code     int64
+		id       string
+		suppress bool
+	}{
+		{
+			name: "request method",
+			data: `{"jsonrpc":"2.0","id":"1","method":"runtime.\uD800list"}`,
+			role: RoleServer,
+			code: -32600,
+			id:   `"1"`,
+		},
+		{
+			name: "request string id",
+			data: `{"jsonrpc":"2.0","id":"id-\uD800","method":"initialize"}`,
+			role: RoleServer,
+			code: -32600,
+		},
+		{
+			name: "request params",
+			data: `{"jsonrpc":"2.0","id":"1","method":"call","params":{"text":"\uD800"}}`,
+			role: RoleServer,
+			code: -32602,
+			id:   `"1"`,
+		},
+		{
+			name:     "response result",
+			data:     `{"jsonrpc":"2.0","id":"1","result":{"text":"\uD800"}}`,
+			role:     RoleClient,
+			code:     -32600,
+			id:       `"1"`,
+			suppress: true,
+		},
+		{
+			name:     "response error message",
+			data:     `{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"\uD800"}}`,
+			role:     RoleClient,
+			code:     -32600,
+			id:       `"1"`,
+			suppress: true,
+		},
+		{
+			name:     "response error data",
+			data:     `{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"bad","data":{"text":"\uD800"}}}`,
+			role:     RoleClient,
+			code:     -32600,
+			id:       `"1"`,
+			suppress: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse([]byte(test.data), test.role)
+			require.NotNil(t, err)
+			require.Equal(t, test.code, err.Code)
+			require.Equal(t, test.id, string(err.ID))
+			require.Equal(t, test.suppress, err.Suppress)
+		})
+	}
+}
+
+func TestParsePreservesLosslessUnicodeAcrossMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		role Role
+	}{
+		{
+			name: "request method and id",
+			data: `{"jsonrpc":"2.0","id":"普通-\uD83D\uDE00","method":"调用-\uD83D\uDE00"}`,
+			role: RoleServer,
+		},
+		{
+			name: "response result",
+			data: `{"jsonrpc":"2.0","id":"1","result":{"text":"普通\n\uD83D\uDE00\"C:\\work"}}`,
+			role: RoleClient,
+		},
+		{
+			name: "response error",
+			data: `{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"普通\n\uD83D\uDE00","data":{"text":"C:\\work"}}}`,
+			role: RoleClient,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse([]byte(test.data), test.role)
+			require.Nil(t, err)
+		})
+	}
+}
+
 func TestParseResponseProfile(t *testing.T) {
 	valid := []string{
 		`{"jsonrpc":"2.0","id":"a","result":null}`,

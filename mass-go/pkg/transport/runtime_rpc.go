@@ -152,13 +152,20 @@ func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *
 		replyServiceError(ctx, conn, req.ID, err)
 		return
 	}
+	if err := rpcwire.ValidateLossless(result); err != nil {
+		slog.Default().Debug("JSON-RPC result has no lossless representation", "method", req.Method)
+		replyInternalError(ctx, conn, req.ID)
+		return
+	}
 	response := &rpc2.Response{ID: req.ID}
 	if err := response.SetResult(result); err != nil {
 		slog.Default().Debug("JSON-RPC result encoding failed", "method", req.Method)
 		replyInternalError(ctx, conn, req.ID)
 		return
 	}
-	_ = conn.SendResponse(ctx, response)
+	if err := conn.SendResponse(ctx, response); err != nil {
+		replyInternalError(ctx, conn, req.ID)
+	}
 }
 
 func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err error) {
@@ -169,17 +176,23 @@ func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err err
 		replyInternalError(ctx, conn, id)
 		return
 	}
+	if err := rpcwire.ValidateLossless(public); err != nil {
+		replyInternalError(ctx, conn, id)
+		return
+	}
 	data, encodeErr := json.Marshal(public)
 	if encodeErr != nil {
 		replyInternalError(ctx, conn, id)
 		return
 	}
 	raw := json.RawMessage(data)
-	_ = conn.SendResponse(ctx, &rpc2.Response{ID: id, Error: &rpc2.Error{
+	if err := conn.SendResponse(ctx, &rpc2.Response{ID: id, Error: &rpc2.Error{
 		Code:    rpcwire.CodeServiceError,
 		Message: public.Message,
 		Data:    &raw,
-	}})
+	}}); err != nil {
+		replyInternalError(ctx, conn, id)
+	}
 }
 
 func replyInternalError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID) {

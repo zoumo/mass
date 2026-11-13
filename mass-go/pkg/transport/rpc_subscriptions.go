@@ -3,12 +3,14 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"sync"
 
 	rpc2 "github.com/sourcegraph/jsonrpc2"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -222,6 +224,11 @@ func (s *rpcSubscription) forward() {
 			s.abort()
 			for event := range sub.Events() {
 				if err := s.notifyEvent(event); err != nil {
+					if errors.Is(err, rpcwire.ErrLossyJSON) {
+						s.sendClosed(err)
+					} else {
+						_ = s.conn.Close()
+					}
 					close(request.ack)
 					return
 				}
@@ -243,6 +250,10 @@ func (s *rpcSubscription) forward() {
 				return
 			}
 			if err := s.notifyEvent(event); err != nil {
+				if errors.Is(err, rpcwire.ErrLossyJSON) {
+					s.sendClosed(err)
+					return
+				}
 				_ = s.conn.Close()
 				return
 			}
@@ -263,10 +274,17 @@ func (s *rpcSubscription) shutdownCause() error {
 }
 
 func (s *rpcSubscription) notifyEvent(event events.SessionEvent) error {
-	return s.conn.Notify(context.Background(), "session.event", sessionEventRPC{
+	params := sessionEventRPC{
 		SubscriptionID: s.id,
 		Event:          event,
-	})
+	}
+	if err := rpcwire.ValidateLossless(params); err != nil {
+		return err
+	}
+	if err := rpcwire.ValidateLossless(event.Payload()); err != nil {
+		return err
+	}
+	return s.conn.Notify(context.Background(), "session.event", params)
 }
 
 func (s *rpcSubscription) abort() {
@@ -327,6 +345,13 @@ func (s *rpcSubscription) sendClosed(cause error) {
 			}
 		}
 		notification.Error = public
+	}
+	if rpcwire.ValidateLossless(notification) != nil {
+		notification.Error = &Error{
+			Code:    "internal",
+			Reason:  "event_delivery_failed",
+			Message: "Event delivery failed",
+		}
 	}
 	if err := s.conn.Notify(context.Background(), "subscription.closed", notification); err != nil {
 		_ = s.conn.Close()

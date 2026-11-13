@@ -471,6 +471,40 @@ func TestRPCSessionWorkUnknownOutcomePreservesServiceError(t *testing.T) {
 	require.Equal(t, 1, prompts, "unknown outcome must not be retried")
 }
 
+func TestRPCSessionWorkLossyReceiptReturnsSanitizedInternalError(t *testing.T) {
+	fixture := newSessionWorkRPCFixture(t)
+	fixture.driver.setPromptResult(runtime.InputReceipt{Submission: "has-\xff"}, nil)
+	conn := sessionWorkRPCConn(t, fixture)
+
+	sendCall(t, conn, "lossy-receipt", "session.prompt", fmt.Sprintf(`{
+		"session":%s,
+		"input":{"content":[{"type":"text","text":"hello"}]}
+	}`, sessionWorkRefJSON(t, fixture.ref)))
+	response := readRPC(t, conn)
+	requireRPCError(t, response, -32603, `"lossy-receipt"`, "")
+	require.Equal(t, "Internal error", response.Error.Message)
+	prompts, _, _, _ := fixture.driver.workState()
+	require.Equal(t, 1, prompts)
+}
+
+func TestRPCSessionWorkLossyServiceErrorReturnsSanitizedInternalError(t *testing.T) {
+	fixture := newSessionWorkRPCFixture(t)
+	fixture.driver.setPromptResult(runtime.InputReceipt{}, &runtime.OperationError{
+		Code:    "invalid_argument",
+		Reason:  "invalid_input",
+		Message: "bad-\xff",
+	})
+	conn := sessionWorkRPCConn(t, fixture)
+
+	sendCall(t, conn, "lossy-error", "session.prompt", fmt.Sprintf(`{
+		"session":%s,
+		"input":{"content":[{"type":"text","text":"hello"}]}
+	}`, sessionWorkRefJSON(t, fixture.ref)))
+	response := readRPC(t, conn)
+	requireRPCError(t, response, -32603, `"lossy-error"`, "")
+	require.Equal(t, "Internal error", response.Error.Message)
+}
+
 func TestRPCSessionWorkConnectionCloseDoesNotCancelAdmittedPrompt(t *testing.T) {
 	fixture := newSessionWorkRPCFixture(t)
 	fixture.driver.setPromptBlock()
