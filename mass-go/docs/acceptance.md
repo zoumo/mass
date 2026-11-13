@@ -29,16 +29,16 @@ builds and formatting verification. A skipped E2E target is not a PASS.
 | Class | What it can establish | Current scope |
 | --- | --- | --- |
 | SDK protocol probe | Immutable SDK APIs against strict authored native JSONL | `examples/sdkprobe`; separate from product acceptance |
-| Product integration | Actual adapters, Service, file Store, CLI/HTTP/SSE and owned protocol peers | `tests/integration`; constructed data only; no models or tools run |
+| Product integration | Actual adapters, Service, file Store, CLI and WebSocket JSON-RPC, plus owned protocol peers | `tests/integration`; constructed data only; no models or tools run |
 | Public-module fault injection | Deterministic append/publish/close/admission outcomes through public interfaces | Original facts, unsettled obligations, bounded isolation and cleanup, not native CLI guarantees |
 | Consumer simulation | MASS public actions against exported, hash-bound Codex and Claude captures | `tests/simulation`; four active cases plus four historical audited cases; all four active Claude/Codex replays pass at the current pins; no live model under test |
 | Native recording session | Installed CLI, authenticated account, selected model and exported native session | Current Codex and Claude active cases were recorded through real CLIs with `auto/deepseek-v4.1-flash-1017`; Claude used CLI `2.1.293`; historical 2026-11-05 evidence retains its original pins |
-| Live MASS product E2E | Real MASS daemon/CLI/HTTP/SSE with a native runtime, model, history load and persistence | NOT EXECUTED in this checkout; explicit, separately authorized procedure below |
+| Live MASS product E2E | Real MASS daemon/CLI/WebSocket JSON-RPC with a native runtime, model, history load and persistence | NOT EXECUTED in this checkout; explicit, separately authorized procedure below |
 
 Consumer recordings have `provenance=consumer`; official verification does not
 apply, and replaying them does not prove live Agent behavior. Authored peers are
 not recordings. Old logs under `examples/sdkprobe/evidence`, the prior six-ticket
-experiment and [HTTP v1](http-v1-acceptance.md) /
+experiment and the historical [HTTP v1](http-v1-acceptance.md) /
 [Store/Broadcast](store-broadcast-acceptance.md) reports retain their original
 source/version attribution; they are not current-pin PASS evidence.
 
@@ -82,11 +82,12 @@ are not scale PASS results.
 
 All paths below are relative to `mass-go/`. The named tests are scenario
 selectors, not a blanket claim that every event originates natively on both
-providers. HTTP answers are deliberate: this CLI has no answer command.
+providers. Answers through the Go client are deliberate: this CLI has no answer
+command.
 
 | Behavior | Scenario/source | Evidence boundary |
 | --- | --- | --- |
-| Three inputs on one connection with approval in the middle | `TestTicket08ContinuousInputWithApproval` | Both providers; actual CLI prompt, HTTP invalid/correct/duplicate answer, SSE complete facts equal public history, original process reaped |
+| Three inputs on one connection with approval in the middle | `TestTicket08ContinuousInputWithApproval` | Both providers; actual CLI prompt, WebSocket invalid/correct/duplicate answer, subscription facts equal public history, original process reaped |
 | Loaded connection, current approval and subsequent input, then close | `integrated_load_ticket08_test.go` | Both providers; replay never grants live authority; Claude completion requires explicit native linkage |
 | Close with queued interactions, stop concurrent load | `integrated_lifecycle_ticket08_test.go` | Both providers; stale handles, retained facts, confirmed versus unknown cleanup remain distinct |
 | Healthy peer progresses after slow peer saturation, before slow gate release | `TestTicket05NativeProvidersIsolateSaturatedSession`, `pkg/service/overload_test.go` | Both providers; original complete facts/order/UUID, storage and required-publish ownership; upstream total exhaustion explicitly has no progress guarantee |
@@ -95,27 +96,25 @@ providers. HTTP answers are deliberate: this CLI has no answer command.
 | Close/stop drains admitted final facts; uncertain native close | `lifecycle_ticket04_test.go`, `native_lifecycle_ticket04_test.go` | No global shared-client kill to simulate Session isolation |
 | Codex retained full paged history and same connection input | `history_load_ticket06_test.go`, `history_load_http_ticket06_test.go` | Native ID/cwd/source checks, five content kinds, missing/null/empty output, partial failure |
 | Claude retained main chain and same process continuation | `history_load_ticket07_test.go` | Explicit ConfigDir/ProjectDir, drift/corruption refusal, offset100 crossing, cleanup/cancel; synthetic UUID echoes are not real CLI guarantees |
-| Load cancel, stale cancel, native completion before delivery, failed append/required publish | `pkg/service/*ticket06_test.go`, `load_integrity_ticket06_test.go` | Accepted load persists independently of HTTP disconnect; unsettled responsibilities remain visible |
-| Real daemon/CLI/SSE/history, original-ID resume, disconnect and explicit cancellation | `TestEntrypointSuite`, `TestFileEntrypointSuite`, `TestFailureSuite` | File-authoritative persistence, owned temporary listener/workspace and process cleanup |
+| Load cancel, stale cancel, native completion before delivery, failed append/required publish | `pkg/service/*ticket06_test.go`, `load_integrity_ticket06_test.go` | Accepted load persists independently of WebSocket disconnect; unsettled responsibilities remain visible |
+| Real daemon/CLI/WebSocket/history, original-ID resume, disconnect and explicit cancellation | `TestEntrypointSuite`, `TestFileEntrypointSuite`, `TestFailureSuite` | File-authoritative persistence, owned temporary listener/workspace and process cleanup |
 | Cold restart keeps Runtime/Session unknown, then explicit resume starts the Runtime and restores the original Session | `TestTicket03ColdRestartStartsUnknownRuntimeAndResumesSession` | File Store reopen and Service state machine; not an OS process crash, real CLI or provider-release proof |
 | Explicit non-scenario runtime launch | `TestExplicitEnvironmentLaunchWithoutScenarioConfig` | Both providers; proves product configuration works with an owned executable, not real credentials |
 
 ### All 17 Current Event Examples
 
 The source of truth is the current
-`harness/modules/runtime/event-examples.json`, not an old frozen copy. Three
-independent boundaries actually encode/decode its full examples:
+`harness/modules/runtime/event-examples.json`, not an old frozen copy. The
+events package decodes and re-encodes every current example:
 
 ```sh
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./pkg/events -run "^TestHarnessEventExamplesRoundTrip$"'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./pkg/client -run "^TestGeneratedHTTPSuite$/TestAllEventBranchesStreamAndGeneratedModelRoundTrip$"'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./pkg/service -run "^TestSessionWorkSuite$/TestAllEventBranchesUseSameLiveAndHistoryModel$"'
 ```
 
-The model test compares JSON field fidelity; the client test crosses HTTP/SSE
-and generated models; the Service test crosses persistence/broadcast/history
-including an actually accepted load for replay lifecycle events. These are
-model/delivery tests, not a claim each native CLI emits all 17 branches.
+The model test compares JSON field fidelity. RPC transport tests exercise live
+and history delivery with event fixtures; the retired HTTP/generated-model
+suite is not retained as current evidence. These are model/delivery tests, not
+a claim each native CLI emits all 17 branches.
 
 ## Supported Boundaries And Failures
 
@@ -127,7 +126,7 @@ model/delivery tests, not a claim each native CLI emits all 17 branches.
 - A receipt, local sent evidence, native acceptance, work completion, load native
   completion, durable delivery and native cleanup are separate claims. Claude
   write success is not native acceptance. Unknown work never becomes idle merely
-  because an HTTP request or historical replay ended.
+  because a WebSocket request or historical replay ended.
 - Current interaction authority is consumed once and cannot be restored from
   replay, an offline Session, stale load cancellation or copied IDs. There is
   no pending-interaction recovery/list API or cross-connection authority replay.
@@ -145,8 +144,9 @@ model/delivery tests, not a claim each native CLI emits all 17 branches.
   visibly unsettled, including cleanup=false and fenced new input as appropriate.
 - History is file-authoritative with indexed reads; no SQLite migration or
   crash-recoverable outbox is claimed by these tests. Fresh-Service unresolved
-  reservation checks are not process-crash/disk-reopen acceptance. The HTTP body
-  has an independent read deadline, not a newly introduced size cap.
+  reservation checks are not process-crash/disk-reopen acceptance. The current
+  WebSocket transport has no HTTP business-body path, and no new history size
+  cap is claimed.
 - Generic business-handler/configuration APIs, subagent attribution, every native
   extension, Linux and cross-language parity are not certified by this macOS Go
   acceptance. No deployment, push, publication or production-readiness claim.
@@ -158,7 +158,7 @@ Active consumer-provenance recordings live in
 `tests/testdata/simulation/recordings-09d4ddf1ff20/claude/`. The historical
 `recordings/` suite remains immutable for audit provenance. Each case binds an
 adjacent `index.json` to a `material/` export. The offline gate replays the
-active four through a real MASS daemon and public HTTP/SSE, checks that the mock
+active four through a real MASS daemon and public WebSocket JSON-RPC client, checks that the mock
 route is `executor=external-sdk`, `target=replay`, `provenance=consumer`, and
 requires the replay receipt to prove complete consumption, client EOF, cleanup,
 matching plan/raw hashes and `nativeLaunched=false`. It also treats missing,
@@ -206,7 +206,7 @@ must be reported NOT EXECUTED, not substituted with a different model.
    `args`; Codex defaults to `["app-server"]`. Do not pass invented flags or add
    `scenario` to real runtime configuration.
 3. Run the product commands below against the owned daemon. Capture observe-ready
-   before producing work. Use the HTTP client Answer method on the original live
+   before producing work. Use the Go client Answer method on the original live
    permission/form handle, after inspecting its actual options/schema; never use
    prototype autoapproval to claim manual-answer coverage. A selected permission
    answer is `{"outcome":"selected","optionId":"allow-once"}` only when that
@@ -257,10 +257,9 @@ rtk proxy bin/massctl runtime stop agent
 
 Repeat with `--type claude` and its own explicit configuration/workspace. Claude
 requires the explicit resume input above; zero-input Claude resume fails before
-native open because it cannot observe identity. HTTP
-answering is available through `pkg/client.Client.Answer` or POST
-`/apis/v1/sessions/{sessionId}/interactions/{interaction64}/answer`; the interaction
-path segment is base64url-encoded according to the HTTP contract. See the
+native open because it cannot observe identity. Answering is available through
+`pkg/client.Client.Answer` (`session.answer` over WebSocket JSON-RPC); there is
+no HTTP answer route. See the
 [client implementation notes](../pkg/client/README.md),
 [runtime configuration](../README.md#runtime-launch-configuration) and
 [load boundaries](../README.md#retained-history-load). Never print Bearer tokens.

@@ -18,8 +18,9 @@ All inputs use the original SDK Session and its one Receive consumer.
 ## Native facts and current state
 
 Every converted content event carries `_meta.claude.attribution`, and only an
-attributed fact carries `_meta.claude.submission`. These fields survive SSE and
-public history readback; execution-only Source retains the original run.
+attributed fact carries `_meta.claude.submission`. These fields survive WebSocket
+event delivery and public history readback; execution-only Source retains the
+original run.
 
 - `single_submission`: local single-input policy for the first input, when no
   previous local input can own a delayed fact. This is not native input acceptance

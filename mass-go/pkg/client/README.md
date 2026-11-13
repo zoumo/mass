@@ -1,53 +1,55 @@
-# Generated HTTP client
+# WebSocket JSON-RPC client
 
-`client.Client` is the MASS facade used by massctl. Resource methods use the
-[OpenAPI-generated types and request builders](generated/client.gen.go),
-then execute requests directly through a shared Resty client. Pass raw Session
-IDs in SessionRef. Paths are escaped once by the generated request builder; complete `.` and `..`
-segments and malformed references are rejected before constructing requests.
+`client.Client` is the public MASS service client used by `massctl` and product
+tests. The public constructor is:
 
-Regenerate from the current registered server operations, without starting a
-listener, loading a Store or starting an Agent:
+```go
+func New(serverURL, token string, opts Options) (*Client, error)
 
-```sh
-cd mass-go
-rtk proxy go generate ./pkg/client
+type Options struct {
+	WriteTimeout              time.Duration
+	SubscriptionQueueCapacity int
+}
 ```
 
-The build-ignored `generate.go` exports the exact Huma OpenAPI 3.1 contract to
-`generated/openapi.json`, then applies Go-only hints to a temporary generation
-input. [oapi-codegen v2.8.0](https://github.com/oapi-codegen/oapi-codegen/releases/tag/v2.8.0)
-is pinned in that command; its configuration is `oapi-codegen.yaml`. Generated
-files must not be edited. No schema downgrade or alternate SDK is maintained.
+Use an explicit `ws://` or `wss://` endpoint ending in `/rpc`. Construction
+performs no network I/O; the URL is validated when a connection is first
+needed. `WriteTimeout` bounds each WebSocket write and is a Go
+`time.Duration`; `SubscriptionQueueCapacity` is a count of locally queued
+SessionEvents per observation. Neither option has an implementation default:
+zero, negative values, or an omitted field makes `client.New` fail before a
+connection exists. Queue overflow terminates only that observation and
+releases its connection.
 
-Open JSON and unions use json.RawMessage, including optional explicit null.
-The facade builds generated writable request models and decodes responses with
-UseNumber, preserving open JSON integers such as 9007199254740993. Events decode
-into the existing events.SessionEvent, not a second event representation.
-`Answer(ctx, ref, interaction, nil, out)` sends literal JSON null. CLI answer
-parameters remain deferred; there is no answer command in this release.
+`client.Client` and `client.New` remain the only public client names. There is
+no `WebSocketClient`, `NewWebSocket` compatibility alias, protocol
+auto-detection or HTTP fallback. `Initialize` exposes the side-effect-free
+handshake, while typed Runtime and Session methods initialize lazily on first
+use.
 
-`client.New(url, token)` initializes one [Resty v3.0.0-rc.4](https://github.com/go-resty/resty/releases/tag/v3.0.0-rc.4)
-client, shared by ordinary requests and SSE. It configures Bearer authentication,
-disables retries and redirects, and preserves explicit request body lengths.
-`Client.HTTP` is the `*resty.Client` from `resty.dev/v3`; set its transport and
-timeout before use. Call `Client.Close()` after all requests and observers end;
-the CLI closes its client on every exit path.
-Do not enable retries, redirects or automatic response parsing. Request contexts
-control deadlines by default. Resty v3 timeouts also use context; a client-wide
-timeout limits an SSE stream's entire lifetime. The facade closes ordinary
-response bodies. A failed wait does not cancel Agent work.
-Requests carry the generated Content-Length through the request-level
-`SetContentLength(int64)` API. Resty response parsing is disabled with
-`SetResponseDoNotParse(true)` so the facade retains JSON number precision
-and reads SSE incrementally. Both paths read and close Resty's wrapped
-`Response.Body`, which retains timeout cleanup and content decompression.
-Observe returns only after subscription.ready; Next distinguishes closed, error
-and unexpected EOF. Observer.Close releases just this observation. There is no
-automatic reconnect or resume, and no arbitrary frame-size limit.
+Ordinary calls share one JSON-RPC connection. `Subscribe` always opens a separate
+authenticated and initialized WebSocket, sends `session.subscribe`, and returns
+only after the successful response. Each connection has one active subscription.
+Events are delivered in order through `session.event`; the terminal
+`subscription.closed` notification becomes `io.EOF` for a clean close or a typed
+`runtime.OperationError` for an error. `Subscription.Close` releases only that
+observation. There is no automatic reconnect, replay or subscription resume.
 
-Client/HTTP/CLI and fixed SDK mock evidence verifies protocol and deterministic
-workflows. It does not establish real Agent/model or deployed-proxy acceptance.
+Service `OperationError` values retain `code/reason/message` through JSON-RPC
+error code `-32000`. Unknown outcomes remain `outcome_unknown`; callers must not
+retry side effects merely because a connection timed out or closed. Request
+contexts bound only that wait and never cancel admitted Agent work.
+
+Open JSON and unions use `json.RawMessage`, including optional explicit null.
+Strict JSON decoding preserves integer lexemes for open values such as
+9007199254740993. Events decode into the existing `events.SessionEvent`, not a
+second event representation. `Answer(ctx, ref, interaction, nil, out)` sends
+literal JSON null. There is no CLI answer command in this release.
+
+Call `Client.Close()` after all calls and observations end; the CLI closes its
+client on every exit path. Client, CLI and fixed SDK mock evidence verify the
+protocol and deterministic workflows. It does not establish real Agent/model,
+TLS proxy or deployed-network acceptance.
 
 ## Asynchronous history loading
 

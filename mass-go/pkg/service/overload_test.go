@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -244,12 +244,12 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 						return nil
 					}}))
 				}
-				h, e := transport.New(svc, transport.Options{Token: "fixture"})
+				h, e := transport.New(svc, withServiceTestWriteTimeout(transport.Options{Token: "fixture"}))
 				require.NoError(t, e)
 				defer h.Shutdown()
 				server := httptest.NewServer(h)
 				defer server.Close()
-				c := client.New(server.URL, "fixture")
+				c := newServiceTestClient(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "fixture")
 				defer c.Close()
 				input := runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}
 				err = c.SendPrompt(ctx, slow, input, nil)

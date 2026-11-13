@@ -59,6 +59,47 @@
           }
         }
       }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
+      "direction": "client",
+      "data": {
+        "type": "control_response",
+        "response": {
+          "subtype": "success",
+          "request_id": "early-permission",
+          "response": {
+            "behavior": "allow",
+            "updatedInput": {
+              "command": "never execute"
+            }
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "result",
+        "subtype": "success",
+        "session_id": "claude-session",
+        "is_error": false,
+        "result": "allowed"
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "session_state_changed",
+        "session_id": "claude-session",
+        "state": "idle"
+      }
     }
   ]
 }

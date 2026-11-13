@@ -1,232 +1,375 @@
-// Package client carries HTTP v1 Service values without resource or history caches.
 package client
 
 import (
-	"bufio"
-	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"io"
-	"mime"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"unicode/utf8"
+	"time"
 
-	"resty.dev/v3"
+	"github.com/gorilla/websocket"
+	rpc2 "github.com/sourcegraph/jsonrpc2"
 
-	"github.com/zoumo/mass/mass-go/pkg/client/generated"
-	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-type Client struct {
-	url string
-	// HTTP is configured once before use and shared by JSON and SSE requests.
-	// Custom configuration must preserve the no-retry and no-redirect policy.
-	HTTP *resty.Client
+const rpcHandshakeTimeout = 5 * time.Second
+
+// Package client is the public JSON-RPC over WebSocket service client.
+
+// ClientInfo identifies this client during WebSocket initialize.
+type ClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
-// New creates a client with Bearer authentication and no automatic replay.
-// Request contexts control deadlines; SSE contexts must span the observation.
-func New(serverURL, token string) *Client {
-	if !strings.HasSuffix(serverURL, "/") {
-		serverURL += "/"
+// Options are required assembly choices for one client.
+type Options struct {
+	WriteTimeout              time.Duration
+	SubscriptionQueueCapacity int
+}
+
+// Client owns one ordinary RPC connection and any observations opened through it.
+// It is lazy: New performs no network I/O.
+type Client struct {
+	serverURL                 string
+	token                     string
+	tlsConfig                 *tls.Config
+	writeTimeout              time.Duration
+	subscriptionQueueCapacity int
+
+	initMu sync.Mutex
+
+	mu           sync.Mutex
+	conn         *rpc2.Conn
+	stream       *rpcwire.Stream
+	cancel       context.CancelFunc
+	initialized  *rpc2.Conn
+	closed       bool
+	observations map[*Subscription]struct{}
+}
+
+// SetTLSClientConfig configures the WebSocket handshake transport before first
+// use. It is only meaningful for wss:// endpoints.
+func (c *Client) SetTLSClientConfig(config *tls.Config) {
+	c.tlsConfig = config
+}
+
+// New creates a lazy JSON-RPC client without opening a connection.
+func New(serverURL, token string, opts Options) (*Client, error) {
+	if opts.WriteTimeout <= 0 {
+		return nil, errors.New("client write timeout must be positive")
+	}
+	if opts.SubscriptionQueueCapacity <= 0 {
+		return nil, errors.New("client subscription queue capacity must be positive")
 	}
 	return &Client{
-		url: serverURL,
-		HTTP: resty.New().
-			SetAuthToken(token).
-			SetRedirectPolicy(resty.RedirectNoPolicy()).
-			SetRetryCount(0).
-			SetResponseDoNotParse(true),
-	}
+		serverURL:                 serverURL,
+		token:                     token,
+		writeTimeout:              opts.WriteTimeout,
+		subscriptionQueueCapacity: opts.SubscriptionQueueCapacity,
+		observations:              map[*Subscription]struct{}{},
+	}, nil
 }
 
-// Close releases Resty client resources after all requests and observers end.
-func (c *Client) Close() error { return c.HTTP.Close() }
-
-// execute leaves Resty's wrapped response body to the JSON decoder or Observer.
-func (c *Client) execute(ctx context.Context, accept string, req *http.Request) (*resty.Response, error) {
-	r := c.HTTP.R().SetContext(ctx).SetContentLength(req.ContentLength)
-	r.Header = req.Header.Clone()
-	r.SetHeader("Accept", accept)
-	if req.Body != nil {
-		defer req.Body.Close()
-		r.SetBody(req.Body)
+// Initialize performs the complete side-effect-free MASS protocol handshake.
+func (c *Client) Initialize(ctx context.Context, clientInfo *ClientInfo, out any) error {
+	if clientInfo != nil && (clientInfo.Name == "" || clientInfo.Version == "") {
+		return invalid()
 	}
-	response, err := r.Execute(req.Method, req.URL.String())
-	if err != nil {
-		if response != nil && response.Body != nil {
-			_ = response.Body.Close()
-		}
-		return nil, err
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return response, nil
-}
-
-func SessionPath(ref resource.SessionRef) (string, error) {
-	if ref.SessionID != "" && ref.SessionID != "." && ref.SessionID != ".." && ref.Namespace == "" && ref.Name == "" && utf8.ValidString(ref.SessionID) {
-		return "/apis/v1/sessions/" + url.PathEscape(ref.SessionID), nil
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if ref.SessionID == "" && validSegment(ref.Namespace) && validSegment(ref.Name) {
-		return "/apis/v1/namespaces/" + url.PathEscape(ref.Namespace) + "/sessions/" + url.PathEscape(ref.Name), nil
-	}
-	return "", invalid()
-}
-
-func decodeResponse(response *resty.Response, err error, expected int, out any) error {
+	conn, stream, err := c.connection(ctx)
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
-	if response.StatusCode() < 200 || response.StatusCode() >= 300 {
-		var v runtime.OperationError
-		if json.NewDecoder(response.Body).Decode(&v) != nil || v.Code == "" {
-			return errors.New("unexpected HTTP response")
-		}
-		return &v
+	return c.initializeConnection(ctx, conn, stream, clientInfo, out, true)
+}
+
+func (c *Client) initializeConnection(
+	ctx context.Context,
+	conn *rpc2.Conn,
+	stream *rpcwire.Stream,
+	clientInfo *ClientInfo,
+	out any,
+	owned bool,
+) error {
+	params := rpcwire.InitializeParams{ProtocolVersion: rpcwire.Version}
+	if clientInfo != nil {
+		params.ClientInfo = &rpcwire.PeerInfo{Name: clientInfo.Name, Version: clientInfo.Version}
+	}
+	var raw json.RawMessage
+	if err := conn.Call(ctx, "initialize", params, &raw, rpc2.StringID()); err != nil {
+		return c.callError(ctx, stream, err)
 	}
 
-	if response.StatusCode() != expected {
-		return errors.New("unexpected HTTP status")
+	var result rpcwire.Initialized
+	if err := rpcwire.DecodeStrict(raw, &result); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("invalid initialize result: %w", err)
 	}
-	if expected == 204 {
-		return nil
+	if result.ProtocolVersion != rpcwire.Version || result.ServerInfo.Name == "" || result.ServerInfo.Version == "" {
+		_ = conn.Close()
+		return errors.New("invalid initialize result")
+	}
+	if owned {
+		c.mu.Lock()
+		c.initialized = conn
+		c.mu.Unlock()
 	}
 	if out == nil {
-		_, err = io.Copy(io.Discard, response.Body)
+		return nil
+	}
+	return rpcwire.DecodeStrict(raw, out)
+}
+
+func (c *Client) ensureInitialized(ctx context.Context) (*rpc2.Conn, *rpcwire.Stream, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	conn, stream, err := c.connection(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.mu.Lock()
+	ready := c.initialized == conn
+	c.mu.Unlock()
+	if ready {
+		return conn, stream, nil
+	}
+	if err := c.initializeConnection(ctx, conn, stream, nil, nil, true); err != nil {
+		return nil, nil, err
+	}
+	return conn, stream, nil
+}
+
+func (c *Client) call(ctx context.Context, method string, params, out any) error {
+	return c.callWith(ctx, method, params, out, false)
+}
+
+func (c *Client) callWork(ctx context.Context, method string, params, out any) error {
+	return c.callWith(ctx, method, params, out, true)
+}
+
+func (c *Client) callWith(ctx context.Context, method string, params, out any, work bool) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	d := json.NewDecoder(response.Body)
-	d.UseNumber()
-	return d.Decode(out)
-}
-
-type Observer struct {
-	body      io.ReadCloser
-	reader    *bufio.Reader
-	terminal  error
-	mu        sync.Mutex
-	closeOnce sync.Once
-	closeErr  error
-}
-
-func (c *Client) Observe(ctx context.Context, ref resource.SessionRef) (*Observer, error) {
-	if _, e := SessionPath(ref); e != nil {
-		return nil, e
+	conn, stream, err := c.ensureInitialized(ctx)
+	if err != nil {
+		return err
 	}
-	var req *http.Request
-	var e error
-	if ref.SessionID != "" {
-		req, e = generated.NewObserveSessionByIDRequest(c.url, ref.SessionID, nil)
-	} else {
-		req, e = generated.NewObserveSessionByNameOrIDRequest(c.url, ref.Namespace, ref.Name, nil)
-	}
-	if e != nil {
-		return nil, e
-	}
-	r, e := c.execute(ctx, "text/event-stream", req)
-	if e != nil {
-		return nil, e
-	}
-	if r.StatusCode() != http.StatusOK {
-		defer r.Body.Close()
-		var v runtime.OperationError
-		if json.NewDecoder(r.Body).Decode(&v) == nil && v.Code != "" {
-			return nil, &v
+	waiter, err := conn.DispatchCall(ctx, method, params, rpc2.StringID())
+	if err != nil {
+		if work {
+			return unconfirmedWork()
 		}
-		return nil, errors.New("observe rejected")
+		return c.callError(ctx, stream, err)
 	}
-	media, _, err := mime.ParseMediaType(r.Header().Get("Content-Type"))
-	if err != nil || media != "text/event-stream" {
-		r.Body.Close()
-		return nil, errors.New("unexpected observation media type")
-	}
-	o := &Observer{body: r.Body, reader: bufio.NewReader(r.Body)}
-	kind, _, e := o.frame()
-	if e != nil || kind != "subscription.ready" {
-		r.Body.Close()
-		return nil, errors.New("observation not established")
-	}
-	return o, nil
-}
-
-func (o *Observer) frame() (string, []byte, error) {
-	var kind string
-	var data []byte
-	for {
-		line, err := o.reader.ReadString('\n')
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				err = io.ErrUnexpectedEOF
+	var raw json.RawMessage
+	if err = waiter.Wait(ctx, &raw); err != nil {
+		mapped := c.callError(ctx, stream, err)
+		if work {
+			var rpcErr *rpc2.Error
+			if !errors.As(err, &rpcErr) && stream.ProtocolError() == nil {
+				return unconfirmedWork()
 			}
-			return "", nil, err
 		}
-		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if line == "" {
-			if kind == "" && len(data) == 0 {
-				continue
+		return mapped
+	}
+	if out == nil {
+		return nil
+	}
+	return decodeResult(raw, out)
+}
+
+func unconfirmedWork() *runtime.OperationError {
+	return &runtime.OperationError{
+		Code:    "outcome_unknown",
+		Reason:  "operation_unconfirmed",
+		Message: "Operation result unconfirmed; inspect state before further action",
+	}
+}
+
+// Close releases the connection and all pending calls.
+func (c *Client) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	conn, cancel := c.conn, c.cancel
+	c.conn, c.stream, c.cancel, c.initialized = nil, nil, nil, nil
+	observations := make([]*Subscription, 0, len(c.observations))
+	for subscription := range c.observations {
+		observations = append(observations, subscription)
+	}
+	c.observations = map[*Subscription]struct{}{}
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	var result error
+	if conn != nil {
+		if err := conn.Close(); !errors.Is(err, rpc2.ErrClosed) {
+			result = errors.Join(result, err)
+		}
+	}
+	for _, subscription := range observations {
+		subscription.finish(errors.New("WebSocket client is closed"))
+		if err := subscription.closeTransport(); err != nil {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
+}
+
+func (c *Client) connection(ctx context.Context) (*rpc2.Conn, *rpcwire.Stream, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, nil, errors.New("WebSocket client is closed")
+	}
+	if c.conn != nil {
+		select {
+		case <-c.conn.DisconnectNotify():
+			if profileErr := c.stream.ProtocolError(); profileErr != nil {
+				return nil, nil, profileErr
 			}
-			return kind, bytes.TrimSuffix(data, []byte("\n")), nil
-		}
-		field, value, _ := strings.Cut(line, ":")
-		value = strings.TrimPrefix(value, " ")
-		switch field {
-		case "event":
-			kind = value
-		case "data":
-			data = append(data, value...)
-			data = append(data, '\n')
+			return nil, nil, errors.New("WebSocket connection is closed")
+		default:
+			return c.conn, c.stream, nil
 		}
 	}
+
+	conn, stream, cancel, err := c.dial(ctx, clientHandler{})
+	if err != nil {
+		return nil, nil, err
+	}
+	c.conn, c.stream, c.cancel = conn, stream, cancel
+	return conn, stream, nil
 }
 
-func (o *Observer) Next() (events.SessionEvent, error) {
-	o.mu.Lock()
-	terminal := o.terminal
-	o.mu.Unlock()
-	if terminal != nil {
-		return events.SessionEvent{}, terminal
+func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *rpcwire.Stream, context.CancelFunc, error) {
+	endpoint, err := websocketEndpoint(c.serverURL)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	k, b, e := o.frame()
-	if e != nil {
-		return events.SessionEvent{}, o.finish(e)
+	headers := http.Header{}
+	if c.token != "" {
+		headers.Set("Authorization", "Bearer "+c.token)
 	}
-	switch k {
-	case "subscription.closed":
-		return events.SessionEvent{}, o.finish(io.EOF)
-	case "subscription.error":
-		var v runtime.OperationError
-		if json.Unmarshal(b, &v) != nil {
-			return events.SessionEvent{}, o.finish(errors.New("invalid stream error"))
+	dialer := websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: rpcHandshakeTimeout,
+		TLSClientConfig:  c.tlsConfig,
+	}
+	socket, response, err := dialer.DialContext(ctx, endpoint, headers)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		if response != nil {
+			return nil, nil, nil, fmt.Errorf("WebSocket handshake failed: %s", response.Status)
 		}
-		return events.SessionEvent{}, o.finish(&v)
-	case "session.event":
-		var v events.SessionEvent
-		e = json.Unmarshal(b, &v)
-		if e != nil {
-			return v, o.finish(e)
-		}
-		return v, nil
+		return nil, nil, nil, err
 	}
-	return events.SessionEvent{}, o.finish(errors.New("invalid stream frame"))
+
+	stream, err := rpcwire.NewStream(socket, rpcwire.RoleClient, c.writeTimeout)
+	if err != nil {
+		_ = socket.Close()
+		return nil, nil, nil, err
+	}
+	life, cancel := context.WithCancel(context.Background())
+	conn := rpc2.NewConn(life, stream, handler, rpc2.SetLogger(rpcLogger{}))
+	return conn, stream, cancel, nil
 }
 
-func (o *Observer) finish(err error) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.terminal == nil {
-		o.terminal = err
+func (c *Client) callError(ctx context.Context, stream *rpcwire.Stream, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
-	return o.terminal
+	var rpcErr *rpc2.Error
+	if errors.As(err, &rpcErr) {
+		if rpcErr.Code == rpcwire.CodeServiceError && rpcErr.Data != nil && len(*rpcErr.Data) > 0 {
+			var operation runtime.OperationError
+			if json.Unmarshal(*rpcErr.Data, &operation) == nil && operation.Code != "" {
+				return &operation
+			}
+		}
+		response := &rpcwire.RPCError{Code: rpcErr.Code, Message: rpcErr.Message}
+		if rpcErr.Data != nil {
+			response.Data = append(response.Data, (*rpcErr.Data)...)
+		}
+		return response
+	}
+	if errors.Is(err, rpc2.ErrClosed) {
+		if profileErr := stream.ProtocolError(); profileErr != nil {
+			return profileErr
+		}
+	}
+	return err
 }
 
-func (o *Observer) Close() error {
-	_ = o.finish(io.EOF)
-	o.closeOnce.Do(func() { o.closeErr = o.body.Close() })
-	return o.closeErr
+type clientHandler struct {
+	subscription *Subscription
+}
+
+func (h clientHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request) {
+	if h.subscription != nil {
+		h.subscription.handle(req)
+		return
+	}
+	if req.Notif {
+		return
+	}
+	_ = conn.ReplyWithError(ctx, req.ID, &rpc2.Error{Code: rpc2.CodeMethodNotFound, Message: "Method not found"})
+}
+
+func websocketEndpoint(serverURL string) (string, error) {
+	parsed, err := url.Parse(serverURL)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("invalid MASS server URL")
+	}
+	switch parsed.Scheme {
+	case "ws", "wss":
+	default:
+		return "", errors.New("invalid MASS server URL")
+	}
+	path := strings.TrimSuffix(parsed.Path, "/")
+	switch path {
+	case "":
+		parsed.Path = "/rpc"
+	case "/rpc":
+		parsed.Path = path
+	default:
+		return "", errors.New("MASS server URL must be a ws:// or wss:// endpoint ending in /rpc")
+	}
+	return parsed.String(), nil
+}
+
+type rpcLogger struct{}
+
+func (rpcLogger) Printf(format string, args ...any) {
+	slog.Default().Debug(strings.TrimSuffix(fmt.Sprintf(format, args...), "\n"))
 }

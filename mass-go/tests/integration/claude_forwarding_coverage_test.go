@@ -63,7 +63,7 @@ func (s forwardingNotificationStream) Next(ctx context.Context) (events.SessionE
 	}
 }
 
-func TestClaudeAssignedRootForwardingGapSurvivesHTTPNotifications(t *testing.T) {
+func TestClaudeAssignedRootForwardingGapSurvivesRPCNotifications(t *testing.T) {
 	authority, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, authority.Close()) })
@@ -77,7 +77,7 @@ func TestClaudeAssignedRootForwardingGapSurvivesHTTPNotifications(t *testing.T) 
 		defer cancel()
 		assert.NoError(t, svc.Shutdown(cleanup))
 	})
-	handler, err := transport.New(svc, transport.Options{LocalOnly: true})
+	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	t.Cleanup(handler.Shutdown)
 	server := httptest.NewServer(handler)
@@ -87,11 +87,11 @@ func TestClaudeAssignedRootForwardingGapSurvivesHTTPNotifications(t *testing.T) 
 	_, err = uuid.Parse(opened.Status.SessionID)
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: opened.Status.SessionID}
-	observer, err := client.Observe(ctx(t), ref)
+	observer, err := client.Subscribe(ctx(t), ref)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, observer.Close()) })
 	release()
-	event, err := observer.Next()
+	event, err := observer.Next(ctx(t))
 	require.NoError(t, err)
 	require.Equal(t, "session.error", event.Type())
 	require.Equal(t, ref.SessionID, event.SessionID)
@@ -108,7 +108,7 @@ func TestClaudeAssignedRootForwardingGapSurvivesHTTPNotifications(t *testing.T) 
 	require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
 	answered := false
 	for {
-		event, err = observer.Next()
+		event, err = observer.Next(ctx(t))
 		require.NoError(t, err)
 		if event.Type() == "agent.message" {
 			answered = true

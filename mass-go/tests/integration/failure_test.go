@@ -3,19 +3,20 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
@@ -664,54 +665,138 @@ func (s *failureSuite) TestConcurrentStopSharesOriginalResponsibility() {
 	s.Equal("stopped", r.Status.State)
 }
 
-// This gate delays a transport write, not native observations or Store commits.
-type pausedSSE struct {
-	*httptest.ResponseRecorder
-	ready   chan struct{}
-	release chan struct{}
-	first   bool
+type overflowSubscriptionAPI struct {
+	*service.Service
+
+	broadcast  *events.EventBroadcast
+	prePublish []events.SessionEvent
 }
 
-func (w *pausedSSE) Flush() {
-	if !w.first {
-		w.first = true
-		close(w.ready)
-		<-w.release
+func (a *overflowSubscriptionAPI) SubscribeEvents(resource.SessionRef) (*service.Subscription, error) {
+	subscription, err := a.broadcast.Subscribe()
+	if err != nil {
+		return nil, err
 	}
-	w.ResponseRecorder.Flush()
+	for _, event := range a.prePublish {
+		if err := a.broadcast.Publish(event); err != nil {
+			_ = subscription.Close()
+			return nil, err
+		}
+	}
+	return subscription, nil
 }
 
-var _ http.Flusher = (*pausedSSE)(nil)
+type subscriptionOverflowFrame struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Method  string          `json:"method"`
+	Result  json.RawMessage `json:"result"`
+	Params  json.RawMessage `json:"params"`
+	Error   json.RawMessage `json:"error"`
+}
 
-func (s *failureSuite) TestSSEOverflowIsExplicit() {
+func dialSubscriptionOverflow(t *testing.T, server *httptest.Server, ref resource.SessionRef) (*websocket.Conn, string) {
+	t.Helper()
+	conn, response, err := websocket.DefaultDialer.DialContext(ctx(t), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", nil)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	requireNoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	requireNoError(t, conn.WriteJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "init",
+		"method":  "initialize",
+		"params":  map[string]string{"protocolVersion": "1"},
+	}))
+	readSubscriptionOverflowFrame(t, conn)
+	requireNoError(t, conn.WriteJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "subscribe",
+		"method":  "session.subscribe",
+		"params":  map[string]any{"session": ref},
+	}))
+	frame := readSubscriptionOverflowFrame(t, conn)
+	var result struct {
+		SubscriptionID string `json:"subscriptionId"`
+	}
+	requireNoError(t, json.Unmarshal(frame.Result, &result))
+	if result.SubscriptionID == "" {
+		t.Fatal("subscription response did not contain an ID")
+	}
+	return conn, result.SubscriptionID
+}
+
+func readSubscriptionOverflowFrame(t *testing.T, conn *websocket.Conn) subscriptionOverflowFrame {
+	t.Helper()
+	requireNoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+	messageType, raw, err := conn.ReadMessage()
+	requireNoError(t, err)
+	if messageType != websocket.TextMessage {
+		t.Fatalf("unexpected WebSocket message type %d", messageType)
+	}
+	var frame subscriptionOverflowFrame
+	requireNoError(t, json.Unmarshal(raw, &frame))
+	return frame
+}
+
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (s *failureSuite) TestSubscriptionOverflowIsExplicit() {
 	s.start("codex", "slow-subscriber", s.st)
 	ref := s.open("demo")
-	w := &pausedSSE{ResponseRecorder: httptest.NewRecorder(), ready: make(chan struct{}), release: make(chan struct{})}
-	path, err := client.SessionPath(ref)
-	s.Require().NoError(err)
-	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path+"/events/stream", nil)
-	request.RemoteAddr = "127.0.0.1:1234"
-	handler, err := transport.New(s.svc, transport.Options{LocalOnly: true})
-	s.Require().NoError(err)
-	defer handler.Shutdown()
-	done := make(chan struct{})
-	go func() { defer close(done); handler.ServeHTTP(w, request) }()
-	<-w.ready
-	// Always release the writer on a failed assertion too.
-	defer func() {
-		select {
-		case <-w.release:
-		default:
-			close(w.release)
-		}
-		<-done
-	}()
 	s.input(ref)
 	s.requireHistoryAfterTurn(ref, 140)
-	close(w.release)
-	<-done
-	s.Contains(w.Body.String(), "event: subscription.error")
-	s.NotContains(w.Body.String(), "event: subscription.closed")
-	s.NotContains(w.Body.String(), "slow subscriber")
-	s.T().Log("PASS synthetic transport write stall => Service overflow => explicit redacted SSE error, full 140-fact history preserved")
+
+	session, err := s.svc.GetSession(ref)
+	s.Require().NoError(err)
+	history, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 2})
+	s.Require().NoError(err)
+	s.Require().Len(history.Events, 2)
+	broadcast, err := events.NewBroadcast(session.Metadata.Namespace, session.Metadata.Name, ref.SessionID, 1)
+	s.Require().NoError(err)
+	// This injects an already-overflowed EventBroadcast into the transport. The
+	// real Service overflow path is covered by TestSlowSubscriberDoesNotChangeHistory.
+	api := &overflowSubscriptionAPI{
+		Service:    s.svc,
+		broadcast:  broadcast,
+		prePublish: history.Events,
+	}
+	handler, err := transport.New(api, transport.Options{LocalOnly: true, WriteTimeout: 30 * time.Second})
+	s.Require().NoError(err)
+	defer handler.Shutdown()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	conn, subscriptionID := dialSubscriptionOverflow(s.T(), server, ref)
+
+	first := readSubscriptionOverflowFrame(s.T(), conn)
+	s.Equal("session.event", first.Method)
+	var firstParams struct {
+		SubscriptionID string              `json:"subscriptionId"`
+		Event          events.SessionEvent `json:"event"`
+	}
+	s.Require().NoError(json.Unmarshal(first.Params, &firstParams))
+	s.Equal(subscriptionID, firstParams.SubscriptionID)
+	s.Equal(history.Events[0].EventID, firstParams.Event.EventID)
+
+	closed := readSubscriptionOverflowFrame(s.T(), conn)
+	s.Equal("subscription.closed", closed.Method)
+	var closedParams struct {
+		SubscriptionID string                  `json:"subscriptionId"`
+		Error          *runtime.OperationError `json:"error"`
+	}
+	s.Require().NoError(json.Unmarshal(closed.Params, &closedParams))
+	s.Equal(subscriptionID, closedParams.SubscriptionID)
+	s.Require().NotNil(closedParams.Error)
+	s.Equal("resource_exhausted", closedParams.Error.Code)
+	s.Equal("slow_subscriber", closedParams.Error.Reason)
+	s.Equal("Observation capacity exceeded", closedParams.Error.Message)
+	s.NotContains(closedParams.Error.Message, "slow subscriber")
+	s.requireHistoryAfterTurn(ref, 140)
+	s.T().Log("PASS overflowed EventBroadcast maps to one historical event followed by explicit redacted subscription.closed; full 140-fact history preserved")
 }

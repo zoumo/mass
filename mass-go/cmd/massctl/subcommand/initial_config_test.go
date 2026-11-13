@@ -3,8 +3,6 @@ package subcommand_test
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -18,24 +16,22 @@ func TestInitialSessionConfigurationCLI(t *testing.T) {
 	for _, action := range []string{"create", "load"} {
 		t.Run(action, func(t *testing.T) {
 			calls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			endpoint := newRPCService(t, "", func(call *rpcTestCall) {
 				calls++
-				var body map[string]any
-				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				target := body
+				var params map[string]any
+				require.NoError(t, json.Unmarshal(call.Params, &params))
+				input := params["input"].(map[string]any)
+				target := input
 				if action == "create" {
-					target = body["spec"].(map[string]any)
+					assert.Equal(t, "session.create", call.Method)
+					target = input["spec"].(map[string]any)
+				} else {
+					assert.Equal(t, "session.load", call.Method)
 				}
 				assert.Equal(t, map[string]any{"model": " Native Model ", "effort": " MAX "}, target["config"])
-				if action == "load" {
-					w.WriteHeader(http.StatusAccepted)
-				} else {
-					w.WriteHeader(http.StatusCreated)
-				}
-				_, _ = w.Write([]byte(`{}`))
-			}))
-			defer server.Close()
-			args := []string{"--url", server.URL, "-o", "json", "session", action, "configured", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--model", " Native Model ", "--effort", " MAX "}
+				call.respond(json.RawMessage(`{}`))
+			})
+			args := []string{"--url", endpoint, "-o", "json", "session", action, "configured", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--model", " Native Model ", "--effort", " MAX "}
 			if action == "load" {
 				args = append(args, "--session-id", "native")
 			}
@@ -47,12 +43,12 @@ func TestInitialSessionConfigurationCLI(t *testing.T) {
 }
 
 func TestInitialSessionConfigurationCLIRejectsInvalidBeforeRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("invalid config sent") }))
-	defer server.Close()
+	var calls int
+	endpoint := newRPCService(t, "", func(*rpcTestCall) { calls++ })
 	for _, action := range []string{"create", "load"} {
 		for _, flag := range []string{"--model", "--effort"} {
 			for _, value := range []string{"bad\x00", string([]byte{0xff})} {
-				args := []string{"--url", server.URL, "session", action, "configured", "-n", "one", "--runtime", "agent", "--cwd", "/work", flag, value}
+				args := []string{"--url", endpoint, "session", action, "configured", "-n", "one", "--runtime", "agent", "--cwd", "/work", flag, value}
 				if action == "load" {
 					args = append(args, "--session-id", "native")
 				}
@@ -61,4 +57,5 @@ func TestInitialSessionConfigurationCLIRejectsInvalidBeforeRequest(t *testing.T)
 			}
 		}
 	}
+	require.Zero(t, calls)
 }

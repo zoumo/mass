@@ -53,7 +53,7 @@ func ticket08Daemon(t *testing.T) *entrypointSuite {
 		}
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), time.Second)
 		defer checkCancel()
-		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimPrefix(s.url, "http://"))
+		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimPrefix(strings.TrimSuffix(s.url, "/rpc"), "ws://"))
 		if conn != nil {
 			_ = conn.Close()
 		}

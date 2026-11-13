@@ -1,8 +1,12 @@
 # Go HTTP v1 implementation
 
-The authoritative [HTTP v1 contract](../../harness/bindings/http.md) defines routes,
-JSON values, errors and SSE. This document describes Go assembly and CLI usage;
-it does not create another protocol. The former `/experimental/operations/*` and
+> **Historical record.** This page describes the retired HTTP/SSE transport and
+> is retained as evidence of that experiment. The current daemon serves only
+> `/rpc` WebSocket JSON-RPC plus `/livez` and `/readyz`; the `/v1` routes and
+> commands below are not available and will not work. See the
+> [current implementation notes](../README.md) for the supported API.
+
+This document records the historical HTTP implementation and CLI usage. The former [HTTP v1 contract](../../harness/bindings/http.md) is deprecated in favor of the [JSON-RPC/WebSocket design](../../harness/bindings/websocket.md); the commands below do not demonstrate that migration. The former `/experimental/operations/*` and
 `/experimental/observe` endpoints are removed, with no compatibility aliases.
 
 ## Start the daemon

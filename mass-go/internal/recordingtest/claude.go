@@ -268,7 +268,7 @@ func requireSubsequence(t *testing.T, actual, expected []string) {
 		for index < len(expected) && expected[index] != kind {
 			index++
 		}
-		require.Less(t, index, len(expected), "SSE event %q is absent from durable history", kind)
+		require.Less(t, index, len(expected), "subscription event %q is absent from durable history", kind)
 		index++
 	}
 }

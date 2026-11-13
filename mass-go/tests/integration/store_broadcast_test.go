@@ -57,17 +57,18 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 			s.restartForHistory(rebuild)
 			named := resource.SessionRef{Namespace: before.Metadata.Namespace, Name: before.Metadata.Name}
 			// Subscription readiness is established before the queries.
-			idWatch, err := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
+			idWatch, err := newHTTPClient(s.T(), s.url, "").Subscribe(ctx(s.T()), ref)
 			s.Require().NoError(err)
 			defer idWatch.Close()
-			nameWatch, err := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), named)
+			nameWatch, err := newHTTPClient(s.T(), s.url, "").Subscribe(ctx(s.T()), named)
 			s.Require().NoError(err)
 			defer nameWatch.Close()
 			// Read during the queries; shutdown is allowed to end a stream without
 			// draining its queue, so its terminal frame alone cannot prove no replay.
 			idResult, nameResult := make(chan error, 1), make(chan error, 1)
-			go func() { _, err := idWatch.Next(); idResult <- err }()
-			go func() { _, err := nameWatch.Next(); nameResult <- err }()
+			readCtx := ctx(s.T())
+			go func() { _, err := idWatch.Next(readCtx); idResult <- err }()
+			go func() { _, err := nameWatch.Next(readCtx); nameResult <- err }()
 			var after resource.Session
 			s.call("session.get", workflowParams{Session: named}, &after)
 			expected := before
@@ -101,7 +102,7 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 			s.Require().ErrorAs(err, &terminal, "ID observation must end without historical events")
 			s.Equal("unavailable", terminal.Code)
 			s.Equal("server_shutdown", terminal.Reason)
-			_, again := idWatch.Next()
+			_, again := idWatch.Next(readCtx)
 			s.Same(err, again, "terminal cause remains stable")
 			err = <-nameResult
 			s.Require().ErrorAs(err, &terminal, "name observation must end without historical events")
@@ -120,7 +121,7 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 			s.True(os.IsNotExist(err), "SQLite must not require resource file copies: "+name)
 		}
 	}
-	s.T().Log("PASS no-subscriber persistence, restart then SQL rebuild, exact history/cursors/metadata, ID/name offline SSE without replay or Agent activation")
+	s.T().Log("PASS no-subscriber persistence, restart then SQL rebuild, exact history/cursors/metadata, ID/name offline subscriptions without replay or Agent activation")
 }
 
 func (s *entrypointSuite) stopForHistory() {

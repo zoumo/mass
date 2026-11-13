@@ -72,12 +72,12 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string) {
 	s.start("codex", scenario, s.st)
 	s.unknown = true
 	ref := s.open("unsupported")
-	handler, err := transport.New(s.svc, transport.Options{LocalOnly: true})
+	handler, err := transport.New(s.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	s.Require().NoError(err)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	c := newHTTPClient(s.T(), server.URL, "")
-	observer, err := c.Observe(ctx(s.T()), ref)
+	observer, err := c.Subscribe(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	defer observer.Close()
 	s.Require().NoError(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
@@ -92,7 +92,7 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string) {
 	s.Equal("unavailable", operation.Code)
 	s.Equal("unsupported_native_item", operation.Reason)
 	for {
-		e, err := observer.Next()
+		e, err := observer.Next(ctx(s.T()))
 		s.Require().NoError(err)
 		s.Require().NotEqual("user.message", e.Type(), "a mixed supported/unsupported message must not be partially emitted")
 		if problem, ok := e.Payload().(events.SessionError); ok {

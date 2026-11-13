@@ -47,19 +47,19 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 			opened, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "continuous"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}})
 			require.NoError(t, err)
 			ref := resource.SessionRef{SessionID: opened.Status.SessionID}
-			h, err := transport.New(svc, transport.Options{Token: "synthetic"})
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "synthetic"}))
 			require.NoError(t, err)
 			defer h.Shutdown()
 			server := httptest.NewServer(h)
 			defer server.Close()
 			c := newHTTPClient(t, server.URL, "synthetic")
-			watch, err := c.Observe(ctx(t), ref)
+			watch, err := c.Subscribe(ctx(t), ref)
 			require.NoError(t, err)
 			defer watch.Close()
 			var observed []events.SessionEvent
 			var previous string
 			for n := 1; n <= 3; n++ {
-				cmd := exec.CommandContext(ctx(t), ctl, "--url", server.URL, "-o", "json", "session", "prompt", ref.SessionID, "--text", fmt.Sprintf("input-%d", n))
+				cmd := exec.CommandContext(ctx(t), ctl, "--url", rpcEndpoint(server.URL), "-o", "json", "session", "prompt", ref.SessionID, "--text", fmt.Sprintf("input-%d", n))
 				cmd.Env = []string{"MASS_TOKEN=synthetic"}
 				out, err = cmd.Output()
 				require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 				}
 				answered, message := false, false
 				for {
-					e, err := watch.Next()
+					e, err := watch.Next(ctx(t))
 					require.NoError(t, err)
 					if p, ok := e.Payload().(events.InteractionRequested); ok {
 						require.Equal(t, 2, n, "only the middle input needs approval")
@@ -102,7 +102,7 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 			}
 			var page store.HistoryPage
 			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{}, &page))
-			require.Equal(t, observed, page.Events, "complete SSE facts and public durable history must agree")
+			require.Equal(t, observed, page.Events, "complete subscribed facts and public durable history must agree")
 			require.NoError(t, c.CloseSession(ctx(t), ref, nil))
 			require.NoError(t, c.StopRuntime(ctx(t), "agent", nil))
 			data, err := os.ReadFile(evidence)

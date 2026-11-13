@@ -27,7 +27,7 @@ agent 写入本目录之前，须有人类明确要求或事先同意；具体�
 - [EventStore](modules/eventstore/design.md)：事件批量追加、查询与同步进度；文件权威，SQLite 为可重建的完整查询副本，自动从已验证消费位置续同步。
 - [Runtime](modules/runtime/design.md)：Registry 只校验类型配置并构造 Driver；Driver 执行实际运行操作，当前运行映射归 Service。Runtime 顶层的 Session 默认值与覆盖规则见 [Runtime Session 默认配置](modules/runtime/session-defaults.md)。Claude block 条目身份见 [Claude 条目身份](modules/runtime/claude-item-identity.md)（draft）。
 
-依赖方向：HTTP/CLI → Service → MetaStore、EventStore、Events 与 Runtime。Service 独占当前运行映射及完整停止协调，组装层只注入依赖；Service 管理 Session → Broadcast 映射，直接协调 EventStore 持久提交后，将统一 SessionEvent 交给对应 Broadcast；状态等 Handler 由 Service 装配。Events 核心不直接依赖存储或 Service；存储模块不相互调用，Runtime 不接收资源目录或分页。
+依赖方向：CLI/客户端 → JSON-RPC over WebSocket → Service → MetaStore、EventStore、Events 与 Runtime。Service 独占当前运行映射及完整停止协调，组装层只注入依赖；Service 管理 Session → Broadcast 映射，直接协调 EventStore 持久提交后，将统一 SessionEvent 交给对应 Broadcast；状态等 Handler 由 Service 装配。Events 核心不直接依赖存储或 Service；存储模块不相互调用，Runtime 不接收资源目录或分页。
 
 原生历史导入见 [异步 load](modules/service/load.md)：先绑定接收，恢复同一原生会话后沿单 Driver 流回放、转换、校验、提交和分发；本地完成后直接继续输入。接纳、原生恢复/穷尽与本地完成分别表达。
 
@@ -36,7 +36,9 @@ Service 的详细职责：[Session](modules/service/session.md)、[历史](modul
 ## 接口与承载映射
 
 - [TypeSpec 入口](typespec/README.md)：当前接口版本、声明和校验工具。
-- [HTTP v1](bindings/http.md)：以 `/apis/v1` 为业务路径前缀的资源式 REST JSON API、错误映射与可选 SSE 实时观察。
+- [JSON-RPC 业务协议](bindings/jsonrpc.md)：JSON-RPC 2.0 方法、回执、错误与实时通知（详细绑定为 draft）。
+- [WebSocket 承载](bindings/websocket.md)：唯一业务传输、每订阅独立连接、认证与服务实例。
+- [Go JSON-RPC 绑定](bindings/go-jsonrpc.md)：sourcegraph/jsonrpc2 的适配、并发与上下文要求。
 - [Go 实时订阅映射](bindings/go-events.md)：通用异步流在 Go 中表达为只读 channel、Err 与 Close；不规定其他语言的流类型。
 - [持久化](bindings/storage.md)：资源与历史的存储表示。
 
@@ -50,7 +52,7 @@ Service 的详细职责：[Session](modules/service/session.md)、[历史](modul
 
 ## 架构决策
 
-- [ADR-0001：暂不强制限制 HTTP 请求体大小等容量边界](adr/0001-defer-http-capacity-limits.md)。
+- [ADR-0001：暂不预设业务消息容量限制](adr/0001-defer-http-capacity-limits.md)。
 
 ## 更新记录
 

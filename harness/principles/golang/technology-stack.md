@@ -1,7 +1,7 @@
 ---
 type: Development Standard
 title: Go 项目技术选型
-description: 规定 Go 项目的 CLI、配置读取、测试、HTTP 框架与客户端、结构化日志、lint 和可观测性选型。
+description: 规定 Go 项目的 CLI、配置读取、测试、JSON-RPC 与 WebSocket 通信、结构化日志、lint 和可观测性选型。
 status: stable
 sources:
   - id: direction
@@ -13,6 +13,9 @@ sources:
   - id: http-client-direction
     resource: 项目负责人在 2026-10-20 指定 Resty 为默认 HTTP 客户端
     title: HTTP 客户端选型
+  - id: jsonrpc-direction
+    resource: 项目负责人在 2026-11-12 指定 sourcegraph/jsonrpc2
+    title: JSON-RPC 2.0 Go 实现
   - id: configuration-direction
     resource: 项目负责人在 2026-10-20 指定 Viper 读取配置，默认配置格式采用 YAML
     title: 配置读取选型
@@ -44,17 +47,15 @@ sources:
 
 尽可能使用 suite 组织测试。
 
-## HTTP 框架
+## JSON-RPC 与 WebSocket
 
-选型：[Huma v2](https://huma.rocks/) + [chi](https://github.com/go-chi/chi)。
+JSON-RPC 选型：[sourcegraph/jsonrpc2](https://github.com/sourcegraph/jsonrpc2)。
 
-使用 chi 路由，配合 Huma 定义 HTTP 接口并生成 OpenAPI。通过统一脚手架注册路由与请求、响应类型，由代码生成具体 schema 和 OpenAPI 文档，避免手工维护重复的接口定义。
+使用该库处理请求响应关联、通知和错误。方法参数、业务准入、错误脱敏与能力范围由应用合同维护；显式核对 batch、ID 和解码边界，不以库名替代协议兼容性验证。
 
-## HTTP 客户端
+WebSocket 适配使用其 ObjectStream 扩展点；自带 websocket 包基于 [gorilla/websocket](https://github.com/gorilla/websocket)。认证、Origin、写入期限和生命周期由绑定明确。HTTP Upgrade 与最小健康探针使用标准库 [net/http](https://pkg.go.dev/net/http)，不为 JSON-RPC 引入 REST schema 或 OpenAPI 客户端生成链路。
 
-选型：[Resty](https://github.com/go-resty/resty)。
-
-默认使用 Resty 发送 HTTP 请求。超时、重试、重定向与流式响应处理须遵守所调用接口的合同。
+Handler 不得阻塞连接读循环；异步分发仍须保护初始化、在途请求和资源登记的顺序。连接取消与已接纳业务的生命周期分开管理。库发送串行化不等于已经解决背压或写入截止，须以公开行为验证。
 
 ## 结构化日志
 

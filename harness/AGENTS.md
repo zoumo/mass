@@ -18,7 +18,7 @@ sources:
 
 [harness 入口](index.md)是指导本项目当前演进和发展的唯一真相源。先读取[原则索引](principles/index.md)，再读取任务相关的[总体架构](architecture.md)、模块设计和 [API/TypeSpec 合同](typespec/README.md)。涉及 Go 实现时，还须读取 [Go 目录规范](principles/golang/directory-conventions.md)和[Go 技术选型](principles/golang/technology-stack.md)。
 
-公共 interface、HTTP 协议、事件与持久化格式由项目负责人定义，所有语言实现遵守同一设计及其确认后的合同。遇到待决合同或冲突要求，记录约定和影响，由项目负责人决定；现有代码、测试、更新时间或更详细的字段表均不能覆盖设计。
+公共 interface、通信协议、事件与持久化格式由项目负责人定义，所有语言实现遵守同一设计及其确认后的合同。遇到待决合同或冲突要求，记录约定和影响，由项目负责人决定；现有代码、测试、更新时间或更详细的字段表均不能覆盖设计。
 
 ## harness 写入授权
 
@@ -87,6 +87,6 @@ MASS 按人类确认范围维护状态：未确认设计为 `draft`，已确认�
 
 模块正文和 TypeSpec 描述语言无关的逻辑能力、输入输出、顺序、失败及生命周期，不把 channel、迭代器、goroutine 或锁作为通用接口。属性读取和异步接收操作不强制各语言复制方法名或一对一方法形状。语言映射放在 bindings/ 并链接通用合同，不得削弱其语义。
 
-未决结构须显式标记，合同明确允许的开放值不算占位。事件 `_meta`、工具 `rawInput`/`rawOutput` 见 [SessionEvent](modules/runtime/events.md)，RuntimeConfig、InteractionAnswer 见[共享类型](shared/types.tsp)，ContentBlock 见[内容块](shared/content-blocks.md)。JSON 不可承载的语言值须按 [HTTP 承载](bindings/http.md#基础规则)转换或报错，持久化编码遵循[存储合同](bindings/storage.md)。
+未决结构须显式标记，合同明确允许的开放值不算占位。事件 `_meta`、工具 `rawInput`/`rawOutput` 见 [SessionEvent](modules/runtime/events.md)，RuntimeConfig、InteractionAnswer 见[共享类型](shared/types.tsp)，ContentBlock 见[内容块](shared/content-blocks.md)。JSON 不可承载的语言值须按 [JSON-RPC 编码](bindings/jsonrpc.md#基础规则)转换或报错，持久化编码遵循[存储合同](bindings/storage.md)。
 
 [^okf]: 官方 SPEC.md 的 concept、来源、生命周期、索引和符合性规则；采用 v0.2。

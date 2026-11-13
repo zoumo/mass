@@ -1,5 +1,14 @@
 # 设计知识包更新记录
 
+## 2026-11-12
+
+- **统一 JSON-RPC/WebSocket 设计**：公共业务接口改为 JSON-RPC 2.0 over WebSocket；废止 REST/SSE 绑定，保留历史入口说明。客户端连接明确服务实例，普通调用与每个订阅分连接，服务端每连接最多一个活动订阅；慢连接驱逐不取消 Agent 工作。新增消息/方法 TypeSpec 及错误、初始化、背压、认证、数据目录所有权和 HTTP 可迁回边界，在 SDK 接口之后修订为 v0.3.2，详细绑定为 draft。
+- **Go JSON-RPC 选型**：按负责人要求采用 sourcegraph/jsonrpc2，明确其 batch/ID 限制及 Handler、上下文、写入和错误映射适配要求；同步架构、CLI、技术选型与导航。选择单传输不预建多传输框架，也不让业务合同依赖 WebSocket 对象。
+
+## 2026-11-11
+
+- **主 Session 配置**：按人类批准的配置语义增加初始 model/effort、瞬态单项 setter 与原运行责任合同，同步 TypeSpec、传输/存储及 CLI 映射。setter 不持久、恢复请求初始值；设计批准不代表实现或运行验收通过。
+
 ## 2026-11-10
 
 - **统一事件收敛到 agent-sdk-go**：经负责人授权，MASS live SessionEvent 的 type、payload、eventId、time、itemId、`_meta` 与工具 `toolName/provider/kind` 以 SDK `agent.Event` 为唯一真相源；MASS relay 只补 namespace/sessionName、Source、历史 replay 和持久化分类。删除 `agent.plan`，工具旧 `name` wire 与计划类型均为公开 breaking change；内容块与输入直接使用 SDK 类型，InputReceipt 增加 SDK 四态 result。同步 Runtime 事件合同、共享模型与示例，接口修订为 v0.3.0。
@@ -140,7 +149,3 @@
 - **事件处理器**：进程内按 Session 构造并串行处理，支持登记、关闭、停用与显式启用；业务消费与核心持久提交分离，不提供可靠业务重放。
 - **开发规范**：语言无关编码原则与测试验收要求独立维护在 principles/；远端认证、秘密、原生身份与资源所有权要求随 Runtime 维护。
 - **删除过时内容**：删除旧文档来源清单、被替代的设计记录及 HTTP/存储格式摘录，移除对前一版文档目录的引用。HTTP 与持久化绑定仅保留当前要求和真实待决项。
-
-## 2026-11-11 主 Session 配置
-
-按人类批准的配置语义增加初始 model/effort、瞬态单项 setter 与原运行责任合同，同步 TypeSpec、HTTP/存储及 CLI 映射。setter 不持久、恢复请求初始值；设计批准不代表实现或运行验收通过。

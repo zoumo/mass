@@ -1,7 +1,12 @@
 # HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–06)
 
-The contract is [harness/bindings/http.md](../../harness/bindings/http.md).
-This note records implementation coverage, not a replacement contract.
+> **Historical record.** This note records the retired REST/SSE implementation
+> and its ticket evidence. The current daemon serves only `/rpc` WebSocket
+> JSON-RPC plus `/livez` and `/readyz`; the `/apis/v1` routes and the
+> `massd openapi` exporter described here no longer exist. See the
+> [current implementation notes](../README.md) for the supported API.
+
+This note records the historical REST/SSE implementation. Its former [HTTP contract](../../harness/bindings/http.md) is deprecated; the target design is [JSON-RPC over WebSocket](../../harness/bindings/websocket.md). A design update does not mean this implementation has migrated.
 
 Runtime configuration uses Huma v2 with chi, at `/apis/v1/runtimes`:
 POST creates a stopped resource, GET reads/lists, and PUT on the original

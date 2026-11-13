@@ -131,7 +131,7 @@ func (d *notificationDriver) disconnect() {
 	native.end.Do(func() { close(native.stop) })
 }
 
-func TestSDKNotificationsThroughHTTPHistoryStateAndResume(t *testing.T) {
+func TestSDKNotificationsThroughRPCHistoryStateAndResume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	st, err := file.Open(t.TempDir(), false)
@@ -149,14 +149,19 @@ func TestSDKNotificationsThroughHTTPHistoryStateAndResume(t *testing.T) {
 		Spec:     resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}},
 	})
 	require.NoError(t, err)
-	handler, err := transport.New(svc, transport.Options{LocalOnly: true})
+	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	t.Cleanup(handler.Shutdown)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	httpClient := client.New(server.URL, "")
+	rpcClient, err := client.New(rpcURL(server), "", client.Options{
+		WriteTimeout:              time.Second,
+		SubscriptionQueueCapacity: 8,
+	})
+	require.NoError(t, err)
+	defer rpcClient.Close()
 	var created resource.Session
-	require.NoError(t, httpClient.CreateSession(ctx, resource.Session{
+	require.NoError(t, rpcClient.CreateSession(ctx, resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "notifications"},
 		Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{
 			Cwd: "/work", Config: &runtime.InitialSessionConfig{Model: "literal-model", Effort: "literal-effort"},
@@ -164,7 +169,7 @@ func TestSDKNotificationsThroughHTTPHistoryStateAndResume(t *testing.T) {
 		}},
 	}, &created))
 	ref := resource.SessionRef{SessionID: created.Status.SessionID}
-	observer, err := httpClient.Observe(ctx, resource.SessionRef{Namespace: "one", Name: "notifications"})
+	observer, err := rpcClient.Subscribe(ctx, resource.SessionRef{Namespace: "one", Name: "notifications"})
 	require.NoError(t, err)
 	defer observer.Close()
 
@@ -189,7 +194,7 @@ func TestSDKNotificationsThroughHTTPHistoryStateAndResume(t *testing.T) {
 		var native agent.Event
 		require.NoError(t, json.Unmarshal(wire, &native))
 		driver.send(native)
-		got, err := observer.Next()
+		got, err := observer.Next(ctx)
 		require.NoError(t, err)
 		require.Equal(t, native.EventID, got.EventID)
 		require.Equal(t, native.SessionID, got.SessionID)
@@ -208,7 +213,7 @@ func TestSDKNotificationsThroughHTTPHistoryStateAndResume(t *testing.T) {
 		if got.Persistent() {
 			persistent = append(persistent, got)
 			var history store.HistoryPage
-			require.NoError(t, httpClient.History(ctx, ref, store.HistoryQuery{}, &history))
+			require.NoError(t, rpcClient.History(ctx, ref, store.HistoryQuery{}, &history))
 			require.Equal(t, persistent, history.Events)
 		}
 		delivered++
@@ -221,36 +226,36 @@ func TestSDKNotificationsThroughHTTPHistoryStateAndResume(t *testing.T) {
 		Payload: agent.StateUpdatePayload{State: new(agent.StateIdle)},
 	}
 	driver.send(idle)
-	state, err := observer.Next()
+	state, err := observer.Next(ctx)
 	require.NoError(t, err)
 	require.Equal(t, idle.EventID, state.EventID)
 	require.Eventually(t, func() bool {
 		var current resource.Session
-		return httpClient.GetSession(ctx, ref, &current) == nil && current.Status.State == events.Idle
+		return rpcClient.GetSession(ctx, ref, &current) == nil && current.Status.State == events.Idle
 	}, time.Second, time.Millisecond)
 	var closed resource.Session
-	require.NoError(t, httpClient.CloseSession(ctx, ref, &closed))
+	require.NoError(t, rpcClient.CloseSession(ctx, ref, &closed))
 	require.Equal(t, events.SessionState("offline"), closed.Status.State)
 	require.Equal(t, created.Spec, closed.Spec)
 	var resumed resource.Session
-	require.NoError(t, httpClient.ResumeSession(ctx, ref, &resumed))
+	require.NoError(t, rpcClient.ResumeSession(ctx, ref, &resumed))
 	require.Equal(t, created.Spec, resumed.Spec)
 	require.Equal(t, created.Metadata.UID, resumed.Metadata.UID)
 	idle.EventID = uuid.NewString()
 	driver.send(idle)
-	state, err = observer.Next()
+	state, err = observer.Next(ctx)
 	require.NoError(t, err)
 	require.Equal(t, idle.EventID, state.EventID)
 	var history store.HistoryPage
-	require.NoError(t, httpClient.History(ctx, ref, store.HistoryQuery{}, &history))
+	require.NoError(t, rpcClient.History(ctx, ref, store.HistoryQuery{}, &history))
 	require.Equal(t, persistent, history.Events)
 	driver.disconnect()
 	require.Eventually(t, func() bool {
 		var current resource.Session
-		return httpClient.GetSession(ctx, ref, &current) == nil &&
+		return rpcClient.GetSession(ctx, ref, &current) == nil &&
 			current.Status.State == events.Unknown && current.Status.Reason == "session_observation_lost"
 	}, time.Second, time.Millisecond)
-	require.NoError(t, httpClient.CloseSession(ctx, ref, nil))
+	require.NoError(t, rpcClient.CloseSession(ctx, ref, nil))
 }
 
 type httpConfigFactoryWithDriver struct{ runtime.Driver }

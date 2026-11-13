@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.3.1
+interface_version: v0.3.2
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论
@@ -12,7 +12,9 @@ sources:
 
 # TypeSpec 合同入口
 
-当前接口版本记录在本页元数据。v0.3.1 增加主 Session 初始配置与瞬态单项配置操作，沿用既有错误与接受证据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
+当前接口版本记录在本页元数据。v0.3.2 在 SDK 统一事件与配置合同之后增加 JSON-RPC 消息及方法绑定；v0.3.1 增加主 Session 初始配置与瞬态单项配置操作，沿用既有错误与接受证据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
+
+v0.3.2 增加 [JSON-RPC 消息与方法绑定](../bindings/jsonrpc.tsp)，公共业务入口改为 [WebSocket](../bindings/websocket.md)。复用既有 Service DTO，显式 SessionRef 取代路径歧义；客户端普通 RPC 与每个实时订阅使用独立连接，服务端每连接最多一个活动订阅。Go 选择 sourcegraph/jsonrpc2，首版 profile 明确 batch/ID 限制，不宣称完整标准形态兼容。详细协议与语言绑定仍为 draft；版本修订不是设计批准或实现完成证明。
 
 v0.3.0 把 MASS live event 与输入内容收敛到 `agent-sdk-go/agent`：SDK 的 type、payload、eventId、time、itemId、`_meta` 与工具 `toolName/provider/kind` 成为唯一真相源；MASS 仍只补 namespace/sessionName、Source、历史 replay 与持久化分类。`agent.plan` 从统一事件联合删除，旧 MASS 工具 `name` wire 改为 SDK 身份，均为公开 breaking change。InputReceipt 增加 SDK 四态 `result`。该修订为 v0.3.0。
 
@@ -22,6 +24,7 @@ v0.3.0 把 MASS live event 与输入内容收敛到 `agent-sdk-go/agent`：SDK �
 
 此前 v0.2.17 修订增加可扩展的 Session features，首个开关 agentQuestions 默认开启，Driver 以 effectiveFeatures 返回实际生效值，不支持时降级为 false。更早修订已明确 EventStore 自动增量同步与失败续接、Service 独占当前运行映射和完整停止操作，Registry 只负责配置校验与 Driver 构造。停止只暴露 stopRuntime，不固定内部多步协调 Interface。设计变化历史见[更新记录](../log.md)，实现差距与检查证据见[实现差距记录](../implementation-gaps.md)。
 
+- [JSON-RPC 绑定](../bindings/jsonrpc.tsp)：initialize、业务方法、统一信封与通知，复用 Service 类型；[语义](../bindings/jsonrpc.md)、[WebSocket](../bindings/websocket.md)、[Go 适配](../bindings/go-jsonrpc.md)。
 - [资源管理接口](../modules/service/main.tsp)：RuntimeService、SessionService；历史存取与实时观察是分开的业务操作。
 - [运行时接口](../modules/runtime/main.tsp)：RuntimeRegistry、RuntimeDriver；Driver.events() 返回单消费者 EventStream<SessionEvent>，多个 Session 共用。
 - [元数据存储接口](../modules/metastore/main.tsp)：MetaStore 按 Runtime 与 Session 绑定资源和查询类型；MetaStoreConfig 选择唯一权威后端，默认 sqlite。
@@ -53,9 +56,9 @@ rtk proxy npm run format:check --prefix harness/typespec
 rtk proxy npm run examples --prefix harness/typespec
 ```
 
-校验分别编译 Service、Runtime、MetaStore、EventStore、Events 五个模块，开启 noEmit 与 warningAsError；固定编译器和依赖锁，需要 Node.js 22 或更新版本。编译成功不代表并发、资源释放或实际 Agent 行为已经验证。
+校验分别编译 Service、Runtime、MetaStore、EventStore、Events 五个模块及 JSON-RPC 绑定，开启 noEmit 与 warningAsError；固定编译器和依赖锁，需要 Node.js 22 或更新版本。编译成功不代表并发、资源释放或实际 Agent 行为已经验证。
 
-存储职责分别见 [MetaStore](../modules/metastore/design.md) 与 [EventStore](../modules/eventstore/design.md)；MetaStore CRUD、资源分页和实时订阅均已定义 TypeSpec；共享基础类型见 [types.tsp](../shared/types.tsp)，其开放值不是待决占位。Service 与 Store 共用 [历史模型](../shared/history-models.tsp)，保留类型过滤、历史游标和同步进度。SessionEvent 已定义统一信封和按 type 绑定的 payload，adapter 补齐名称后交付；内容块已定义，消息与思考按条目 ID 定位，不增加块坐标；交互与配置的适配细节见运行时事件文档。HTTP 已定义已知错误 code 的状态码映射，code 仍开放；各业务拒绝场景的准确分类及文件提交协议仍需细化。编译检查不表示已有存储实现。
+存储职责分别见 [MetaStore](../modules/metastore/design.md) 与 [EventStore](../modules/eventstore/design.md)；MetaStore CRUD、资源分页和实时订阅均已定义 TypeSpec；共享基础类型见 [types.tsp](../shared/types.tsp)，其开放值不是待决占位。Service 与 Store 共用 [历史模型](../shared/history-models.tsp)，保留类型过滤、历史游标和同步进度。SessionEvent 已定义统一信封和按 type 绑定的 payload，adapter 补齐名称后交付；内容块已定义，消息与思考按条目 ID 定位，不增加块坐标；交互与配置的适配细节见运行时事件文档。JSON-RPC 错误 data 保留开放的业务 code/reason，传输错误单独映射；各业务拒绝场景的准确分类及文件提交协议仍需细化。编译检查不表示已有存储实现。
 
 事件预览通过标准 @example 编写，使用编译器校验并序列化。npm run check 同时检查示例是否覆盖所有事件类型、UUID 格式及生成 JSON 是否过期；它不验证所有跨字段业务条件或媒体正文的实际有效性。导出工具不增加额外依赖。
 

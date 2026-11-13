@@ -42,7 +42,7 @@ func (s *entrypointSuite) ticket04Drain(kind string, stop bool) {
 		s.EqualValues("offline", session.Status.State)
 	}
 	// A successful lifecycle return must already include the final append and
-	// required publication. Match the same fact through SSE and public history.
+	// required publication. Match the same fact through the subscription and public history.
 	page := s.history(ref)
 	finalID := ""
 	finalItem := messageItemID(kind, expectedFact)
@@ -61,7 +61,7 @@ func (s *entrypointSuite) ticket04Drain(kind string, stop bool) {
 			break
 		}
 	}
-	s.Require().True(published, "the committed final fact must reach the required SSE observer")
+	s.Require().True(published, "the committed final fact must reach the required subscription observer")
 	if !stop {
 		s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	}

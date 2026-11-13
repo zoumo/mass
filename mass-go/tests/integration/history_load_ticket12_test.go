@@ -39,7 +39,7 @@ func ticket12Calls(t *testing.T, path string) []ticket12Call {
 	return calls
 }
 
-func TestTicket12CodexColdLoadHTTPHistoryAndContinuedInput(t *testing.T) {
+func TestTicket12CodexColdLoadRPCHistoryAndContinuedInput(t *testing.T) {
 	ticket12ColdLoadHTTP(t, "cold")
 }
 
@@ -47,7 +47,7 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 	t.Helper()
 	evidence := filepath.Join(t.TempDir(), "peer.jsonl")
 	svc, cwd := ticket06Service(t, mode, map[string]any{"LOAD_EVIDENCE": evidence})
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)

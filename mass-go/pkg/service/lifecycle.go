@@ -254,7 +254,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	s.mu.Lock()
 	if len(run.pending) != 0 || run.blocked != nil {
 		s.mu.Unlock()
-		return r, errors.New("outcome_unknown: original opening or stream responsibility remains")
+		return r, unknownOutcome("runtime_stop_unsettled", "Runtime stop remains unsettled by retained opening or stream responsibility; inspect state before further action")
 	}
 	s.mu.Unlock()
 	s.mu.Lock()
@@ -319,7 +319,11 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	}
 	if !run.driverStopped {
 		if err := run.driver.Stop(ctx); err != nil {
-			return r, err
+			return r, &runtime.OperationError{
+				Code:    "outcome_unknown",
+				Reason:  "runtime_stop_unconfirmed",
+				Message: "Runtime stop result unconfirmed; inspect state before further action",
+			}
 		}
 		run.driverStopped = true
 	}
@@ -749,7 +753,11 @@ func (s *Service) closeForStop(ctx context.Context, run *runBinding, id string) 
 }
 
 func fmtUnknown(err error) error {
-	return errors.Join(errors.New("outcome_unknown: drain incomplete"), err)
+	return errors.Join(unknownOutcome("operation_settlement_unknown", "Operation settlement remains unknown; inspect state before further action"), err)
+}
+
+func unknownOutcome(reason, message string) *runtime.OperationError {
+	return &runtime.OperationError{Code: "outcome_unknown", Reason: reason, Message: message}
 }
 
 // Caller cancellation abandons only the wait. A bounded original restore owner

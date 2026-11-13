@@ -46,7 +46,7 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 			}
 			return s.settleFailedRestore(ctx, run, op, key)
 		}
-		return errors.New("outcome_unknown: native identity remains unknown")
+		return unknownOutcome("native_identity_unknown", "Native identity remains unknown; inspect state before further action")
 	}
 	if !released {
 		if err := run.driver.CloseSession(ctx, native.SessionID); err != nil {

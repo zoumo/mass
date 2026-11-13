@@ -70,7 +70,7 @@ process restart, an explicit start/resume may establish a new local Driver for a
 persisted unknown Runtime when this process has no run binding. This treats the
 old local owner as unreachable; it does not prove provider work or backend
 resources stopped and does not reconstruct per-fact obligations. Manual
-cross-process settlement remains unimplemented. HTTP and CLI close/resume paths
+cross-process settlement remains unimplemented. WebSocket client and CLI close/resume paths
 are implemented and exercised by temporary file/SQLite-backed vertical tests.
 SQLite provides the current metadata authority and a rebuildable event-history
 query replica; recovery must preserve the former while the latter may be rebuilt.

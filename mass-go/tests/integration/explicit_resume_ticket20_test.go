@@ -1,12 +1,9 @@
 package integration_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -21,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -107,7 +103,7 @@ func (s ticket20TerminalStream) Next(ctx context.Context) (events.SessionEvent, 
 	return e, err
 }
 
-func TestTicket20ExplicitResumeHTTP(t *testing.T) {
+func TestTicket20ExplicitResumeRPC(t *testing.T) {
 	bin := ticket20Peer(t)
 	for _, scenario := range []struct{ kind, mode string }{{"claude", "early-terminal"}, {"codex", "early-terminal"}, {"codex", "terminal-before-receipt"}} {
 		t.Run(scenario.kind+"/"+scenario.mode, func(t *testing.T) {
@@ -161,47 +157,31 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 			before := wait(1)
 			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
-			h, err := transport.New(svc, transport.Options{LocalOnly: true})
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			t.Cleanup(h.Shutdown)
 			server := httptest.NewServer(h)
 			t.Cleanup(server.Close)
-			c := client.New(server.URL, "")
-			t.Cleanup(func() { assert.NoError(t, c.Close()) })
-			observer, err := c.Observe(ctx(t), ref)
+			c := newHTTPClient(t, server.URL, "")
+			observer, err := c.Subscribe(ctx(t), ref)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, observer.Close()) })
 			originalWire, err := os.ReadFile(filepath.Join(native, "wire.jsonl"))
 			require.NoError(t, err)
 			for _, invalid := range []string{`{"initialInput":{"content":[]}}`, `{"initialInput":null}`, `{"initialInput":{"content":[{"type":"image","data":"aA==","mimeType":"image/png"}]}}`, `{"initialInput":{"content":[{"type":"text","text":"not sent","annotations":{"audience":["user"]}}]}}`} {
-				req, e := http.NewRequestWithContext(ctx(t), http.MethodPost, server.URL+"/apis/v1/sessions/"+ref.SessionID+"/resume", strings.NewReader(invalid))
+				params, e := json.Marshal(map[string]any{
+					"session": ref,
+					"input":   json.RawMessage(invalid),
+				})
 				require.NoError(t, e)
-				req.Header.Set("Content-Type", "application/json")
-				response, e := http.DefaultClient.Do(req)
-				require.NoError(t, e)
-				_, e = io.Copy(io.Discard, response.Body)
-				assert.NoError(t, e)
-				assert.NoError(t, response.Body.Close())
-				require.Contains(t, []int{400, 422}, response.StatusCode)
+				response := rawRPCCall(t, rpcEndpoint(server.URL), "", "session.resume", params)
+				require.NotNil(t, response.Error)
 				wire, e := os.ReadFile(filepath.Join(native, "wire.jsonl"))
 				require.NoError(t, e)
 				require.Equal(t, originalWire, wire, "invalid/unsupported input must not restore a native connection")
 			}
-			body := `{"initialInput":{"content":[{"type":"text","text":"new resume input"}]}}`
-			req, err := http.NewRequestWithContext(ctx(t), http.MethodPost, server.URL+"/apis/v1/sessions/"+ref.SessionID+"/resume", bytes.NewBufferString(body))
-			require.NoError(t, err)
-			req.Header.Set("Content-Type", "application/json")
-			response, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, response.Body.Close()) })
-			raw, err := io.ReadAll(response.Body)
-			require.NoError(t, err)
-			require.Equal(t, http.StatusOK, response.StatusCode, "%s", raw)
-			var got struct {
-				resource.Session
-				InitialInputReceipt *runtime.InputReceipt `json:"initialInputReceipt"`
-			}
-			require.NoError(t, json.Unmarshal(raw, &got))
+			var got resource.SessionResumed
+			require.NoError(t, c.ResumeSessionWithInput(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("new resume input")}}, &got))
 			require.Equal(t, ref.SessionID, got.Status.SessionID)
 			require.NotNil(t, got.InitialInputReceipt)
 			require.NotEmpty(t, got.InitialInputReceipt.Submission)
@@ -237,7 +217,7 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 			require.Equal(t, before.Events[0], after.Events[0])
 			require.Equal(t, "new resume input", events.TextOf(after.Events[1].Payload().(events.AgentMessage).Content[0]))
 			for {
-				streamed, e := observer.Next()
+				streamed, e := observer.Next(ctx(t))
 				require.NoError(t, e)
 				if streamed.Type() != "agent.message" {
 					continue
@@ -429,7 +409,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 	for _, kind := range []string{"claude", "codex"} {
 		t.Run(kind, func(t *testing.T) {
 			f := ticket20Setup(t, kind, "early-terminal")
-			h, err := transport.New(f.svc, transport.Options{LocalOnly: true})
+			h, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			t.Cleanup(h.Shutdown)
 			server := httptest.NewServer(h)
@@ -442,7 +422,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 				expectedBlocks = 2
 			}
 			require.NoError(t, os.WriteFile(path, []byte(input), 0o600))
-			cmd := exec.CommandContext(ctx(t), ctl, "--url", server.URL, "-o", "json", "session", "resume", "original", "-n", "default", "--input-file", path)
+			cmd := exec.CommandContext(ctx(t), ctl, "--url", rpcEndpoint(server.URL), "-o", "json", "session", "resume", "original", "-n", "default", "--input-file", path)
 			raw, err := cmd.CombinedOutput()
 			require.NoError(t, err, "%s", raw)
 			var resumed resource.SessionResumed
@@ -472,29 +452,21 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			durable, err := f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{Types: []string{"agent.message"}})
 			require.NoError(t, err)
 			require.Equal(t, before, durable)
-			h2, err := transport.New(f.svc, transport.Options{LocalOnly: true})
+			h2, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			t.Cleanup(h2.Shutdown)
 			server2 := httptest.NewServer(h2)
 			t.Cleanup(server2.Close)
-			// Legacy empty-body clients still resume without sending business input.
-			req, err := http.NewRequestWithContext(ctx(t), http.MethodPost, server2.URL+"/apis/v1/sessions/"+f.ref.SessionID+"/resume", http.NoBody)
+			emptyClient := newHTTPClient(t, server2.URL, "")
+			err = emptyClient.ResumeSession(ctx(t), f.ref, nil)
 			require.NoError(t, err)
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			body, readErr := io.ReadAll(resp.Body)
-			assert.NoError(t, resp.Body.Close())
-			require.NoError(t, readErr)
-			require.Equal(t, http.StatusOK, resp.StatusCode, "%s", body)
-			require.NotContains(t, string(body), "initialInputReceipt")
 			_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
 			require.NoError(t, err)
 			ticket20Wait(t, f, 3)
 			_, err = f.svc.CloseSession(ctx(t), f.ref)
 			require.NoError(t, err)
 			// The generated client carries explicit input by ID as well as CLI's name route.
-			c := client.New(server2.URL, "")
-			t.Cleanup(func() { assert.NoError(t, c.Close()) })
+			c := newHTTPClient(t, server2.URL, "")
 			var result resource.SessionResumed
 			err = c.ResumeSessionWithInput(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("second opt-in")}}, &result)
 			require.NoError(t, err)

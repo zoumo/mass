@@ -19,29 +19,37 @@ func Invalid() *Error {
 
 // PublicError classifies only explicit sentinels. Native diagnostics never escape.
 func PublicError(err error) *Error {
+	if public, ok := publicError(err); ok {
+		return public
+	}
+	return &Error{Code: "outcome_unknown", Reason: "operation_unconfirmed", Message: "Operation result unconfirmed; inspect state before further action"}
+}
+
+// publicError reports whether err has an explicit public mapping.
+func publicError(err error) (*Error, bool) {
 	var public *Error
 	if errors.As(err, &public) {
-		return public
+		return public, true
 	}
 	switch {
 	case errors.Is(err, events.ErrSlowSubscriber):
-		return &Error{Code: "resource_exhausted", Reason: "slow_subscriber", Message: "Observation capacity exceeded"}
+		return &Error{Code: "resource_exhausted", Reason: "slow_subscriber", Message: "Observation capacity exceeded"}, true
 	case errors.Is(err, events.ErrLegacyEventSchema):
-		return &Error{Code: "unsupported", Reason: "legacy_event_schema", Message: "Stored event schema is not supported"}
+		return &Error{Code: "unsupported", Reason: "legacy_event_schema", Message: "Stored event schema is not supported"}, true
 	case errors.Is(err, runtime.ErrInvalidArgument):
-		return Invalid()
+		return Invalid(), true
 	case errors.Is(err, runtime.ErrFailedPrecondition):
-		return &Error{Code: "conflict", Reason: "operation_rejected", Message: "Operation rejected by current resource state"}
+		return &Error{Code: "conflict", Reason: "operation_rejected", Message: "Operation rejected by current resource state"}, true
 	case errors.Is(err, runtime.ErrResourcesReleased):
-		return &Error{Code: "conflict", Reason: "native_open_failed", Message: "Native open failed; owned resources released"}
+		return &Error{Code: "conflict", Reason: "native_open_failed", Message: "Native open failed; owned resources released"}, true
 	case errors.Is(err, store.ErrNotFound):
-		return &Error{Code: "not_found", Reason: "resource_not_found", Message: "Resource not found"}
+		return &Error{Code: "not_found", Reason: "resource_not_found", Message: "Resource not found"}, true
 	case errors.Is(err, store.ErrConflict):
-		return &Error{Code: "conflict", Reason: "resource_conflict", Message: "Resource conflict"}
+		return &Error{Code: "conflict", Reason: "resource_conflict", Message: "Resource conflict"}, true
 	case errors.Is(err, store.ErrReadOnly):
-		return &Error{Code: "unavailable", Reason: "read_only", Message: "Store is read only"}
+		return &Error{Code: "unavailable", Reason: "read_only", Message: "Store is read only"}, true
 	default:
-		return &Error{Code: "outcome_unknown", Reason: "operation_unconfirmed", Message: "Operation result unconfirmed; inspect state before further action"}
+		return nil, false
 	}
 }
 
@@ -84,10 +92,3 @@ func fail(w http.ResponseWriter, status int, err *Error) {
 		return // The response is already committed; the client may have disconnected.
 	}
 }
-
-type protocolError struct {
-	status int
-	public *Error
-}
-
-func (e *protocolError) Error() string { return e.public.Error() }

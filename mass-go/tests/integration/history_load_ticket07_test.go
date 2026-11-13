@@ -109,7 +109,7 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	server := httptest.NewServer(h)
 	t.Cleanup(func() {
@@ -156,7 +156,7 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 	require.Len(t, tail.Events, 1)
 	require.Equal(t, "last:0", tail.Events[0].ItemID)
 	require.Equal(t, "last", tail.Events[0].Replay.NativeRecordID)
-	observer, err := c.Observe(ctx(t), ref)
+	observer, err := c.Subscribe(ctx(t), ref)
 	require.NoError(t, err)
 	defer observer.Close()
 	var submissions []string
@@ -168,7 +168,7 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 		submissions = append(submissions, receipt.Submission)
 		messageObserved := false
 		for {
-			e, nextErr := observer.Next()
+			e, nextErr := observer.Next(ctx(t))
 			require.NoError(t, nextErr)
 			if e.Type() == "agent.message" {
 				messageObserved = true
@@ -483,7 +483,7 @@ func TestTicket07ClaudeUnlinkedNativeResultUsesSDKState(t *testing.T) {
 	_, ref := ticket07Load(t, url, cwd)
 	ticket07Status(t, url, ref, "completed")
 	c := newHTTPClient(t, url, "")
-	observer, err := c.Observe(ctx(t), ref)
+	observer, err := c.Subscribe(ctx(t), ref)
 	require.NoError(t, err)
 	defer observer.Close()
 	var receipt runtime.InputReceipt
@@ -491,7 +491,7 @@ func TestTicket07ClaudeUnlinkedNativeResultUsesSDKState(t *testing.T) {
 		require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("ordinary unlinked response")}}, &receipt))
 		sawMessage := false
 		for {
-			e, err := observer.Next()
+			e, err := observer.Next(ctx(t))
 			require.NoError(t, err)
 			if e.Type() == "agent.message" {
 				sawMessage = true

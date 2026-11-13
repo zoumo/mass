@@ -46,7 +46,7 @@ Runtime 写入时校验 provider-neutral 的结构、transport 字段组合和�
 
 ## 生效与恢复
 
-Runtime 更新采用完整替换。直接通过 RuntimeService/HTTP 更新时，省略 `features` 或 `mcpServers` 会清除对应默认值；CLI 的部分更新流程先读取当前 spec，未提供对应 flag 时保留旧值，显式 `null` 清除。Runtime 自己的 `mcpServers: []` 是已声明的空默认列表，不提供默认 server，但合并结果仍为非 nil，因此会排除 ambient server；Runtime 省略 `mcpServers` 则保留 ambient。Session 自己的空列表只表示没有覆盖项，仍继承 Runtime 默认项。
+Runtime 更新采用完整替换。直接通过 RuntimeService/JSON-RPC 更新时，省略 `features` 或 `mcpServers` 会清除对应默认值；CLI 的部分更新流程先读取当前 spec，未提供对应 flag 时保留旧值，显式 `null` 清除。Runtime 自己的 `mcpServers: []` 是已声明的空默认列表，不提供默认 server，但合并结果仍为非 nil，因此会排除 ambient server；Runtime 省略 `mcpServers` 则保留 ambient。Session 自己的空列表只表示没有覆盖项，仍继承 Runtime 默认项。
 
 修改 `features` 或 `mcpServers` 不需要重启 Runtime。下一次 createSession、resumeSession 或 loadSession 读取最新持久 spec 并应用，已经打开且仍有效的 Session 不被热更新。Session 未显式覆盖的值也不会在打开时复制进 Session spec，因此后续 Runtime 更新仍可在下一次打开操作中生效。
 

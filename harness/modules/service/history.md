@@ -52,7 +52,7 @@ Service 在共享读取循环之外按 Session 串行协调：
 
 历史查询返回已提交公共事件，不返回私有证据，不激活 Runtime，也不调用业务处理器。读取验证持久身份、记录结构和顺序，不能用请求页之外的损坏记录隐藏错误。
 
-实时观察与历史读取是 SessionService interface 中语义不同的会话操作。订阅只观察之后的事件，不自动补历史；取消订阅只结束观察，不取消 Agent 工作。Service 解析 sessionId 或 namespace/name 到同一 Broadcast，只调用 Broadcast.subscribe，由 Broadcast 内部创建登记队列 Handler 后返回可取消的异步流；读取与关闭接口见 [EventSubscription](../events/observation.tsp)，HTTP 只映射这一行为。
+实时观察与历史读取是 SessionService interface 中语义不同的会话操作。订阅只观察之后的事件，不自动补历史；取消订阅只结束观察，不取消 Agent 工作。Service 解析 sessionId 或 namespace/name 到同一 Broadcast，只调用 Broadcast.subscribe，由 Broadcast 内部创建登记队列 Handler 后返回可取消的异步流；读取与关闭接口见 [EventSubscription](../events/observation.tsp)，协议入口只映射这一行为。
 
 实时订阅资源有界，慢订阅者可以断开；消费者过载不能迫使核心修改已提交事件。跨断线连续消费、持久消费游标和恰好一次业务处理都需要额外合同，不能从实时通知推断。
 
@@ -93,7 +93,7 @@ Agent 的 session.state_update 由异步状态 handler 写 MetaStore，允许写
 | 场景 | 应观察到的行为 |
 |---|---|
 | 只有增量，随后连接退出 | 无伪造的完整历史条目 |
-| 持久化写入失败 | SSE 与处理器均收不到失败记录的已提交版本 |
+| 持久化写入失败 | 实时订阅 与处理器均收不到失败记录的已提交版本 |
 | 文件已提交、SQL 同步失败后再次触发 | EventStore 自动续同步，原 ID 重试不重复，未同步前不发布；副本补同步不补广播 |
 | 同一工具调用及结果 | itemId 一致，eventId 各自独立 |
 | 慢订阅者 | 按有限策略断开，健康提交继续 |
@@ -104,7 +104,7 @@ Agent 的 session.state_update 由异步状态 handler 写 MetaStore，允许写
 
 事件结构见[SessionEvent](../runtime/session-events.tsp)；持久化屏障强度与准确文件格式仍待确认。EventStore 的 syncedEventId 仅是最后同步事件身份，不等同于业务消费者进度；文件先提交、SQL 事务投影后才允许发布的顺序已确定；增量校验细节与持久业务消费者进度仍待设计。显式原生导入采用 [异步 load](load.md)，不改变本地历史查询不触发 Handler 的规则；只有显式 load 将新导入事实经提交后发布。历史查询与分页已有当前合同，具体实现与验收另行验证。
 
-[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；协议入口只做协议映射，具体接口由负责人定义。
 
 ## 原生历史回放
 

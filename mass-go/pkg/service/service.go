@@ -547,7 +547,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				if cleanup == nil {
 					removePending()
 				}
-				return resource.Session{}, errors.Join(errors.New("outcome_unknown: abandoned create settled against original owner"), cleanup)
+				return resource.Session{}, errors.Join(unknownOutcome("create_outcome_unconfirmed", "Session creation outcome remains unconfirmed; inspect state before further action"), cleanup)
 			}
 			r.Status = resource.SessionStatus{SessionID: native.SessionID, State: events.Unknown, AppliedGeneration: 1, RuntimeGeneration: run.generation, Capabilities: native.Capabilities, EffectiveFeatures: &native.EffectiveFeatures}
 			s.mu.Lock()
@@ -586,7 +586,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				if cleanup == nil {
 					removePending()
 				}
-				return resource.Session{}, errors.Join(errors.New("outcome_unknown: late creation closed by original owner"), cleanup)
+				return resource.Session{}, errors.Join(unknownOutcome("create_outcome_unconfirmed", "Session creation outcome remains unconfirmed; inspect state before further action"), cleanup)
 			}
 			op.finish()
 			if creationErr != nil {
@@ -606,7 +606,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		s.mu.Lock()
 		op.abandoned = true
 		s.mu.Unlock()
-		return resource.SessionCreated{}, fmt.Errorf("outcome_unknown: creation continues under original reservation: %w", ctx.Err())
+		return resource.SessionCreated{}, errors.Join(unknownOutcome("create_outcome_unconfirmed", "Session creation outcome remains unconfirmed; inspect state before further action"), ctx.Err())
 	}
 }
 
@@ -687,7 +687,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			if !errors.Is(err, io.EOF) || !stopping {
 				s.mu.Lock()
 				if errors.Is(err, io.EOF) {
-					err = errors.New("outcome_unknown: unexpected driver EOF")
+					err = unknownOutcome("runtime_stream_unexpected_eof", "Runtime event stream ended unexpectedly; inspect state before further action")
 				}
 				run.err = err
 				run.streamErr = err

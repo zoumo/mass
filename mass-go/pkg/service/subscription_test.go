@@ -6,10 +6,18 @@ import (
 	"io"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
+
+func (s *SessionWorkSuite) fact(id string, p events.Payload) events.SessionEvent {
+	event, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: "one", SessionName: "demo", SessionID: "original", ItemID: id, Time: time.Now().UTC()}, p, s.driver.source)
+	s.Require().NoError(err)
+	return event
+}
 
 func nextSubscription(sub *events.Subscription, ctx context.Context) (events.SessionEvent, error) {
 	select {

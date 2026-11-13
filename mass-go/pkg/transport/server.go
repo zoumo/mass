@@ -1,17 +1,15 @@
-// Package transport maps the HTTP v1 contract to application services.
+// Package transport serves the WebSocket JSON-RPC endpoint and health probes.
 package transport
 
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/base64"
-	"mime"
+	"encoding/json"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
-	"unicode/utf8"
+	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/service"
 )
@@ -23,8 +21,11 @@ type API interface {
 
 // Options selects authenticated instance access or explicit trusted local access.
 type Options struct {
-	Token     string
-	LocalOnly bool
+	Token          string
+	LocalOnly      bool
+	AllowedOrigins []string
+	WriteTimeout   time.Duration
+	ServerVersion  string
 }
 type Server struct {
 	api     API
@@ -33,22 +34,50 @@ type Server struct {
 	life    context.Context
 	stop    context.CancelFunc
 	handler http.Handler
+	rpc     *rpcEndpoint
 }
 
 func New(api API, opts Options) (*Server, error) {
-	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") {
+	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") || opts.WriteTimeout <= 0 {
 		return nil, Invalid()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{api: api, options: opts, life: ctx, stop: cancel}
+	s.rpc = newRPCEndpoint(ctx, s.api, opts)
 	s.ready.Store(true)
-	router, _ := s.routes()
-	s.handler = router
+	s.handler = s.routes()
 	return s, nil
 }
 
-// Shutdown closes admission and observation. Service retains operation ownership.
-func (s *Server) Shutdown()                                        { s.ready.Store(false); s.stop() }
+// CloseAdmission rejects new RPC connections and marks observations for a
+// shutdown terminal cause while leaving established connections available for
+// final Service events.
+func (s *Server) CloseAdmission() {
+	s.ready.Store(false)
+	s.rpc.closeAdmission()
+	s.rpc.markSubscriptionsForShutdown()
+}
+
+// Drain waits, within ctx, for established connections to finish in-flight
+// calls and to forward their terminal subscription notifications.
+func (s *Server) Drain(ctx context.Context) error { return s.rpc.drain(ctx) }
+
+// DrainAndClose waits for established connections to become idle, then closes
+// them. The wait is bounded by ctx.
+func (s *Server) DrainAndClose(ctx context.Context) error {
+	s.CloseAdmission()
+	err := s.rpc.drain(ctx)
+	s.rpc.closeAll()
+	return err
+}
+
+// Shutdown immediately closes admission and owned WebSocket connections.
+// Service retains operation ownership.
+func (s *Server) Shutdown() {
+	s.ready.Store(false)
+	s.stop()
+	s.rpc.closeAll()
+}
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 func (s *Server) authorized(r *http.Request) bool {
@@ -64,49 +93,51 @@ func (s *Server) authorized(r *http.Request) bool {
 	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.options.Token)) == 1
 }
 
-func hasBody(r *http.Request) bool {
-	return r.Body != nil && r.Body != http.NoBody && (r.ContentLength != 0 || len(r.TransferEncoding) > 0)
-}
-
-func accepts(header, media string) bool {
-	if header == "" {
-		return true
-	}
-	best := -1
-	quality := 0.0
-	for part := range strings.SplitSeq(header, ",") {
-		kind, params, err := mime.ParseMediaType(strings.TrimSpace(part))
-		if err != nil {
-			continue
+func (s *Server) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rpc", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			fail(w, http.StatusMethodNotAllowed, Invalid())
+			return
 		}
-		q := 1.0
-		if raw, ok := params["q"]; ok {
-			q, err = strconv.ParseFloat(raw, 64)
-			if err != nil || q < 0 || q > 1 {
-				continue
+		s.rpc.handle(w, r)
+	})
+	for path, state := range map[string]string{"/livez": "alive", "/readyz": "ready"} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.Header().Set("Allow", http.MethodGet)
+				fail(w, http.StatusMethodNotAllowed, Invalid())
+				return
 			}
-		}
-		specificity := -1
-		switch {
-		case kind == media:
-			specificity = 2
-		case kind == strings.Split(media, "/")[0]+"/*":
-			specificity = 1
-		case kind == "*/*":
-			specificity = 0
-		}
-		if specificity > best {
-			best = specificity
-			quality = q
-		}
+			if path == "/readyz" && !s.ready.Load() {
+				fail(w, http.StatusServiceUnavailable, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": state})
+		})
 	}
-	return best >= 0 && quality > 0
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fail(w, http.StatusNotFound, &Error{Code: "not_found", Reason: "route_not_found", Message: "Route not found"})
+	})
+	return s.guard(mux)
 }
 
-func decodeRef(v string) (string, error) {
-	b, e := base64.RawURLEncoding.Strict().DecodeString(v)
-	if e != nil || len(b) == 0 || !utf8.Valid(b) || base64.RawURLEncoding.EncodeToString(b) != v {
-		return "", Invalid()
-	}
-	return string(b), nil
+// guard authenticates every route except the health probes and prevents HTTP
+// request bodies from being drained on early rejection.
+func (s *Server) guard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		probe := r.URL.Path == "/livez" || r.URL.Path == "/readyz"
+		if !probe && !s.authorized(r) {
+			fail(w, http.StatusUnauthorized, &Error{Code: "unauthenticated", Reason: "invalid_credentials", Message: "Valid instance credentials required"})
+			return
+		}
+		if r.Body != nil && r.Body != http.NoBody {
+			defer r.Body.Close()
+		}
+		next.ServeHTTP(w, r)
+	})
 }

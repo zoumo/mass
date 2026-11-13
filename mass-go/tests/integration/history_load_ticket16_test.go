@@ -17,7 +17,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
-func TestTicket16CodexColdDirectInputHTTPHistoryAndContinuedInput(t *testing.T) {
+func TestTicket16CodexColdDirectInputRPCHistoryAndContinuedInput(t *testing.T) {
 	ticket12ColdLoadHTTP(t, "cold-materialized-direct")
 }
 

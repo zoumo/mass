@@ -1,17 +1,15 @@
 package service_test
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,7 +29,7 @@ import (
 )
 
 // Real file/SQLite failure through the existing synthetic Driver seam. No model
-// or native Agent behavior is claimed by these HTTP/SSE assertions.
+// or native Agent behavior is claimed by these RPC assertions.
 func TestSQLReplicaFailureNeverPublishesUncoordinatedFact(t *testing.T) {
 	for _, authority := range []string{"", "file"} {
 		name := authority
@@ -67,25 +65,17 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	require.NoError(t, err)
 	_, err = svc.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic"}}})
 	require.NoError(t, err)
-	handler, err := transport.New(svc, transport.Options{Token: "fixture"})
+	handler, err := transport.New(svc, withServiceTestWriteTimeout(transport.Options{Token: "fixture"}))
 	require.NoError(t, err)
 	defer handler.Shutdown()
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	get := func(path string) *http.Response {
-		req, e := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, http.NoBody)
-		require.NoError(t, e)
-		req.Header.Set("Authorization", "Bearer fixture")
-		res, e := server.Client().Do(req)
-		require.NoError(t, e)
-		return res
-	}
-	stream := get("/apis/v1/sessions/original/events/stream")
-	defer stream.Body.Close()
-	reader := bufio.NewReader(stream.Body)
-	ready, err := readFrame(reader)
+	ref := resource.SessionRef{SessionID: "original"}
+	c := newServiceTestClient(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "fixture")
+	defer c.Close()
+	sub, err := c.Subscribe(ctx, ref)
 	require.NoError(t, err)
-	require.Contains(t, ready, "subscription.ready")
+	defer sub.Close()
 	// An actual SQLite trigger aborts the event/progress transaction after the
 	// authoritative append. The Store must seal all potentially incomplete reads.
 	dsn := (&url.URL{Scheme: "file", Path: filepath.Join(dir, "history.sqlite")}).String()
@@ -98,12 +88,12 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	require.NoError(t, err)
 	require.NoError(t, d.pipe.Send(ctx, fact))
 
-	frames := make(chan string, 1)
-	go func() { frame, _ := readFrame(reader); frames <- frame }()
+	frames := make(chan events.SessionEvent, 1)
+	go func() { event, _ := sub.Next(ctx); frames <- event }()
 	require.Eventually(t, func() bool { _, e := os.Stat(filepath.Join(dir, ".events.append.pending.json")); return e == nil }, time.Second, time.Millisecond)
 	select {
 	case frame := <-frames:
-		t.Fatalf("uncommitted publication: %s", frame)
+		t.Fatalf("uncommitted publication: %+v", frame)
 	case <-time.After(100 * time.Millisecond):
 	}
 	bytes, err := os.ReadFile(filepath.Join(dir, "sessions", "one", "demo", "eventlogs", base64.RawURLEncoding.EncodeToString([]byte("original")), "events.jsonl"))
@@ -116,11 +106,8 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	}
 	require.NoError(t, json.Unmarshal(pending, &intent))
 	require.Contains(t, string(intent.Data), fact.EventID)
-	res := get("/apis/v1/sessions/original/events")
-	body, err := io.ReadAll(res.Body)
-	res.Body.Close()
-	require.NoError(t, err)
-	require.NotEqual(t, http.StatusOK, res.StatusCode, string(body))
+	var sealed store.HistoryPage
+	require.Error(t, c.History(ctx, ref, store.HistoryQuery{}, &sealed))
 	// Metadata remains readable and writable while event SQL is sealed.
 	before, err := meta.GetRuntime("agent")
 	require.NoError(t, err)
@@ -132,11 +119,11 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	require.NoError(t, st.Reconcile())
 	// The failed lane retains the original UUID. Explicit settlement is allowed
 	// only after Store repair and never invokes Driver.OpenSession again.
-	require.NoError(t, svc.ReconcileHistory(ctx, resource.SessionRef{SessionID: "original"}))
+	require.NoError(t, svc.ReconcileHistory(ctx, ref))
 
 	select {
-	case frame := <-frames:
-		require.Contains(t, frame, fact.EventID)
+	case event := <-frames:
+		require.Equal(t, fact.EventID, event.EventID)
 	case <-ctx.Done():
 		t.Fatal("settled event was not published")
 	}
@@ -155,13 +142,12 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	require.NoError(t, err)
 	defer reopened.Close()
 	// An empty registry makes any accidental Runtime activation fail. Startup and
-	// HTTP history queries still return the original full fact without replay.
+	// RPC history queries still return the original full fact without replay.
 	restoredMeta, err := backend.Open(dir, metastore.Config{Backend: authority}, false)
 	require.NoError(t, err)
 	defer restoredMeta.Close()
 	queryOnly := service.New(restoredMeta, reopened, runtime.NewRegistry(nil))
 	defer func() { require.NoError(t, queryOnly.Shutdown(ctx)) }()
-	ref := resource.SessionRef{SessionID: "original"}
 	broadcast, err := queryOnly.EventBroadcast(ref)
 	require.NoError(t, err)
 	var replayed atomic.Int32
@@ -169,29 +155,24 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 		replayed.Add(1)
 		return nil
 	}}))
-	sub, err := queryOnly.SubscribeEvents(ref)
+	serviceSub, err := queryOnly.SubscribeEvents(ref)
 	require.NoError(t, err)
-	defer sub.Close()
+	defer serviceSub.Close()
 	// Rebuild while consumers are registered: projection is independent of both
 	// handlers and the (empty) Runtime registry, not just a quiet startup path.
 	require.NoError(t, reopened.Reconcile())
-	readHandler, err := transport.New(queryOnly, transport.Options{Token: "fixture"})
+	readHandler, err := transport.New(queryOnly, withServiceTestWriteTimeout(transport.Options{Token: "fixture"}))
 	require.NoError(t, err)
 	defer readHandler.Shutdown()
 	readServer := httptest.NewServer(readHandler)
 	defer readServer.Close()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, readServer.URL+"/apis/v1/sessions/original/events?types=agent.message&limit=1", http.NoBody)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer fixture")
-	response, err := readServer.Client().Do(req)
-	require.NoError(t, err)
-	defer response.Body.Close()
-	require.Equal(t, http.StatusOK, response.StatusCode)
+	readClient := newServiceTestClient(t, "ws"+strings.TrimPrefix(readServer.URL, "http")+"/rpc", "fixture")
+	defer readClient.Close()
 	var restored store.HistoryPage
-	require.NoError(t, json.NewDecoder(response.Body).Decode(&restored))
+	require.NoError(t, readClient.History(ctx, ref, store.HistoryQuery{Types: []string{"agent.message"}, Limit: 1}, &restored))
 	require.Len(t, restored.Events, 1)
 	require.Equal(t, fact.EventID, restored.Events[0].EventID)
 	require.NotContains(t, string(after), "agent.message_chunk")
 	require.Zero(t, replayed.Load(), "history/rebuild must not invoke ordinary handlers")
-	require.Empty(t, sub.Events(), "history/rebuild must not supplement realtime delivery")
+	require.Empty(t, serviceSub.Events(), "history/rebuild must not supplement realtime delivery")
 }

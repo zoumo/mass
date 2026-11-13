@@ -1,12 +1,9 @@
 package service_test
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"io"
 	"math"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -14,9 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -25,6 +24,20 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
+
+func newServiceTestClient(t *testing.T, url, token string) *client.Client {
+	t.Helper()
+	c, err := client.New(url, token, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
+	require.NoError(t, err)
+	return c
+}
+
+func withServiceTestWriteTimeout(opts transport.Options) transport.Options {
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = time.Second
+	}
+	return opts
+}
 
 type workDriver struct {
 	runtime.Driver
@@ -227,45 +240,27 @@ func (s *SessionWorkSuite) TestNonJSONAnswersAndInvalidReferencesRejectedBeforeD
 	s.Equal(int32(0), s.driver.calls.Load())
 }
 
-func (s *SessionWorkSuite) TestHTTPDisconnectedInputStillPublishesCommittedEvent() {
-	h, err := transport.New(s.svc, transport.Options{Token: "test-token"})
+func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent() {
+	h, err := transport.New(s.svc, withServiceTestWriteTimeout(transport.Options{Token: "test-token"}))
 	s.Require().NoError(err)
 	s.T().Cleanup(h.Shutdown)
 	server := httptest.NewServer(h)
 	s.T().Cleanup(server.Close)
+	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	s.T().Cleanup(func() { s.Require().NoError(c.Close()) })
 	observed, cancelObserve := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelObserve()
-	watch, err := http.NewRequestWithContext(observed, http.MethodGet, server.URL+"/apis/v1/sessions/original/events/stream", http.NoBody)
+	watch, err := c.Subscribe(observed, s.ref)
 	s.Require().NoError(err)
-	watch.Header.Set("Authorization", "Bearer test-token")
-	response, err := http.DefaultClient.Do(watch)
-	s.Require().NoError(err)
-	defer response.Body.Close()
-	s.Require().Equal(200, response.StatusCode)
-	scanner := bufio.NewScanner(response.Body)
-	for scanner.Scan() {
-		if scanner.Text() == "event: subscription.ready" {
-			break
-		}
-	}
-	s.Require().NoError(scanner.Err())
+	defer watch.Close()
 	event, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: "original", ItemID: "after-disconnect", Time: time.Now()}, events.AgentMessage{MessageID: "after-disconnect", Content: []events.ContentBlock{events.Text("completed after caller left")}}, s.driver.source)
 	s.Require().NoError(err)
 	s.driver.onFinish = func() error { return s.driver.pipe.Send(context.Background(), event) }
 	waiting, cancelWait := context.WithCancel(context.Background())
 	defer cancelWait()
-	request, err := http.NewRequestWithContext(waiting, http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/demo/inputs", strings.NewReader(`{"content":[{"type":"text","text":"hello"}]}`))
-	s.Require().NoError(err)
-	request.Header.Set("Authorization", "Bearer test-token")
-	request.Header.Set("Content-Type", "application/json")
 	done := make(chan error, 1)
 	go func() {
-		r, err := http.DefaultClient.Do(request)
-		if r != nil {
-			io.Copy(io.Discard, r.Body)
-			r.Body.Close()
-		}
-		done <- err
+		done <- c.SendPrompt(waiting, s.ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil)
 	}()
 	var owner context.Context
 	select {
@@ -276,20 +271,18 @@ func (s *SessionWorkSuite) TestHTTPDisconnectedInputStillPublishesCommittedEvent
 	cancelWait()
 	select {
 	case err := <-done:
-		s.Require().ErrorIs(err, context.Canceled)
+		var public *runtime.OperationError
+		s.Require().ErrorAs(err, &public)
+		s.Equal("outcome_unknown", public.Code)
+		s.Equal("operation_unconfirmed", public.Reason)
 	case <-observed.Done():
-		s.FailNow("HTTP wait did not end")
+		s.FailNow("RPC wait did not end")
 	}
 	s.Require().NoError(owner.Err())
 	close(s.driver.release)
-	found := false
-	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), "after-disconnect") {
-			found = true
-			break
-		}
-	}
-	s.Require().True(found, "original operation must publish after disconnect: %v", scanner.Err())
+	event, err = watch.Next(observed)
+	s.Require().NoError(err)
+	s.Equal("after-disconnect", event.ItemID)
 	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 1)

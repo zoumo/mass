@@ -14,7 +14,7 @@
 *A runtime for managing AI agents beyond a terminal session.*
 
 [![Go](https://img.shields.io/badge/Go-1.26.9+-00ADD8?style=flat-square&logo=go&logoColor=white)](#build)
-[![API](https://img.shields.io/badge/API-REST_+_SSE-6366F1?style=flat-square)](harness/bindings/http.md)
+[![API](https://img.shields.io/badge/API-WebSocket_JSON--RPC-6366F1?style=flat-square)](harness/bindings/jsonrpc.md)
 [![Status](https://img.shields.io/badge/v2-Prototype-F59E0B?style=flat-square)](#current-status)
 [![License](https://img.shields.io/badge/License-Apache_2.0-22C55E?style=flat-square)](LICENSE)
 
@@ -36,7 +36,7 @@ Running an agent once is straightforward. Building a service around agents means
 keeping track of which sessions exist, what they are doing, what they need from
 you, and what happened while you were away.
 
-MASS brings those concerns together behind a CLI and an HTTP API. It draws
+MASS brings those concerns together behind a CLI and a WebSocket JSON-RPC API. It draws
 inspiration from container runtimes: give different execution backends a common
 management interface, while leaving agent-specific behavior to their drivers.
 
@@ -51,7 +51,7 @@ or your own agent interface.
 | 💬 | **Session management** | Conversations with a working directory, input, cancellation, close, and resume through the runtime driver. |
 | 👁️ | **Live events & history** | Watch progress as it happens and query saved events when you return. |
 | 🤝 | **Interactive agents** | Permission requests and questions exposed to the calling application. |
-| ⚡ | **CLI + HTTP API** | Use `massctl` at the terminal or connect your own application through REST JSON and SSE. |
+| ⚡ | **CLI + JSON-RPC API** | Use `massctl` at the terminal or connect your own application through JSON-RPC 2.0 over WebSocket. |
 
 These are the core responsibilities of v2. The implementation is still a
 prototype; see [current status](#current-status) for its present limits.
@@ -69,15 +69,15 @@ workspace-management, compose, and interactive TUI surface.
 | v1 | v2 |
 |---|---|
 | Agent, Workspace, and AgentRun abstractions | Runtime and Session as the core user-facing concepts |
-| Workspace management, compose, and an interactive TUI | A focused daemon, CLI, and HTTP API |
-| Public JSON-RPC interface | REST JSON resources with optional SSE observation |
+| Workspace management, compose, and an interactive TUI | A focused daemon, CLI, and JSON-RPC API |
+| Public JSON-RPC interface | JSON-RPC 2.0 over WebSocket with independent subscriptions |
 
 ## Architecture
 
 ![MASS v2 architecture](docs/assets/mass-v2-architecture.svg)
 
-`massctl` and API clients run outside `massd` and connect over HTTP. Inside
-`massd`, the HTTP API calls Service, which coordinates Store and Runtime. Store
+`massctl` and API clients run outside `massd` and connect over WebSocket JSON-RPC.
+Inside `massd`, the RPC transport calls Service, which coordinates Store and Runtime. Store
 saves resources and history; Runtime uses agent drivers and SDKs to launch and
 communicate with external Agent processes, such as Codex and Claude.
 
@@ -88,13 +88,16 @@ Two concepts carry most of the user-facing model:
 | 🔌 **Runtime** | A named agent backend and its configuration, such as a Codex or Claude driver. |
 | 💬 **Session** | A conversation owned by a Runtime, with a working directory, state, and event history. |
 
-Live observation and saved history serve different purposes. SSE shows new
-events; history queries retrieve committed events. Closing a watch does not
+Live observation and saved history serve different purposes. Subscriptions show
+new events; history queries retrieve committed events. Closing a watch does not
 cancel agent work.
 
 The [interactive diagram](docs/assets/mass-v2-architecture.html)
 includes source references. The [architecture contract](harness/architecture.md)
 describes the intended design in detail.
+
+The checked-in architecture diagram still shows the retired HTTP/SSE binding;
+current transport is WebSocket JSON-RPC.
 
 ## Build
 
@@ -107,8 +110,8 @@ make build
 
 | Binary | Role |
 |---|---|
-| `bin/massd` | 🛠️ Daemon — serves the API and manages runtimes, sessions, and history. |
-| `bin/massctl` | ⌨️ CLI — talks to the daemon over HTTP. |
+| `bin/massd` | 🛠️ Daemon — serves the WebSocket JSON-RPC API and health probes. |
+| `bin/massctl` | ⌨️ CLI — talks to the daemon over WebSocket JSON-RPC. |
 
 ## Quick start
 
@@ -120,7 +123,7 @@ make prototype-go
 
 It builds mock Codex and Claude CLIs and exercises session creation, input,
 interaction, live events, history, cancellation, close, and resume through the
-actual MASS CLI and HTTP service. It uses temporary data and working directories
+actual MASS CLI and JSON-RPC service. It uses temporary data and working directories
 and does not call a model or require an agent account. Its pinned dependencies
 must already be cached.
 
@@ -140,8 +143,8 @@ bin/massctl session --help
 
 | Local default | Value |
 |---|---|
-| 🌐 Service address | `http://127.0.0.1:24368` |
-| 📂 Data directory | `~/.mass/data` |
+| 🌐 Service address | `ws://127.0.0.1:24368/rpc` |
+| 📂 Data directory | `~/.mass` |
 | ⚙️ Configuration | `~/.mass/config.yaml`, when present; flags override file values |
 
 `--local` selects trusted single-user loopback access.
@@ -154,11 +157,11 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 
 | Area | Available today | Current limit |
 |---|---|---|
-| 🛠️ Service | HTTP API, CLI, and file-backed resource/history storage | Prototype implementation |
+| 🛠️ Service | WebSocket JSON-RPC API, CLI, and file-backed resource/history storage | Prototype implementation |
 | 🧩 Agent drivers | Codex and Claude SDK adapters | An absolute executable is required; live authentication and model behavior remain separately verified |
-| 🧪 Demonstration | Isolated CLI → HTTP → Service → Store / Runtime scenarios | Uses mock CLIs; does not establish real model execution, native recovery, or production readiness |
+| 🧪 Demonstration | Isolated CLI → JSON-RPC → Service → Store / Runtime scenarios | Uses mock CLIs; does not establish real model execution, native recovery, or production readiness |
 | 💬 Claude input | Text input, close, and resume | One input per running connection |
-| 🤝 Permissions & questions | HTTP answer API | No CLI answer command yet |
+| 🤝 Permissions & questions | JSON-RPC `session.answer` | No CLI answer command yet |
 
 ## Development
 
@@ -181,10 +184,12 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 |---|---|
 | 📘 [Go implementation](mass-go/README.md) | Configuration, commands, and implementation limits |
 | 🧭 [Project harness](harness/index.md) | Authoritative design, principles, and API contracts |
-| 🌐 [HTTP API](harness/bindings/http.md) | REST JSON resources and optional SSE observation |
-| 🧪 [HTTP acceptance](mass-go/docs/http-v1-acceptance.md) | Implementation validation and its scope |
+| 🌐 [API contract](harness/bindings/jsonrpc.md) | JSON-RPC 2.0 methods, subscription events, and transport rules |
+| 📡 [Historical HTTP implementation](mass-go/docs/http-service-v1.md) | Superseded REST/SSE binding; retained for migration history only |
+| 🧪 [Historical HTTP acceptance](mass-go/docs/http-v1-acceptance.md) | Superseded HTTP v1 validation and its scope |
 
-The HTTP API's **v1** version is separate from the project's **v2** redesign.
+The current endpoint accepts only `/rpc`, `/livez`, and `/readyz`; retired
+`/apis/v1` routes return `404` without aliases or redirects.
 
 ## License
 

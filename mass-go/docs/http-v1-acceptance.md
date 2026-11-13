@@ -4,6 +4,8 @@
 [harness HTTP v1](../../harness/bindings/http.md)，接口知识包 v0.2.0。
 本次改造 Go HTTP、客户端/CLI 及必要的核心回执与错误值，不修改 harness 合同。
 
+> 本页是上述日期的 HTTP 实现验收记录。当前目标设计已改为 [JSON-RPC/WebSocket](../../harness/bindings/websocket.md)，本页结果不证明新协议已实现或通过验收。
+
 ## 变更与边界
 
 - 删除实验 HTTP 操作/观察入口，17 个 Service 操作映射到 REST；创建 201 + Location，删除 204，其余成功直接返回 JSON 值。

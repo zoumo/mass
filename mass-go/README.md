@@ -1,13 +1,13 @@
 # MASS Go experiment
 
 [harness](../harness/index.md) is the read-only project contract. This implementation
-uses **CLI → HTTP/SSE → Service → Store / Runtime**. It has one SessionEvent model,
-one Driver consumer, independent live observers, and file-authoritative history.
+uses **CLI → WebSocket JSON-RPC → Service → Store / Runtime**. It has one SessionEvent model,
+one Driver consumer, independent live subscriptions, and file-authoritative history.
 Executable assembly lives under `cmd/`; CLI and other library modules live under `pkg/`.
 
 ## Layered verification
 
-From the repository root, with Go 1.26.10 and pinned dependencies already cached:
+From the repository root, with Go 1.26.9 and pinned dependencies already cached:
 
 ```sh
 # Package-local unit tests
@@ -26,7 +26,7 @@ normal offline suite.
 
 The integration layer builds MASS's test-only strict protocol peer for Codex
 **and** Claude plus `massd` and `massctl`, then runs `TestEntrypointSuite`
-through actual CLI processes and HTTP+SSE. Every scenario is constructed. The
+through actual CLI processes and WebSocket JSON-RPC clients. Every scenario is constructed. The
 scenario peer matches ordered protocol frames
 strictly, rebinds native request IDs, and does not execute tools, use accounts, call models,
 or prove intelligence.
@@ -40,8 +40,8 @@ history and pagination/filtering, explicit user questions for each Agent,
 request-before-ACK handling, cancel receipt versus observed termination,
 close/stop and original-ID resume followed by fresh input. It tests CLI parse
 errors, Runtime operations, disconnect isolation and failed-creation cleanup.
-Answer and filtered queries are tested through HTTP because they are not CLI commands.
-Each persistent event read from SSE is compared with a committed history query.
+Answer and filtered queries use the public Go client because they are not CLI commands.
+Each persistent event read from a subscription is compared with a committed history query.
 SDK probe passes are reported separately and do not stand in for this suite.
 `prototype-go` remains the focused entrypoint demonstration, and
 `acceptance-sdk-go` remains the cross-capability selector.
@@ -70,14 +70,18 @@ local: true
 ```
 
 Then run `bin/massd` without flags. Optional fields are `data` (an absolute
-owned directory), `tokenFile`, `tlsCert`, `tlsKey`,
-`prototypeAutoApprovePermissions`, and `sessionIdleTimeout`. Automatic permission
-approval is off by default.
+owned directory), `tokenFile`, `tlsCert`, `tlsKey`, `allowedOrigins`,
+`prototypeAutoApprovePermissions`, `sessionIdleTimeout`, and `writeTimeout`.
+Automatic permission approval is off by default.
 `sessionIdleTimeout` accepts Go duration syntax such as `5s` or `10m`; its
 default is `10m`, and `0` disables automatic Session close. The matching
 `--session-idle-timeout` flag overrides the file. Negative or invalid durations
 are rejected before the daemon opens its stores. Automatic close releases
 idle Session connections without stopping their Runtime.
+`writeTimeout` and `--write-timeout` set the per-WebSocket-write deadline in Go
+duration units and default to `10s`. The value must be positive; zero, negative,
+or invalid values fail daemon assembly before it serves traffic. Omitting the
+YAML field uses the `--write-timeout` default, and the flag overrides the file.
 Existing data is not moved into the default directory. Legacy `state.json` snapshots
 are explicitly rejected; there is no automatic migration.
 
@@ -109,24 +113,60 @@ The permission flag is explicit prototype assembly policy; it leaves form/user
 questions pending. Without it permissions are manual too. `massd` prints its bound
 URL as JSON, supports port 0, and settles Service on SIGINT/SIGTERM. Shutdown
 failure exits nonzero. Select explicit `--local` trusted loopback mode or
-`--token-file`; direct remote access requires TLS. `/readyz` measures HTTP
+`--token-file`; direct remote access requires TLS. `/readyz` measures RPC
 admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
 
-`massctl <resource> <operation>` uses the `/apis/v1` HTTP contract. Run
+`/rpc` accepts JSON-RPC 2.0 over WebSocket on the same listener and authentication
+boundary; `/livez` and `/readyz` remain plain HTTP probes. The endpoint accepts
+the side-effect-free `initialize` method with MASS protocol version `"1"`, plus
+the `runtime.create`, `runtime.get`, `runtime.list`, `runtime.update`,
+`runtime.start`, `runtime.stop`, `runtime.delete`, `session.create`,
+`session.get`, `session.list`, `session.resume`, `session.close`,
+`session.prompt`, `session.answer`, `session.cancel`, `session.history`,
+`session.load`, `session.cancelLoad`, `session.subscribe` and
+`session.unsubscribe` methods. Methods use
+named params and return the same resource values and `OperationError` data as the
+Service. Session references are explicit `{sessionId}` or `{namespace,name}`
+unions; list queries retain the nested `page` object. Create and resume preserve
+an explicitly supplied one-use initial input receipt without persisting it.
+Slow Runtime and Session calls dispatch asynchronously, so a query on the same
+connection can complete while another call is still settling. `session.load`
+returns acceptance only; query the Session to follow native replay. Requests
+carrying an `Origin` header must match `allowedOrigins` exactly; native clients
+without `Origin` authenticate with `Authorization: Bearer`. The retired
+`/apis/v1` business routes have no aliases or redirects. The public Go client is
+`client.Client`, created with
+`client.New(serverURL, token, client.Options{WriteTimeout: ..., SubscriptionQueueCapacity: ...})`.
+Both option fields are required and must be positive; `WriteTimeout` is a Go
+`time.Duration` per WebSocket write, and `SubscriptionQueueCapacity` is a
+SessionEvent count for each local subscription queue. There are no library
+defaults or compatibility aliases: omission or zero fails in `client.New` before
+I/O. The server-side `transport.New(..., transport.Options{WriteTimeout: ...})`
+and `jsonrpc.NewStream` use the same positive explicit timeout rule.
+`Initialize` performs an explicit handshake, while typed Runtime and Session
+methods initialize lazily on first use. Each `Subscribe` call opens a separate
+WebSocket and returns only after the subscribe response; events arrive in order
+and terminate with `subscription.closed`.
+
+`massctl <resource> <operation>` uses this WebSocket JSON-RPC contract. Run
 `massctl --help`, `massctl runtime --help`, or `massctl session --help` for the
 complete command tree; `massctl version` reports the client build. The old `--op`
 interface is removed. CLI implementation lives in `cmd/massctl/subcommand`, organized by resource
 subcommands; `cmd/massctl/main.go` only assembles process I/O and signals.
 
-Address precedence is `--url`, then `MASS_URL`, then `http://127.0.0.1:24368`.
+Address precedence is `--url`, then `MASS_URL`, then `ws://127.0.0.1:24368/rpc`.
 Authentication uses `MASS_TOKEN`. Output defaults to human summaries/tables;
-`-o json` pretty-prints the complete business result, and watch emits
-SessionEvent JSONL. Errors retain `code/reason/message` on stderr; watch
+`-o json` pretty-prints the complete business result, and watch writes one raw
+SessionEvent JSON value per stdout line. Errors retain `code/reason/message` on stderr; watch
 readiness is also on stderr. Exit codes are 0 (success), 1 (operation/I/O
 failure or unknown result), 2 (invalid arguments), and 130 (interrupted wait).
 Ordinary requests default to 30 seconds; `--timeout 0` disables the timeout.
 Watch applies that timeout only through `subscription.ready`, then observes
 until explicitly closed or interrupted.
+`--write-timeout` is the per-WebSocket write deadline in Go duration units and
+defaults to `10s`; `--subscription-queue` is the local SessionEvent queue size
+and defaults to `64`. Both must be positive, and an invalid value fails argument
+validation before any request is sent.
 Neither timeout nor Ctrl-C cancels Agent work; requests are never retried.
 
 For Codex, explicitly create and start a Runtime, then create a Session without
@@ -169,14 +209,15 @@ These command examples describe supported interfaces, not proof of real CLI/mode
 execution. Authentication, real native recovery, accounts and models must be
 validated separately in owned test directories. Permission auto-approval remains
 an explicit daemon prototype policy; pending form/question interactions require
-the HTTP answer API. This CLI version deliberately has no answer command.
+the typed client `client.Answer` method. This CLI version deliberately has no
+answer command.
 
 ### Consumer recording and replay
 
 From the repository root, run `make test-simulation-go` (or its compatibility
 alias `make recording-gate-go`) to replay the four exported Codex and Claude
 basic and permission cases through a running MASS daemon and its public
-HTTP/SSE API. The target forces `MASS_RECORD=0` and runs the artifact, receipt
+JSON-RPC/WebSocket API. The target forces `MASS_RECORD=0` and runs the artifact, receipt
 and credential audits with the replays. The mock route must be
 `executor=external-sdk`, `target=replay`, `provenance=consumer`, and the replay
 receipt must show `nativeLaunched=false`.
@@ -421,9 +462,9 @@ Sessions retain their references and history. Successful delete has empty JSON
 stdout. Test-only driver configuration stays in complete JSON, not public flags.
 
 The client owns no local Store, Session directory, projection or retry policy.
-See [the Go HTTP v1 implementation](docs/http-experiment.md) for server migration
-status and protocol details. Server implementation and client contract can migrate
-in separate commits; integration checks must use a daemon providing these routes.
+The retired HTTP/SSE notes in [the historical HTTP experiment](docs/http-experiment.md)
+and [HTTP v1 acceptance](docs/http-v1-acceptance.md) are retained as historical
+evidence only. They do not describe the current API or expected verification.
 
 ## Verification and boundaries
 
@@ -452,7 +493,7 @@ format, lint, and verify the Go implementation respectively.
 
 The public module tests, SDK protocol probes and `tests/integration` additionally
 cover Store concurrency/cursors, lifecycle, uncertain operations, original work
-isolation, blocked writes, partial/unknown commits and bounded overload. An SSE
+isolation, blocked writes, partial/unknown commits and bounded overload. A subscription
 write gate proves that 140 committed facts survive observer overflow, which emits
 an explicit error. Client framing tests distinguish end, abnormal error and
 unexpected disconnection, preserve terminal errors and release blocked reads.
@@ -460,7 +501,7 @@ unexpected disconnection, preserve terminal errors and release blocked reads.
 ### Retained history load
 
 Use a started Runtime, a new MASS name and the original native ID. All paths are
-absolute paths on the Agent host, not paths inferred from the HTTP client's HOME.
+absolute paths on the Agent host, not paths inferred from the client's HOME.
 Codex history comes from native metadata/full ascending turn/item queries; set
 its explicit `env.CODEX_HOME` when source identity requires it. Claude requires
 explicit `env.CLAUDE_CONFIG_DIR` and the requested `cwd` as ProjectDir. Runtime
@@ -489,7 +530,7 @@ retained. Cancel after completed cannot close later live work. Request timeout o
 observer disconnect does not cancel an accepted background load.
 
 Replay marks retained content and native identities; it does not restore old
-state, permissions or answer authority. SSE is future-only; use public paginated
+state, permissions or answer authority. Subscriptions are future-only; use public paginated
 history for a late observer. Unsupported content, identity/source mismatch,
 corruption, observed source drift, uncertain cleanup or partial publication never
 become successful complete history. Partial committed facts and the reservation
@@ -517,8 +558,8 @@ Session. The sole consumer can hold one returned event outside the pipe budget.
 until its next `Next` call, not a storage/native-release acknowledgement.
 
 Service normal delivery admits 128 queued events per Session, plus one active
-settlement. At saturation, that Session rejects further input/answers with HTTP
-429 (`resource_exhausted`, reason `session_delivery_overloaded`), enters
+settlement. At saturation, that Session rejects further input/answers with
+`resource_exhausted` and reason `session_delivery_overloaded`, enters
 `closing`, and starts an original-source-fenced owned close outside the shared
 Runtime reader. One `session.error` diagnostic follows the already queued
 prefix. The **same** channel has 256 slots total, including the diagnostic and
@@ -538,7 +579,7 @@ Append failure retains the original full fact/UUID and serial settlement for
 `ReconcileHistory`. Unknown native release or unavailable persistence remains
 `closing`/unsettled; only confirmed native release plus settlement permits
 `offline`. A later explicit Close/Stop can settle the same owner. Closing
-state and HTTP rejection are visible while persistence is blocked; the ordered
+state and JSON-RPC rejection are visible while persistence is blocked; the ordered
 realtime diagnostic can itself wait behind that blocked prefix.
 
 Counts apply to all Session events, not payload bytes. SDK native FIFOs grow
@@ -550,9 +591,9 @@ covers a Session-local blocked Append/Handler while peer dependencies remain
 healthy. Ordinary slow subscriptions
 still fail independently with `slow_subscriber`; required handler failure still
 stops that event's remaining fan-out without replay or loss of committed history.
-No HTTP request-body cap is introduced.
+No additional WebSocket message-size cap is introduced by the subscription layer.
 
-The HTTP input codec preserves all five ContentBlock shapes; existing native
+The JSON-RPC input codec preserves all five ContentBlock shapes; existing native
 adapters execute text input only. Claude accepts exactly one text block.
 Complete text/thinking, tool calls/results, permission/form interactions, state
 and sanitized Session errors are mapped; deltas are previews and never fabricated
@@ -573,7 +614,7 @@ recovery intent. Fault and process-exit tests do not establish power-loss guaran
 operations/pending UUIDs are retained within the original process; cross-process
 unknown-operation settlement/outbox recovery is not implemented. Real Agent CLIs,
 accounts/models/tools, native durable recovery, Linux and Rust validation are
-outside these synthetic results. The HTTP v1 binding is implemented; these synthetic results do not establish
+outside these synthetic results. The JSON-RPC/WebSocket binding is implemented; these synthetic results do not establish
 production readiness or real Agent execution.
 
 The six-ticket scenario matrix, commit map and evidence guide are in

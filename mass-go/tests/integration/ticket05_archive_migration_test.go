@@ -3,21 +3,18 @@ package integration_test
 import (
 	"database/sql"
 	"encoding/json"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 func (s *entrypointSuite) TestTicket05CloseResumeAndLegacyArchiveMigration() {
@@ -43,20 +40,10 @@ func (s *entrypointSuite) TestTicket05CloseResumeAndLegacyArchiveMigration() {
 	require.Error(t, err, "archive command must not exist")
 	require.NotEmpty(t, raw)
 
-	req, err := http.NewRequestWithContext(ctx(s.T()), http.MethodPost, s.url+"/apis/v1/sessions/"+ref.SessionID+"/archive", strings.NewReader("{}"))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	response, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	_, err = io.Copy(io.Discard, response.Body)
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-	require.Equal(t, http.StatusNotFound, response.StatusCode)
-
 	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.list", workflowParams{SessionQuery: resource.SessionQuery{State: "archived"}}, nil)
-	var public *transport.Error
-	require.ErrorAs(t, err, &public)
-	require.Equal(t, "invalid_argument", public.Code)
+	var rpcErr *rpcwire.RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, int64(-32602), rpcErr.Code)
 
 	var resumed resource.Session
 	s.call("session.resume", workflowParams{Session: ref}, &resumed)
@@ -98,8 +85,8 @@ func (s *entrypointSuite) TestTicket05CloseResumeAndLegacyArchiveMigration() {
 	s.True(os.IsNotExist(err), "startup migration must not activate the Runtime or Session")
 
 	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.list", workflowParams{SessionQuery: resource.SessionQuery{State: "archived"}}, nil)
-	require.ErrorAs(t, err, &public)
-	s.Equal("invalid_argument", public.Code)
+	require.ErrorAs(t, err, &rpcErr)
+	s.Equal(int64(-32602), rpcErr.Code)
 }
 
 func (s *entrypointSuite) ticket05Input(ref resource.SessionRef, text string) {

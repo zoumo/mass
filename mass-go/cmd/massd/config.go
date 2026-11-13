@@ -36,8 +36,10 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 		"tokenFile":                       "token-file",
 		"tlsCert":                         "tls-cert",
 		"tlsKey":                          "tls-key",
+		"allowedOrigins":                  "allowed-origin",
 		"prototypeAutoApprovePermissions": "prototype-auto-approve-permissions",
 		"sessionIdleTimeout":              "session-idle-timeout",
+		"writeTimeout":                    "write-timeout",
 	} {
 		if err := config.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
 			return options{}, fmt.Errorf("cannot bind configuration flag: %w", err)
