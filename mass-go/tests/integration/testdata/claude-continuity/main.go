@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
@@ -42,6 +44,9 @@ func main() {
 		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
 			nativeSessionID = value
 		}
+	}
+	if clipeer.AwaitingClaim() {
+		nativeSessionID = uuid.NewString()
 	}
 	init := func() {
 		send(map[string]any{"type": "system", "subtype": "init", "session_id": nativeSessionID, "cwd": cwd, "claude_code_version": clipeer.VersionNumber})

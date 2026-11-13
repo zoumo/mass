@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
@@ -142,6 +144,9 @@ func claude(send func(any)) {
 		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
 			sessionID = value
 		}
+	}
+	if clipeer.AwaitingClaim() {
+		sessionID = uuid.NewString()
 	}
 	interrupts := 0
 	scan := bufio.NewScanner(os.Stdin)

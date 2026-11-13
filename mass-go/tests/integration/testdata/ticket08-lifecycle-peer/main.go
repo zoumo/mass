@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
@@ -139,6 +141,9 @@ func runClaude(send func(any), cwd string) {
 		if assigned, ok := strings.CutPrefix(arg, "--session-id="); ok {
 			id = assigned
 		}
+	}
+	if clipeer.AwaitingClaim() {
+		id = uuid.NewString()
 	}
 	var link string
 	fact := func(item string) {

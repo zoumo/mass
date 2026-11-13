@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
@@ -57,6 +59,9 @@ func main() {
 		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
 			sessionID = value
 		}
+	}
+	if clipeer.AwaitingClaim() {
+		sessionID = uuid.NewString()
 	}
 	mode := os.Getenv("RESUME_INPUT_MODE")
 	init := func() {

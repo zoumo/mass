@@ -52,6 +52,7 @@ func run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 		p.claimCWD = claimCWD
 	}
 	var ordinal int64
+	initializeRequestID := ""
 	defer func() {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = errors.Join(ctxErr, err)
@@ -83,6 +84,9 @@ func run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 			if err != nil {
 				return err
 			}
+			if stringMember(member(actual, "request"), "subtype") == "initialize" {
+				initializeRequestID = stringMember(actual, "request_id")
+			}
 			if _, err = a.client(frame.Wire, actual); err != nil {
 				return err
 			}
@@ -101,6 +105,13 @@ func run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 			}
 			if err := p.write(emitted.Raw()); err != nil {
 				return err
+			}
+			if p.claimSessionID != "" && initializeRequestID != "" &&
+				stringMember(emitted, "type") == "control_response" &&
+				stringMember(member(emitted, "response"), "request_id") == initializeRequestID {
+				if err := p.claim(); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -129,20 +140,27 @@ type peerIO struct {
 }
 
 func (p *peerIO) read() (rawjson.Value, error) {
-	for {
-		value, err := p.readFrame()
-		if err != nil || p.claimSessionID == "" {
-			return value, err
-		}
-		reply, claimed, err := claimExchange(value, p.claimSessionID)
-		if err != nil || !claimed {
-			return value, err
-		}
-		p.claimCWD = stringMember(member(member(reply, "response"), "response"), "cwd")
-		if err := p.write(reply.Raw()); err != nil {
-			return rawjson.Value{}, err
-		}
+	return p.readFrame()
+}
+
+func (p *peerIO) claim() error {
+	value, err := p.readFrame()
+	if err != nil {
+		return err
 	}
+	reply, claimed, err := claimExchange(value, p.claimSessionID)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return errors.New("expected claim_session after initialize")
+	}
+	p.claimCWD = stringMember(member(member(reply, "response"), "response"), "cwd")
+	p.claimSessionID = ""
+	if err := p.write(reply.Raw()); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (p *peerIO) readFrame() (rawjson.Value, error) {

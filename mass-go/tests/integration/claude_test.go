@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
@@ -132,8 +133,28 @@ func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	require.NoError(t, dec.Decode(&scenario))
+	normalizeClaudeVersion(scenario, kind)
 	ensureNativeReadyObservation(scenario, kind)
 	return writeNativeScenario(t, scenario)
+}
+
+func normalizeClaudeVersion(value any, kind string) {
+	if kind != "claude" {
+		return
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		if _, ok := typed["claude_code_version"]; ok {
+			typed["claude_code_version"] = nativeclaude.MinimumCLIVersion
+		}
+		for _, child := range typed {
+			normalizeClaudeVersion(child, kind)
+		}
+	case []any:
+		for _, child := range typed {
+			normalizeClaudeVersion(child, kind)
+		}
+	}
 }
 
 // The strict peers model the native wire, not the SDK adapter. A successful
@@ -1182,7 +1203,7 @@ func capacityFrames(sessionID string) []any {
 			"response": map[string]any{"subtype": "success", "request_id": "init", "response": map[string]any{}},
 		}),
 		scenarioFrame(3, "server", map[string]any{
-			"type": "system", "subtype": "init", "claude_code_version": "2.1.258", "session_id": sessionID, "cwd": "/synthetic", "model": "synthetic", "tools": []any{"Bash"},
+			"type": "system", "subtype": "init", "claude_code_version": nativeclaude.MinimumCLIVersion, "session_id": sessionID, "cwd": "/synthetic", "model": "synthetic", "tools": []any{"Bash"},
 		}),
 		scenarioFrame(4, "client", map[string]any{
 			"type": "user", "message": map[string]any{"role": "user", "content": "hello"}, "parent_tool_use_id": nil, "session_id": "", "priority": "next", "shouldQuery": true,

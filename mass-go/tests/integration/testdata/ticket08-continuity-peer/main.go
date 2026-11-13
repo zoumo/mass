@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
@@ -35,6 +37,9 @@ func main() {
 			if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
 				id = value
 			}
+		}
+		if clipeer.AwaitingClaim() {
+			id = uuid.NewString()
 		}
 	}
 	notify := func(method string, p any) { send(map[string]any{"method": method, "params": p}) }

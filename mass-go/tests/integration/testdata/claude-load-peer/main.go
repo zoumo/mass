@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
@@ -26,6 +28,9 @@ func main() {
 	id := os.Getenv("LOAD_ID")
 	if id == "" {
 		id = "88888888-8888-4888-8888-888888888888"
+	}
+	if clipeer.AwaitingClaim() {
+		id = uuid.NewString()
 	}
 	for _, arg := range os.Args[1:] {
 		if value, ok := strings.CutPrefix(arg, "--resume="); ok {

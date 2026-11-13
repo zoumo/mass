@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
-
-const claimedSessionID = "66666666-6666-4666-8666-666666666666"
 
 func main() {
 	if clipeer.Version() {
@@ -25,7 +25,9 @@ func main() {
 }
 
 func replay() error {
+	claimedSessionID := uuid.NewString()
 	assignedSessionID := ""
+	claiming := clipeer.AwaitingClaim()
 	for _, arg := range os.Args[1:] {
 		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
 			assignedSessionID = value
@@ -34,7 +36,7 @@ func replay() error {
 			assignedSessionID = value
 		}
 	}
-	if clipeer.AwaitingClaim() {
+	if claiming {
 		assignedSessionID = claimedSessionID
 	}
 	f, err := os.Open(os.Getenv("CLAUDE_MOCK_SCENARIO"))
@@ -59,6 +61,7 @@ func replay() error {
 	output := json.NewEncoder(os.Stdout)
 	var link string
 	ids := map[string]any{}
+	var initializeRequestID any
 	readActual := func() (map[string]any, error) {
 		for {
 			var actual map[string]any
@@ -91,9 +94,11 @@ func replay() error {
 				return err
 			}
 			if data["type"] == "control_request" {
-				ids[data["request_id"].(string)] = actual["request_id"]
+				actualRequestID := actual["request_id"]
+				ids[data["request_id"].(string)] = actualRequestID
 				actual["request_id"] = data["request_id"]
 				if req, ok := actual["request"].(map[string]any); ok && req["subtype"] == "initialize" {
+					initializeRequestID = actualRequestID
 					req["hooks"] = nil
 				}
 			}
@@ -132,6 +137,23 @@ func replay() error {
 		replaceSessionID(data, recordedSessionID, assignedSessionID)
 		if err := output.Encode(data); err != nil {
 			return err
+		}
+		if claiming && data["type"] == "control_response" {
+			response, _ := data["response"].(map[string]any)
+			if response["request_id"] == initializeRequestID {
+				var claim map[string]any
+				if err := input.Decode(&claim); err != nil {
+					return err
+				}
+				reply, ok := clipeer.ClaimReply(claim, claimedSessionID)
+				if !ok {
+					return fmt.Errorf("expected claim_session after initialize response: %v", claim)
+				}
+				if err := output.Encode(reply); err != nil {
+					return err
+				}
+				claiming = false
+			}
 		}
 	}
 	// Retain the native connection until its owner closes it.
