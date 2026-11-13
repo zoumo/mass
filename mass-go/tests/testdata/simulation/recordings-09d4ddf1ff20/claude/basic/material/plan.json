@@ -1,0 +1,20 @@
+{
+  "agentType": "claude",
+  "caseId": "mass-claude-basic",
+  "cliVersion": "2.1.293 (Claude Code)",
+  "driverProfile": "consumer",
+  "historyBindings": [
+    {
+      "role": "runtime",
+      "sessionId": "c9486160-3061-4924-ade7-7ad598bb546d",
+      "project": "/private/var/tmp/mass-record-claude-153315685/project",
+      "nativeTarget": "config/projects/-private-var-tmp-mass-record-claude-153315685-project/c9486160-3061-4924-ade7-7ad598bb546d.jsonl",
+      "source": "history/runtime/config/projects/-private-var-tmp-mass-record-claude-153315685-project/c9486160-3061-4924-ade7-7ad598bb546d.jsonl",
+      "sha256": "27c7430f95c23875711d1bedf674f20851100f61e69f5392930f949cc63cbde1"
+    }
+  ],
+  "model": "auto/deepseek-v4.1-flash-1017",
+  "project": "/var/tmp/mass-record-claude-153315685/project",
+  "sourcePlanSHA256": "1520e918f487e3f15d517b2137b09359f194af3da02f08ec85b84db324c63e84",
+  "version": 1
+}

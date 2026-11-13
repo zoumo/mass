@@ -10,7 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const codexRecordingSuite = "recordings-4959190bc518"
+const (
+	codexRecordingSuite  = "recordings-4959190bc518"
+	claudeRecordingSuite = "recordings-09d4ddf1ff20"
+)
 
 var currentCodexArtifacts = []artifactCase{
 	{
@@ -27,15 +30,32 @@ var currentCodexArtifacts = []artifactCase{
 	},
 }
 
+var currentClaudeArtifacts = []artifactCase{
+	{
+		provider: "claude", name: "basic", suite: claudeRecordingSuite,
+		sdk: RuntimeSDKVersion, testify: TestifyVersion,
+		materialID: "5cf2bc799cde1a0f60ed6706ca36ef15",
+		flow:       flowCase{name: "basic", provider: "claude", prompt: claudePrompt, project: "/var/tmp/mass-record-claude-153315685/project", initialInput: true, ignoreStreamKinds: true},
+	},
+	{
+		provider: "claude", name: "permission", suite: claudeRecordingSuite,
+		sdk: RuntimeSDKVersion, testify: TestifyVersion,
+		materialID: "21e27325e989edaf20923eade3fada20",
+		flow:       flowCase{name: "permission", provider: "claude", prompt: claudePermissionPrompt, project: "/var/tmp/mass-record-claude-permission-3946514327/project", initialInput: true, ignoreStreamKinds: true, expectPermission: true},
+	},
+}
+
 var activeRecordingArtifacts = []artifactCase{
 	currentCodexArtifacts[0],
 	currentCodexArtifacts[1],
-	recordingArtifacts[2],
-	recordingArtifacts[3],
+	currentClaudeArtifacts[0],
+	currentClaudeArtifacts[1],
 }
 
 func allRecordingArtifacts() []artifactCase {
-	return append(append([]artifactCase{}, recordingArtifacts...), currentCodexArtifacts...)
+	all := append([]artifactCase{}, recordingArtifacts...)
+	all = append(all, currentCodexArtifacts...)
+	return append(all, currentClaudeArtifacts...)
 }
 
 func (spec artifactCase) directory() string {

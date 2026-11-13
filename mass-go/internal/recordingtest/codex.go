@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -483,6 +484,12 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		h.diagnostic.phase("mass-sse-completion")
 	}
 	var persistent []events.SessionEvent
+	var observedEvents []events.SessionEvent
+	if c.evidence != "" {
+		defer func() {
+			writeJSON(t, filepath.Join(c.evidence, "sse-events.json"), observedEvents)
+		}()
+	}
 	result := facts{SessionID: ref.SessionID, Accepted: true}
 	if provider == "claude" {
 		result.Input = &inputFacts{Sent: true, NativeAccepted: receipt.Acceptance.NativeAccepted}
@@ -509,6 +516,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		event, err := observer.Next()
 		require.NoError(t, err)
 		require.Equal(t, ref.SessionID, event.SessionID)
+		observedEvents = append(observedEvents, event)
 		result.StreamKinds = append(result.StreamKinds, event.Type())
 		if h.diagnostic != nil {
 			h.diagnostic.report.Boundaries["mass_relay_sse"] = "observed"
@@ -746,7 +754,14 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 	}
 	prepared := h.prepare(session, "--recording", material, "mock", expectedProtocol)
 	require.FileExists(h.t, prepared.Connections[0].Launcher)
-	actual := h.flow(prepared, prepared.Connections[0].Launcher, c)
+	executable := prepared.Connections[0].Launcher
+	if c.provider == "claude" {
+		require.NotEmpty(h.t, plan.CLIVersion)
+		executable = filepath.Join(session, "claude-mock-launcher")
+		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + quote(plan.CLIVersion) + "; exit 0; fi\nexec " + quote(prepared.Connections[0].Launcher) + " \"$@\"\n"
+		require.NoError(h.t, os.WriteFile(executable, []byte(script), 0o700))
+	}
+	actual := h.flow(prepared, executable, c)
 	if c.ignoreStreamKinds {
 		expected.StreamKinds = nil
 		actual.StreamKinds = nil
@@ -946,6 +961,7 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 			Command          string `json:"command"`
 			Status           string `json:"status"`
 			DescriptorSHA256 string `json:"descriptorSHA256"`
+			MaterialID       string `json:"materialId"`
 		} `json:"executions"`
 	}
 	readJSON(t, filepath.Join(session, "executions", "index.json"), &index)
@@ -956,36 +972,136 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	execution := index.Executions[0]
 	require.Equal(t, "record", execution.Command)
 	require.Equal(t, "passed", execution.Status)
-	executionReport, err := fixture.ExecutionReport(execution.ID)
-	require.NoError(t, err)
-	descriptor := executionReport.ExecutionPath
+	require.NotEmpty(t, execution.MaterialID)
+	packageRoot := filepath.Join(session, "packages", execution.MaterialID)
+	executionDir := filepath.Join(packageRoot, "executions", execution.ID)
+	descriptor := filepath.Join(executionDir, "execution.json")
 	require.Equal(t, execution.DescriptorSHA256, hashFile(t, descriptor))
 	var desc struct {
 		SchemaVersion int    `json:"schemaVersion"`
 		ExecutionID   string `json:"executionId"`
 		FixtureID     string `json:"fixtureId"`
 		Command       string `json:"command"`
+		Executor      string `json:"executor"`
+		Target        string `json:"target"`
 		Provenance    string `json:"provenance"`
-		Connections   []struct {
-			Material        string `json:"material"`
-			PlanSHA256      string `json:"planSHA256"`
-			ManifestSHA256  string `json:"manifestSHA256"`
-			RecordingSHA256 string `json:"recordingSHA256"`
-			Receipt         string `json:"receipt"`
+		Source        struct {
+			Kind       string `json:"kind"`
+			Path       string `json:"path"`
+			SHA256     string `json:"sha256"`
+			Provenance string `json:"provenance"`
+		} `json:"source"`
+		Connections []struct {
+			ID         string `json:"id"`
+			Transport  string `json:"transport"`
+			MaterialID string `json:"materialId"`
+			Receipt    string `json:"receipt"`
 		} `json:"connections"`
+		Artifact struct {
+			ID          string   `json:"id"`
+			Kind        string   `json:"kind"`
+			Action      string   `json:"action"`
+			Provenance  string   `json:"provenance"`
+			Connections []string `json:"connections"`
+		} `json:"artifact"`
 	}
 	readJSON(t, descriptor, &desc)
 	require.Equal(t, testifyExecutionIndexSchemaVersion, desc.SchemaVersion)
 	require.Equal(t, execution.ID, desc.ExecutionID)
 	require.Equal(t, fixture.FixtureID, desc.FixtureID)
 	require.Equal(t, "record", desc.Command)
+	require.Equal(t, "external-sdk", desc.Executor)
+	require.Equal(t, "native-agent", desc.Target)
 	require.Equal(t, "consumer", desc.Provenance)
+	require.Equal(t, "plan", desc.Source.Kind)
+	require.Equal(t, "source/plan.json", filepath.ToSlash(desc.Source.Path))
+	sourcePath := filepath.Join(session, filepath.FromSlash(desc.Source.Path))
+	require.NoError(t, requireWithin(session, sourcePath))
+	require.Equal(t, desc.Source.SHA256, hashFile(t, sourcePath))
+	require.Equal(t, fixture.Source.SHA256, desc.Source.SHA256)
+	require.Equal(t, execution.MaterialID, desc.Artifact.ID)
+	require.Equal(t, "capture", desc.Artifact.Kind)
+	require.Equal(t, "record", desc.Artifact.Action)
+	require.Equal(t, "consumer", desc.Artifact.Provenance)
+	require.Equal(t, []string{"main"}, desc.Artifact.Connections)
 	require.Len(t, desc.Connections, 1)
 	connection := desc.Connections[0]
-	require.NotEmpty(t, connection.Material)
-	require.NoError(t, requireWithin(session, connection.Material))
-	require.NoError(t, requireWithin(session, connection.Receipt))
-	var receipt struct {
+	require.Equal(t, "main", connection.ID)
+	require.Equal(t, "process", connection.Transport)
+	require.Equal(t, execution.MaterialID, connection.MaterialID)
+
+	var result struct {
+		SchemaVersion        int               `json:"schemaVersion"`
+		Status               string            `json:"status"`
+		PublicationCommitted bool              `json:"publicationCommitted"`
+		ExecutionID          string            `json:"executionId"`
+		ExecutionSHA256      string            `json:"executionSHA256"`
+		MaterialID           string            `json:"materialId"`
+		Material             string            `json:"material"`
+		PlanSHA256           string            `json:"planSHA256"`
+		ManifestSHA256       string            `json:"manifestSHA256"`
+		MaterialSHA256       string            `json:"materialSHA256"`
+		Files                map[string]string `json:"files"`
+	}
+	readJSON(t, filepath.Join(executionDir, "result.json"), &result)
+	require.Equal(t, 1, result.SchemaVersion)
+	require.Equal(t, "passed", result.Status)
+	require.True(t, result.PublicationCommitted)
+	require.Equal(t, execution.ID, result.ExecutionID)
+	require.Equal(t, execution.DescriptorSHA256, result.ExecutionSHA256)
+	require.Equal(t, execution.MaterialID, result.MaterialID)
+	require.NotEmpty(t, result.Files)
+	for name, digest := range result.Files {
+		filePath := filepath.Join(packageRoot, filepath.FromSlash(name))
+		require.NoError(t, requireWithin(packageRoot, filePath))
+		require.Equal(t, digest, hashFile(t, filePath))
+	}
+	descriptorName := filepath.ToSlash(filepath.Join("executions", execution.ID, "execution.json"))
+	require.Equal(t, execution.DescriptorSHA256, result.Files[descriptorName])
+
+	var executionResult struct {
+		SchemaVersion        int    `json:"schemaVersion"`
+		Status               string `json:"status"`
+		Command              string `json:"command"`
+		ConnectionID         string `json:"connectionId"`
+		ConnectionStatus     string `json:"connectionStatus"`
+		ExecutionStatus      string `json:"executionStatus"`
+		ExecutionComplete    bool   `json:"executionComplete"`
+		PublicationCommitted bool   `json:"publicationCommitted"`
+		ExecutionID          string `json:"executionId"`
+		ExecutionSHA256      string `json:"executionSHA256"`
+		MaterialID           string `json:"materialId"`
+		Receipt              string `json:"receipt"`
+		Material             struct {
+			ID              string `json:"id"`
+			PlanSHA256      string `json:"planSHA256"`
+			ManifestSHA256  string `json:"manifestSHA256"`
+			RecordingSHA256 string `json:"recordingSHA256"`
+			Provenance      string `json:"provenance"`
+		} `json:"material"`
+	}
+	receiptPath := filepath.Join(executionDir, "receipts", "main.result.json")
+	readJSON(t, receiptPath, &executionResult)
+	require.Equal(t, 3, executionResult.SchemaVersion)
+	require.Equal(t, "passed", executionResult.Status)
+	require.Equal(t, "record", executionResult.Command)
+	require.Equal(t, "main", executionResult.ConnectionID)
+	require.Equal(t, "passed", executionResult.ConnectionStatus)
+	require.Equal(t, "passed", executionResult.ExecutionStatus)
+	require.True(t, executionResult.ExecutionComplete)
+	require.True(t, executionResult.PublicationCommitted)
+	require.Equal(t, execution.ID, executionResult.ExecutionID)
+	require.Equal(t, execution.DescriptorSHA256, executionResult.ExecutionSHA256)
+	require.Equal(t, execution.MaterialID, executionResult.MaterialID)
+	require.Equal(t, execution.MaterialID, executionResult.Material.ID)
+	require.Equal(t, "consumer", executionResult.Material.Provenance)
+	require.Equal(t, result.PlanSHA256, executionResult.Material.PlanSHA256)
+	require.Equal(t, result.ManifestSHA256, executionResult.Material.ManifestSHA256)
+	receiptPath = filepath.Join(packageRoot, filepath.FromSlash(executionResult.Receipt))
+	require.NoError(t, requireWithin(packageRoot, receiptPath))
+	require.Equal(t, result.Files[executionResult.Receipt], hashFile(t, receiptPath))
+
+	var transport struct {
 		CaptureStatus   string `json:"captureStatus"`
 		NativeLaunched  bool   `json:"nativeLaunched"`
 		NativeExitCode  int    `json:"nativeExitCode"`
@@ -993,13 +1109,74 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		Reaped          bool   `json:"reaped"`
 		CleanupComplete bool   `json:"cleanupComplete"`
 	}
-	readJSON(t, connection.Receipt, &receipt)
-	require.Equal(t, "complete", receipt.CaptureStatus)
-	require.True(t, receipt.NativeLaunched)
-	require.Zero(t, receipt.NativeExitCode)
-	require.True(t, receipt.ClientEOF)
-	require.True(t, receipt.Reaped)
-	require.True(t, receipt.CleanupComplete)
+	readJSON(t, receiptPath, &transport)
+	require.Equal(t, "complete", transport.CaptureStatus)
+	require.True(t, transport.NativeLaunched)
+	require.Zero(t, transport.NativeExitCode)
+	require.True(t, transport.ClientEOF)
+	require.True(t, transport.Reaped)
+	require.True(t, transport.CleanupComplete)
+
+	packageMaterial := filepath.Join(session, "packages", execution.MaterialID, "material")
+	var materialDocument struct {
+		FormatVersion    int      `json:"formatVersion"`
+		ID               string   `json:"id"`
+		Kind             string   `json:"kind"`
+		Action           string   `json:"action"`
+		Provenance       string   `json:"provenance"`
+		PlanSHA256       string   `json:"planSHA256"`
+		ManifestSHA256   string   `json:"manifestSHA256"`
+		RecordingSHA256  string   `json:"recordingSHA256"`
+		SourcePlanSHA256 string   `json:"sourcePlanSHA256"`
+		Connections      []string `json:"connections"`
+	}
+	readJSON(t, filepath.Join(packageMaterial, "material.json"), &materialDocument)
+	require.Equal(t, 3, materialDocument.FormatVersion)
+	require.Equal(t, result.MaterialSHA256, hashFile(t, filepath.Join(packageMaterial, "material.json")))
+	require.Equal(t, execution.MaterialID, materialDocument.ID)
+	require.Equal(t, "capture", materialDocument.Kind)
+	require.Equal(t, "record", materialDocument.Action)
+	require.Equal(t, "consumer", materialDocument.Provenance)
+	require.Equal(t, result.PlanSHA256, materialDocument.PlanSHA256)
+	require.Equal(t, result.ManifestSHA256, materialDocument.ManifestSHA256)
+	require.Equal(t, []string{"main"}, materialDocument.Connections)
+	require.Equal(t, desc.Source.SHA256, materialDocument.SourcePlanSHA256)
+	require.Equal(t, desc.Source.SHA256, hashFile(t, filepath.Join(packageMaterial, "source-plan.json")))
+
+	materialFiles, err := hashTree(packageMaterial, "material.json")
+	require.NoError(t, err)
+	var manifest struct {
+		SchemaVersion         int               `json:"schemaVersion"`
+		MaterialFormatVersion int               `json:"materialFormatVersion"`
+		Status                string            `json:"status"`
+		CaptureStatus         string            `json:"captureStatus"`
+		CredentialScan        string            `json:"credentialScan"`
+		Provenance            string            `json:"provenance"`
+		ProxyVersion          string            `json:"proxyVersion"`
+		PlanSHA256            string            `json:"planSHA256"`
+		RunSHA256             string            `json:"runSHA256"`
+		Files                 map[string]string `json:"files"`
+		Native                struct {
+			Version string `json:"version"`
+		} `json:"native"`
+	}
+	readJSON(t, filepath.Join(packageMaterial, "manifest.json"), &manifest)
+	require.Equal(t, 1, manifest.SchemaVersion)
+	require.Equal(t, 3, manifest.MaterialFormatVersion)
+	require.Equal(t, "captured", manifest.Status)
+	require.Equal(t, "complete", manifest.CaptureStatus)
+	require.Equal(t, "pass", manifest.CredentialScan)
+	require.Equal(t, "consumer", manifest.Provenance)
+	require.Equal(t, TestifyVersion, manifest.ProxyVersion)
+	require.Equal(t, result.PlanSHA256, manifest.PlanSHA256)
+	require.Equal(t, manifest.RunSHA256, materialFiles["raw/transport.json"])
+	require.Equal(t, expectedVersion, manifest.Native.Version)
+	declaredFiles := maps.Clone(materialFiles)
+	delete(declaredFiles, "manifest.json")
+	require.Equal(t, declaredFiles, manifest.Files)
+	require.Equal(t, materialDocument.PlanSHA256, materialFiles["plan.json"])
+	require.Equal(t, materialDocument.ManifestSHA256, materialFiles["manifest.json"])
+
 	var report struct {
 		Status          string `json:"status"`
 		CaptureStatus   string `json:"captureStatus"`
@@ -1009,7 +1186,7 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		Consumer        bool   `json:"consumer"`
 		Provenance      string `json:"provenance"`
 	}
-	readJSON(t, filepath.Join(connection.Material, "report.json"), &report)
+	readJSON(t, filepath.Join(packageMaterial, "report.json"), &report)
 	require.Equal(t, "captured", report.Status)
 	require.Equal(t, "complete", report.CaptureStatus)
 	require.True(t, report.NativeLaunched)
@@ -1017,27 +1194,9 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	require.True(t, report.CleanupComplete)
 	require.True(t, report.Consumer)
 	require.Equal(t, "consumer", report.Provenance)
-	var manifest struct {
-		CaptureStatus  string            `json:"captureStatus"`
-		CredentialScan string            `json:"credentialScan"`
-		PlanSHA256     string            `json:"planSHA256"`
-		Files          map[string]string `json:"files"`
-		SavedFiles     map[string]string `json:"savedFiles"`
-		Provenance     string            `json:"provenance"`
-		Native         struct {
-			Version string `json:"version"`
-		} `json:"native"`
-	}
-	readJSON(t, filepath.Join(connection.Material, "manifest.json"), &manifest)
-	require.Equal(t, "complete", manifest.CaptureStatus)
-	require.Equal(t, "pass", manifest.CredentialScan)
-	require.Equal(t, connection.PlanSHA256, manifest.PlanSHA256)
-	require.Equal(t, "consumer", manifest.Provenance)
-	require.Equal(t, expectedVersion, manifest.Native.Version)
-	require.NotEmpty(t, manifest.SavedFiles)
-	rawHash := hashFile(t, filepath.Join(connection.Material, "raw", "raw.jsonl"))
-	require.Equal(t, connection.RecordingSHA256, rawHash)
-	require.Equal(t, rawHash, manifest.Files["raw.jsonl"])
+	rawHash := hashFile(t, filepath.Join(packageMaterial, "raw", "raw.jsonl"))
+	require.Equal(t, materialDocument.RecordingSHA256, rawHash)
+	require.Equal(t, rawHash, materialFiles["raw/raw.jsonl"])
 }
 
 func readJSONFile(path string, out any) error {

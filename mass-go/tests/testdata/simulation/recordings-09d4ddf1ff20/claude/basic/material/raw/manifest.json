@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "recordingFormat": {
+    "name": "agent-mock-jsonl",
+    "version": 1,
+    "transport": "stdio-jsonl"
+  },
+  "proxyVersion": "v0.2.1",
+  "captureStatus": "complete",
+  "native": {
+    "executable": "/private/var/tmp/mass-record-claude-153315685/native-claude",
+    "sha256": "9f43251cc30ec73e586689359c4345b5fc5b1d01aeb4f08f2d79524edd889a3b",
+    "args": [
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--input-format",
+      "stream-json",
+      "--permission-prompt-tool",
+      "stdio",
+      "--include-partial-messages",
+      "--model=auto/deepseek-v4.1-flash-1017",
+      "--await-claim"
+    ],
+    "cwd": "/private/var/tmp/mass-record-claude-153315685/session/runtime/executions/2751a1470cd3d4fbc259a24b6e22085c/workspace",
+    "version": "2.1.293 (Claude Code)"
+  },
+  "files": {
+    "raw.jsonl": "e2b4b546a8d2fb1dbcfa2117b5b01504530d4e98e2866cc8d214ef2e84263ce8",
+    "stderr.raw": "09b1eaa3ba7f497d554db3d67dc7d4a10da3319014db4b04457db9806284728c",
+    "transport.json": "916db8a684d8d34993d24776dbd1ba549081ed0946d250a63461e484f5fc3a41"
+  }
+}

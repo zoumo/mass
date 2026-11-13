@@ -14,7 +14,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	github.com/zoumo/agent-sdk-go v0.0.0-20261113030733-09d4ddf1ff20
-	github.com/zoumo/agent-sdk-testify v0.1.3-0.20261113014718-45bce662f756
+	github.com/zoumo/agent-sdk-testify v0.2.1
 	modernc.org/sqlite v1.60.1
 	resty.dev/v3 v3.0.0-rc.4
 )

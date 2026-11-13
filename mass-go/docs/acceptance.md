@@ -2,10 +2,10 @@
 
 This is the current Go implementation acceptance map, not a change to the
 [harness contracts](../../harness/index.md). The runtime SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.0.0-20261110170013-efcb24caac28`, source
-`efcb24ca`, with no local `replace`. The
+`github.com/zoumo/agent-sdk-go v0.0.0-20261113030733-09d4ddf1ff20`, source
+`09d4ddf1`, with no local `replace`. The
 external `agent-sdk-testify` tool is pinned to
-`v0.1.2`; it is a test-only recording and replay
+`v0.2.1`; it is a test-only recording and replay
 dependency. Exact consumer case hashes and the current gate result are in
 [consumer recording acceptance](recording-acceptance.md).
 
@@ -31,8 +31,8 @@ builds and formatting verification. A skipped E2E target is not a PASS.
 | SDK protocol probe | Immutable SDK APIs against strict authored native JSONL | `examples/sdkprobe`; separate from product acceptance |
 | Product integration | Actual adapters, Service, file Store, CLI/HTTP/SSE and owned protocol peers | `tests/integration`; constructed data only; no models or tools run |
 | Public-module fault injection | Deterministic append/publish/close/admission outcomes through public interfaces | Original facts, unsettled obligations, bounded isolation and cleanup, not native CLI guarantees |
-| Consumer simulation | MASS public actions against exported, hash-bound Codex and Claude captures | `tests/simulation`; four registered cases; artifact and audit checks pass, but all four replays fail at the current SDK pin because the captures used SDK `5edf8b62`; no live model under test |
-| Native recording session | Installed CLI, authenticated account, selected model and exported native session | Four historical consumer-session recordings executed on 2026-11-05 with SDK `5edf8b62` and `auto/deepseek-v4.1-flash-1017`; not current-pin evidence |
+| Consumer simulation | MASS public actions against exported, hash-bound Codex and Claude captures | `tests/simulation`; four active cases plus four historical audited cases; all four active Claude/Codex replays pass at the current pins; no live model under test |
+| Native recording session | Installed CLI, authenticated account, selected model and exported native session | Current Codex and Claude active cases were recorded through real CLIs with `auto/deepseek-v4.1-flash-1017`; Claude used CLI `2.1.293`; historical 2026-11-05 evidence retains its original pins |
 | Live MASS product E2E | Real MASS daemon/CLI/HTTP/SSE with a native runtime, model, history load and persistence | NOT EXECUTED in this checkout; explicit, separately authorized procedure below |
 
 Consumer recordings have `provenance=consumer`; official verification does not
@@ -153,37 +153,35 @@ model/delivery tests, not a claim each native CLI emits all 17 branches.
 
 ## Consumer Simulation
 
-This checkout contains four consumer-provenance recordings under
-`tests/testdata/simulation/recordings/{codex,claude}/{basic,permission}/`.
-Each case binds an adjacent `index.json` to a `material/` export. The offline
-gate replays them through a real MASS daemon and public HTTP/SSE, checks that the
-mock route is `executor=external-sdk`, `target=replay`,
-`provenance=consumer`, and requires the replay receipt to prove complete
-consumption, client EOF, cleanup, matching plan/raw hashes and
-`nativeLaunched=false`. It also treats missing, extra, altered, incompletely
-consumed or secret-bearing material as failure.
+Active consumer-provenance recordings live in
+`tests/testdata/simulation/recordings-4959190bc518/codex/` and
+`tests/testdata/simulation/recordings-09d4ddf1ff20/claude/`. The historical
+`recordings/` suite remains immutable for audit provenance. Each case binds an
+adjacent `index.json` to a `material/` export. The offline gate replays the
+active four through a real MASS daemon and public HTTP/SSE, checks that the mock
+route is `executor=external-sdk`, `target=replay`, `provenance=consumer`, and
+requires the replay receipt to prove complete consumption, client EOF, cleanup,
+matching plan/raw hashes and `nativeLaunched=false`. It also treats missing,
+extra, altered, incompletely consumed or secret-bearing material as failure.
 
-Current offline status is zero of four consumer replays passed. The artifact,
-receipt, and credential audits pass, but strict replay fails for both providers.
-The captures were recorded with SDK `5edf8b62`; Codex now sends an added
-initialize capability, and Claude waits for `system init` before `Open` while
-the capture sends the first user frame earlier. The four historical
-`MASS_RECORD=1` runs used real CLIs, but they are not current-pin evidence.
-Live MASS product E2E and native persistence or recovery behavior remain
-unverified. Official verification does not apply to consumer recordings. Full
-failures, hashes, and required re-recording commands are in
-[consumer recording acceptance](recording-acceptance.md) and
-[SDK migration gaps](sdk-migration-gaps.md).
+All four active consumer replays pass at SDK `09d4ddf1ff20` and testify
+`v0.2.1`. The Claude cases were freshly recorded with CLI `2.1.293`; MASS opens
+with `--await-claim`, never assigns `--session-id`, and adopts the ID returned by
+`claim_session`. The historical captures were recorded with SDK `5edf8b62` and
+are no longer replayed. Live MASS product E2E and native persistence or
+recovery behavior remain unverified. Official verification does not apply to
+consumer recordings. Hashes and recording commands are in
+[current-pin recording acceptance](codex-current-pin-recording.md); the older
+snapshot is in [historical consumer recording acceptance](recording-acceptance.md).
 
 ## Current T05 Gate
 
-T05 does not report the baseline as green. The complete unit layer fails in six
-pre-existing `pkg/service` subtests, and integration panics in
-`TestTicket17ClaudeProvenMessageLinkage/proof`; both reproduce at base
-`e7a74846`. The SDK probe passes independently at the current pins. Simulation
-fails because the four consumer captures predate the T05 event protocol. See
-[SDK migration gaps and T05 acceptance](sdk-migration-gaps.md) for exact
-commands, failures, and the public breaking-change list.
+`make check-go` passes at the current pins: lint, unit, integration, the SDK
+probe, all four active simulation replays, both builds and the format check are
+green. This is offline evidence only. It does not establish live-product E2E,
+native persistence/recovery, or arbitrary model behavior. The earlier T05
+failure list is retained in
+[SDK migration gaps and T05 acceptance](sdk-migration-gaps.md) as history.
 
 ## Separately Authorized Native / Real-Model Procedure
 

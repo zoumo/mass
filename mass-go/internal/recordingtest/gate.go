@@ -55,17 +55,19 @@ var recordingArtifacts = []artifactCase{
 }
 
 type materialArtifact struct {
-	ID              string            `json:"id"`
-	Kind            string            `json:"kind"`
-	Action          string            `json:"action"`
-	Provenance      string            `json:"provenance"`
-	Path            string            `json:"path"`
-	PlanSHA256      string            `json:"planSHA256"`
-	ManifestSHA256  string            `json:"manifestSHA256"`
-	RecordingSHA256 string            `json:"recordingSHA256"`
-	Connections     []string          `json:"connections"`
-	CreatedAt       string            `json:"createdAt"`
-	Files           map[string]string `json:"files"`
+	FormatVersion    int               `json:"formatVersion"`
+	ID               string            `json:"id"`
+	Kind             string            `json:"kind"`
+	Action           string            `json:"action"`
+	Provenance       string            `json:"provenance"`
+	Path             string            `json:"path"`
+	SourcePlanSHA256 string            `json:"sourcePlanSHA256"`
+	PlanSHA256       string            `json:"planSHA256"`
+	ManifestSHA256   string            `json:"manifestSHA256"`
+	RecordingSHA256  string            `json:"recordingSHA256"`
+	Connections      []string          `json:"connections"`
+	CreatedAt        string            `json:"createdAt"`
+	Files            map[string]string `json:"files"`
 }
 
 type recordingFormat struct {
@@ -83,18 +85,19 @@ type nativeIdentity struct {
 }
 
 type captureManifest struct {
-	SchemaVersion   int               `json:"schemaVersion"`
-	Status          string            `json:"status"`
-	CaptureStatus   string            `json:"captureStatus"`
-	CredentialScan  string            `json:"credentialScan"`
-	Provenance      string            `json:"provenance"`
-	PlanSHA256      string            `json:"planSHA256"`
-	RunSHA256       string            `json:"runSHA256"`
-	ProxyVersion    string            `json:"proxyVersion"`
-	RecordingFormat recordingFormat   `json:"recordingFormat"`
-	Native          nativeIdentity    `json:"native"`
-	Files           map[string]string `json:"files"`
-	SavedFiles      map[string]string `json:"savedFiles"`
+	SchemaVersion         int               `json:"schemaVersion"`
+	MaterialFormatVersion int               `json:"materialFormatVersion"`
+	Status                string            `json:"status"`
+	CaptureStatus         string            `json:"captureStatus"`
+	CredentialScan        string            `json:"credentialScan"`
+	Provenance            string            `json:"provenance"`
+	PlanSHA256            string            `json:"planSHA256"`
+	RunSHA256             string            `json:"runSHA256"`
+	ProxyVersion          string            `json:"proxyVersion"`
+	RecordingFormat       recordingFormat   `json:"recordingFormat"`
+	Native                nativeIdentity    `json:"native"`
+	Files                 map[string]string `json:"files"`
+	SavedFiles            map[string]string `json:"savedFiles"`
 }
 
 type rawManifest struct {
@@ -118,13 +121,21 @@ type captureReport struct {
 }
 
 type capturePlan struct {
-	Version       int    `json:"version"`
-	AgentType     string `json:"agentType"`
-	CaseID        string `json:"caseId"`
-	DriverProfile string `json:"driverProfile"`
-	Project       string `json:"project"`
-	CLIVersion    string `json:"cliVersion"`
-	Model         string `json:"model"`
+	Version         int    `json:"version"`
+	AgentType       string `json:"agentType"`
+	CaseID          string `json:"caseId"`
+	DriverProfile   string `json:"driverProfile"`
+	Project         string `json:"project"`
+	CLIVersion      string `json:"cliVersion"`
+	Model           string `json:"model"`
+	HistoryBindings []struct {
+		Role         string `json:"role"`
+		SessionID    string `json:"sessionId"`
+		Project      string `json:"project"`
+		NativeTarget string `json:"nativeTarget"`
+		Source       string `json:"source"`
+		SHA256       string `json:"sha256"`
+	} `json:"historyBindings"`
 }
 
 func RunGate(t *testing.T) {
@@ -281,6 +292,14 @@ func auditRecordingCase(root string, spec artifactCase) (string, caseIndex, erro
 	if err := validateCaptureManifest(manifest, index, plan, materialFiles, rawFiles); err != nil {
 		return "", caseIndex{}, err
 	}
+	if spec.suite == claudeRecordingSuite && manifest.ProxyVersion != TestifyVersion {
+		return "", caseIndex{}, fmt.Errorf("claude capture proxy version = %q, want %q", manifest.ProxyVersion, TestifyVersion)
+	}
+	for _, binding := range plan.HistoryBindings {
+		if materialFiles[binding.Source] != binding.SHA256 {
+			return "", caseIndex{}, errors.New("history binding source hash differs from the material")
+		}
+	}
 
 	var raw rawManifest
 	if err := readJSONFile(filepath.Join(material, "raw", "manifest.json"), &raw); err != nil {
@@ -297,11 +316,16 @@ func auditRecordingCase(root string, spec artifactCase) (string, caseIndex, erro
 	if err := validateCaptureReport(report); err != nil {
 		return "", caseIndex{}, err
 	}
-	if err := validateIndexFacts(index.Facts, spec, manifest); err != nil {
+	if err := validateIndexFacts(index.Facts, spec, manifest, plan); err != nil {
 		return "", caseIndex{}, err
 	}
 	if spec.suite == codexRecordingSuite {
 		if err := auditCodexCapture(material, "auto/deepseek-v4.1-flash-1017", index.Facts.SessionID); err != nil {
+			return "", caseIndex{}, err
+		}
+	}
+	if spec.suite == claudeRecordingSuite {
+		if err := auditClaudeCapture(material, "auto/deepseek-v4.1-flash-1017", index.Facts.SessionID, spec.flow.project); err != nil {
 			return "", caseIndex{}, err
 		}
 	}
@@ -398,11 +422,18 @@ func validateCaseIndex(index caseIndex, spec artifactCase, material string) erro
 }
 
 func validateMaterialDocument(material materialArtifact, index caseIndex, files map[string]string) error {
-	if material.ID == "" || path.Base(material.Path) != material.ID {
-		return errors.New("material id/path identity is invalid")
+	if material.ID == "" {
+		return errors.New("material id is invalid")
 	}
-	if !filepath.IsAbs(material.Path) || !strings.HasSuffix(filepath.ToSlash(material.Path), "/"+index.SourceSession+"/materials/"+material.ID) {
-		return fmt.Errorf("material path does not bind source session %q", index.SourceSession)
+	if material.FormatVersion < 3 {
+		if path.Base(material.Path) != material.ID {
+			return errors.New("material id/path identity is invalid")
+		}
+		if !filepath.IsAbs(material.Path) || !strings.HasSuffix(filepath.ToSlash(material.Path), "/"+index.SourceSession+"/materials/"+material.ID) {
+			return fmt.Errorf("material path does not bind source session %q", index.SourceSession)
+		}
+	} else if material.SourcePlanSHA256 == "" || material.SourcePlanSHA256 != files["source-plan.json"] {
+		return errors.New("material source plan hash differs")
 	}
 	if material.Kind != "capture" || material.Action != "record" || material.Provenance != "consumer" {
 		return fmt.Errorf("material identity is %q/%q/%q, want capture/record/consumer", material.Kind, material.Action, material.Provenance)
@@ -421,10 +452,16 @@ func validateMaterialDocument(material materialArtifact, index caseIndex, files 
 	if recordedAt.Before(createdAt) {
 		return errors.New("index recordedAt precedes material creation")
 	}
-	if !maps.Equal(material.Files, files) {
-		return fmt.Errorf("material file inventory differs from tree: declared=%d actual=%d", len(material.Files), len(files))
+	if material.FormatVersion < 3 {
+		if !maps.Equal(material.Files, files) {
+			return fmt.Errorf("material file inventory differs from tree: declared=%d actual=%d", len(material.Files), len(files))
+		}
 	}
-	for _, name := range []string{"plan.json", "manifest.json", "report.json", "raw/manifest.json", "raw/raw.jsonl", "raw/stderr.raw", "raw/transport.json"} {
+	required := []string{"plan.json", "manifest.json", "report.json", "raw/manifest.json", "raw/raw.jsonl", "raw/stderr.raw", "raw/transport.json"}
+	if material.FormatVersion >= 3 {
+		required = append(required, "source-plan.json")
+	}
+	for _, name := range required {
 		if files[name] == "" {
 			return fmt.Errorf("material is missing %s", name)
 		}
@@ -463,8 +500,18 @@ func validateCapturePlan(plan capturePlan, index caseIndex, spec artifactCase) e
 	if plan.Model == "" {
 		return errors.New("plan model is missing")
 	}
-	if spec.suite == codexRecordingSuite && plan.Model != "auto/deepseek-v4.1-flash-1017" {
+	if spec.suite != "" && plan.Model != "auto/deepseek-v4.1-flash-1017" {
 		return errors.New("plan model differs from registered DeepSeek model")
+	}
+	if spec.suite == claudeRecordingSuite {
+		if len(plan.HistoryBindings) == 0 {
+			return errors.New("claude plan is missing its history binding")
+		}
+		for _, binding := range plan.HistoryBindings {
+			if binding.Role == "" || binding.SessionID == "" || binding.NativeTarget == "" || !isLocalRelative(binding.Source) || !isSHA256(binding.SHA256) || !sameNativePath(binding.Project, plan.Project) {
+				return errors.New("claude history binding is incomplete")
+			}
+		}
 	}
 	return nil
 }
@@ -485,16 +532,29 @@ func validateCaptureManifest(manifest captureManifest, index caseIndex, plan cap
 	if manifest.RunSHA256 != materialFiles["raw/transport.json"] {
 		return errors.New("manifest run hash differs from transport")
 	}
-	if !maps.Equal(manifest.Files, rawFiles) {
+	if manifest.MaterialFormatVersion >= 3 {
+		declaredFiles := maps.Clone(materialFiles)
+		delete(declaredFiles, "manifest.json")
+		if !maps.Equal(manifest.Files, declaredFiles) {
+			return fmt.Errorf("manifest material inventory differs: declared=%d actual=%d", len(manifest.Files), len(materialFiles))
+		}
+	} else if !maps.Equal(manifest.Files, rawFiles) {
 		return fmt.Errorf("manifest raw inventory differs: declared=%d actual=%d", len(manifest.Files), len(rawFiles))
 	}
 	for _, name := range []string{"manifest.json", "raw.jsonl", "stderr.raw", "transport.json"} {
-		if manifest.Files[name] == "" {
+		key := name
+		if manifest.MaterialFormatVersion >= 3 {
+			key = "raw/" + name
+		}
+		if manifest.Files[key] == "" {
 			return fmt.Errorf("manifest is missing raw file %s", name)
 		}
 	}
-	if len(manifest.SavedFiles) == 0 {
+	if manifest.MaterialFormatVersion < 3 && len(manifest.SavedFiles) == 0 {
 		return errors.New("manifest savedFiles is empty")
+	}
+	if manifest.Native.Version != index.Versions[plan.AgentType] {
+		return fmt.Errorf("manifest native version = %q, index = %q", manifest.Native.Version, index.Versions[plan.AgentType])
 	}
 	for name, digest := range manifest.SavedFiles {
 		if !isLocalRelative(name) {
@@ -551,15 +611,24 @@ func validateCaptureReport(report captureReport) error {
 	return nil
 }
 
-func validateIndexFacts(facts facts, spec artifactCase, manifest captureManifest) error {
+func validateIndexFacts(facts facts, spec artifactCase, manifest captureManifest, plan capturePlan) error {
 	if facts.SessionID == "" || facts.State != "idle" || !facts.Accepted {
 		return fmt.Errorf("index facts status is %q/%q/%v", facts.SessionID, facts.State, facts.Accepted)
 	}
 	foundHistory := false
-	for name := range manifest.SavedFiles {
-		if strings.Contains(path.Base(name), facts.SessionID) {
-			foundHistory = true
-			break
+	if manifest.MaterialFormatVersion >= 3 {
+		for _, binding := range plan.HistoryBindings {
+			if binding.Role == "runtime" && binding.SessionID == facts.SessionID && binding.Source != "" && binding.SHA256 != "" {
+				foundHistory = true
+				break
+			}
+		}
+	} else {
+		for name := range manifest.SavedFiles {
+			if strings.Contains(path.Base(name), facts.SessionID) {
+				foundHistory = true
+				break
+			}
 		}
 	}
 	if !foundHistory {
@@ -598,14 +667,22 @@ func validateIndexFacts(facts facts, spec artifactCase, manifest captureManifest
 	if spec.suite == "" && len(permission.Request.Content) == 0 {
 		return errors.New("historical permission request content is missing")
 	}
-	if spec.suite == codexRecordingSuite {
+	if spec.suite == codexRecordingSuite || spec.suite == claudeRecordingSuite {
 		call, result := false, false
+		command := "printf mass-approved > permission-proof.txt"
+		if spec.provider == "claude" {
+			command = "printf mass-claude-approved"
+		}
 		for _, event := range facts.Events {
 			if event.ToolCallID != permission.Request.ToolCallID {
 				continue
 			}
-			call = call || event.Kind == "agent.tool_call" && strings.Contains(event.Text, "printf mass-approved > permission-proof.txt")
-			result = result || event.Kind == "agent.tool_result" && event.Status == "completed" && event.ExitCode != nil && *event.ExitCode == 0
+			call = call || event.Kind == "agent.tool_call" && strings.Contains(event.Text, command)
+			if spec.provider == "claude" {
+				result = result || event.Kind == "agent.tool_result" && event.Status == "completed" && strings.Contains(event.Text, "mass-claude-approved")
+			} else {
+				result = result || event.Kind == "agent.tool_result" && event.Status == "completed" && event.ExitCode != nil && *event.ExitCode == 0
+			}
 		}
 		if !call || !result || !permission.Closed {
 			return errors.New("permission lacks linked command, successful result or closure")
@@ -766,9 +843,13 @@ func copyRecordingCase(t *testing.T, root string, spec artifactCase) (string, st
 }
 
 func RunAuditRejectsInvalidCaseSelection(t *testing.T) {
-	for _, suite := range []string{"recordings", codexRecordingSuite} {
+	for _, suite := range []string{"recordings", codexRecordingSuite, claudeRecordingSuite} {
 		for _, mutation := range []string{"missing case", "extra case", "extra provider", "extra file", "missing suite", "extra suite"} {
 			t.Run(suite+"/"+mutation, func(t *testing.T) {
+				provider := "codex"
+				if suite == claudeRecordingSuite {
+					provider = "claude"
+				}
 				root := t.TempDir()
 				for _, spec := range allRecordingArtifacts() {
 					require.NoError(t, os.MkdirAll(filepath.Join(root, spec.casePath()), 0o700))
@@ -778,9 +859,9 @@ func RunAuditRejectsInvalidCaseSelection(t *testing.T) {
 				selected := filepath.Join(simulation, suite)
 				switch mutation {
 				case "missing case":
-					require.NoError(t, os.Remove(filepath.Join(selected, "codex", "permission")))
+					require.NoError(t, os.Remove(filepath.Join(selected, provider, "permission")))
 				case "extra case":
-					require.NoError(t, os.MkdirAll(filepath.Join(selected, "codex", "extra"), 0o700))
+					require.NoError(t, os.MkdirAll(filepath.Join(selected, provider, "extra"), 0o700))
 				case "extra provider":
 					require.NoError(t, os.MkdirAll(filepath.Join(selected, "unknown"), 0o700))
 				case "extra file":

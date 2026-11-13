@@ -1,13 +1,14 @@
-# Current-pin Codex consumer recording acceptance
+# Current-pin Codex and Claude consumer recording acceptance
 
-This page records the November 11, 2026 Codex recording procedure and evidence
+This page records the current Codex and Claude recording procedure and evidence
 boundary. It does not change the harness contracts.
 
-This November 11 recording was captured while the runtime SDK was pinned to
-`v0.0.0-20261111031457-4959190bc518` and testify to
-`v0.1.3-0.20261111025559-1f8db14a50e1`, without a local replacement. The current
-runtime pin is `v0.0.0-20261111190044-a7b8e2821acf`; the checked-in recording
-suite below remains bound to the captured versions.
+The Codex suite was captured on November 11, 2026 while the runtime SDK was
+pinned to `v0.0.0-20261111031457-4959190bc518` and testify to
+`v0.1.3-0.20261111025559-1f8db14a50e1`, without a local replacement. The Claude
+suite was re-recorded on November 13, 2026 with the current runtime SDK
+`v0.0.0-20261113030733-09d4ddf1ff20` and testify `v0.2.1`. Each suite retains
+the versions captured in its own index.
 Codex CLI `0.166.0` recorded basic and permission through the public MASS
 HTTP/SSE and history APIs. Both exports passed two strict replays before
 publication. The explicit SessionSpec.Config model was
@@ -32,11 +33,12 @@ material ID, SDK version, testify version, and project:
 | --- | --- | --- | --- |
 | Codex basic | `recordings-4959190bc518` | `50194530555049c8e6a258fa3b85ebb5` | passed |
 | Codex permission | `recordings-4959190bc518` | `a172abf87285e44f5d82f74a258d9fff` | passed |
-| Claude basic | historical `recordings` | unchanged historical material | known `initialize_wait_failed` |
-| Claude permission | historical `recordings` | unchanged historical material | known `initialize_wait_failed` |
+| Claude basic | `recordings-09d4ddf1ff20` | `5cf2bc799cde1a0f60ed6706ca36ef15` | passed |
+| Claude permission | `recordings-09d4ddf1ff20` | `21e27325e989edaf20923eade3fada20` | passed |
 
-The new suite is under
-`tests/testdata/simulation/recordings-4959190bc518/codex/<case>/`.
+The active suites are under
+`tests/testdata/simulation/recordings-4959190bc518/codex/<case>/` and
+`tests/testdata/simulation/recordings-09d4ddf1ff20/claude/<case>/`.
 All four historical cases remain in `tests/testdata/simulation/recordings/`
 with their original bytes, indexes, hashes and provenance. Each suite has an
 exact provider/case inventory. Audits reject missing or extra suites, providers,
@@ -48,10 +50,11 @@ Every new index requires hashes for `plan.json`, `material.json`,
 `raw/transport.json`. Historical Codex indexes retain their four primary hashes;
 their complete raw inventories remain independently audited.
 
-Claude has not switched in this ticket. Its historical strict replay failures
-remain known failures; this ticket does not rerun its matrix. Full simulation,
-current-pin Claude recording and real resume/load acceptance are not claimed.
-See the [historical snapshot](recording-acceptance.md) for earlier evidence.
+The new Claude cases use CLI `2.1.293`. MASS opens with `--await-claim`, does not
+pass `--session-id`, and adopts the identity returned by `claim_session`. Each
+export passed two strict replays before publication. Full simulation passes;
+real resume/load acceptance is not claimed. See the
+[historical snapshot](recording-acceptance.md) for earlier evidence.
 
 ## Focused offline acceptance
 
@@ -59,7 +62,7 @@ Run from `mass-go/`. First confirm that selection is nonempty:
 
 ```sh
 MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off \
-  go test -list '^(TestCodex(Basic|Permission)Replay|TestRecordingRejectsIncompleteExecution|TestRecordingGate|TestRecordingAuditRejects.*|TestRecordingRejectsInvalidMaterial)$' ./tests/simulation
+  go test -list '^(Test(Codex|Claude)(Basic|Permission)Replay|TestRecordingRejectsIncompleteExecution|TestRecordingGate|TestRecordingAuditRejects.*|TestRecordingRejectsInvalidMaterial)$' ./tests/simulation
 ```
 
 Then run the same focused selection with race checks:
@@ -67,7 +70,7 @@ Then run the same focused selection with race checks:
 ```sh
 MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off \
   go test -race -count=1 -timeout=600s ./tests/simulation \
-  -run '^(TestCodex(Basic|Permission)Replay|TestRecordingRejectsIncompleteExecution|TestRecordingGate|TestRecordingAuditRejects.*|TestRecordingRejectsInvalidMaterial)$'
+  -run '^(Test(Codex|Claude)(Basic|Permission)Replay|TestRecordingRejectsIncompleteExecution|TestRecordingGate|TestRecordingAuditRejects.*|TestRecordingRejectsInvalidMaterial)$'
 ```
 
 These commands use external-sdk/replay/consumer materials with

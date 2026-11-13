@@ -59,9 +59,9 @@ failure-injection tests run here. The real recording tests are in `tests/e2e`,
 behind the `e2e` build tag, and cannot be selected by this target.
 `make recording-gate-go` is a compatibility alias.
 
-Current gate result: FAIL. The artifact, receipt, credential-audit, selection,
-and mutation-only audit tests pass. All four strict replays fail before MASS can
-complete the recorded exchange:
+Historical T05 gate result: FAIL. The artifact, receipt, credential-audit,
+selection, and mutation-only audit tests passed. All four historical strict
+replays failed before MASS could complete the recorded exchange:
 
 | Case | Failure | Protocol change |
 | --- | --- | --- |
@@ -70,10 +70,11 @@ complete the recorded exchange:
 | `claude/basic` | `unavailable: initialize_wait_failed` | The recording sends the first user frame at ordinal 5 and `system init` at ordinal 7. Current provider `Open` waits for init before returning, so replay cannot reach ordinal 7. |
 | `claude/permission` | `unavailable: initialize_wait_failed` | Same Claude ordering drift. |
 
-`TestRecordingRejectsIncompleteExecution` also fails because its setup requires
-the Codex basic replay to succeed. This is a consequence of the stale fixture,
-not a second protocol fault. The solution is a new consumer recording at the current
-pins, not editing raw frames, order, provenance, or version metadata in place.
+`TestRecordingRejectsIncompleteExecution` also failed because its setup required
+the Codex basic replay to succeed. This was a consequence of the stale fixture,
+not a second protocol fault. New current-pin recordings replaced the active
+selection without editing raw frames, order, provenance, or version metadata in
+place; see [current-pin recording acceptance](codex-current-pin-recording.md).
 
 The gate enforces:
 

@@ -181,15 +181,15 @@ and credential audits with the replays. The mock route must be
 `executor=external-sdk`, `target=replay`, `provenance=consumer`, and the replay
 receipt must show `nativeLaunched=false`.
 
-The checked-in captures were recorded with SDK `5edf8b62`. They no longer pass
-strict replay at the current T06 pin `efcb24ca`: Codex now sends an added initialize
-capability, and Claude waits for `system init` before `Open` while the capture
-sends the first user frame earlier. The artifact and audit tests pass, but all
-four replay cases fail until those captures are re-recorded with the current SDK,
-testify, and native CLI versions. They are retained as historical consumer
-evidence and are not current-pin PASS evidence. Exact failures, hashes and
-recording commands are in
-[consumer recording acceptance](docs/recording-acceptance.md).
+The active cases come from the current Codex suite
+`recordings-4959190bc518` and the Claude suite
+`recordings-09d4ddf1ff20`. The Claude cases were re-recorded on November 13,
+2026 with Claude CLI `2.1.293`, SDK `09d4ddf1ff20`, and testify `v0.2.1`, then
+passed two strict replays before publication. All four active replays pass at
+the current pins. The older `recordings/` exports retain their original bytes
+and hashes for audit provenance but are no longer active replay evidence. See
+[current-pin recording acceptance](docs/codex-current-pin-recording.md) and the
+[historical snapshot](docs/recording-acceptance.md).
 
 ### Real Agent preflight and diagnosis
 
@@ -233,7 +233,7 @@ runtime and daemon cleanup each have an additional 15 second budget. Every
 flow receives a new context, including each strict replay.
 Authentication command output and secret-like values are not retained.
 
-Claude recording additionally requires native CLI 2.1.258 or later, as enforced
+Claude recording additionally requires native CLI 2.1.293 or later, as enforced
 by the current SDK resume gate. Claude smoke uses the user setting source only
 to make OAuth available, passes an explicit model and no tools, and does not
 take a default model from personal settings. A CLI that starts but fails
@@ -276,7 +276,7 @@ as private because testify stages authentication there. The output contains
 native session metadata; inspect it before sharing outside the repository.
 
 Claude recording uses the same lifecycle and exports to
-`tests/testdata/simulation/recordings/claude/<case>/`:
+`tests/testdata/simulation/recordings-09d4ddf1ff20/claude/<case>/`:
 
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
@@ -290,6 +290,8 @@ MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
 
 Set `MASS_RECORD_CLAUDE_BASIC_OUTPUT` or
 `MASS_RECORD_CLAUDE_PERMISSION_OUTPUT` to publish to another absolute path.
+Claude opens with `--await-claim`; MASS does not pass `--session-id` and takes
+the native identity returned by `claim_session`.
 The permission wrapper supplies only the inline `permissions.ask: ["Bash"]`
 setting and answers the offered `allow-once` option through MASS. Testify
 isolates `HOME` during `prepare`; if Claude authentication is stored in
@@ -303,13 +305,11 @@ export is published.
 
 The runtime SDK is pinned to `v0.0.0-20261113030733-09d4ddf1ff20`,
 source commit `09d4ddf1`, without a local replacement. The external
-`agent-sdk-testify` tool is pinned to
-`v0.1.3-0.20261113014718-45bce662f756` for consumer recording and replay and
-is not a production dependency.
-The checked-in consumer fixtures remain bound to their recording SDK
-`v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not
-rewritten to the current runtime pin, and that incompatibility is reported
-rather than hidden.
+`agent-sdk-testify` tool is pinned to `v0.2.1` for consumer recording and
+replay and is not a production dependency.
+The active Claude fixtures are bound to the current SDK and testify pins. The
+current Codex suite and the historical `recordings/` exports retain their
+original recording versions; that provenance is intentionally not rewritten.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Claude has one SDK Events consumer through MASS agentrelay;
 live event identity, payload and metadata come from the SDK.

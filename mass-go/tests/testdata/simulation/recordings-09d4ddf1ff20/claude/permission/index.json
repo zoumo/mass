@@ -1,0 +1,214 @@
+{
+  "provider": "claude",
+  "case": "permission",
+  "provenance": "consumer",
+  "recordedAt": "2026-11-13T09:18:31Z",
+  "sourceSession": "mass-record-claude-permission-3946514327/session",
+  "exportPath": "tests/testdata/simulation/recordings-09d4ddf1ff20/claude/permission/material",
+  "sha256": {
+    "manifest.json": "d9e772a3e3d6e7fb014c971aac8ff963ae679333cbfc5f824ab51c65a0d5ad6e",
+    "material.json": "e82a3d639f309afcf3e7902f19fdbe032af22af00a93d803846565e652e90dbd",
+    "plan.json": "21e07ba196525476804807b5ac4783782fb6896d151e59d26ec3aac8cbfa7818",
+    "raw/manifest.json": "8177d175f1e0bfa5c27f0499b13ffb966f9a1fe629dc487f2400fb9c83e2ca5a",
+    "raw/raw.jsonl": "9e8193798277d96cf82247ba761afa95e341d16a8e90cfce9e3ed70d2f1f0f35",
+    "raw/stderr.raw": "09b1eaa3ba7f497d554db3d67dc7d4a10da3319014db4b04457db9806284728c",
+    "raw/transport.json": "6dbb67405c1f51cd34b5d0bb01699f3a7c4ecd78f0cb3fb2de3578daf8325e33"
+  },
+  "versions": {
+    "claude": "2.1.293 (Claude Code)",
+    "claudeModel": "auto/deepseek-v4.1-flash-1017",
+    "mass": "d7197757166efe8f3c93b25cec9831ae1f2dbcde",
+    "massWorktree": "M mass-go/go.mod\n M mass-go/go.sum\n M mass-go/internal/recordingtest/claude.go\n M mass-go/internal/recordingtest/codex.go\n M mass-go/internal/recordingtest/gate.go\n M mass-go/internal/recordingtest/registry.go\n M mass-go/internal/recordingtest/versions.go\n M mass-go/internal/testpeer/build.go\n?? mass-go/internal/recordingtest/claude_capture.go\n?? mass-go/tests/testdata/simulation/recordings-09d4ddf1ff20/",
+    "sdk": "v0.0.0-20261113030733-09d4ddf1ff20",
+    "testify": "v0.2.1"
+  },
+  "toolSHA256": {
+    "claude": "27d4e9aeb2335156c7859edb6e13f35c884fa09915fea2f9b8305f4b52aeaaa0",
+    "massd": "e41e5a51bfcdfac5397961043be72c97fe2f23685b5219672d0439032132e2b5",
+    "testify": "bb38ef7a6e0fca47b6a3bde344c7c0aac2e2e08758629abf3d6848e7d0d76cb2"
+  },
+  "claudePath": "claude",
+  "claudeAuthMethod": "oauth_token",
+  "claudeAPIProvider": "firstParty",
+  "prompt": "Use the Bash tool to execute this exact command in the current project: `printf mass-claude-approved`. Do not use any other tool. Do not only describe the command; execute it once and report its output.",
+  "project": "/var/tmp/mass-record-claude-permission-3946514327/project",
+  "facts": {
+    "sessionId": "ed71fbf4-9df4-499c-a69a-080a93a708aa",
+    "state": "idle",
+    "accepted": true,
+    "input": {
+      "sent": true,
+      "nativeAccepted": null
+    },
+    "events": [
+      {
+        "kind": "agent.thinking"
+      },
+      {
+        "kind": "agent.tool_call",
+        "text": "printf mass-claude-approved",
+        "toolCallId": "call_27c2d69444ad41cb926a8ee5"
+      },
+      {
+        "kind": "agent.tool_result",
+        "text": "mass-claude-approved",
+        "toolCallId": "call_27c2d69444ad41cb926a8ee5",
+        "status": "completed"
+      },
+      {
+        "kind": "agent.thinking"
+      },
+      {
+        "kind": "agent.message",
+        "text": "Executed. Output:\n\n```\nmass-claude-approved\n```\n\n(No trailing newline — `printf` was used exactly as specified.)"
+      }
+    ],
+    "streamKinds": [
+      "session.error",
+      "session.state_update",
+      "session.available_commands_update",
+      "session.error",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "agent.thinking",
+      "agent.message_chunk",
+      "agent.tool_call_chunk",
+      "agent.tool_call_chunk",
+      "agent.tool_call_chunk",
+      "agent.tool_call_chunk",
+      "agent.tool_call_chunk",
+      "agent.tool_call_chunk",
+      "agent.tool_call_chunk",
+      "agent.tool_call",
+      "session.state_update",
+      "session.interaction_requested",
+      "session.interaction_closed",
+      "session.state_update",
+      "agent.tool_result",
+      "session.error",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "session.error",
+      "agent.thinking_chunk",
+      "agent.thinking",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message",
+      "session.usage_update",
+      "session.state_update"
+    ],
+    "permission": {
+      "interaction": "claude-beae388b-8c86-49b7-b64f-e38e747055f3",
+      "request": {
+        "kind": "permission",
+        "toolCallId": "call_27c2d69444ad41cb926a8ee5",
+        "title": "Bash",
+        "options": [
+          {
+            "optionId": "allow-once",
+            "name": "Allow once",
+            "kind": "allow_once"
+          },
+          {
+            "optionId": "reject-once",
+            "name": "Reject once",
+            "kind": "reject_once"
+          }
+        ],
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"subtype\":\"can_use_tool\",\"tool_name\":\"Bash\",\"display_name\":\"Bash\",\"input\":{\"command\":\"printf mass-claude-approved\",\"description\":\"Print the test approval string\"},\"description\":\"Print the test approval string\",\"decision_reason_type\":\"rule\",\"tool_use_id\":\"call_27c2d69444ad41cb926a8ee5\"}"
+          }
+        ]
+      },
+      "stateBeforeAnswer": "requires_action",
+      "answer": {
+        "optionId": "allow-once",
+        "sent": true,
+        "nativeAccepted": null
+      },
+      "stateAfterAnswer": "running",
+      "completed": true,
+      "closed": true
+    }
+  }
+}
