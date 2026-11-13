@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -41,11 +42,9 @@ func run(args []string) int {
 			break
 		}
 	}
-	for _, arg := range native {
-		if arg == "--version" {
-			fmt.Fprintln(os.Stdout, nativeclaude.MinimumCLIVersion+" (Claude Code)")
-			return exitOK
-		}
+	if slices.Contains(native, "--version") {
+		fmt.Fprintln(os.Stdout, nativeclaude.MinimumCLIVersion+" (Claude Code)")
+		return exitOK
 	}
 	assignedSessionID := ""
 	claimSession := false
