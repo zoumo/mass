@@ -514,7 +514,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		}
 	}
 	for !finished {
-		event, err := observer.Next()
+		event, err := observer.Next(h.ctx)
 		require.NoError(t, err)
 		require.Equal(t, ref.SessionID, event.SessionID)
 		observedEvents = append(observedEvents, event)

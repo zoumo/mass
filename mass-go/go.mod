@@ -17,6 +17,7 @@ require (
 )
 
 require (
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect

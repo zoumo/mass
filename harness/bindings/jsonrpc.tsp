@@ -91,6 +91,7 @@ interface Methods {
     interaction: InteractionRef,
     answer: InteractionAnswer,
   ): InteractionReceipt;
+  `session.setConfig`(session: SessionRef, change: ConfigChange): ConfigReceipt;
   `session.cancel`(session: SessionRef): CancelReceipt;
   `session.history`(session: SessionRef, query?: HistoryQuery): HistoryPage;
 

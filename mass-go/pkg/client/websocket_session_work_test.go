@@ -258,10 +258,11 @@ func TestClientSessionWorkTypedReceiptsAndOpenAnswer(t *testing.T) {
 	require.Nil(t, prompt.Acceptance.NativeRecorded)
 	encoded, err := json.Marshal(prompt)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"submission":"typed-input","acceptance":{"nativeAccepted":false}}`, string(encoded))
+	require.JSONEq(t, `{"submission":"typed-input","result":"","acceptance":{"nativeAccepted":false}}`, string(encoded))
 	inputs := fixture.driver.promptInputState()
 	require.Len(t, inputs, 1)
-	require.Equal(t, "hello", inputs[0].Content[0].Text)
+	require.NotNil(t, inputs[0].Content[0].Text)
+	require.Equal(t, "hello", inputs[0].Content[0].Text.Text)
 
 	var nullReceipt runtime.InteractionReceipt
 	nameRef := resource.SessionRef{Namespace: "demo", Name: "typed-work"}

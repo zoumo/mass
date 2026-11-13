@@ -96,6 +96,7 @@ Service 仍拥有资源、当前运行、操作接纳与结算、历史及事件
 | `session.close` | `{session: SessionRef}` | Session |
 | `session.prompt` | `{session: SessionRef, input: SessionInput}` | InputReceipt |
 | `session.answer` | `{session: SessionRef, interaction: InteractionRef, answer: InteractionAnswer}` | InteractionReceipt |
+| `session.setConfig` | `{session: SessionRef, change: ConfigChange}` | ConfigReceipt |
 | `session.cancel` | `{session: SessionRef}` | CancelReceipt |
 | `session.history` | `{session: SessionRef, query?: HistoryQuery}` | HistoryPage |
 | `session.load` | `{input: SessionLoad}` | SessionLoadAccepted |
@@ -112,9 +113,9 @@ Service 仍拥有资源、当前运行、操作接纳与结算、历史及事件
 
 `session.answer` 的 answer 属性必填，但值可以为 null；缺失和显式 null 不等价。分页保持 SessionQuery.page、HistoryQuery.after/limit/types 的原始嵌套，不复制 HTTP query 的平铺规则。
 
-runtime.update 仍完整替换 spec；create/resume/load 仍使用 Runtime Session 默认配置合并规则。create/resume 的 initialInput 仅在调用者明确提供时发送，receipt 不持久化。session.load 的结果只表示接纳，之后查询 status.historyLoad；不因为没有 HTTP 202 就改变异步语义。
+runtime.update 仍完整替换 spec；create/resume/load 仍使用 Runtime Session 默认配置合并规则。create 与 load 的显式 `config` 保存在 Session spec；create/resume 的 initialInput 仅在调用者明确提供时发送，receipt 不持久化。session.load 的结果只表示接纳，之后查询 status.historyLoad；不因为没有 HTTP 202 就改变异步语义。
 
-所有方法保留 [RuntimeService](../modules/service/runtime-service.tsp) 和 [SessionService](../modules/service/session-service.tsp) 的前置条件、成功保证和错误。新协议不新增 Session 删除、配置写入或任意事件注入。
+所有方法保留 [RuntimeService](../modules/service/runtime-service.tsp) 和 [SessionService](../modules/service/session-service.tsp) 的前置条件、成功保证和错误。`session.setConfig` 只映射既有瞬态单项更新，不回写 spec。新协议不新增 Session 删除或任意事件注入。
 
 ## 回执、超时与重试
 

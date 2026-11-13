@@ -89,7 +89,7 @@ func TestTicket14ExplicitCreateCLI(t *testing.T) {
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	cmd := exec.CommandContext(ctx(t), ctl, "--url", server.URL, "-o", "json", "session", "create", "first", "-n", "default", "--runtime", "agent", "--cwd", work, "--text", "hello")
+	cmd := exec.CommandContext(ctx(t), ctl, "--url", rpcEndpoint(server.URL), "-o", "json", "session", "create", "first", "-n", "default", "--runtime", "agent", "--cwd", work, "--text", "hello")
 	raw, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", raw)
 	var result resource.SessionCreated
@@ -145,7 +145,7 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			raw, err := json.Marshal(input.InitialInput)
 			require.NoError(t, err)
 			require.NoError(t, os.WriteFile(inputPath, raw, 0o600))
-			cmd := exec.CommandContext(ctx(t), ctl, "--url", server.URL, "-o", "json", "session", "create", "first", "-n", "default", "--runtime", "agent", "--cwd", work, "--input-file", inputPath)
+			cmd := exec.CommandContext(ctx(t), ctl, "--url", rpcEndpoint(server.URL), "-o", "json", "session", "create", "first", "-n", "default", "--runtime", "agent", "--cwd", work, "--input-file", inputPath)
 			raw, err = cmd.CombinedOutput()
 			require.NoError(t, err, "%s", raw)
 			var got resource.SessionCreated
@@ -211,26 +211,54 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 	}
 }
 
-func TestTicket14PreInitPermissionIsExplicitFailure(t *testing.T) {
-	svc, _, _ := setup(t, nil)
+func TestTicket14ClaimedSessionExposesPreInitPermission(t *testing.T) {
+	requests := make(chan events.InteractionRequested, 1)
+	svc, _, _ := setup(t, func(request events.InteractionRequested) (map[string]any, bool) {
+		requests <- request
+		return nil, false
+	})
 	path, work := nativeScenario(t, "claude", "explicit-permission")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	result, err := svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "first"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}, InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}})
-	require.Error(t, err)
-	var public *runtime.OperationError
-	require.ErrorAs(t, err, &public)
-	require.Equal(t, "outcome_unknown", public.Code)
-	require.Equal(t, "pre_identity_native_observation", public.Reason)
-	require.Empty(t, result.Status.SessionID)
-	require.Nil(t, result.InitialInputReceipt)
-	page, err := svc.ListSessions(resource.SessionQuery{})
+	result, err := svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{
+		Metadata:     resource.Metadata{Namespace: "default", Name: "first"},
+		Spec:         resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}},
+		InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("hello")}},
+	})
 	require.NoError(t, err)
-	require.Empty(t, page.Items)
+	require.NotEmpty(t, result.Status.SessionID)
+	require.NotNil(t, result.InitialInputReceipt)
+	require.NotEmpty(t, result.InitialInputReceipt.Submission)
+	require.Equal(t, runtime.Yes(), result.InitialInputReceipt.Acceptance.Sent)
+
+	var permission events.InteractionRequested
+	select {
+	case permission = <-requests:
+	case <-ctx(t).Done():
+		t.Fatal("pre-init permission was not exposed")
+	}
+	require.Equal(t, events.InteractionPermission, permission.Request.Kind)
+	require.Equal(t, "early-tool", permission.Request.ToolCallID)
+	require.NotEmpty(t, permission.Interaction)
+	require.True(t, permission.Blocking)
+
+	answered, err := svc.AnswerInteraction(ctx(t), resource.SessionRef{SessionID: result.Status.SessionID}, string(permission.Interaction), map[string]any{
+		"outcome":  "selected",
+		"optionId": "allow-once",
+	})
+	require.NoError(t, err)
+	require.Equal(t, runtime.Yes(), answered.Evidence.Sent)
+	require.Nil(t, answered.Evidence.NativeAccepted)
+	require.Eventually(t, func() bool {
+		current, getErr := svc.GetSession(resource.SessionRef{SessionID: result.Status.SessionID})
+		return getErr == nil && current.Status.State == events.Idle
+	}, 5*time.Second, 10*time.Millisecond)
+	_, err = svc.CloseSession(ctx(t), resource.SessionRef{SessionID: result.Status.SessionID})
+	require.NoError(t, err)
 	_, err = svc.StopRuntime(ctx(t), "agent")
-	require.NoError(t, err, "owned process and opening reservation are settled, not the caller input side effects")
+	require.NoError(t, err)
 }
 
 func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
@@ -254,7 +282,13 @@ func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	first, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, first.Events, 1)
-	require.Equal(t, got.InitialInputReceipt.Submission, first.Events[0].Meta["claude"].(map[string]any)["submission"])
+	require.NotEmpty(t, got.InitialInputReceipt.Submission)
+	require.Equal(t, "applied_best_effort", string(got.InitialInputReceipt.Result))
+	require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.Sent)
+	claudeMeta, ok := first.Events[0].Meta["claude"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, claudeMeta, "submission", "MASS must preserve SDK metadata without injecting submission")
+	require.Equal(t, "assistant", claudeMeta["type"])
 	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	defer h.Shutdown()

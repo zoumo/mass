@@ -2,10 +2,7 @@ package service_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -16,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -32,11 +30,6 @@ type (
 	configDispatchResult struct {
 		receipt runtime.ConfigReceipt
 		err     error
-	}
-	configHTTPResult struct {
-		status int
-		body   []byte
-		err    error
 	}
 	liveConfigDriver struct {
 		*closeDriver
@@ -161,24 +154,29 @@ func TestLiveSessionConfigurationServiceAdmission(t *testing.T) {
 
 func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 	svc, _, d, ref := newLiveConfigService(t, true)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	h, err := transport.New(svc, transport.Options{LocalOnly: true, WriteTimeout: time.Second})
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
+	c, err := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "", client.Options{
+		WriteTimeout:              time.Second,
+		SubscriptionQueueCapacity: 1,
+	})
+	require.NoError(t, err)
+	defer c.Close()
 	cases := []struct {
 		code       string
-		status     int
 		acceptance agent.Acceptance
 	}{
-		{"", 200, agent.Acceptance{}},
-		{"", 200, agent.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false), NativeRecorded: runtime.Bool(false)}},
-		{"", 200, agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes(), NativeRecorded: runtime.Yes()}},
-		{"native_rejected", 422, agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}},
-		{"unsupported", 422, agent.Acceptance{Sent: runtime.Bool(false)}},
-		{"conflict", 409, agent.Acceptance{Sent: runtime.Bool(false)}},
-		{"deadline_exceeded", 504, agent.Acceptance{Sent: runtime.Bool(false)}},
-		{"outcome_unknown", 500, agent.Acceptance{Sent: runtime.Yes()}},
+		{"", agent.Acceptance{}},
+		{"", agent.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false), NativeRecorded: runtime.Bool(false)}},
+		{"", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes(), NativeRecorded: runtime.Yes()}},
+		{"native_rejected", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}},
+		{"unsupported", agent.Acceptance{Sent: runtime.Bool(false)}},
+		{"conflict", agent.Acceptance{Sent: runtime.Bool(false)}},
+		{"deadline_exceeded", agent.Acceptance{Sent: runtime.Bool(false)}},
+		{"outcome_unknown", agent.Acceptance{Sent: runtime.Yes()}},
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%d_%s", i, tc.code), func(t *testing.T) {
@@ -196,44 +194,24 @@ func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 			result := <-done
 			require.Equal(t, receipt, result.receipt)
 			require.Equal(t, failure, result.err)
-			httpDone := make(chan configHTTPResult, 1)
+			rpcDone := make(chan configDispatchResult, 1)
 			go func() {
-				req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/configured/config", strings.NewReader(`{"id":"effort","value":" Native Effort "}`))
-				if err != nil {
-					httpDone <- configHTTPResult{err: err}
-					return
-				}
-				req.Header.Set("Content-Type", "application/json")
-				res, err := http.DefaultClient.Do(req)
-				if err != nil {
-					httpDone <- configHTTPResult{err: err}
-					return
-				}
-				defer res.Body.Close()
-				raw, err := io.ReadAll(res.Body)
-				httpDone <- configHTTPResult{status: res.StatusCode, body: raw, err: err}
+				var got runtime.ConfigReceipt
+				err := c.SetSessionConfig(t.Context(), resource.SessionRef{Namespace: "one", Name: "configured"}, change, &got)
+				rpcDone <- configDispatchResult{receipt: got, err: err}
 			}()
 			request = configRequest(t, d)
 			request.done <- configDispatchResult{receipt, failure}
-			res := <-httpDone
-			require.NoError(t, res.err)
-			require.Equal(t, tc.status, res.status, "%s", res.body)
+			res := <-rpcDone
 			if failure != nil {
-				require.JSONEq(t, fmt.Sprintf(`{"code":%q,"reason":"sdk_reason","message":"safe"}`, tc.code), string(res.body))
+				var public *runtime.OperationError
+				require.ErrorAs(t, res.err, &public)
+				require.Equal(t, tc.code, public.Code)
+				require.Equal(t, "sdk_reason", public.Reason)
+				require.Equal(t, "safe", public.Message)
 			} else {
-				var value struct {
-					Change struct {
-						ID    string `json:"id"`
-						Value string `json:"value"`
-					} `json:"change"`
-					Acceptance runtime.Acceptance `json:"acceptance"`
-				}
-				require.NoError(t, json.Unmarshal(res.body, &value))
-				require.Equal(t, string(change.ID), value.Change.ID)
-				require.Equal(t, change.Value, value.Change.Value)
-				require.Equal(t, tc.acceptance.Sent, value.Acceptance.Sent)
-				require.Equal(t, tc.acceptance.NativeAccepted, value.Acceptance.NativeAccepted)
-				require.Equal(t, tc.acceptance.NativeRecorded, value.Acceptance.NativeRecorded)
+				require.NoError(t, res.err)
+				require.Equal(t, receipt, res.receipt)
 			}
 		})
 	}

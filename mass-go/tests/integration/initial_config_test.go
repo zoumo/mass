@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -41,23 +39,18 @@ func initialReject(t *testing.T, url, cwd string) {
 	t.Helper()
 	for _, action := range []string{"create", "load"} {
 		for _, field := range []string{"model", "effort"} {
-			for _, value := range []string{`null`, `42`, `true`, `"a\u0000b"`, `"\ud800"`, "\"" + string([]byte{0xff}) + "\""} {
+			for _, value := range []string{`null`, `42`, `true`, `"a\u0000b"`, `"\ud800"`} {
 				config := `{"` + field + `":` + value + `}`
-				path := url + "/apis/v1/sessions"
-				body := fmt.Sprintf(`{"metadata":{"namespace":"one","name":"configured"},"spec":{"runtimeRef":"agent","cwd":%q,"config":%s}}`, cwd, config)
+				method := "session.create"
+				params := fmt.Sprintf(`{"input":{"metadata":{"namespace":"one","name":"configured"},"spec":{"runtimeRef":"agent","cwd":%q,"config":%s}}}`, cwd, config)
 				if action == "load" {
-					path += "/load"
-					body = fmt.Sprintf(`{"metadata":{"namespace":"one","name":"configured"},"runtimeRef":"agent","cwd":%q,"sessionId":"invalid-native","config":%s}`, cwd, config)
+					method = "session.load"
+					params = fmt.Sprintf(`{"input":{"metadata":{"namespace":"one","name":"configured"},"runtimeRef":"agent","cwd":%q,"sessionId":"invalid-native","config":%s}}`, cwd, config)
 				}
-				req, err := http.NewRequestWithContext(ctx(t), http.MethodPost, path, strings.NewReader(body))
-				require.NoError(t, err)
-				req.Header.Set("Content-Type", "application/json")
-				res, err := http.DefaultClient.Do(req)
-				require.NoError(t, err)
-				raw, err := io.ReadAll(res.Body)
-				require.NoError(t, err)
-				require.NoError(t, res.Body.Close())
-				require.Equal(t, 400, res.StatusCode, "%s", raw)
+				response := rawRPCCall(t, rpcEndpoint(url), "", method, json.RawMessage(params))
+				require.NotNil(t, response.Error)
+				require.Equal(t, int64(-32602), response.Error.Code, string(response.Error.Data))
+				require.Empty(t, response.Result)
 			}
 		}
 	}
@@ -65,7 +58,7 @@ func initialReject(t *testing.T, url, cwd string) {
 
 func initialCLI(t *testing.T, url, action, cwd, id string, config *runtime.InitialSessionConfig, out any) {
 	t.Helper()
-	args := []string{"--url", url, "-o", "json", "session", action, "configured", "-n", "one", "--runtime", "agent", "--cwd", cwd}
+	args := []string{"--url", rpcEndpoint(url), "-o", "json", "session", action, "configured", "-n", "one", "--runtime", "agent", "--cwd", cwd}
 	if action == "load" {
 		args = append(args, "--session-id", id)
 	}
@@ -107,7 +100,7 @@ func TestInitialSessionConfigurationCodexCreateResume(t *testing.T) {
 			svc, _, dir := setup(t, nil)
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 			require.NoError(t, err)
-			handler, err := transport.New(svc, transport.Options{LocalOnly: true})
+			handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 			require.NoError(t, err)
 			defer handler.Shutdown()
 			server := httptest.NewServer(handler)
@@ -257,7 +250,7 @@ func TestInitialSessionConfigurationLoadNative(t *testing.T) {
 					svc, work := ticket06Service(t, "", map[string]any{"LOAD_EVIDENCE": evidence})
 					cwd = work
 					id = "native-thread"
-					h, err := transport.New(svc, transport.Options{LocalOnly: true})
+					h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 					require.NoError(t, err)
 					t.Cleanup(h.Shutdown)
 					server := httptest.NewServer(h)

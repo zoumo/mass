@@ -228,7 +228,8 @@ func TestRPCSessionLifecycleHistoryAndExplicitReferences(t *testing.T) {
 	require.Equal(t, runtime.Yes(), created.InitialInputReceipt.Acceptance.Sent)
 	fixture.driver.mu.Lock()
 	require.Len(t, fixture.driver.openInputs, 1)
-	require.Equal(t, "explicit create", fixture.driver.openInputs[0].Content[0].Text)
+	require.NotNil(t, fixture.driver.openInputs[0].Content[0].Text)
+	require.Equal(t, "explicit create", fixture.driver.openInputs[0].Content[0].Text.Text)
 	fixture.driver.mu.Unlock()
 
 	sendCall(t, conn, "create-empty", "session.create", `{
@@ -290,7 +291,8 @@ func TestRPCSessionLifecycleHistoryAndExplicitReferences(t *testing.T) {
 	require.Equal(t, "resume-submission", resumed.InitialInputReceipt.Submission)
 	fixture.driver.mu.Lock()
 	require.Len(t, fixture.driver.resumeInputs, 1)
-	require.Equal(t, "explicit resume", fixture.driver.resumeInputs[0].Content[0].Text)
+	require.NotNil(t, fixture.driver.resumeInputs[0].Content[0].Text)
+	require.Equal(t, "explicit resume", fixture.driver.resumeInputs[0].Content[0].Text.Text)
 	fixture.driver.mu.Unlock()
 
 	event, err := events.NewEvent(events.EventBase{

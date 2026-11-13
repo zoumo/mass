@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"unicode/utf8"
 
+	"github.com/zoumo/agent-sdk-go/agent"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -32,9 +34,9 @@ type sessionCreateRPCParams struct {
 	Input json.RawMessage `json:"input"`
 }
 type sessionCreateRPCInput struct {
-	Metadata     json.RawMessage       `json:"metadata"`
-	Spec         *resource.SessionSpec `json:"spec"`
-	InitialInput json.RawMessage       `json:"initialInput"`
+	Metadata     json.RawMessage `json:"metadata"`
+	Spec         json.RawMessage `json:"spec"`
+	InitialInput json.RawMessage `json:"initialInput"`
 }
 type sessionMetadataRPC struct {
 	Namespace json.RawMessage `json:"namespace"`
@@ -68,6 +70,7 @@ type sessionLoadRPCInput struct {
 	RuntimeRef json.RawMessage `json:"runtimeRef"`
 	Cwd        json.RawMessage `json:"cwd"`
 	SessionID  json.RawMessage `json:"sessionId"`
+	Config     json.RawMessage `json:"config"`
 	Features   json.RawMessage `json:"features"`
 	MCPServers json.RawMessage `json:"mcpServers"`
 }
@@ -83,6 +86,22 @@ type historyQueryRPC struct {
 	Types json.RawMessage `json:"types"`
 	After json.RawMessage `json:"after"`
 	Limit json.RawMessage `json:"limit"`
+}
+type sessionSetConfigRPCParams struct {
+	Session json.RawMessage `json:"session"`
+	Change  json.RawMessage `json:"change"`
+}
+type sessionConfigChangeRPC struct {
+	ID    json.RawMessage `json:"id"`
+	Value json.RawMessage `json:"value"`
+}
+type configChangeWire struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+type configReceiptWire struct {
+	Change     configChangeWire   `json:"change"`
+	Acceptance runtime.Acceptance `json:"acceptance"`
 }
 
 func (c *rpcConnection) prepareSessionCall(method string, raw *json.RawMessage) (rpcCall, bool, error) {
@@ -153,6 +172,26 @@ func (c *rpcConnection) prepareSessionCall(method string, raw *json.RawMessage) 
 		}
 		return func(ctx context.Context) (any, error) {
 			return c.api.AnswerInteraction(ctx, ref, interaction, answer)
+		}, true, nil
+
+	case "session.setConfig":
+		ref, change, err := decodeSessionSetConfig(raw)
+		if err != nil {
+			return nil, true, err
+		}
+		return func(ctx context.Context) (any, error) {
+			receipt, err := c.api.SetSessionConfig(ctx, ref, change)
+			if err != nil {
+				return receipt, err
+			}
+			return configReceiptWire{
+				Change: configChangeWire{ID: string(receipt.Change.ID), Value: receipt.Change.Value},
+				Acceptance: runtime.Acceptance{
+					Sent:           receipt.Acceptance.Sent,
+					NativeAccepted: receipt.Acceptance.NativeAccepted,
+					NativeRecorded: receipt.Acceptance.NativeRecorded,
+				},
+			}, nil
 		}, true, nil
 
 	case "session.cancel":
@@ -237,6 +276,42 @@ func decodeSessionAnswer(raw *json.RawMessage) (resource.SessionRef, string, any
 	return ref, interaction, answer, nil
 }
 
+func decodeSessionSetConfig(raw *json.RawMessage) (resource.SessionRef, runtime.ConfigChange, error) {
+	var params sessionSetConfigRPCParams
+	if decodeRPCParams(raw, &params) != nil || len(params.Session) == 0 || len(params.Change) == 0 {
+		return resource.SessionRef{}, runtime.ConfigChange{}, errInvalidRPCParams
+	}
+	ref, err := decodeSessionRef(params.Session)
+	if err != nil {
+		return resource.SessionRef{}, runtime.ConfigChange{}, err
+	}
+	var wire sessionConfigChangeRPC
+	if decodeObject(params.Change, &wire) != nil || len(wire.ID) == 0 || len(wire.Value) == 0 {
+		return resource.SessionRef{}, runtime.ConfigChange{}, errInvalidRPCParams
+	}
+	id, err := decodeConfigString(wire.ID)
+	if err != nil {
+		return resource.SessionRef{}, runtime.ConfigChange{}, err
+	}
+	value, err := decodeConfigString(wire.Value)
+	if err != nil {
+		return resource.SessionRef{}, runtime.ConfigChange{}, err
+	}
+	change := runtime.ConfigChange{ID: agent.ConfigID(id), Value: value}
+	if change.Validate() != nil {
+		return resource.SessionRef{}, runtime.ConfigChange{}, errInvalidRPCParams
+	}
+	return ref, change, nil
+}
+
+func decodeConfigString(raw json.RawMessage) (string, error) {
+	value, err := decodeJSONString(raw)
+	if err != nil || !runtime.ValidConfigStringJSON(bytes.TrimSpace(raw)) {
+		return "", errInvalidRPCParams
+	}
+	return value, nil
+}
+
 func decodeOpenJSON(raw json.RawMessage) (any, error) {
 	var value any
 	if rpcwire.DecodeStrict(bytes.TrimSpace(raw), &value) != nil || events.CheckDynamicJSON(value) != nil {
@@ -251,10 +326,14 @@ func decodeSessionCreate(raw *json.RawMessage) (resource.SessionCreateInput, err
 		return resource.SessionCreateInput{}, errInvalidRPCParams
 	}
 	var wire sessionCreateRPCInput
-	if decodeObject(params.Input, &wire) != nil || len(wire.Metadata) == 0 || wire.Spec == nil {
+	if decodeObject(params.Input, &wire) != nil || len(wire.Metadata) == 0 || len(wire.Spec) == 0 {
 		return resource.SessionCreateInput{}, errInvalidRPCParams
 	}
 	metadata, err := decodeSessionMetadata(wire.Metadata)
+	if err != nil {
+		return resource.SessionCreateInput{}, err
+	}
+	spec, err := decodeSessionSpec(wire.Spec)
 	if err != nil {
 		return resource.SessionCreateInput{}, err
 	}
@@ -262,7 +341,29 @@ func decodeSessionCreate(raw *json.RawMessage) (resource.SessionCreateInput, err
 	if err != nil {
 		return resource.SessionCreateInput{}, err
 	}
-	return resource.SessionCreateInput{Metadata: metadata, Spec: *wire.Spec, InitialInput: initial}, nil
+	return resource.SessionCreateInput{Metadata: metadata, Spec: spec, InitialInput: initial}, nil
+}
+
+func decodeSessionSpec(raw json.RawMessage) (resource.SessionSpec, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return resource.SessionSpec{}, errInvalidRPCParams
+	}
+	data := bytes.TrimSpace(raw)
+	if len(data) == 0 || data[0] != '{' {
+		return resource.SessionSpec{}, errInvalidRPCParams
+	}
+	var spec resource.SessionSpec
+	if rpcwire.DecodeStrict(data, &spec) != nil {
+		return resource.SessionSpec{}, errInvalidRPCParams
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return resource.SessionSpec{}, errInvalidRPCParams
+	}
+	if config, ok := fields["config"]; ok && bytes.Equal(bytes.TrimSpace(config), []byte("null")) {
+		return resource.SessionSpec{}, errInvalidRPCParams
+	}
+	return spec, nil
 }
 
 func decodeSessionMetadata(raw json.RawMessage) (resource.Metadata, error) {
@@ -441,9 +542,13 @@ func decodeSessionLoad(raw *json.RawMessage) (resource.SessionLoad, error) {
 	if err != nil {
 		return resource.SessionLoad{}, err
 	}
+	config, err := decodeOptionalValue[runtime.InitialSessionConfig](wire.Config)
+	if err != nil {
+		return resource.SessionLoad{}, err
+	}
 	return resource.SessionLoad{
 		Metadata: metadata, RuntimeRef: runtimeRef, Cwd: cwd, SessionID: sessionID,
-		Features: features, MCPServers: servers,
+		Config: config, Features: features, MCPServers: servers,
 	}, nil
 }
 

@@ -56,6 +56,60 @@ func TestParseNotificationErrorsAreSuppressed(t *testing.T) {
 	require.True(t, err.Suppress)
 }
 
+func TestParseParamsPreservesValidJSONStringEscapes(t *testing.T) {
+	for _, params := range []string{
+		`{"text":"普通中文"}`,
+		`{"text":"line\nnext"}`,
+		`{"text":"\uD83D\uDE00"}`,
+		`{"text":"say \"hello\""}`,
+		`{"text":"C:\\work\\file"}`,
+	} {
+		message, err := Parse([]byte(`{"jsonrpc":"2.0","id":"1","method":"call","params":`+params+`}`), RoleServer)
+		require.Nil(t, err, params)
+		require.Equal(t, Request, message.Kind)
+		require.JSONEq(t, params, string(message.Params))
+	}
+}
+
+func TestParseParamsRejectsInvalidUnicodeEscapes(t *testing.T) {
+	for name, params := range map[string]string{
+		"isolated high surrogate": `{"text":"\uD83D"}`,
+		"isolated low surrogate":  `{"text":"\uDE00"}`,
+		"high then text":          `{"text":"\uD83Dx"}`,
+		"high then non-low":       `{"text":"\uD83D\u0041"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(`{"jsonrpc":"2.0","id":"1","method":"call","params":`+params+`}`), RoleServer)
+			require.NotNil(t, err)
+			require.Equal(t, int64(-32602), err.Code)
+			require.Equal(t, `"1"`, string(err.ID))
+			require.False(t, err.Suppress)
+		})
+	}
+}
+
+func TestInvalidJSONEscapeSyntaxIsRejected(t *testing.T) {
+	for name, params := range map[string]string{
+		"invalid hex":      `{"text":"\u12G4"}`,
+		"truncated hex":    `{"text":"\u123"}`,
+		"truncated escape": `{"text":"\`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.False(t, validJSONStringEscapes([]byte(params)))
+			_, err := Parse([]byte(`{"jsonrpc":"2.0","id":"1","method":"call","params":`+params+`}`), RoleServer)
+			require.NotNil(t, err)
+			require.Equal(t, int64(-32700), err.Code)
+		})
+	}
+}
+
+func TestParseNotificationSuppressesInvalidUnicodeEscapeError(t *testing.T) {
+	_, err := Parse([]byte(`{"jsonrpc":"2.0","method":"call","params":{"text":"\uD83D"}}`), RoleServer)
+	require.NotNil(t, err)
+	require.Equal(t, int64(-32602), err.Code)
+	require.True(t, err.Suppress)
+}
+
 func TestParseResponseProfile(t *testing.T) {
 	valid := []string{
 		`{"jsonrpc":"2.0","id":"a","result":null}`,

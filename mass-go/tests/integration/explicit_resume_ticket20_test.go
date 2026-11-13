@@ -1,12 +1,9 @@
 package integration_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -462,16 +459,8 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			t.Cleanup(server2.Close)
 			emptyClient := newHTTPClient(t, server2.URL, "")
 			err = emptyClient.ResumeSession(ctx(t), f.ref, nil)
-			if kind == "claude" {
-				var public *runtime.OperationError
-				require.ErrorAs(t, err, &public)
-				require.Equal(t, "unsupported", public.Code)
-				require.Equal(t, "resume_identity_unobservable", public.Reason)
-				_, err = f.svc.ResumeSessionWithInput(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
-			} else {
-				require.NoError(t, err)
-				_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
-			}
+			require.NoError(t, err)
+			_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
 			require.NoError(t, err)
 			ticket20Wait(t, f, 3)
 			_, err = f.svc.CloseSession(ctx(t), f.ref)

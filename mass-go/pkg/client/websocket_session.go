@@ -59,12 +59,21 @@ type sessionLoadParams struct {
 	Input sessionLoadInput `json:"input"`
 }
 type sessionLoadInput struct {
-	Metadata   sessionMetadata          `json:"metadata"`
-	RuntimeRef string                   `json:"runtimeRef"`
-	Cwd        string                   `json:"cwd"`
-	SessionID  string                   `json:"sessionId"`
-	Features   *runtime.SessionFeatures `json:"features,omitempty"`
-	MCPServers *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
+	Metadata   sessionMetadata               `json:"metadata"`
+	RuntimeRef string                        `json:"runtimeRef"`
+	Cwd        string                        `json:"cwd"`
+	SessionID  string                        `json:"sessionId"`
+	Config     *runtime.InitialSessionConfig `json:"config,omitempty"`
+	Features   *runtime.SessionFeatures      `json:"features,omitempty"`
+	MCPServers *[]runtime.MCPServer          `json:"mcpServers,omitempty"`
+}
+type sessionSetConfigParams struct {
+	Session resource.SessionRef      `json:"session"`
+	Change  sessionConfigChangeInput `json:"change"`
+}
+type sessionConfigChangeInput struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
 }
 type sessionCancelLoadParams struct {
 	Session resource.SessionRef `json:"session"`
@@ -82,6 +91,9 @@ type historyQuery struct {
 
 // CreateSession creates a Session without sending an initial input.
 func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any) error {
+	if err := v.Spec.Config.Validate(); err != nil {
+		return invalid()
+	}
 	return c.callWork(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
 		Metadata: sessionMetadata{Namespace: v.Metadata.Namespace, Name: v.Metadata.Name},
 		Spec:     v.Spec,
@@ -90,10 +102,21 @@ func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any)
 
 // CreateSessionWithInput sends create-only input and preserves its receipt.
 func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionCreateInput, out any) error {
+	if err := v.Spec.Config.Validate(); err != nil {
+		return invalid()
+	}
+	var initial *runtime.Input
+	if v.InitialInput != nil {
+		copied, err := runtime.CopyInput(*v.InitialInput)
+		if err != nil {
+			return err
+		}
+		initial = &copied
+	}
 	return c.callWork(ctx, "session.create", sessionCreateParams{Input: sessionCreateInput{
 		Metadata:     sessionMetadata{Namespace: v.Metadata.Namespace, Name: v.Metadata.Name},
 		Spec:         v.Spec,
-		InitialInput: v.InitialInput,
+		InitialInput: initial,
 	}}, out)
 }
 
@@ -187,6 +210,21 @@ func (c *Client) Answer(ctx context.Context, ref resource.SessionRef, interactio
 	}, out)
 }
 
+// SetSessionConfig applies one transient configuration change to the original
+// live Session and never retries an unconfirmed outcome.
+func (c *Client) SetSessionConfig(ctx context.Context, ref resource.SessionRef, change runtime.ConfigChange, out any) error {
+	if err := validateSessionRef(ref); err != nil {
+		return err
+	}
+	if err := change.Validate(); err != nil {
+		return invalid()
+	}
+	return c.callWork(ctx, "session.setConfig", sessionSetConfigParams{
+		Session: ref,
+		Change:  sessionConfigChangeInput{ID: string(change.ID), Value: change.Value},
+	}, out)
+}
+
 // Cancel targets the work fixed when the Service admits the request.
 func (c *Client) Cancel(ctx context.Context, ref resource.SessionRef, out any) error {
 	if err := validateSessionRef(ref); err != nil {
@@ -200,11 +238,15 @@ func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, ou
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return err
 	}
+	if err := input.Config.Validate(); err != nil {
+		return invalid()
+	}
 	return c.callWork(ctx, "session.load", sessionLoadParams{Input: sessionLoadInput{
 		Metadata:   sessionMetadata{Namespace: input.Metadata.Namespace, Name: input.Metadata.Name},
 		RuntimeRef: input.RuntimeRef,
 		Cwd:        input.Cwd,
 		SessionID:  input.SessionID,
+		Config:     input.Config,
 		Features:   input.Features,
 		MCPServers: input.MCPServers,
 	}}, out)

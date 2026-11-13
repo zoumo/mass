@@ -277,14 +277,14 @@ func TestRPCSessionWorkReceiptsAndOpenNullAnswer(t *testing.T) {
 	}`, sessionWorkRefJSON(t, fixture.ref)))
 	prompt := readRPC(t, conn)
 	require.Nil(t, prompt.Error)
-	require.JSONEq(t, `{"submission":"input-1","acceptance":{"nativeAccepted":false}}`, string(prompt.Result))
+	require.JSONEq(t, `{"submission":"input-1","result":"","acceptance":{"nativeAccepted":false}}`, string(prompt.Result))
 	require.NotContains(t, string(prompt.Result), `"sent"`)
 	require.NotContains(t, string(prompt.Result), `"nativeRecorded"`)
 	inputs := fixture.driver.promptInputState()
 	require.Len(t, inputs, 1)
 	require.Len(t, inputs[0].Content, 1)
-	require.Equal(t, "text", inputs[0].Content[0].Type)
-	require.Equal(t, "hello", inputs[0].Content[0].Text)
+	require.NotNil(t, inputs[0].Content[0].Text)
+	require.Equal(t, "hello", inputs[0].Content[0].Text.Text)
 
 	openAnswer := `{"value":9007199254740993,"deep":{"items":[null,9007199254740993]}}`
 	sendCall(t, conn, "answer-open", "session.answer", fmt.Sprintf(`{
@@ -433,7 +433,7 @@ func TestRPCSessionWorkLongPromptAllowsConcurrentCancelAndAnswer(t *testing.T) {
 	prompt := readRPC(t, conn)
 	require.Equal(t, `"prompt"`, string(prompt.ID))
 	require.Nil(t, prompt.Error)
-	require.JSONEq(t, `{"submission":"late-input","acceptance":{}}`, string(prompt.Result))
+	require.JSONEq(t, `{"submission":"late-input","result":"","acceptance":{}}`, string(prompt.Result))
 	select {
 	case <-finished:
 	case <-time.After(2 * time.Second):

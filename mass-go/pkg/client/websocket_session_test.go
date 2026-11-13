@@ -177,7 +177,8 @@ func TestClientSessionLifecycleAndHistory(t *testing.T) {
 	require.Equal(t, runtime.Yes(), created.InitialInputReceipt.Acceptance.Sent)
 	driver.mu.Lock()
 	require.Len(t, driver.openInputs, 1)
-	require.Equal(t, "create input", driver.openInputs[0].Content[0].Text)
+	require.NotNil(t, driver.openInputs[0].Content[0].Text)
+	require.Equal(t, "create input", driver.openInputs[0].Content[0].Text.Text)
 	driver.mu.Unlock()
 
 	var byID resource.Session
@@ -220,7 +221,8 @@ func TestClientSessionLifecycleAndHistory(t *testing.T) {
 	require.Equal(t, "typed-resume", resumed.InitialInputReceipt.Submission)
 	driver.mu.Lock()
 	require.Len(t, driver.resumeInputs, 1)
-	require.Equal(t, "resume input", driver.resumeInputs[0].Content[0].Text)
+	require.NotNil(t, driver.resumeInputs[0].Content[0].Text)
+	require.Equal(t, "resume input", driver.resumeInputs[0].Content[0].Text.Text)
 	driver.mu.Unlock()
 
 	event, err := events.NewEvent(events.EventBase{

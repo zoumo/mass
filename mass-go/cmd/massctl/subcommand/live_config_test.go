@@ -3,8 +3,6 @@ package subcommand_test
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -18,22 +16,17 @@ func TestLiveSessionConfigurationCLI(t *testing.T) {
 	for _, namespace := range []string{"", "demo"} {
 		t.Run("namespace="+namespace, func(t *testing.T) {
 			calls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			endpoint := newRPCService(t, "", func(call *rpcTestCall) {
 				calls++
-				path := "/apis/v1/sessions/target/config"
+				assert.Equal(t, "session.setConfig", call.Method)
+				expected := `{"session":{"sessionId":"target"},"change":{"id":"model","value":" Native Model "}}`
 				if namespace != "" {
-					path = "/apis/v1/namespaces/demo/sessions/target/config"
+					expected = `{"session":{"namespace":"demo","name":"target"},"change":{"id":"model","value":" Native Model "}}`
 				}
-				assert.Equal(t, path, r.URL.Path)
-				assert.Equal(t, http.MethodPost, r.Method)
-				var body map[string]any
-				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				assert.Equal(t, map[string]any{"id": "model", "value": " Native Model "}, body)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"change":{"id":"model","value":" Native Model "},"acceptance":{"sent":true,"nativeAccepted":false}}`))
-			}))
-			defer server.Close()
-			args := []string{"--url", server.URL, "-o", "json", "session", "set-config", "target", "--id", "model", "--value", " Native Model "}
+				assert.JSONEq(t, expected, string(call.Params))
+				call.respond(json.RawMessage(`{"change":{"id":"model","value":" Native Model "},"acceptance":{"sent":true,"nativeAccepted":false}}`))
+			})
+			args := []string{"--url", endpoint, "-o", "json", "session", "set-config", "target", "--id", "model", "--value", " Native Model "}
 			if namespace != "" {
 				args = append(args, "-n", namespace)
 			}
@@ -46,10 +39,11 @@ func TestLiveSessionConfigurationCLI(t *testing.T) {
 }
 
 func TestLiveSessionConfigurationCLIValidation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("invalid change dispatched") }))
-	defer server.Close()
+	var calls int
+	endpoint := newRPCService(t, "", func(*rpcTestCall) { calls++ })
 	for _, pair := range [][2]string{{"future", "x"}, {"model", ""}, {"effort", "bad\x00"}, {"model", string([]byte{0xff})}} {
 		var out, stderr bytes.Buffer
-		require.Equal(t, 2, subcommand.Run(t.Context(), []string{"--url", server.URL, "session", "set-config", "native", "--id", pair[0], "--value", pair[1]}, strings.NewReader(""), &out, &stderr), stderr.String())
+		require.Equal(t, 2, subcommand.Run(t.Context(), []string{"--url", endpoint, "session", "set-config", "native", "--id", pair[0], "--value", pair[1]}, strings.NewReader(""), &out, &stderr), stderr.String())
 	}
+	require.Zero(t, calls)
 }

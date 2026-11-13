@@ -247,8 +247,19 @@ func (s *Subscription) handle(req *rpc2.Request) {
 	switch req.Method {
 	case "session.event":
 		var notification sessionEventNotification
-		if req.Params == nil || rpcwire.DecodeStrict(*req.Params, &notification) != nil ||
-			notification.SubscriptionID != s.id {
+		if req.Params == nil {
+			s.protocolFailure("invalid session.event notification")
+			return
+		}
+		if err := rpcwire.DecodeStrict(*req.Params, &notification); err != nil {
+			if errors.Is(err, events.ErrLegacyEventSchema) {
+				s.finish(err)
+				return
+			}
+			s.protocolFailure("invalid session.event notification")
+			return
+		}
+		if notification.SubscriptionID != s.id {
 			s.protocolFailure("invalid session.event notification")
 			return
 		}

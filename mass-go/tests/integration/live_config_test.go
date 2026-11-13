@@ -254,7 +254,7 @@ func liveConfigHTTP(t *testing.T, kind string, allowShutdownError ...bool) (*ser
 	})
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": liveConfigBinary, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": peer.listener.Addr().String(), "CLAUDE_CONFIG_DIR": configDir}}}})
 	require.NoError(t, err)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true})
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
 	require.NoError(t, err)
 	t.Cleanup(h.Shutdown)
 	server := httptest.NewServer(h)
@@ -271,7 +271,7 @@ func liveConfigHTTP(t *testing.T, kind string, allowShutdownError ...bool) (*ser
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, created.Status.SessionID+".jsonl"), append(raw, '\n'), 0o600))
 	}
-	return svc, c, server.URL, peer, created
+	return svc, c, rpcEndpoint(server.URL), peer, created
 }
 
 type configCallResult struct {

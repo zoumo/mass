@@ -124,6 +124,9 @@ func parseRequest(object map[string]json.RawMessage, role Role) (Message, *Profi
 		if len(trimmed) == 0 || trimmed[0] != '{' {
 			return Message{}, &ProfileError{Code: -32602, Message: "Invalid params", ID: id, Suppress: notification}
 		}
+		if !validJSONStringEscapes(trimmed) {
+			return Message{}, &ProfileError{Code: -32602, Message: "Invalid params", ID: id, Suppress: notification}
+		}
 	}
 
 	kind := Request
@@ -131,6 +134,57 @@ func parseRequest(object map[string]json.RawMessage, role Role) (Message, *Profi
 		kind = Notification
 	}
 	return Message{Kind: kind, ID: id, Method: method, Params: params}, nil
+}
+
+// validJSONStringEscapes rejects isolated UTF-16 surrogate escapes. JSON
+// grammar allows them, but the decoded value would silently become U+FFFD
+// instead of the string the caller sent.
+func validJSONStringEscapes(data []byte) bool {
+	inString := false
+	for i := 0; i < len(data); i++ {
+		switch {
+		case !inString:
+			if data[i] == '"' {
+				inString = true
+			}
+			continue
+		case data[i] == '"':
+			inString = false
+			continue
+		case data[i] != '\\':
+			continue
+		}
+		i++
+		if i >= len(data) {
+			return false
+		}
+		if data[i] != 'u' {
+			continue
+		}
+		if i+4 >= len(data) {
+			return false
+		}
+		high, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
+		if err != nil {
+			return false
+		}
+		i += 4
+		if high >= 0xDC00 && high <= 0xDFFF {
+			return false
+		}
+		if high < 0xD800 || high > 0xDBFF {
+			continue
+		}
+		if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+			return false
+		}
+		low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
+		if err != nil || low < 0xDC00 || low > 0xDFFF {
+			return false
+		}
+		i += 6
+	}
+	return true
 }
 
 func parseResponse(object map[string]json.RawMessage, role Role) (Message, *ProfileError) {

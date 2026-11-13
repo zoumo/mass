@@ -1,20 +1,23 @@
 package client_test
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 func TestInitialSessionConfigurationClientRejectsInvalidBeforeRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("invalid config sent") }))
-	defer server.Close()
-	c := newHTTPClient(t, server.URL, "")
+	c, err := client.New("ws://127.0.0.1:1/rpc", "", client.Options{
+		WriteTimeout:              time.Second,
+		SubscriptionQueueCapacity: 1,
+	})
+	require.NoError(t, err)
+	defer c.Close()
 	for _, bad := range []string{"nul\x00", string([]byte{0xff})} {
 		for _, config := range []*runtime.InitialSessionConfig{{Model: bad}, {Effort: bad}} {
 			spec := resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/work", Config: config}}

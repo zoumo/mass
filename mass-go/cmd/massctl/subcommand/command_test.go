@@ -112,18 +112,21 @@ func (s *CommandSuite) TestWatchJSONPreservesToolIdentityAcrossFrames() {
 		`{"eventId":"10000000-0000-4000-8000-000000000001","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:00Z","itemId":"tool_1","type":"agent.tool_call","payload":{"id":"tool_1","kind":"read","toolName":"Read","provider":"agent","status":"in_progress","rawInput":{"path":"README.md"}}}`,
 		`{"eventId":"10000000-0000-4000-8000-000000000002","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:01Z","itemId":"tool_1","type":"agent.tool_result","payload":{"id":"tool_1","kind":"read","toolName":"Read","provider":"agent","status":"completed","rawInput":{"path":"README.md"},"content":[{"type":"text","text":"hello"}]}}`,
 	}
-	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "event: subscription.ready\ndata: {}\n\n")
+	endpoint := newRPCService(s.T(), "", func(call *rpcTestCall) {
+		s.Equal("session.subscribe", call.Method)
+		s.JSONEq(`{"session":{"sessionId":"test"}}`, string(call.Params))
+		call.respond(json.RawMessage(`{"subscriptionId":"sub-1"}`))
 		for _, event := range events {
-			_, _ = fmt.Fprintf(w, "event: session.event\ndata: %s\n\n", event)
+			call.notify("session.event", map[string]any{
+				"subscriptionId": "sub-1",
+				"event":          json.RawMessage(event),
+			})
 		}
-		_, _ = fmt.Fprint(w, "event: subscription.closed\ndata: {}\n\n")
-	}))
-	defer h.Close()
+		call.notify("subscription.closed", map[string]any{"subscriptionId": "sub-1"})
+	})
 
 	var out, stderr bytes.Buffer
-	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-ojson", "session", "watch", "test"}, strings.NewReader(""), &out, &stderr), stderr.String())
+	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", endpoint, "-ojson", "session", "watch", "test"}, strings.NewReader(""), &out, &stderr), stderr.String())
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	s.Require().Len(lines, len(events))
 	for i, line := range lines {
@@ -146,14 +149,16 @@ func (s *CommandSuite) TestWatchRejectsLegacyEventSchemaDistinctly() {
 		"tool identity": `{"eventId":"10000000-0000-4000-8000-000000000002","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:00Z","itemId":"tool_1","type":"agent.tool_call","payload":{"id":"tool_1","kind":"read","name":"Read","rawInput":{"path":"README.md"}}}`,
 	} {
 		s.Run(name, func() {
-			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = fmt.Fprintf(w, "event: subscription.ready\ndata: {}\n\nevent: session.event\ndata: %s\n\n", event)
-			}))
-			defer h.Close()
+			endpoint := newRPCService(s.T(), "", func(call *rpcTestCall) {
+				call.respond(json.RawMessage(`{"subscriptionId":"sub-1"}`))
+				call.notify("session.event", map[string]any{
+					"subscriptionId": "sub-1",
+					"event":          json.RawMessage(event),
+				})
+			})
 
 			var out, stderr bytes.Buffer
-			s.Equal(1, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-ojson", "session", "watch", "test"}, strings.NewReader(""), &out, &stderr), stderr.String())
+			s.Equal(1, subcommand.Run(s.T().Context(), []string{"--url", endpoint, "-ojson", "session", "watch", "test"}, strings.NewReader(""), &out, &stderr), stderr.String())
 			s.Empty(out.String())
 			var public map[string]string
 			for line := range strings.SplitSeq(stderr.String(), "\n") {
