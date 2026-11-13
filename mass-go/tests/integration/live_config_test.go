@@ -68,20 +68,20 @@ type configNativePeer struct {
 	mu            sync.Mutex
 	conns         map[net.Conn]bool
 	wg            sync.WaitGroup
+	acceptWG      sync.WaitGroup
 	trace         []string
 }
 
 func newConfigNativePeer(t *testing.T, kind, cwd string) *configNativePeer {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	p := &configNativePeer{kind: kind, cwd: cwd, id: "native-thread", listener: listener, calls: make(chan configNativeCall, 64), opened: make(chan []string, 8), done: make(chan struct{}), conns: map[net.Conn]bool{}}
 	if kind == "claude" {
 		p.id = "33333333-3333-4333-8333-333333333333"
 	}
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.acceptWG.Go(func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
@@ -90,31 +90,39 @@ func newConfigNativePeer(t *testing.T, kind, cwd string) *configNativePeer {
 			p.mu.Lock()
 			p.conns[conn] = true
 			p.mu.Unlock()
-			p.wg.Add(1)
-			go p.serve(conn)
+			p.wg.Go(func() { p.serve(conn) })
 		}
-	}()
+	})
 	t.Cleanup(func() {
 		close(p.done)
 		_ = listener.Close()
+		p.acceptWG.Wait()
 		p.mu.Lock()
 		for c := range p.conns {
 			_ = c.Close()
 		}
 		p.mu.Unlock()
 		p.wg.Wait()
-		_, err := net.Dial("tcp", listener.Addr().String())
+		var dialer net.Dialer
+		_, err := dialer.DialContext(t.Context(), "tcp", listener.Addr().String())
 		require.Error(t, err)
 	})
 	return p
 }
 
 func (p *configNativePeer) serve(conn net.Conn) {
-	defer p.wg.Done()
 	defer conn.Close()
 	defer func() { p.mu.Lock(); delete(p.conns, conn); p.mu.Unlock() }()
 	var writeMu sync.Mutex
-	send := func(v any) { writeMu.Lock(); defer writeMu.Unlock(); _ = json.NewEncoder(conn).Encode(v) }
+	send := func(v any) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if err := json.NewEncoder(conn).Encode(v); err != nil {
+			p.mu.Lock()
+			p.trace = append(p.trace, "write error: "+err.Error())
+			p.mu.Unlock()
+		}
+	}
 	thread := func() map[string]any {
 		return map[string]any{"id": p.id, "sessionId": "native-session", "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": p.cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
 	}
@@ -300,7 +308,7 @@ func TestLiveSessionConfigurationNativePublic(t *testing.T) {
 			ref := resource.SessionRef{SessionID: created.Status.SessionID}
 			for _, id := range []agent.ConfigID{agent.ConfigModel, agent.ConfigEffort} {
 				change := runtime.ConfigChange{ID: id, Value: " Native/Value " + string(id)}
-				for repeat := 0; repeat < 2; repeat++ {
+				for repeat := range 2 {
 					// The first model request traverses the real massctl process.
 					var done <-chan configCallResult
 					var cliDone chan error
@@ -371,7 +379,7 @@ func TestLiveSessionConfigurationNativePublic(t *testing.T) {
 			require.NoError(t, c.ResumeSession(ctx(t), ref, &resumed))
 			require.Equal(t, created.Spec, resumed.Spec)
 			if kind == "claude" {
-				for n := 0; n < 2; n++ {
+				for range 2 {
 					select {
 					case args := <-peer.opened:
 						require.Contains(t, args, "--model=initial/model")

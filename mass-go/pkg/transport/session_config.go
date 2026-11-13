@@ -17,7 +17,7 @@ type configChange struct {
 	Value string         `json:"value" minLength:"1"`
 }
 
-func (c configChange) sdk() runtime.ConfigChange {
+func (c *configChange) sdk() runtime.ConfigChange {
 	return runtime.ConfigChange{ID: c.ID, Value: c.Value}
 }
 

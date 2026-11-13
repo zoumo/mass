@@ -33,6 +33,11 @@ type (
 		receipt runtime.ConfigReceipt
 		err     error
 	}
+	configHTTPResult struct {
+		status int
+		body   []byte
+		err    error
+	}
 	liveConfigDriver struct {
 		*closeDriver
 		requests chan configDispatch
@@ -191,28 +196,30 @@ func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 			result := <-done
 			require.Equal(t, receipt, result.receipt)
 			require.Equal(t, failure, result.err)
-			httpDone := make(chan *http.Response, 1)
+			httpDone := make(chan configHTTPResult, 1)
 			go func() {
-				req, err := http.NewRequestWithContext(t.Context(), "POST", server.URL+"/apis/v1/namespaces/one/sessions/configured/config", strings.NewReader(`{"id":"effort","value":" Native Effort "}`))
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/configured/config", strings.NewReader(`{"id":"effort","value":" Native Effort "}`))
 				if err != nil {
-					panic(err)
+					httpDone <- configHTTPResult{err: err}
+					return
 				}
 				req.Header.Set("Content-Type", "application/json")
 				res, err := http.DefaultClient.Do(req)
 				if err != nil {
-					panic(err)
+					httpDone <- configHTTPResult{err: err}
+					return
 				}
-				httpDone <- res
+				defer res.Body.Close()
+				raw, err := io.ReadAll(res.Body)
+				httpDone <- configHTTPResult{status: res.StatusCode, body: raw, err: err}
 			}()
 			request = configRequest(t, d)
 			request.done <- configDispatchResult{receipt, failure}
 			res := <-httpDone
-			defer res.Body.Close()
-			raw, err := io.ReadAll(res.Body)
-			require.NoError(t, err)
-			require.Equal(t, tc.status, res.StatusCode, "%s", raw)
+			require.NoError(t, res.err)
+			require.Equal(t, tc.status, res.status, "%s", res.body)
 			if failure != nil {
-				require.JSONEq(t, fmt.Sprintf(`{"code":%q,"reason":"sdk_reason","message":"safe"}`, tc.code), string(raw))
+				require.JSONEq(t, fmt.Sprintf(`{"code":%q,"reason":"sdk_reason","message":"safe"}`, tc.code), string(res.body))
 			} else {
 				var value struct {
 					Change struct {
@@ -221,7 +228,7 @@ func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 					} `json:"change"`
 					Acceptance runtime.Acceptance `json:"acceptance"`
 				}
-				require.NoError(t, json.Unmarshal(raw, &value))
+				require.NoError(t, json.Unmarshal(res.body, &value))
 				require.Equal(t, string(change.ID), value.Change.ID)
 				require.Equal(t, change.Value, value.Change.Value)
 				require.Equal(t, tc.acceptance.Sent, value.Acceptance.Sent)

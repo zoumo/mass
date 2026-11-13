@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/cmd/massctl/subcommand"
@@ -20,16 +21,16 @@ func TestInitialSessionConfigurationCLI(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				var body map[string]any
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 				target := body
 				if action == "create" {
 					target = body["spec"].(map[string]any)
 				}
-				require.Equal(t, map[string]any{"model": " Native Model ", "effort": " MAX "}, target["config"])
+				assert.Equal(t, map[string]any{"model": " Native Model ", "effort": " MAX "}, target["config"])
 				if action == "load" {
-					w.WriteHeader(202)
+					w.WriteHeader(http.StatusAccepted)
 				} else {
-					w.WriteHeader(201)
+					w.WriteHeader(http.StatusCreated)
 				}
 				_, _ = w.Write([]byte(`{}`))
 			}))

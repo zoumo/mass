@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/cmd/massctl/subcommand"
@@ -23,11 +24,11 @@ func TestLiveSessionConfigurationCLI(t *testing.T) {
 				if namespace != "" {
 					path = "/apis/v1/namespaces/demo/sessions/target/config"
 				}
-				require.Equal(t, path, r.URL.Path)
-				require.Equal(t, "POST", r.Method)
+				assert.Equal(t, path, r.URL.Path)
+				assert.Equal(t, http.MethodPost, r.Method)
 				var body map[string]any
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				require.Equal(t, map[string]any{"id": "model", "value": " Native Model "}, body)
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.Equal(t, map[string]any{"id": "model", "value": " Native Model "}, body)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"change":{"id":"model","value":" Native Model "},"acceptance":{"sent":true,"nativeAccepted":false}}`))
 			}))

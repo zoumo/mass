@@ -19,7 +19,7 @@ func TestLiveSessionConfigurationClientValidationAndNoRetry(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"code":"outcome_unknown","reason":"set_config_unknown","message":"do not resend"}`))
 	}))
 	defer server.Close()

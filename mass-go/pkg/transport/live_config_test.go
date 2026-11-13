@@ -39,7 +39,7 @@ func TestLiveSessionConfigurationHTTPValidation(t *testing.T) {
 	for _, path := range []string{"/apis/v1/sessions/native/config", "/apis/v1/namespaces/one/sessions/name/config"} {
 		for i, body := range cases {
 			t.Run(fmt.Sprintf("%s/%d", path, i), func(t *testing.T) {
-				request := httptest.NewRequest("POST", path, strings.NewReader(body))
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
 				request.RemoteAddr = "127.0.0.1:12345"
 				request.Header.Set("Content-Type", "application/json")
 				response := httptest.NewRecorder()
