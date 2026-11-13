@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	agenttestify "github.com/zoumo/agent-sdk-testify"
 )
 
 type artifactCase struct {
@@ -1130,16 +1131,12 @@ func executionEvidencePaths(t *testing.T, session string) (string, string, strin
 	}
 	readJSON(t, indexPath, &index)
 	require.Len(t, index.Executions, 1)
-	descriptor := filepath.Join(session, "executions", index.Executions[0].ID, "execution.json")
-	var desc struct {
-		Connections []struct {
-			Receipt        string `json:"receipt"`
-			ProcessReceipt string `json:"processReceipt"`
-		} `json:"connections"`
-	}
-	readJSON(t, descriptor, &desc)
-	require.Len(t, desc.Connections, 1)
-	return descriptor, desc.Connections[0].Receipt, desc.Connections[0].ProcessReceipt
+	fixture, err := agenttestify.Open(session)
+	require.NoError(t, err)
+	report, err := fixture.ExecutionReport(index.Executions[0].ID)
+	require.NoError(t, err)
+	require.Len(t, report.Connections, 1)
+	return report.ExecutionPath, report.Connections[0].ReceiptPath, report.Connections[0].ProcessReceiptPath
 }
 
 func mustReadFile(t *testing.T, filePath string) []byte {

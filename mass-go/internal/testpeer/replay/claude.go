@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 
@@ -8,6 +9,56 @@ import (
 )
 
 const assignedSessionPlaceholder = "claude-session"
+
+// syntheticCWD is the placeholder path those synthetic fixtures use for a
+// working directory. A claiming peer reports the directory the CLI was
+// actually bound to, so no fixture depends on a real path.
+const syntheticCWD = "/synthetic"
+
+func replaceSyntheticCWD(value rawjson.Value, cwd string) (rawjson.Value, error) {
+	if stringMember(value, "cwd") != syntheticCWD {
+		return value, nil
+	}
+	replacement, err := rawjson.Parse([]byte(strconv.Quote(cwd)))
+	if err != nil {
+		return rawjson.Value{}, err
+	}
+	return value.Replace([]string{"cwd"}, replacement)
+}
+
+// claimExchange answers a synthetic spare's claim_session request with the
+// identity this peer assigned. It mirrors the native reply shape without
+// inventing any model or account fact.
+func claimExchange(value rawjson.Value, sessionID string) (rawjson.Value, bool, error) {
+	if stringMember(value, "type") != "control_request" {
+		return rawjson.Value{}, false, nil
+	}
+	request := member(value, "request")
+	if stringMember(request, "subtype") != "claim_session" {
+		return rawjson.Value{}, false, nil
+	}
+	cwd := stringMember(request, "cwd")
+	if cwd == "" {
+		return rawjson.Value{}, true, errors.New("claim_session has no working directory")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype":    "success",
+			"request_id": json.RawMessage(member(value, "request_id").Raw()),
+			"response": map[string]any{
+				"status":     "ok",
+				"session_id": sessionID,
+				"cwd":        cwd,
+			},
+		},
+	})
+	if err != nil {
+		return rawjson.Value{}, true, err
+	}
+	reply, err := rawjson.Parse(payload)
+	return reply, true, err
+}
 
 type claudeAdapter struct {
 	requests

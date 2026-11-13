@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -171,9 +172,15 @@ func (p *configNativePeer) serve(conn net.Conn) {
 				respond(map[string]any{"userAgent": "synthetic", "codexHome": "/synthetic", "platformFamily": "unix", "platformOs": "linux"})
 			} else {
 				respond(map[string]any{})
-				send(map[string]any{"type": "system", "subtype": "init", "session_id": p.id, "cwd": p.cwd, "claude_code_version": "2.1.258"})
+				send(map[string]any{"type": "system", "subtype": "init", "session_id": p.id, "cwd": p.cwd, "claude_code_version": nativeclaude.MinimumCLIVersion})
 				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": p.id, "state": "idle"})
 			}
+		case "claim_session":
+			cwd, _ := params["cwd"].(string)
+			if cwd == "" {
+				cwd = p.cwd
+			}
+			respond(map[string]any{"status": "ok", "session_id": p.id, "cwd": cwd})
 		case "initialized":
 		case "thread/start", "thread/resume":
 			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": p.cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})

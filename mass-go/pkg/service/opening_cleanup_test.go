@@ -28,7 +28,7 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 	dir := t.TempDir()
 	peer := filepath.Join(dir, "peer")
 	pidFile := filepath.Join(dir, "pid")
-	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\nexit 1\n"), 0o700))
+	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\nexit 1\n"), 0o700))
 	st, err := file.Open(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
@@ -78,7 +78,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 					if mode == "timeout" {
 						ending = "echo ready > '" + ready + "'\nwhile read -r request; do :; done\n"
 					}
-					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\n"+ending), 0o700))
+					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\n"+ending), 0o700))
 				}
 				var factory runtime.Factory = claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}
 				if kind == "codex" {
@@ -135,7 +135,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
 	dir := t.TempDir()
 	peer, ready, pidFile := filepath.Join(dir, "peer"), filepath.Join(dir, "ready"), filepath.Join(dir, "pid")
-	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\necho ready > '"+ready+"'\nwhile read -r request; do :; done\n"), 0o700))
+	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\necho ready > '"+ready+"'\nwhile read -r request; do :; done\n"), 0o700))
 	st, err := file.Open(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })

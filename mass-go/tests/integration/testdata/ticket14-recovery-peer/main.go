@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 var sessionID = "14141414-1414-4141-8141-141414141414"
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("2.1.258 (Claude Code)")
+	if clipeer.Version() {
 		return
 	}
 	dir := os.Getenv("PEER_DIR")
@@ -81,6 +82,10 @@ func main() {
 			if v["type"] == "control_request" {
 				r := v["request"].(map[string]any)
 				log(r["subtype"].(string), nil)
+				if reply, ok := clipeer.ClaimReply(v, sessionID); ok {
+					send(reply)
+					continue
+				}
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 				if r["subtype"] == "initialize" && !(resumed && mode == "hold-init") {
 					init()

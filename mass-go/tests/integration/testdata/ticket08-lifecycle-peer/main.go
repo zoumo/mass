@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("2.1.258 (Claude Code)")
+	if clipeer.Version() {
 		return
 	}
 	evidence := os.Getenv("EVIDENCE")
@@ -159,6 +160,10 @@ func runClaude(send func(any), cwd string) {
 		switch v["type"] {
 		case "control_request":
 			r := v["request"].(map[string]any)
+			if reply, ok := clipeer.ClaimReply(v, id); ok {
+				send(reply)
+				continue
+			}
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 			if r["subtype"] == "initialize" {
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd, "tools": []any{}})

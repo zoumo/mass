@@ -4,9 +4,44 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
+
+func TestMCPServerSDKServerMapsAndCopiesConfiguration(t *testing.T) {
+	server := runtime.MCPServer{
+		Name:              "remote",
+		Type:              runtime.MCPTransportHTTP,
+		Args:              []string{"--unused"},
+		Env:               map[string]string{"ENV_TOKEN": "${ENV_TOKEN}"},
+		URL:               "https://example.invalid/mcp",
+		Headers:           map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		EnvHeaders:        map[string]string{"X-API-Key": "API_KEY"},
+		BearerTokenEnvVar: "TOKEN",
+	}
+
+	converted := server.SDKServer()
+	require.Equal(t, mcp.Server{
+		Name:              "remote",
+		Transport:         mcp.TransportHTTP,
+		Args:              []string{"--unused"},
+		Env:               map[string]string{"ENV_TOKEN": "${ENV_TOKEN}"},
+		URL:               "https://example.invalid/mcp",
+		Headers:           map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		EnvHeaders:        map[string]string{"X-API-Key": "API_KEY"},
+		BearerTokenEnvVar: "TOKEN",
+	}, converted)
+
+	converted.Args[0] = "--changed"
+	converted.Env["ENV_TOKEN"] = "changed"
+	converted.Headers["Authorization"] = "changed"
+	converted.EnvHeaders["X-API-Key"] = "changed"
+	require.Equal(t, []string{"--unused"}, server.Args)
+	require.Equal(t, "${ENV_TOKEN}", server.Env["ENV_TOKEN"])
+	require.Equal(t, "Bearer ${TOKEN}", server.Headers["Authorization"])
+	require.Equal(t, "API_KEY", server.EnvHeaders["X-API-Key"])
+}
 
 func TestValidateSessionDefaults(t *testing.T) {
 	servers := []runtime.MCPServer{{

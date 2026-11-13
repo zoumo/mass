@@ -3,15 +3,15 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"os"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("2.1.258 (Claude Code)")
+	if clipeer.Version() {
 		return
 	}
 	conn, err := net.Dial("tcp", os.Getenv("CONFIG_PEER_ADDR"))

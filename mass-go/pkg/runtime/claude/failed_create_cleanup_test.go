@@ -9,8 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -29,13 +29,9 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 	if dir == "" {
 		return
 	}
-	sessionID := ""
-	for _, arg := range os.Args[1:] {
-		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
-			sessionID = value
-		}
-	}
-	if _, err := uuid.Parse(sessionID); err != nil {
+	answerVersionProbe()
+	sessionID := uuid.NewString()
+	if !slices.Contains(os.Args[1:], "--await-claim") {
 		os.Exit(2)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
@@ -45,16 +41,22 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 	if !scanner.Scan() {
 		os.Exit(4)
 	}
-	var request struct {
-		ID string `json:"request_id"`
-	}
-	if json.Unmarshal(scanner.Bytes(), &request) != nil || request.ID == "" {
+	var initialize controlFrame
+	if json.Unmarshal(scanner.Bytes(), &initialize) != nil || initialize.Type != "control_request" || initialize.Request.Subtype != "initialize" || initialize.RequestID == "" {
 		os.Exit(5)
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"type":     "control_response",
-		"response": map[string]any{"subtype": "success", "request_id": request.ID, "response": map[string]any{}},
-	}); err != nil {
+	enc := json.NewEncoder(os.Stdout)
+	if err := controlSuccess(enc, initialize.RequestID, map[string]any{}); err != nil {
+		os.Exit(6)
+	}
+	if !scanner.Scan() {
+		os.Exit(4)
+	}
+	var claim controlFrame
+	if json.Unmarshal(scanner.Bytes(), &claim) != nil || claim.Type != "control_request" || claim.Request.Subtype != "claim_session" || claim.RequestID == "" || claim.Request.CWD == "" {
+		os.Exit(5)
+	}
+	if err := claimSuccess(enc, claim, sessionID); err != nil {
 		os.Exit(6)
 	}
 	if os.Getenv("MASS_FAILED_CREATE_CLEANUP_WAIT") == "1" {

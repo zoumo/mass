@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("2.1.258 (Claude Code)")
+	if clipeer.Version() {
 		return
 	}
 	if os.Getenv("LOAD_PROVIDER") == "claude" {

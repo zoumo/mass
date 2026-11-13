@@ -10,9 +10,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	pidPath := os.Getenv("PEER_PID")
 	if os.Getenv("PEER_CONTROL") == "overload" {
 		pidPath += "." + strconv.Itoa(os.Getpid())
@@ -125,7 +130,7 @@ func main() {
 }
 
 func claude(send func(any)) {
-	sessionID := "claude-session"
+	sessionID := "77777777-7777-4777-8777-777777777777"
 	cwd, err := os.Getwd()
 	if err != nil {
 		panic(err)
@@ -146,6 +151,7 @@ func claude(send func(any)) {
 			ID      string `json:"request_id"`
 			Request struct {
 				Subtype string `json:"subtype"`
+				CWD     string `json:"cwd"`
 			} `json:"request"`
 		}
 		if err := json.Unmarshal(scan.Bytes(), &v); err != nil {
@@ -189,6 +195,13 @@ func claude(send func(any)) {
 		if v.Type != "control_request" {
 			panic("unexpected Claude frame")
 		}
+		if v.Request.Subtype == "claim_session" {
+			if v.Request.CWD == "" {
+				panic("claim_session has no working directory")
+			}
+			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v.ID, "response": map[string]any{"status": "ok", "session_id": sessionID, "cwd": v.Request.CWD}}})
+			continue
+		}
 		if v.Request.Subtype == "interrupt" {
 			interrupts++
 			if interrupts == 1 && os.Getenv("PEER_CONTROL") == "unknown" {
@@ -206,7 +219,7 @@ func claude(send func(any)) {
 			if err != nil {
 				panic(err)
 			}
-			send(map[string]any{"type": "system", "subtype": "init", "claude_code_version": "2.1.258", "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
+			send(map[string]any{"type": "system", "subtype": "init", "claude_code_version": clipeer.VersionNumber, "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
 			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 		}
 	}

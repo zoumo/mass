@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/zoumo/agent-sdk-go/agent"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -33,12 +33,12 @@ func TestCodexMCPConfigurationMapping(t *testing.T) {
 	converted, err := codexMCPServers(&servers, codexMCPOptions(t))
 	require.NoError(t, err)
 	require.Len(t, converted, 2)
-	require.Equal(t, agent.MCPTransportStdio, converted[0].Transport)
+	require.Equal(t, mcp.TransportStdio, converted[0].Transport)
 	require.Equal(t, "/mcp-server", converted[0].Command)
 	require.Equal(t, "/work", converted[0].Cwd)
 	require.Equal(t, "fixture-secret", converted[0].Env["TOKEN"])
 	require.Equal(t, "https://example.invalid/mcp", converted[1].URL)
-	require.Equal(t, agent.MCPTransportHTTP, converted[1].Transport)
+	require.Equal(t, mcp.TransportHTTP, converted[1].Transport)
 	require.Equal(t, "TOKEN", converted[1].BearerTokenEnvVar)
 	require.NotContains(t, converted[1].Headers, "Authorization")
 	require.Equal(t, "TOKEN", converted[1].EnvHeaders["X-Token"])

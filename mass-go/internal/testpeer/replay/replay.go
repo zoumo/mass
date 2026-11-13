@@ -19,12 +19,24 @@ var ErrDisconnected = errors.New("scripted disconnect")
 // Reads and writes are strict: exactly one client frame per recorded c2s frame,
 // no extra client byte after the script, and no unfinished request.
 func Run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, sessionIDs ...string) (err error) {
-	if ctx == nil || document == nil || input == nil || output == nil {
-		return errors.New("context, document and protocol streams required")
-	}
 	assignedSessionID := ""
 	if len(sessionIDs) > 0 {
 		assignedSessionID = sessionIDs[0]
+	}
+	return run(ctx, document, limits, input, output, assignedSessionID, "")
+}
+
+// RunClaim is Run for a synthetic Claude CLI started with --await-claim. The
+// peer answers the SDK's claim_session request with claimSessionID before
+// handing the next scripted client frame to the strict replay engine, and
+// reports claimCWD for the synthetic working-directory placeholder.
+func RunClaim(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, claimSessionID, claimCWD string) error {
+	return run(ctx, document, limits, input, output, claimSessionID, claimCWD)
+}
+
+func run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, assignedSessionID, claimCWD string) (err error) {
+	if ctx == nil || document == nil || input == nil || output == nil {
+		return errors.New("context, document and protocol streams required")
 	}
 	a, err := newAdapter(document.Provider, assignedSessionID)
 	if err != nil {
@@ -35,6 +47,10 @@ func Run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 		return err
 	}
 	p := peerIO{input: bufio.NewReader(input), output: output, limits: limits}
+	if claimCWD != "" {
+		p.claimSessionID = assignedSessionID
+		p.claimCWD = claimCWD
+	}
 	var ordinal int64
 	defer func() {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -71,8 +87,15 @@ func Run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 				return err
 			}
 		} else {
+			wire := frame.Wire
+			if p.claimCWD != "" {
+				wire, err = replaceSyntheticCWD(wire, p.claimCWD)
+				if err != nil {
+					return err
+				}
+			}
 			var emitted rawjson.Value
-			emitted, err = a.server(frame.Wire)
+			emitted, err = a.server(wire)
 			if err != nil {
 				return err
 			}
@@ -100,10 +123,29 @@ type peerIO struct {
 	input                 *bufio.Reader
 	output                io.Writer
 	limits                scenario.Limits
+	claimSessionID        string
+	claimCWD              string
 	readBytes, writeBytes int64
 }
 
 func (p *peerIO) read() (rawjson.Value, error) {
+	for {
+		value, err := p.readFrame()
+		if err != nil || p.claimSessionID == "" {
+			return value, err
+		}
+		reply, claimed, err := claimExchange(value, p.claimSessionID)
+		if err != nil || !claimed {
+			return value, err
+		}
+		p.claimCWD = stringMember(member(member(reply, "response"), "response"), "cwd")
+		if err := p.write(reply.Raw()); err != nil {
+			return rawjson.Value{}, err
+		}
+	}
+}
+
+func (p *peerIO) readFrame() (rawjson.Value, error) {
 	var line []byte
 	for {
 		part, err := p.input.ReadSlice('\n')

@@ -8,11 +8,12 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("2.1.258 (Claude Code)")
+	if clipeer.Version() {
 		return
 	}
 	log, err := os.OpenFile(os.Getenv("LOAD_EVIDENCE"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -23,6 +24,9 @@ func main() {
 	record := json.NewEncoder(log)
 	write := json.NewEncoder(os.Stdout)
 	id := os.Getenv("LOAD_ID")
+	if id == "" {
+		id = "88888888-8888-4888-8888-888888888888"
+	}
 	for _, arg := range os.Args[1:] {
 		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
 			id = value
@@ -88,6 +92,10 @@ func main() {
 	for v := range frames {
 		if v["type"] == "control_request" {
 			r := v["request"].(map[string]any)
+			if reply, ok := clipeer.ClaimReply(v, id); ok {
+				send(reply)
+				continue
+			}
 			if r["subtype"] == "initialize" && os.Getenv("LOAD_MODE") == "startup" {
 				if !await() {
 					return
@@ -105,7 +113,7 @@ func main() {
 				if os.Getenv("LOAD_MODE") == "identity" {
 					observed = "22222222-2222-4222-8222-222222222222"
 				}
-				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd, "claude_code_version": "2.1.258"})
+				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd, "claude_code_version": clipeer.VersionNumber})
 				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": observed, "state": "idle"})
 			case "interrupt":
 				result()

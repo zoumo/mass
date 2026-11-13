@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 var nativeSessionID = "44444444-4444-4444-8444-444444444444"
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("2.1.258 (Claude Code)")
+	if clipeer.Version() {
 		return
 	}
 	enc := json.NewEncoder(os.Stdout)
@@ -43,7 +44,7 @@ func main() {
 		}
 	}
 	init := func() {
-		send(map[string]any{"type": "system", "subtype": "init", "session_id": nativeSessionID, "cwd": cwd, "claude_code_version": "2.1.258"})
+		send(map[string]any{"type": "system", "subtype": "init", "session_id": nativeSessionID, "cwd": cwd, "claude_code_version": clipeer.VersionNumber})
 		if !resumed {
 			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": nativeSessionID, "state": "idle"})
 		}
@@ -67,6 +68,10 @@ func main() {
 		}
 		if v["type"] == "control_request" {
 			r := v["request"].(map[string]any)
+			if reply, ok := clipeer.ClaimReply(v, nativeSessionID); ok {
+				send(reply)
+				continue
+			}
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 			switch r["subtype"] {
 			case "initialize":

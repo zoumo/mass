@@ -2,23 +2,28 @@ package runtime
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/zoumo/agent-sdk-go/mcp"
 )
 
-// MCPTransport is one provider-neutral MCP server transport.
-type MCPTransport string
+// MCPTransport is the provider-neutral MCP transport defined by the agent SDK.
+// MASS keeps its own JSON field name ("type"), but not a second enum.
+type MCPTransport = mcp.Transport
 
 const (
-	MCPTransportStdio MCPTransport = "stdio"
-	MCPTransportHTTP  MCPTransport = "http"
-	MCPTransportSSE   MCPTransport = "sse"
+	MCPTransportStdio = mcp.TransportStdio
+	MCPTransportHTTP  = mcp.TransportHTTP
+	MCPTransportSSE   = mcp.TransportSSE
 )
 
-func (t MCPTransport) valid() bool {
+func validMCPTransport(t MCPTransport) bool {
 	switch t {
 	case MCPTransportStdio, MCPTransportHTTP, MCPTransportSSE:
 		return true
@@ -42,6 +47,24 @@ type MCPServer struct {
 	BearerTokenEnvVar string            `json:"bearerTokenEnvVar,omitempty"`
 }
 
+// SDKServer maps the persisted Session shape to the SDK's shared MCP
+// definition. MASS keeps the wire field name "type"; runtime adapters consume
+// mcp.Server.
+func (s MCPServer) SDKServer() mcp.Server {
+	return mcp.Server{
+		Name:              s.Name,
+		Transport:         s.Type,
+		Command:           s.Command,
+		Args:              slices.Clone(s.Args),
+		Env:               maps.Clone(s.Env),
+		Cwd:               s.Cwd,
+		URL:               s.URL,
+		Headers:           maps.Clone(s.Headers),
+		EnvHeaders:        maps.Clone(s.EnvHeaders),
+		BearerTokenEnvVar: s.BearerTokenEnvVar,
+	}
+}
+
 // ValidateMCPServers checks the provider-neutral shape before native side
 // effects. Provider-specific field and transport support is checked by adapters.
 func ValidateMCPServers(servers []MCPServer) error {
@@ -57,7 +80,7 @@ func ValidateMCPServers(servers []MCPServer) error {
 		if err := validateMCPServerText(i, server); err != nil {
 			return err
 		}
-		if !server.Type.valid() {
+		if !validMCPTransport(server.Type) {
 			return fmt.Errorf("mcp server %d: type must be stdio, http or sse", i)
 		}
 		if server.Type == MCPTransportStdio {

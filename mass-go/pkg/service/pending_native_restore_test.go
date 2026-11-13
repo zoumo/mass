@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -40,14 +41,10 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 	if dir == "" {
 		return
 	}
-	for _, arg := range os.Args {
-		if arg == "--version" {
-			fmt.Println("2.1.258 (Claude Code)")
-			os.Exit(0)
-		}
-	}
+	answerSyntheticClaudeVersion()
 	sessionID := pendingRestoreSessionID
 	resumed := false
+	claiming := false
 	for _, arg := range os.Args[1:] {
 		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
 			sessionID = value
@@ -56,10 +53,19 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			sessionID = value
 			resumed = true
 		}
+		if arg == "--await-claim" {
+			claiming = true
+		}
 	}
 	phase := "create"
 	if resumed {
 		phase = "resume"
+	}
+	if claiming {
+		if resumed {
+			os.Exit(3)
+		}
+		sessionID = uuid.NewString()
 	}
 	must := func(err error) {
 		if err != nil {
@@ -86,39 +92,75 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 	cwd, err := os.Getwd()
 	must(err)
 	init := func() {
-		send(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "cwd": cwd})
+		send(map[string]any{
+			"type": "system", "subtype": "init", "session_id": sessionID,
+			"cwd": cwd, "claude_code_version": nativeclaude.MinimumCLIVersion,
+		})
 	}
 	var identityMu sync.Mutex
 	identityReleased := false
+	claimed := false
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var v map[string]any
 		must(json.Unmarshal(scan.Bytes(), &v))
 		if v["type"] == "control_request" {
 			r := v["request"].(map[string]any)
-			if r["subtype"] != "initialize" {
+			switch r["subtype"] {
+			case "initialize":
+				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
+				mark("ack", "initialize acknowledged")
+				if resumed {
+					go func() {
+						for {
+							if _, e := os.Stat(filepath.Join(dir, "release-init")); e == nil {
+								identityMu.Lock()
+								init()
+								identityReleased = true
+								identityMu.Unlock()
+								return
+							}
+							time.Sleep(5 * time.Millisecond)
+						}
+					}()
+				} else if !claiming {
+					mark("unexpected", "create did not await claim")
+					os.Exit(11)
+				}
+				continue
+			case "claim_session":
+				if resumed || !claiming || claimed {
+					mark("unexpected", "unexpected claim_session")
+					os.Exit(12)
+				}
+				claimCWD, _ := r["cwd"].(string)
+				if claimCWD == "" {
+					mark("unexpected", "claim_session has no cwd")
+					os.Exit(13)
+				}
+				send(map[string]any{
+					"type": "control_response",
+					"response": map[string]any{
+						"subtype":    "success",
+						"request_id": v["request_id"],
+						"response": map[string]any{
+							"status":     "ok",
+							"session_id": sessionID,
+							"cwd":        claimCWD,
+						},
+					},
+				})
+				claimed = true
+				mark("claim", "claim_session acknowledged")
+				identityMu.Lock()
+				init()
+				identityReleased = true
+				identityMu.Unlock()
+				continue
+			default:
 				mark("unexpected", "non-initialize control")
 				os.Exit(3)
 			}
-			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
-			mark("ack", "initialize acknowledged")
-			if resumed {
-				go func() {
-					for {
-						if _, e := os.Stat(filepath.Join(dir, "release-init")); e == nil {
-							identityMu.Lock()
-							init()
-							identityReleased = true
-							identityMu.Unlock()
-							return
-						}
-						time.Sleep(5 * time.Millisecond)
-					}
-				}()
-			} else {
-				init()
-			}
-			continue
 		}
 		if v["type"] != "user" {
 			mark("unexpected", "unexpected input or replay")

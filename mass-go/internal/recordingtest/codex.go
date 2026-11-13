@@ -792,8 +792,10 @@ func verifyExecution(session, material string) error {
 	if err := readJSONFile(filepath.Join(canonicalSession, "executions", "index.json"), &index); err != nil {
 		return err
 	}
-	if index.SchemaVersion != 5 || index.FixtureID == "" || index.FixtureID != fixture.FixtureID {
-		return errors.New("execution index fixture identity is incomplete")
+	// agent-sdk-testify validates its own index on Open; this keeps MASS's
+	// reading of the current execution index explicit.
+	if index.SchemaVersion != testifyExecutionIndexSchemaVersion || index.FixtureID == "" || index.FixtureID != fixture.FixtureID {
+		return fmt.Errorf("execution index fixture identity is incomplete: schemaVersion=%d fixtureId=%q", index.SchemaVersion, index.FixtureID)
 	}
 	if len(index.Executions) != 1 {
 		return fmt.Errorf("expected one execution, got %d", len(index.Executions))
@@ -947,14 +949,16 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		} `json:"executions"`
 	}
 	readJSON(t, filepath.Join(session, "executions", "index.json"), &index)
-	require.Equal(t, 5, index.SchemaVersion)
+	require.Equal(t, testifyExecutionIndexSchemaVersion, index.SchemaVersion)
 	require.Equal(t, fixture.FixtureID, index.FixtureID)
 	require.Equal(t, fixtureHash, index.FixtureSHA256)
 	require.Len(t, index.Executions, 1)
 	execution := index.Executions[0]
 	require.Equal(t, "record", execution.Command)
 	require.Equal(t, "passed", execution.Status)
-	descriptor := filepath.Join(session, "executions", execution.ID, "execution.json")
+	executionReport, err := fixture.ExecutionReport(execution.ID)
+	require.NoError(t, err)
+	descriptor := executionReport.ExecutionPath
 	require.Equal(t, execution.DescriptorSHA256, hashFile(t, descriptor))
 	var desc struct {
 		SchemaVersion int    `json:"schemaVersion"`
@@ -971,7 +975,7 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		} `json:"connections"`
 	}
 	readJSON(t, descriptor, &desc)
-	require.Equal(t, 5, desc.SchemaVersion)
+	require.Equal(t, testifyExecutionIndexSchemaVersion, desc.SchemaVersion)
 	require.Equal(t, execution.ID, desc.ExecutionID)
 	require.Equal(t, fixture.FixtureID, desc.FixtureID)
 	require.Equal(t, "record", desc.Command)
@@ -1125,14 +1129,12 @@ func executionReceiptPath(t *testing.T, session string) string {
 	}
 	readJSON(t, filepath.Join(session, "executions", "index.json"), &index)
 	require.Len(t, index.Executions, 1)
-	var descriptor struct {
-		Connections []struct {
-			Receipt string `json:"receipt"`
-		} `json:"connections"`
-	}
-	readJSON(t, filepath.Join(session, "executions", index.Executions[0].ID, "execution.json"), &descriptor)
-	require.Len(t, descriptor.Connections, 1)
-	return descriptor.Connections[0].Receipt
+	fixture, err := agenttestify.Open(session)
+	require.NoError(t, err)
+	report, err := fixture.ExecutionReport(index.Executions[0].ID)
+	require.NoError(t, err)
+	require.Len(t, report.Connections, 1)
+	return report.Connections[0].ReceiptPath
 }
 
 func RunRejectsInvalidMaterial(t *testing.T) {

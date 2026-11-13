@@ -7,9 +7,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func main() {
+	if clipeer.Version() {
+		return
+	}
 	log, err := os.Create(os.Getenv("PEER_EVIDENCE"))
 	if err != nil {
 		panic(err)
@@ -61,6 +66,10 @@ func main() {
 			}
 			if v["type"] == "control_request" {
 				r := v["request"].(map[string]any)
+				if reply, ok := clipeer.ClaimReply(v, id); ok {
+					send(reply)
+					continue
+				}
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 				if r["subtype"] == "initialize" {
 					send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd})

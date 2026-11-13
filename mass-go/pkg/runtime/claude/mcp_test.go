@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/zoumo/agent-sdk-go/agent"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -29,8 +29,8 @@ func TestClaudeMCPConfigurationMapping(t *testing.T) {
 	converted, err := claudeMCPServers(&servers, process)
 	require.NoError(t, err)
 	require.Len(t, converted, 2)
-	require.Equal(t, agent.MCPTransportStdio, converted[0].Transport)
-	require.Equal(t, agent.MCPTransportHTTP, converted[1].Transport)
+	require.Equal(t, mcp.TransportStdio, converted[0].Transport)
+	require.Equal(t, mcp.TransportHTTP, converted[1].Transport)
 	require.Equal(t, "${TOKEN}", converted[0].Env["TOKEN"])
 	require.Equal(t, "Bearer ${TOKEN}", converted[1].Headers["Authorization"])
 }

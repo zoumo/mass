@@ -197,7 +197,9 @@ func (d *diagnostic) retainArtifacts(root string) {
 }
 
 func (d *diagnostic) observeNative(root string) {
-	paths, _ := filepath.Glob(filepath.Join(root, "session", "executions", "*", "record", "raw", "raw.jsonl"))
+	paths, _ := filepath.Glob(filepath.Join(root, "session", "packages", "*", "executions", "*", "record", "raw", "raw.jsonl"))
+	legacy, _ := filepath.Glob(filepath.Join(root, "session", "executions", "*", "record", "raw", "raw.jsonl"))
+	paths = append(paths, legacy...)
 	for _, path := range paths {
 		file, err := os.Open(path)
 		if err != nil {

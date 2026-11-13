@@ -9,11 +9,14 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
+const claimedSessionID = "66666666-6666-4666-8666-666666666666"
+
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("2.1.258 (Claude Code)")
+	if clipeer.Version() {
 		return
 	}
 	if err := replay(); err != nil {
@@ -30,6 +33,9 @@ func replay() error {
 		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
 			assignedSessionID = value
 		}
+	}
+	if clipeer.AwaitingClaim() {
+		assignedSessionID = claimedSessionID
 	}
 	f, err := os.Open(os.Getenv("CLAUDE_MOCK_SCENARIO"))
 	if err != nil {
@@ -53,6 +59,21 @@ func replay() error {
 	output := json.NewEncoder(os.Stdout)
 	var link string
 	ids := map[string]any{}
+	readActual := func() (map[string]any, error) {
+		for {
+			var actual map[string]any
+			if err := input.Decode(&actual); err != nil {
+				return nil, err
+			}
+			if reply, ok := clipeer.ClaimReply(actual, claimedSessionID); ok {
+				if err := output.Encode(reply); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return actual, nil
+		}
+	}
 	recordedSessionID := ""
 	for _, frame := range scenario.Frames {
 		if frame.Direction == "server" {
@@ -65,8 +86,8 @@ func replay() error {
 	for _, frame := range scenario.Frames {
 		data := frame.Data
 		if frame.Direction == "client" {
-			var actual map[string]any
-			if err := input.Decode(&actual); err != nil {
+			actual, err := readActual()
+			if err != nil {
 				return err
 			}
 			if data["type"] == "control_request" {

@@ -15,6 +15,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	agentclaude "github.com/zoumo/agent-sdk-go/agent/claude"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -339,7 +340,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	}, nil
 }
 
-func sessionOpenOptions(spec runtime.SessionSpec, features runtime.SessionFeatures, servers []agent.MCPServer) agent.OpenOptions {
+func sessionOpenOptions(spec runtime.SessionSpec, features runtime.SessionFeatures, servers []mcp.Server) agent.OpenOptions {
 	return agent.OpenOptions{
 		Cwd:                    spec.Cwd,
 		AdditionalSystemPrompt: spec.SystemPrompt,
