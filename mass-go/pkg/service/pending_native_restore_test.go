@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,6 +100,20 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 	}
 	var identityMu sync.Mutex
 	identityReleased := false
+	statusRequestID := ""
+	status := func() {
+		send(map[string]any{
+			"type": "control_response",
+			"response": map[string]any{
+				"subtype": "success", "request_id": statusRequestID,
+				"response": map[string]any{"sections": []any{map[string]any{"rows": []any{
+					map[string]any{"label": "Session ID", "value": sessionID},
+					map[string]any{"label": "cwd", "value": cwd},
+				}}}},
+			},
+		})
+		mark("status-replied", "native identity released")
+	}
 	claimed := false
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
@@ -117,6 +132,9 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 								identityMu.Lock()
 								init()
 								identityReleased = true
+								if statusRequestID != "" {
+									status()
+								}
 								identityMu.Unlock()
 								return
 							}
@@ -127,6 +145,19 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 					mark("unexpected", "create did not await claim")
 					os.Exit(11)
 				}
+				continue
+			case "get_status":
+				identityMu.Lock()
+				if !resumed || statusRequestID != "" {
+					mark("unexpected", "unexpected get_status")
+					os.Exit(14)
+				}
+				statusRequestID = v["request_id"].(string)
+				mark("status-query", "get_status awaiting native identity")
+				if identityReleased {
+					status()
+				}
+				identityMu.Unlock()
 				continue
 			case "claim_session":
 				if resumed || !claiming || claimed {
@@ -270,7 +301,7 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	_, err = uuid.Parse(ref.SessionID)
 	require.NoError(t, err)
 	require.NotEqual(t, pendingRestoreSessionID, ref.SessionID)
-	projectDir := filepath.Join(configDir, "projects", "pending")
+	projectDir := filepath.Join(configDir, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(dir, "-"))
 	require.NoError(t, os.MkdirAll(projectDir, 0o700))
 	transcript, err := json.Marshal(map[string]any{"type": "user", "sessionId": ref.SessionID, "cwd": dir, "message": map[string]any{"role": "user", "content": "saved original input"}})
 	require.NoError(t, err)
@@ -301,8 +332,10 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		default:
 		}
 		_, ackErr := os.Stat(filepath.Join(dir, "resume-ack"))
-		return ackErr == nil
+		_, statusErr := os.Stat(filepath.Join(dir, "resume-status-query"))
+		return ackErr == nil && statusErr == nil
 	}, 5*time.Second, 10*time.Millisecond, "restore must acknowledge initialize while withholding identity")
+	require.NoFileExists(t, filepath.Join(dir, "resume-status-replied"), "get_status must wait for native identity")
 	require.NoFileExists(t, filepath.Join(dir, "resume-input"), "resume input must wait for native identity")
 	data, err := os.ReadFile(filepath.Join(dir, "resume-pid"))
 	require.NoError(t, err)
@@ -369,8 +402,10 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	require.FileExists(t, filepath.Join(dir, "resume-eof"))
 	if mode == "caller-abandon-only" {
 		require.FileExists(t, filepath.Join(dir, "resume-input"))
+		require.FileExists(t, filepath.Join(dir, "resume-status-replied"))
 	} else {
 		require.NoFileExists(t, filepath.Join(dir, "resume-input"), "stopped pending identity must not dispatch input")
+		require.NoFileExists(t, filepath.Join(dir, "resume-status-replied"), "stopped pending identity must not be confirmed")
 	}
 	require.NoFileExists(t, filepath.Join(dir, "resume-unexpected"))
 	opened, err := os.ReadFile(filepath.Join(dir, "opened"))
