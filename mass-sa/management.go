@@ -76,21 +76,6 @@ func (s *WorkerService) handleManagement(writer http.ResponseWriter, request *ht
 			return
 		}
 		writeJSON(writer, http.StatusOK, result)
-	case strings.HasPrefix(path, "/tickets/") && strings.HasSuffix(path, "/reconcile") && request.Method == http.MethodPost:
-		var body struct {
-			ProjectID string `json:"projectId"`
-		}
-		if err := readManagementJSON(writer, request, &body); err != nil {
-			writeManagementError(writer, managementStatus(err), err, nil)
-			return
-		}
-		ticketID := strings.TrimSuffix(strings.TrimPrefix(path, "/tickets/"), "/reconcile")
-		result, err := s.tickets.ReconcileTicketTransition(request.Context(), body.ProjectID, ticketID)
-		if err != nil {
-			writeManagementError(writer, managementStatus(err), err, nil)
-			return
-		}
-		writeJSON(writer, http.StatusOK, result)
 	case path == "/triggers" && request.Method == http.MethodPost:
 		var body TriggerRequest
 		if err := readManagementJSON(writer, request, &body); err != nil {

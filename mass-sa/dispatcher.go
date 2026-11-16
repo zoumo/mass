@@ -482,15 +482,15 @@ func (d *EventDispatcher) deliverRouterBatch(ctx context.Context, client session
 	finalEvent, _, collectErr := collectSessionFinal(ctx, client, subscription, ref, prompt, baseline, "router")
 	if collectErr != nil {
 		reason := operationReason(collectErr)
-		settleErr := d.service.settleRouterResult(group.projectID, batch.ID, "unknown", "", "", false, "", reason)
+		settleErr := d.service.settleRouterResult(group.projectID, batch.ID, "unknown", "", false, "", reason)
 		return errors.Join(collectErr, settleErr)
 	}
 	reportText, _ := workerReportText(finalEvent)
 	_, parseErr := parseStructuredReport(reportText)
-	return d.service.settleRouterResult(group.projectID, batch.ID, "confirmed", finalEvent.EventID, "", parseErr == "", parseErr, "")
+	return d.service.settleRouterResult(group.projectID, batch.ID, "confirmed", finalEvent.EventID, parseErr == "", parseErr, "")
 }
 
-func (s *WorkerService) settleRouterResult(projectID, batchID, state, finalEventID, commentID string, structured bool, parseError, reason string) error {
+func (s *WorkerService) settleRouterResult(projectID, batchID, state, finalEventID string, structured bool, parseError, reason string) error {
 	return s.store.updateProject(projectID, func(project *ProjectState) error {
 		batch, exists := project.Deliveries[batchID]
 		if !exists {
@@ -498,7 +498,6 @@ func (s *WorkerService) settleRouterResult(projectID, batchID, state, finalEvent
 		}
 		batch.ResultState = state
 		batch.FinalEventID = finalEventID
-		batch.FinalCommentID = commentID
 		batch.Structured = structured
 		batch.ParseError = strings.TrimSpace(parseError)
 		batch.ResultError = strings.TrimSpace(reason)

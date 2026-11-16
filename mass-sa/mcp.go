@@ -294,7 +294,7 @@ func mcpTools(role string) []mcpToolDefinition {
 	routerTools := []mcpToolDefinition{
 		{
 			Name:        "create_ticket",
-			Description: "Create a root Ticket and root Multica Issue without dispatching a Session.",
+			Description: "Persist a local root Ticket without dispatching a Session.",
 			InputSchema: closedObjectSchema(
 				map[string]any{
 					"title":         stringSchema("Ticket title"),
@@ -366,7 +366,7 @@ func mcpTools(role string) []mcpToolDefinition {
 		},
 		{
 			Name:        "finish_ticket",
-			Description: "Confirm a business state and persist its fact and parent lifecycle input. completed requires a confirmed current Assignment report. Before any terminal outcome, explicitly resolve or cancel unfinished children, descendants first; uncertain child creation blocks closure. blocked/waiting_user are nonterminal; reopened does not resume execution. Unknown transitions require read-only reconciliation.",
+			Description: "Atomically persist a business state, its fact and parent lifecycle input. completed requires a confirmed current Assignment report. Before any terminal outcome, explicitly resolve or cancel unfinished children, descendants first. blocked/waiting_user are nonterminal; reopened does not resume execution.",
 			InputSchema: closedObjectSchema(
 				map[string]any{
 					"ticketId":   stringSchema("Ticket ID"),

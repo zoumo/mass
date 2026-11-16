@@ -87,23 +87,22 @@ func TestStateStoreKeepsRootAndTicketRecords(t *testing.T) {
 			ProjectID: "mass",
 			Title:     "Root",
 			Objective: "Objective.",
-			Issue:     IssueReference{ID: "issue-parent", Identifier: "MASS-1"},
 			CreatedAt: time.Unix(300, 0).UTC(),
 		}
 		project.Tickets["t-12345678"] = TicketState{
-			ID:           "t-12345678",
-			ProjectID:    "mass",
-			RootTicketID: "t-root",
-			Title:        "Ticket",
-			Objective:    "Objective.",
-			Acceptance:   "Acceptance.",
-			Issue:        IssueReference{ID: "issue-child", Identifier: "MASS-2"},
-			Status:       "todo",
-			AssignmentID: "a-12345678",
+			ID:             "t-12345678",
+			ProjectID:      "mass",
+			RootTicketID:   "t-root",
+			ParentTicketID: "t-root",
+			Title:          "Ticket",
+			Objective:      "Objective.",
+			Acceptance:     "Acceptance.",
+			AssignmentID:   "a-12345678",
 			Reports: []ReportState{{
 				AssignmentID: "a-12345678",
 				Session:      SessionRef{SessionID: "native", Namespace: "mass-t-root", Name: "worker"},
-				CommentID:    "comment-1",
+				ID:           "r-12345678",
+				Body:         "Full report body.",
 				ReportedAt:   time.Unix(400, 0).UTC(),
 			}},
 			CreatedAt: time.Unix(300, 0).UTC(),
@@ -143,10 +142,10 @@ func TestStateStoreKeepsRootAndTicketRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := reloaded.Snapshot().Projects["mass"]
-	if project.Tickets["t-root"].Issue.ID != "issue-parent" {
+	if project.Tickets["t-root"].Title != "Root" {
 		t.Fatalf("root record was lost: %+v", project.Tickets)
 	}
-	if project.Tickets["t-12345678"].Issue.ID != "issue-child" ||
+	if project.Tickets["t-12345678"].ParentTicketID != "t-root" ||
 		len(project.Tickets["t-12345678"].Reports) != 1 {
 		t.Fatalf("ticket record was lost: %+v", project.Tickets)
 	}
@@ -156,9 +155,9 @@ func TestStateStoreKeepsRootAndTicketRecords(t *testing.T) {
 
 	snapshot := reloaded.Snapshot()
 	ticket := snapshot.Projects["mass"].Tickets["t-12345678"]
-	ticket.Reports[0].CommentID = "mutated"
+	ticket.Reports[0].Body = "mutated"
 	snapshot.Projects["mass"].Tickets["t-12345678"] = ticket
-	if reloaded.Snapshot().Projects["mass"].Tickets["t-12345678"].Reports[0].CommentID != "comment-1" {
+	if reloaded.Snapshot().Projects["mass"].Tickets["t-12345678"].Reports[0].Body != "Full report body." {
 		t.Fatal("Snapshot returned a shared report slice")
 	}
 	delivery := snapshot.Projects["mass"].Deliveries["b-12345678"]

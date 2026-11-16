@@ -49,6 +49,7 @@ func startT06Server(t *testing.T, config Config) *t06Server {
 		t.Fatal(err)
 	}
 	command := exec.Command(massSABinary, "serve", "--config", configPath)
+	command.Env = []string{"PATH=" + t.TempDir(), "HOME=" + t.TempDir()}
 	command.Stdout = logFile
 	command.Stderr = logFile
 	if err := command.Start(); err != nil {
@@ -343,13 +344,10 @@ func retainedRouterInputs(inspection TicketInspection, minimum int) bool {
 
 func TestT06OfflineCLIAndMCPEndToEnd(t *testing.T) {
 	mass := newFakeMASSServer(t, "")
-	multica := newFakeMultica(t)
 	project := newTestProject("mass")
 	project.CWD = t.TempDir()
-	project.Multica = ProjectMultica{WorkspaceID: multica.workspace, ProjectID: multica.project}
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	config := newTestConfig(t, mass.endpoint(), stateFile, project)
-	config.Multica.Executable = fakeMulticaBinary
 	config.Management.Listen = freeLoopbackAddress(t)
 	tokenPath := filepath.Join(t.TempDir(), "management-token")
 	if err := os.WriteFile(tokenPath, []byte("offline-management-token\n"), 0o600); err != nil {
@@ -522,11 +520,11 @@ func TestT06OfflineCLIAndMCPEndToEnd(t *testing.T) {
 		"resolution": "completed",
 		"summary":    "Worker report met the acceptance criteria.",
 	}))
-	if finishedTicket.BusinessState != "completed" || finishedTicket.Status != "done" {
+	if finishedTicket.BusinessState != "completed" {
 		t.Fatalf("finished ticket = %+v", finishedTicket)
 	}
-	if comments := multica.comments(ticket.Issue.ID); len(comments) < 2 {
-		t.Fatalf("ticket comments = %+v, want worker report and resolution", comments)
+	if len(finishedTicket.Reports) != 1 || finishedTicket.Reports[0].Body == "" {
+		t.Fatalf("local ticket report missing: %+v", finishedTicket.Reports)
 	}
 
 	secondBinding := runT06JSON[RouteBindingView](t, cli("route", "bind",

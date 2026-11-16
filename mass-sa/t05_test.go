@@ -142,11 +142,11 @@ func TestT05FirstEventUsesRouterThenBindingDeliversDirect(t *testing.T) {
 	if len(routerPrompts) != 1 || !strings.Contains(routerPrompts[0].Text, first.EventID) {
 		t.Fatalf("router prompts = %+v", routerPrompts)
 	}
-	if comments := harness.multica.comments(root.Issue.ID); len(comments) != 0 {
-		t.Fatalf("ordinary Router final created external comments: %+v", comments)
+	if reports := project.Tickets[root.ID].Reports; len(reports) != 0 {
+		t.Fatalf("ordinary Router final created worker reports: %+v", reports)
 	}
 	routerBatch := firstDelivery(project.Deliveries)
-	if routerBatch.ResultState != "confirmed" || routerBatch.FinalEventID == "" || routerBatch.FinalCommentID != "" {
+	if routerBatch.ResultState != "confirmed" || routerBatch.FinalEventID == "" {
 		t.Fatalf("Router final audit = %+v", routerBatch)
 	}
 
@@ -221,7 +221,7 @@ func TestT05RouterFinalAfterRootResolutionIsRetained(t *testing.T) {
 	}
 	project := harness.store.Snapshot().Projects["mass"]
 	workerReport := t05TicketReport(t, project.Tickets[ticket.ID], workerRun.SourceEventID)
-	if workerReport.Status != "confirmed" || workerReport.CommentID == "" {
+	if workerReport.Status != "confirmed" || workerReport.ID == "" {
 		t.Fatalf("worker report = %+v", workerReport)
 	}
 
@@ -262,7 +262,7 @@ func TestT05RouterFinalAfterRootResolutionIsRetained(t *testing.T) {
 	}); status != http.StatusOK {
 		t.Fatalf("finish_ticket status %d: %s", status, body)
 	}
-	statusCallsBefore := len(harness.multica.invocationsOf("issue", "status"))
+	revisionBefore := harness.store.Snapshot().Projects["mass"].Tickets[ticket.ID].Revision
 	close(routerGate)
 	released = true
 	select {
@@ -286,11 +286,11 @@ func TestT05RouterFinalAfterRootResolutionIsRetained(t *testing.T) {
 		routerDelivery.ResultState != "confirmed" || routerDelivery.FinalEventID == "" {
 		t.Fatalf("router delivery = %+v", routerDelivery)
 	}
-	if comments := harness.multica.comments(root.Issue.ID); len(comments) != 0 {
-		t.Fatalf("ordinary Router final leaked as comment: %+v", comments)
+	if reports := project.Tickets[root.ID].Reports; len(reports) != 0 {
+		t.Fatalf("ordinary Router final leaked as worker report: %+v", reports)
 	}
-	if statusCalls := len(harness.multica.invocationsOf("issue", "status")); statusCalls != statusCallsBefore {
-		t.Fatalf("router final changed Issue status: before=%d after=%d", statusCallsBefore, statusCalls)
+	if revision := project.Tickets[ticket.ID].Revision; revision != revisionBefore {
+		t.Fatalf("router final changed business revision: before=%d after=%d", revisionBefore, revision)
 	}
 	if project.Tickets[ticket.ID].BusinessState != "completed" {
 		t.Fatalf("router final changed ticket resolution: %+v", project.Tickets[ticket.ID])

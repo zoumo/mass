@@ -1,8 +1,9 @@
 # mass-sa
 
 An independent Go module coordinating project work through public MASS
-WebSocket JSON-RPC and the authenticated Multica CLI. It imports no mass-go
-packages. This demo uses a single process and an atomic local JSON state file.
+WebSocket JSON-RPC. It imports no mass-go packages. Tickets, reports and business
+decisions are authoritative local records in an atomic JSON state file.
+This demo uses a single process and requires no external task tracker.
 
 ## Build and check
 
@@ -14,21 +15,23 @@ GOWORK=off go build ./...
 gofmt -l .
 ```
 
-Tests use real mass-sa serve and stdio MCP subprocesses with fake MASS
-WebSocket and Multica CLI peers. `TestTicketStoryPublicLoop` connects ingress,
+Tests use real mass-sa serve and stdio MCP subprocesses with a fake MASS
+WebSocket peer. Serve subprocesses have empty executable and home directories,
+so their lifecycle needs no external CLI or personal authentication.
+`TestTicketStoryPublicLoop` connects ingress,
 short reply, root/child/grandchild work, parent close/recovery, explicit acceptance,
 output recovery and cancellation. Fault, permission and unknown-result cases
 use the existing public harnesses in adjacent tests. These are offline evidence,
-not proof of real model or Multica service behavior.
+not proof of real model or channel behavior.
 
 ## Model
 
 - **Trigger** records an external event and returns a durable receipt before
   model execution. **Thread** identifies its source discussion; its association
   with Tickets survives execution changes.
-- **Ticket** owns the objective, acceptance, business state, Issue and stable
-  root namespace. It can wait without a Session. A root has a root Multica
-  Issue; optional descendants have Issues under their immediate parent's Issue.
+- **Ticket** owns the objective, acceptance, business state and stable root
+  namespace. It can wait without a Session. Optional descendants retain their
+  immediate parent and root identities.
 - **Assignment** grants one current executor control of a Ticket. Old
   Assignments and reports remain auditable; old capabilities are revoked.
 - **Session** owns execution history. Multiple rounds share it. Close releases
@@ -42,10 +45,18 @@ does not accept the overall work. Router `finish_ticket` explicitly confirms
 `blocked`, `waiting_user`, `completed`, `failed`, `cancelled` or `reopened`.
 Completion requires a confirmed report from the current Assignment. Ticket
 `businessState` stores the accepted business state; terminal states are completed,
-failed and cancelled. Multica `status` records its separate platform status.
+failed and cancelled.
 
-State format is version 3. Use a new state directory; older formats are rejected
+Each report has a stable local `id`, complete original `body`, Assignment/Session
+identity and source event/item/turn references. Repeating the same source and
+content is idempotent; changed content conflicts and stale Assignments cannot
+submit. Report persistence and its Router inbox notification commit together.
+Execution results and Router report events expose `reportId`; facts reference
+`ticket:<id>:revision:<revision>` and `report:<id>` evidence.
+
+State format is version 4. Use a new state directory; older formats are rejected
 without rewriting data. Earlier run evidence remains separate from this version.
+There is no migration from the previous external-tracker state format.
 
 ## Configuration and start
 
@@ -64,7 +75,7 @@ cp -n config.example.yaml "$HOME/.mass/mass-sa-demo.yaml"
 chmod 600 "$HOME/.mass/mass-sa-demo.yaml"
 ```
 
-Edit the local copy with your cwd, Runtime, models and Multica targets, then make
+Edit the local copy with your cwd, Runtime and models, then make
 it owner-readable only:
 
 ```sh
@@ -78,7 +89,7 @@ in configuration or evidence.
 
 Configuration rejects unknown fields, duplicate keys, wrong types and multiple
 YAML documents. Each Project selects cwd, Runtime, literal Router/Worker model
-and effort, explicit Multica workspace/project UUIDs and inbox batching bounds.
+and effort, and inbox batching bounds.
 Additional Worker Runtime choices must appear in `worker.runtimeRefs`.
 
 ```sh
@@ -92,14 +103,14 @@ mass-sa ticket inspect '<root-ticket-id>' --config /absolute/run/config.yaml --p
 ```
 
 `ticket create --objective ... --acceptance ...` is also available for operator
-creation without a Trigger. It creates and reads back one Issue, with no
-initial Assignment or Session. `ticket reconcile <id>` performs read-only
-confirmation of a pending business transition; it never repeats its status write.
+creation without a Trigger. It persists one local Ticket with no initial
+Assignment or Session. Use `ticket get` or `get_ticket_context` to query its
+business state and complete reports.
 
 Management API uses the configured operator credential at
 `/v1/management`: POST `/triggers`, GET `/triggers/<id>?projectId=mass`,
-POST `/tickets`, GET `/tickets/<id>?projectId=mass`, POST
-`/tickets/<id>/reconcile`, GET `/outputs` and POST `/outputs/ack`.
+POST `/tickets`, GET `/tickets/<id>?projectId=mass`, GET `/outputs` and
+POST `/outputs/ack`.
 GET `/tickets/<root-id>/inspect` shows root and descendant Tickets, workers,
 Assignments, routes, inputs, batches and reconciliation needs. The CLI exposes
 the same read model through `ticket inspect`.
@@ -163,7 +174,7 @@ controller; this permission does not bypass its input gate.
 ## Optional delegation and lifecycle
 
 Workers can work directly or use their Agent's native subagent tools. Native
-subagents are not mapped to platform Tickets, Issues or outputs. Static/offline
+subagents are not mapped to platform Tickets or outputs. Static/offline
 interface checks do not establish actual native subagent execution.
 
 Platform delegation requires immutable root `authorization`, for example:
@@ -183,7 +194,7 @@ Platform delegation requires immutable root `authorization`, for example:
 Resource identities constrain Agent instructions, not OS access. Tool and
 execution allowlists are enforced. Child grants must be exact subsets; absolute
 maxDepth and root-wide maxTickets cannot grow. Hard ceilings are depth 8 and
-64 Tickets. Root and unknown reservations count against the budget.
+64 Tickets. The root counts against the budget.
 
 Authorized Workers call `create_child_ticket` with stable requestId, independent
 title/objective/acceptance, narrower authorization and exact
@@ -192,6 +203,7 @@ for immediate dispatch. `dispatch_child_ticket(ticketId, name)` starts a direct
 child. Parent/root/Project/namespace are derived from the current capability.
 Children cannot be reparented. Namespace groups Sessions and grants no tools.
 
+Child creation, request identity and its parent notification commit together.
 Confirmed child creation and business changes atomically enter the parent
 Ticket inbox. Unattempted notifications wait while the parent has no executor
 or is offline, and resolve its current Assignment when dispatched. Child work
@@ -201,8 +213,8 @@ with delivery and result references. Late facts on a terminal parent are audit
 records and never reopen it.
 
 Before a terminal parent outcome, explicitly resolve/cancel descendants first
-with `finish_ticket`. Unknown creation/transition or unfinished descendants
-block closure. No transfer/unlink operation is provided. Children have no
+with `finish_ticket`. Unfinished descendants block closure. No transfer/unlink
+operation is provided. Children have no
 fabricated external Trigger and inherit no channel subscriptions.
 
 ## External consumer
@@ -237,13 +249,13 @@ filters are not separate adapter accounts. No real IM/PR/email connector is incl
 
 ## Reliability and real acceptance
 
-External creates and status operations reserve/fence intent before mutation.
-Multica writes use an explicit workspace, creation selects the project, and
-authoritative readback confirms project, hierarchy, metadata, comments and status.
-No Agent is assigned; recording status uses `--no-start`. An unknown create is
-isolated for investigation, never blindly retried. Restart can read back a pending
-status intent but cannot repeat the write. This does not promise unconditional
-exactly-once external side effects. State is single-instance with no process lock,
+Local business changes atomically persist the Ticket state, revision, Output
+fact and parent lifecycle notification. A failed local write publishes none of
+them. There is no remote business transition intent or reconciliation command.
+MASS provisioning/prompt ambiguity and channel delivery ambiguity retain their
+own fences and recovery rules; removing the tracker does not permit replay of
+unknown external actions. This does not promise unconditional exactly-once
+external side effects. State is single-instance with no process lock,
 HA, pruning or separate message broker.
 
 The sibling mass-go module pins remote SDK
@@ -254,7 +266,7 @@ Use `go list -m -json github.com/zoumo/agent-sdk-go` and `go version -m` to veri
 the remote dependency and absence of a local replacement.
 
 Real acceptance needs authenticated Claude, actual massd/Runtime, isolated
-working/state/data directories and ports, and explicit Multica targets. Record
+working/state/data directories and ports. Record
 all executable hashes, model evidence and SDK source. Historical run5 used
 unpublished candidate massd/SDK changes; published SDK dependencies are not
 proven to reproduce it. Model configuration alone does not prove upstream model

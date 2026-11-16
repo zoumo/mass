@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"slices"
 )
 
@@ -28,16 +27,12 @@ type WorkerExecution struct {
 	Effort     string `json:"effort"`
 }
 
-// DelegationState fences external creation before any Issue write. Unknown
-// entries retain their resource reservation and are never automatically retried.
+// DelegationState identifies an atomically created child ticket.
 type DelegationState struct {
-	RequestID   string         `json:"requestId"`
-	ParentID    string         `json:"parentTicketId"`
-	TicketID    string         `json:"ticketId"`
-	Fingerprint string         `json:"fingerprint"`
-	State       string         `json:"state"`
-	ErrorReason string         `json:"errorReason,omitempty"`
-	Issue       IssueReference `json:"issue,omitempty"`
+	RequestID   string `json:"requestId"`
+	ParentID    string `json:"parentTicketId"`
+	TicketID    string `json:"ticketId"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 type createChildTicketArgs struct {
@@ -151,7 +146,7 @@ func currentWorkerTicket(project ProjectState, cap CapabilityState) (TicketState
 	a, ok := project.Assignments[cap.AssignmentID]
 	t, exists := project.Tickets[a.TicketID]
 	w := project.Workers[workerKey(a.Namespace, cap.WorkerName)]
-	if !ok || !exists || a.Status != "active" || t.AssignmentID != a.ID || w.AssignmentID != a.ID || a.ProjectID != cap.ProjectID || a.RootTicketID != cap.RootTicketID || terminalBusinessState(t.BusinessState) || t.Transition != nil {
+	if !ok || !exists || a.Status != "active" || t.AssignmentID != a.ID || w.AssignmentID != a.ID || a.ProjectID != cap.ProjectID || a.RootTicketID != cap.RootTicketID || terminalBusinessState(t.BusinessState) {
 		return TicketState{}, capabilityInvalid()
 	}
 	return t, nil
@@ -217,13 +212,10 @@ func (s *WorkerService) createChildTicket(ctx context.Context, cap CapabilitySta
 	if err != nil {
 		return ChildTicketResult{}, err
 	}
-	var parent TicketState
 	var intent DelegationState
-	var replay bool
 	err = s.store.updateState(func(state *State) error {
 		p := state.Projects[cap.ProjectID]
-		var err error
-		parent, err = currentWorkerTicket(p, cap)
+		parent, err := currentWorkerTicket(p, cap)
 		if err != nil {
 			return err
 		}
@@ -241,10 +233,7 @@ func (s *WorkerService) createChildTicket(ctx context.Context, cap CapabilitySta
 			if previous.Fingerprint != fingerprint {
 				return operationError("already_exists", "delegation_request_conflict", "requestId already identifies different delegation content")
 			}
-			if previous.State != "confirmed" {
-				return operationError("outcome_unknown", "delegation_creation_unconfirmed", "prior child creation is fenced; reconcile the external Issue before any further creation")
-			}
-			intent, replay = previous, true
+			intent = previous
 			return nil
 		}
 		if parent.Depth+1 > parent.Authorization.MaxDepth {
@@ -254,69 +243,40 @@ func (s *WorkerService) createChildTicket(ctx context.Context, cap CapabilitySta
 		if root.ID == "" || root.ProjectID != cap.ProjectID || root.ParentTicketID != "" || root.Namespace != parent.Namespace || root.Authorization == nil {
 			return delegationDenied()
 		}
-		count := 1
-		for _, d := range p.Delegations {
-			if t, ok := p.Tickets[d.ParentID]; ok && t.RootTicketID == root.ID {
+		count := 0
+		for _, ticket := range p.Tickets {
+			if ticket.RootTicketID == root.ID {
 				count++
 			}
 		}
 		if count >= root.Authorization.MaxTickets || count >= parent.Authorization.MaxTickets {
-			return operationError("failed_precondition", "delegation_resource_limit", "root Ticket resource budget is exhausted, including unconfirmed creations")
+			return operationError("failed_precondition", "delegation_resource_limit", "root Ticket resource budget is exhausted")
 		}
 		if _, exists := p.Tickets[childID]; exists {
 			return operationError("already_exists", "duplicate_ticket", "child Ticket identifier already exists")
 		}
-		for _, reserved := range p.Delegations {
-			if reserved.TicketID == childID {
-				return operationError("already_exists", "duplicate_ticket", "child Ticket identifier is already reserved")
-			}
-		}
-		intent = DelegationState{RequestID: args.RequestID, ParentID: parent.ID, TicketID: childID, Fingerprint: fingerprint, State: "writing"}
+		intent = DelegationState{RequestID: args.RequestID, ParentID: parent.ID, TicketID: childID, Fingerprint: fingerprint}
 		if p.Delegations == nil {
 			p.Delegations = map[string]DelegationState{}
 		}
 		p.Delegations[key] = intent
+		assignment := p.Assignments[cap.AssignmentID]
+		ticket := TicketState{
+			ID: childID, ProjectID: cap.ProjectID, RootTicketID: parent.RootTicketID,
+			ParentTicketID: parent.ID, Namespace: parent.Namespace, Title: args.Title,
+			Objective: args.Objective, Acceptance: args.Acceptance,
+			Authorization: &args.Authorization, Execution: &args.Execution,
+			CreatedByAssignment: cap.AssignmentID, CreatedBySession: assignment.Session,
+			DelegationRequestID: args.RequestID, Depth: parent.Depth + 1,
+			CreatedAt: s.now(), UpdatedAt: s.now(),
+		}
+		p.Tickets[ticket.ID] = ticket
+		recordChildLifecycle(&p, ticket, "created", ticket.Objective, ticket.CreatedAt)
 		state.Projects[cap.ProjectID] = p
 		return nil
 	})
 	if err != nil {
 		return ChildTicketResult{}, err
-	}
-	if !replay {
-		tracker, err := s.tickets.trackerFor(cap.ProjectID)
-		if err != nil {
-			return ChildTicketResult{}, err
-		}
-		provenance, _ := json.Marshal(map[string]any{"ticketId": intent.TicketID, "parentTicketId": parent.ID, "rootTicketId": parent.RootTicketID, "assignmentId": cap.AssignmentID, "requestId": args.RequestID, "execution": args.Execution, "authorization": args.Authorization})
-		description := ticketDescription(args.Objective, args.Acceptance) + fmt.Sprintf("\n## Delegation provenance\n\n```json\n%s\n```\n", provenance)
-		issue, createErr := tracker.CreateIssue(ctx, CreateIssueInput{Title: args.Title, Description: description, ParentID: parent.Issue.ID})
-		// Keep even a confirmed Issue identity if later metadata confirmation fails.
-		if createErr == nil {
-			intent.Issue = IssueReference{ID: issue.ID, Identifier: issue.Identifier}
-			configJSON, _ := json.Marshal(args.Execution)
-			grantJSON, _ := json.Marshal(args.Authorization)
-			createErr = tracker.SetMetadata(ctx, issue.ID, map[string]string{MetadataProject: cap.ProjectID, MetadataTicketID: intent.TicketID, "mass_sa_parent_ticket_id": parent.ID, "mass_sa_root_ticket_id": parent.RootTicketID, "mass_sa_delegation_request": args.RequestID, "mass_sa_execution": string(configJSON), "mass_sa_authorization": string(grantJSON)})
-		}
-		if createErr != nil {
-			_ = s.store.updateProject(cap.ProjectID, func(p *ProjectState) error {
-				intent.State = "unknown"
-				intent.ErrorReason = operationReason(createErr)
-				p.Delegations[parent.ID+":"+args.RequestID] = intent
-				return nil
-			})
-			return ChildTicketResult{}, operationError("outcome_unknown", "delegation_creation_unconfirmed", "child Issue creation or metadata is unconfirmed; request is durably fenced and must not be repeated")
-		}
-		assignment := s.store.Snapshot().Projects[cap.ProjectID].Assignments[cap.AssignmentID]
-		ticket := TicketState{ID: intent.TicketID, ProjectID: cap.ProjectID, RootTicketID: parent.RootTicketID, ParentTicketID: parent.ID, Namespace: parent.Namespace, Title: args.Title, Objective: args.Objective, Acceptance: args.Acceptance, Issue: intent.Issue, Status: issue.Status, Authorization: &args.Authorization, Execution: &args.Execution, CreatedByAssignment: cap.AssignmentID, CreatedBySession: assignment.Session, DelegationRequestID: args.RequestID, Depth: parent.Depth + 1, CreatedAt: s.now(), UpdatedAt: s.now()}
-		if err := s.store.updateProject(cap.ProjectID, func(p *ProjectState) error {
-			intent.State = "confirmed"
-			p.Delegations[parent.ID+":"+args.RequestID] = intent
-			p.Tickets[ticket.ID] = ticket
-			recordChildLifecycle(p, ticket, "created", ticket.Objective, ticket.CreatedAt)
-			return nil
-		}); err != nil {
-			return ChildTicketResult{}, err
-		}
 	}
 	ticket := s.store.Snapshot().Projects[cap.ProjectID].Tickets[intent.TicketID]
 	result := ChildTicketResult{Ticket: ticket}

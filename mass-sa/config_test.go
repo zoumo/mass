@@ -17,8 +17,6 @@ mass:
   endpoint: ws://127.0.0.1:24368
   namespace: sa-system
   tokenEnv: MASS_TOKEN
-multica:
-  executable: multica
 projects:
   - id: mass
     name: MASS
@@ -31,18 +29,12 @@ projects:
       model: deepseek-router-a
     worker:
       model: deepseek-worker
-    multica:
-      workspaceId: test-workspace
-      projectId: 22222222-2222-4222-8222-222222222222
   - id: mass-other
     cwd: /work/mass-other
     memory: MASS secondary project memory.
     runtimeRef: deepseek-claude
     router: {}
     worker: {}
-    multica:
-      workspaceId: test-workspace
-      projectId: second-project
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -95,10 +87,17 @@ func TestLoadConfigRejectsUnknownFieldAndMultipleDocuments(t *testing.T) {
 stateFile: state.json
 unknown: true
 `,
+		"removed tracker config": `
+multica: {executable: multica}
+`,
+		"removed project tracker config": `
+projects:
+  - id: mass
+    multica: {workspaceId: example, projectId: example}
+`,
 		"multiple": `
 stateFile: state.json
 mass: {endpoint: ws://127.0.0.1:24368/rpc, namespace: sa-system}
-multica: {executable: multica}
 projects: []
 ---
 {}
@@ -111,6 +110,8 @@ projects: []
 			}
 			if _, err := LoadConfig(path); err == nil {
 				t.Fatal("LoadConfig succeeded, want validation error")
+			} else if strings.HasPrefix(name, "removed") && !strings.Contains(err.Error(), "invalid keys: multica") {
+				t.Fatalf("removed tracker configuration was not rejected as an unknown field: %v", err)
 			}
 		})
 	}
@@ -138,9 +139,6 @@ func TestConfigValidation(t *testing.T) {
 		"blank memory": func(cfg *Config) { cfg.Projects[0].Memory = "  \n" },
 		"missing runtime": func(cfg *Config) {
 			cfg.Projects[0].RuntimeRef = ""
-		},
-		"missing multica project": func(cfg *Config) {
-			cfg.Projects[0].Multica.ProjectID = ""
 		},
 		"nul model": func(cfg *Config) { cfg.Projects[0].Router.Model = "bad\x00model" },
 		"negative merge window": func(cfg *Config) {
@@ -223,7 +221,6 @@ func newTestConfig(t *testing.T, endpoint, stateFile string, projects ...Project
 			Endpoint:  endpoint,
 			Namespace: RouterNamespace,
 		},
-		Multica:  MulticaConfig{Executable: "multica"},
 		Projects: projects,
 	}
 	cfg.applyDefaults()
@@ -250,10 +247,6 @@ func newTestProject(id string) ProjectConfig {
 		Worker: RoleConfig{
 			Model:  "deepseek-worker",
 			Effort: "high",
-		},
-		Multica: ProjectMultica{
-			WorkspaceID: "test-workspace",
-			ProjectID:   "project-" + id,
 		},
 	}
 }

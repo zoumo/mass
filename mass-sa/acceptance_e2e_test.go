@@ -10,7 +10,7 @@ import (
 // This story uses the same serve process, public CLI/API and stdio MCP as an
 // adapter and Agents. Fault-specific cases live beside their public harnesses.
 func TestTicketStoryPublicLoop(t *testing.T) {
-	mass, multica, server, router := delegationServer(t)
+	mass, server, router := delegationServer(t)
 	config := outputTestConfig(t, server)
 	routerID := triggerSnapshot(t, server).Router.SessionID
 	mass.setState(routerID, "running")
@@ -47,8 +47,8 @@ func TestTicketStoryPublicLoop(t *testing.T) {
 	grandArgs := childRequest("story-grandchild")
 	grandArgs.WorkerName = "grandchild"
 	grand := decodeT06[ChildTicketResult](t, childMCP.call(t, "create_child_ticket", grandArgs))
-	require.Equal(t, root.Issue.ID, multica.issue(child.Ticket.Issue.ID).ParentIssueID)
-	require.Equal(t, child.Ticket.Issue.ID, multica.issue(grand.Ticket.Issue.ID).ParentIssueID)
+	require.Equal(t, root.ID, child.Ticket.ParentTicketID)
+	require.Equal(t, child.Ticket.ID, grand.Ticket.ParentTicketID)
 	router.call(t, "finish_ticket", finishTicketArgs{TicketID: child.Ticket.ID, Resolution: "blocked", Summary: "Waiting for independent evidence"})
 	require.Equal(t, "unfinished_child_tickets", router.callError(t, "finish_ticket", finishTicketArgs{TicketID: root.ID, Resolution: "cancelled", Summary: "Cannot discard live descendants"}).Reason)
 	router.call(t, "send_to_worker", routerSendToWorkerArgs{RootTicketID: root.ID, Name: grand.Worker.Name, Message: "Produce the independently reviewable evidence"})
@@ -57,7 +57,7 @@ func TestTicketStoryPublicLoop(t *testing.T) {
 	waitLifecycleReport(t, server, child.Ticket)
 	router.call(t, "finish_ticket", finishTicketArgs{TicketID: child.Ticket.ID, Resolution: "completed", Summary: "Child evidence and grandchild reviewed"})
 	require.Empty(t, readTestOutputs(t, server, "unrelated", nil).Outputs)
-	creates := len(multica.invocationsOf("issue", "create"))
+	creates := len(triggerSnapshot(t, server).Tickets)
 	server.stop(t)
 	server = startT06Server(t, server.config)
 	resumedAgain := decodeT06[WorkerView](t, router.call(t, "create_worker", createWorkerArgs{TicketID: root.ID, Name: parent.Name}))
@@ -72,7 +72,7 @@ func TestTicketStoryPublicLoop(t *testing.T) {
 	}
 	completed := decodeT06[TicketState](t, router.call(t, "finish_ticket", finishTicketArgs{TicketID: root.ID, Resolution: "completed", Summary: "Overall evidence explicitly accepted"}))
 	require.Equal(t, "completed", completed.BusinessState)
-	require.Equal(t, "done", multica.issue(root.Issue.ID).Status)
+	require.Equal(t, completed, triggerSnapshot(t, server).Tickets[root.ID])
 	page := readTestOutputs(t, server, "origin", nil)
 	require.Len(t, page.Outputs, 2, "ordinary finals and source-free children stay internal")
 	fact := page.Outputs[1]
@@ -94,7 +94,7 @@ func TestTicketStoryPublicLoop(t *testing.T) {
 	require.Equal(t, "ignored", runT06JSON[TriggerState](t, "trigger", "get", echo.TriggerID, "--config", config, "--project", "mass").Decision)
 	readback := runT06JSON[TicketState](t, "ticket", "get", root.ID, "--config", config, "--project", "mass")
 	require.Equal(t, "completed", readback.BusinessState)
-	require.Len(t, multica.invocationsOf("issue", "create"), creates)
+	require.Len(t, triggerSnapshot(t, server).Tickets, creates)
 	_, _, after := mass.operationCounts()
 	require.Equal(t, prompts, after)
 	// A separate cancellation explicitly disposes descendants before the root.

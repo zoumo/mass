@@ -29,7 +29,7 @@ type WorkerRunResult struct {
 	SourceEventID        string       `json:"sourceEventId"`
 	SourceItemID         string       `json:"sourceItemId,omitempty"`
 	SourceTurnID         string       `json:"sourceTurnId,omitempty"`
-	ReportCommentID      string       `json:"reportCommentId"`
+	ReportID             string       `json:"reportId"`
 	RouterInboxEventID   string       `json:"routerInboxEventId"`
 	ReportText           string       `json:"reportText"`
 	ReportFallback       bool         `json:"reportFallback"`
@@ -161,7 +161,7 @@ func (s *WorkerService) executeWorkerEvents(ctx context.Context, sharedClient se
 		return fail(state, collectErr)
 	}
 	reportText, fallbackFromShape := workerReportText(finalEvent)
-	structuredResult, parseErr := parseStructuredReport(reportText)
+	_, parseErr := parseStructuredReport(reportText)
 	assignment := s.store.Snapshot().Projects[projectID].Assignments[worker.AssignmentID]
 	updatedTicket, err := s.tickets.AddReport(ctx, AddReportRequest{
 		ProjectID:     projectID,
@@ -183,13 +183,10 @@ func (s *WorkerService) executeWorkerEvents(ctx context.Context, sharedClient se
 		return fail(state, err)
 	}
 	report, ok := updatedTicket.reportBySource(finalEvent.EventID)
-	if !ok || report.CommentID == "" {
-		return fail("unknown", operationError("outcome_unknown", "report_unconfirmed", "worker report comment was not confirmed in local state"))
+	if !ok || report.ID == "" {
+		return fail("unknown", operationError("outcome_unknown", "report_unconfirmed", "worker report was not confirmed in local state"))
 	}
-	inboxEventID, err := s.enqueueRouterReport(projectID, rootID, worker, finalEvent, report.CommentID, reportText, structuredResult, parseErr)
-	if err != nil {
-		return fail("unknown", err)
-	}
+	inboxEventID := "report/" + report.ID
 	if err := s.setExecutionState(projectID, worker.AssignmentID, "completed", time.Time{}); err != nil {
 		return WorkerRunResult{}, err
 	}
@@ -202,7 +199,7 @@ func (s *WorkerService) executeWorkerEvents(ctx context.Context, sharedClient se
 		SourceEventID:        finalEvent.EventID,
 		SourceItemID:         finalEvent.ItemID,
 		SourceTurnID:         observedTurnID(finalEvent),
-		ReportCommentID:      report.CommentID,
+		ReportID:             report.ID,
 		RouterInboxEventID:   inboxEventID,
 		ReportText:           reportText,
 		ReportFallback:       fallbackFromShape || parseErr != "",
@@ -677,70 +674,4 @@ func parseStructuredReport(text string) (json.RawMessage, string) {
 		return nil, "final JSON cannot be normalized"
 	}
 	return raw, ""
-}
-
-func (s *WorkerService) enqueueRouterReport(projectID, rootTicketID string, worker WorkerState, event SessionEvent, commentID, reportText string, structuredResult json.RawMessage, parseErr string) (string, error) {
-	eventID, err := s.newID("e")
-	if err != nil {
-		return "", err
-	}
-	payload := map[string]any{
-		"ticketId":      worker.TicketID,
-		"assignmentId":  worker.AssignmentID,
-		"sessionId":     worker.Session.SessionID,
-		"session":       worker.Session.Namespace + "/" + worker.Session.Name,
-		"commentId":     commentID,
-		"sourceEventId": event.EventID,
-		"sourceItemId":  event.ItemID,
-		"sourceTurnId":  observedTurnID(event),
-		"structured":    parseErr == "",
-		"report":        reportText,
-	}
-	if parseErr != "" {
-		payload["parseError"] = parseErr
-	}
-	if structuredResult != nil {
-		payload["structuredResult"] = structuredResult
-	}
-	rawPayload, err := json.Marshal(payload)
-	if err != nil {
-		return "", operationError("invalid_argument", "invalid_worker_report", "worker report event cannot be encoded")
-	}
-	err = s.store.updateProject(projectID, func(project *ProjectState) error {
-		for _, existing := range project.Inbox {
-			if existing.Kind == "worker_report" && existing.SourceEventID == event.EventID &&
-				existing.TargetAssignmentID == worker.AssignmentID {
-				eventID = existing.ID
-				return nil
-			}
-		}
-		if project.Router == nil || project.Router.SessionID == "" {
-			return operationError("failed_precondition", "router_session_missing", "project router Session is not available for worker reports")
-		}
-		now := s.now()
-		project.NextInboxSeq++
-		project.Inbox[eventID] = InboxEventState{
-			ID:                 eventID,
-			Sequence:           project.NextInboxSeq,
-			ProjectID:          projectID,
-			RootTicketID:       rootTicketID,
-			Source:             "worker:" + worker.Name,
-			Kind:               "worker_report",
-			Summary:            "Worker report for ticket " + worker.TicketID,
-			Payload:            rawPayload,
-			TargetAssignmentID: worker.AssignmentID,
-			TargetWorkerName:   project.Router.Name,
-			TargetSession:      project.Router.SessionRef,
-			RoutingPath:        "router",
-			State:              "queued",
-			SourceEventID:      event.EventID,
-			AcceptedAt:         now,
-			UpdatedAt:          now,
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return eventID, nil
 }

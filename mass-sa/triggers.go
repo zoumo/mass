@@ -311,7 +311,7 @@ func resolveQueuedInput(p ProjectState, event InboxEventState) (InboxEventState,
 		return event, true
 	}
 	ticket, ok := p.Tickets[event.TicketID]
-	if !ok || terminalBusinessState(ticket.BusinessState) || ticket.Transition != nil {
+	if !ok || terminalBusinessState(ticket.BusinessState) {
 		return event, false
 	}
 	assignment, ok := p.Assignments[ticket.AssignmentID]

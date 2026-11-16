@@ -28,12 +28,9 @@ func acceptTestTrigger(t *testing.T, s *t06Server, event, thread string) Trigger
 
 func TestTriggerOwnershipPublicLoop(t *testing.T) {
 	mass := newFakeMASSServer(t, "")
-	multica := newFakeMultica(t)
 	project := newTestProject("mass")
 	project.CWD = t.TempDir()
-	project.Multica = ProjectMultica{WorkspaceID: multica.workspace, ProjectID: multica.project}
 	config := newTestConfig(t, mass.endpoint(), filepath.Join(t.TempDir(), "state.json"), project)
-	config.Multica.Executable = fakeMulticaBinary
 	config.Management.Listen = freeLoopbackAddress(t)
 	config.Management.TokenFile = filepath.Join(t.TempDir(), "management-token")
 	require.NoError(t, os.WriteFile(config.Management.TokenFile, []byte("trigger-test"), 0600))
@@ -57,7 +54,7 @@ func TestTriggerOwnershipPublicLoop(t *testing.T) {
 	ignored := decodeT06[TriggerState](t, router.call(t, "decide_trigger", decideTriggerArgs{TriggerID: first.TriggerID, Action: "ignore"}))
 	require.Equal(t, "ignored", ignored.Decision)
 	ticket := decodeT06[TicketState](t, router.call(t, "create_ticket", createTicketArgs{Title: "Existing work", Objective: "Keep the scope", Acceptance: "Explicit acceptance"}))
-	// Create is one durable decision, replay never creates another Issue/Ticket.
+	// Create is one durable decision, replay never creates another Ticket.
 	create := acceptTestTrigger(t, server, "create", "new-work")
 	args := decideTriggerArgs{TriggerID: create.TriggerID, Action: "create", Title: "From source", Objective: "Handle new request", Acceptance: "Review result"}
 	created := decodeT06[TriggerState](t, router.call(t, "decide_trigger", args))

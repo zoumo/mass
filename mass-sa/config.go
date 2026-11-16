@@ -40,7 +40,6 @@ var (
 type Config struct {
 	StateFile  string           `yaml:"stateFile"`
 	MASS       MASSConfig       `yaml:"mass"`
-	Multica    MulticaConfig    `yaml:"multica"`
 	Management ManagementConfig `yaml:"management"`
 	Projects   []ProjectConfig  `yaml:"projects"`
 }
@@ -53,11 +52,6 @@ type MASSConfig struct {
 	Namespace string `yaml:"namespace"`
 }
 
-// MulticaConfig contains settings shared by all projects.
-type MulticaConfig struct {
-	Executable string `yaml:"executable"`
-}
-
 // ManagementConfig controls the authenticated management HTTP surface. The
 // internal tool endpoint shares the same loopback listener under /v1/tools.
 type ManagementConfig struct {
@@ -68,15 +62,14 @@ type ManagementConfig struct {
 
 // ProjectConfig defines one long-lived SuperAgent project.
 type ProjectConfig struct {
-	ID         string         `yaml:"id"`
-	Name       string         `yaml:"name"`
-	CWD        string         `yaml:"cwd"`
-	Memory     string         `yaml:"memory"`
-	RuntimeRef string         `yaml:"runtimeRef"`
-	Router     RouterConfig   `yaml:"router"`
-	Worker     RoleConfig     `yaml:"worker"`
-	Inbox      InboxConfig    `yaml:"inbox"`
-	Multica    ProjectMultica `yaml:"multica"`
+	ID         string       `yaml:"id"`
+	Name       string       `yaml:"name"`
+	CWD        string       `yaml:"cwd"`
+	Memory     string       `yaml:"memory"`
+	RuntimeRef string       `yaml:"runtimeRef"`
+	Router     RouterConfig `yaml:"router"`
+	Worker     RoleConfig   `yaml:"worker"`
+	Inbox      InboxConfig  `yaml:"inbox"`
 }
 
 // RouterConfig controls the project router Session.
@@ -98,12 +91,6 @@ type InboxConfig struct {
 	MergeWindowMS  int `yaml:"mergeWindowMs"`
 	MaxBatchSize   int `yaml:"maxBatchSize"`
 	MaxPromptBytes int `yaml:"maxPromptBytes"`
-}
-
-// ProjectMultica identifies the project's Multica target.
-type ProjectMultica struct {
-	WorkspaceID string `yaml:"workspaceId"`
-	ProjectID   string `yaml:"projectId"`
 }
 
 // LoadConfig reads, defaults, normalizes, and validates a YAML configuration.
@@ -311,9 +298,6 @@ func (c Config) validate() error {
 	if c.Management.TokenFile != "" && !filepath.IsAbs(c.Management.TokenFile) {
 		return invalidConfig("management.tokenFile must resolve to an absolute path")
 	}
-	if err := validateText("multica.executable", c.Multica.Executable, true); err != nil {
-		return err
-	}
 	if len(c.Projects) == 0 {
 		return invalidConfig("at least one project is required")
 	}
@@ -377,12 +361,6 @@ func (c Config) validate() error {
 		}
 		if project.Inbox.MaxPromptBytes <= 0 {
 			return invalidConfig(prefix + ".inbox.maxPromptBytes must be positive")
-		}
-		if err := validateText(prefix+".multica.workspaceId", project.Multica.WorkspaceID, true); err != nil {
-			return err
-		}
-		if err := validateText(prefix+".multica.projectId", project.Multica.ProjectID, true); err != nil {
-			return err
 		}
 	}
 	return nil

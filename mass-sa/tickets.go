@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -14,13 +14,9 @@ import (
 type TicketResolution string
 
 const (
-	// ResolutionCompleted accepts the work.
-	ResolutionCompleted TicketResolution = "completed"
-	// ResolutionFailed records work that could not be completed.
-	ResolutionFailed TicketResolution = "failed"
-	// ResolutionCancelled records work that was cancelled.
-	ResolutionCancelled TicketResolution = "cancelled"
-	// ResolutionBlocked records work that is blocked on an external condition.
+	ResolutionCompleted   TicketResolution = "completed"
+	ResolutionFailed      TicketResolution = "failed"
+	ResolutionCancelled   TicketResolution = "cancelled"
 	ResolutionBlocked     TicketResolution = "blocked"
 	ResolutionWaitingUser TicketResolution = "waiting_user"
 	ResolutionReopened    TicketResolution = "reopened"
@@ -35,18 +31,6 @@ func (r TicketResolution) validate() error {
 	}
 }
 
-func (r TicketResolution) issueStatus() string {
-	switch r {
-	case ResolutionBlocked, ResolutionWaitingUser:
-		return "blocked"
-	case ResolutionReopened:
-		return "todo"
-	default:
-		return "done"
-	}
-}
-
-// CreateTicketRequest creates one ticket as a child Issue of a root.
 type CreateTicketRequest struct {
 	Authorization  *WorkAuthorization
 	ProjectID      string
@@ -54,17 +38,14 @@ type CreateTicketRequest struct {
 	Title          string
 	Objective      string
 	Acceptance     string
-	AssignmentID   string
 }
 
-// RecordAssignmentRequest binds the ticket's current worker Assignment.
 type RecordAssignmentRequest struct {
 	ProjectID    string
 	TicketID     string
 	AssignmentID string
 }
 
-// AddReportRequest writes one worker report to the ticket Issue.
 type AddReportRequest struct {
 	ProjectID     string
 	TicketID      string
@@ -78,7 +59,6 @@ type AddReportRequest struct {
 	Body          string
 }
 
-// FinishTicketRequest records the router's explicit ticket conclusion.
 type FinishTicketRequest struct {
 	ProjectID  string
 	TicketID   string
@@ -86,17 +66,13 @@ type FinishTicketRequest struct {
 	Summary    string
 }
 
-// TicketBridge is the narrow business interface shared by the future MCP tools
-// and the management HTTP API. It owns the local ticket state and delegates all
-// external writes to one IssueTracker per project.
 type TicketBridge struct {
 	store    *StateStore
-	trackers map[string]IssueTracker
+	projects map[string]bool
 	now      func() time.Time
 	newID    func(prefix string) (string, error)
 }
 
-// NewTicketBridge binds configured projects to their explicit Multica targets.
 func NewTicketBridge(config Config, store *StateStore) (*TicketBridge, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -104,110 +80,64 @@ func NewTicketBridge(config Config, store *StateStore) (*TicketBridge, error) {
 	if store == nil {
 		return nil, operationError("invalid_argument", "invalid_state_store", "state store is required")
 	}
-	trackers := make(map[string]IssueTracker, len(config.Projects))
+	projects := make(map[string]bool, len(config.Projects))
 	for _, project := range config.Projects {
-		tracker, err := NewMulticaCLI(config.Multica.Executable, MulticaTarget{
-			WorkspaceID: project.Multica.WorkspaceID,
-			ProjectID:   project.Multica.ProjectID,
-		})
-		if err != nil {
-			return nil, err
-		}
-		trackers[project.ID] = tracker
+		projects[project.ID] = true
 	}
-	return &TicketBridge{
-		store:    store,
-		trackers: trackers,
-		now:      func() time.Time { return time.Now().UTC() },
-		newID:    newRecordID,
-	}, nil
+	return &TicketBridge{store: store, projects: projects, now: func() time.Time { return time.Now().UTC() }, newID: newRecordID}, nil
 }
 
-// CreateTicket creates the ticket child Issue and persists the ticket.
 func (b *TicketBridge) CreateTicket(ctx context.Context, req CreateTicketRequest) (TicketState, error) {
-	tracker, err := b.trackerFor(req.ProjectID)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return TicketState{}, err
 	}
-	var parent TicketState
-	if req.ParentTicketID != "" {
-		parent, err = b.ticket(req.ProjectID, req.ParentTicketID)
-		if err != nil {
+	if !b.projects[req.ProjectID] {
+		return TicketState{}, operationError("not_found", "unknown_project", "project is not configured")
+	}
+	for label, value := range map[string]string{"ticket title": req.Title, "ticket objective": req.Objective, "ticket acceptance": req.Acceptance} {
+		if label == "ticket title" {
+			if err := validateSingleLine(label, value, true); err != nil {
+				return TicketState{}, err
+			}
+		} else if err := validateBlockText(label, value, true); err != nil {
 			return TicketState{}, err
 		}
 	}
-	if err := validateSingleLine("ticket title", req.Title, true); err != nil {
-		return TicketState{}, err
-	}
-	if err := validateBlockText("ticket objective", req.Objective, true); err != nil {
-		return TicketState{}, err
-	}
-	if err := validateBlockText("ticket acceptance", req.Acceptance, true); err != nil {
-		return TicketState{}, err
-	}
-
 	ticketID, err := b.allocateTicketID(req.ProjectID)
 	if err != nil {
 		return TicketState{}, err
 	}
-	issue, err := tracker.CreateIssue(ctx, CreateIssueInput{
-		Title:       strings.TrimSpace(req.Title),
-		Description: ticketDescription(req.Objective, req.Acceptance),
-		ParentID:    parent.Issue.ID,
-	})
-	if err != nil {
-		return TicketState{}, err
-	}
-	metadata := map[string]string{
-		MetadataProject:  req.ProjectID,
-		MetadataTicketID: ticketID,
-	}
-
-	if err := tracker.SetMetadata(ctx, issue.ID, metadata); err != nil {
-		return TicketState{}, createdButUnconfirmed("ticket issue", issue, err)
-	}
-
 	now := b.now()
 	ticket := TicketState{
-		Authorization: req.Authorization,
-		ID:            ticketID,
-		ProjectID:     req.ProjectID,
-		Title:         strings.TrimSpace(req.Title),
-		Objective:     strings.TrimSpace(req.Objective),
-		Acceptance:    strings.TrimSpace(req.Acceptance),
-		Issue:         IssueReference{ID: issue.ID, Identifier: issue.Identifier},
-		Status:        issue.Status,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		Authorization: req.Authorization, ID: ticketID, ProjectID: req.ProjectID,
+		RootTicketID: ticketID, Namespace: WorkerNamespace(req.ProjectID, ticketID),
+		Title: strings.TrimSpace(req.Title), Objective: strings.TrimSpace(req.Objective),
+		Acceptance: strings.TrimSpace(req.Acceptance), CreatedAt: now, UpdatedAt: now,
 	}
-	ticket.RootTicketID = ticketID
-	ticket.Namespace = WorkerNamespace(req.ProjectID, ticketID)
-	if parent.ID != "" {
-		ticket.ParentTicketID = parent.ID
-		ticket.RootTicketID = parent.RootTicketID
-		ticket.Namespace = parent.Namespace
-		ticket.Depth = parent.Depth + 1
-	}
-
-	if err := b.store.updateProject(req.ProjectID, func(project *ProjectState) error {
+	err = b.store.updateProject(req.ProjectID, func(project *ProjectState) error {
+		if req.ParentTicketID != "" {
+			parent, exists := project.Tickets[req.ParentTicketID]
+			if !exists {
+				return operationError("not_found", "ticket_not_found", "parent ticket was not found in this project")
+			}
+			if terminalBusinessState(parent.BusinessState) {
+				return operationError("failed_precondition", "ticket_resolved", "resolved tickets cannot receive new child work")
+			}
+			ticket.ParentTicketID, ticket.RootTicketID, ticket.Namespace, ticket.Depth = parent.ID, parent.RootTicketID, parent.Namespace, parent.Depth+1
+		}
 		if _, exists := project.Tickets[ticketID]; exists {
 			return operationError("failed_precondition", "duplicate_ticket", "ticket identifier already exists")
 		}
 		project.Tickets[ticketID] = ticket
 		return nil
-	}); err != nil {
-		return TicketState{}, createdButUnconfirmed("ticket issue", issue, err)
+	})
+	if err != nil {
+		return TicketState{}, err
 	}
 	return ticket, nil
 }
 
-// RecordAssignment binds the ticket to its current worker Assignment and writes
-// the assignment metadata before the local record.
-func (b *TicketBridge) RecordAssignment(ctx context.Context, req RecordAssignmentRequest) (TicketState, error) {
-	tracker, err := b.trackerFor(req.ProjectID)
-	if err != nil {
-		return TicketState{}, err
-	}
+func (b *TicketBridge) RecordAssignment(_ context.Context, req RecordAssignmentRequest) (TicketState, error) {
 	if err := validateSingleLine("assignment ID", req.AssignmentID, true); err != nil {
 		return TicketState{}, err
 	}
@@ -215,273 +145,207 @@ func (b *TicketBridge) RecordAssignment(ctx context.Context, req RecordAssignmen
 	if err != nil {
 		return TicketState{}, err
 	}
-	if terminalBusinessState(ticket.BusinessState) {
-		return TicketState{}, operationError("failed_precondition", "ticket_resolved", "resolved tickets cannot receive a new assignment")
-	}
-	if ticket.AssignmentID == req.AssignmentID {
-		return ticket, nil
-	}
-	previousAssignmentID := ticket.AssignmentID
-	if err := tracker.SetMetadata(ctx, ticket.Issue.ID, map[string]string{
-		MetadataAssignmentID: req.AssignmentID,
-	}); err != nil {
-		return TicketState{}, err
-	}
 	var updated TicketState
 	err = b.store.updateProject(req.ProjectID, func(project *ProjectState) error {
-		stored, exists := project.Tickets[req.TicketID]
-		if !exists {
-			return operationError("not_found", "ticket_not_found", "ticket was not found in this project")
-		}
+		stored := project.Tickets[req.TicketID]
 		if terminalBusinessState(stored.BusinessState) {
 			return operationError("failed_precondition", "ticket_resolved", "resolved tickets cannot receive a new assignment")
 		}
-		if stored.AssignmentID != previousAssignmentID {
-			return operationError("failed_precondition", "assignment_changed", "ticket assignment changed before metadata was confirmed")
+		if stored.AssignmentID != ticket.AssignmentID {
+			return operationError("failed_precondition", "assignment_changed", "ticket assignment changed before the new assignment was recorded")
 		}
-		stored.AssignmentID = req.AssignmentID
-		stored.UpdatedAt = b.now()
-		if previousAssignmentID != "" {
-			if previous, exists := project.Assignments[previousAssignmentID]; exists {
-				previous.Status = "superseded"
-				previous.UpdatedAt = b.now()
-				project.Assignments[previousAssignmentID] = previous
-			}
-			for key, binding := range project.RouteBindings {
-				if binding.AssignmentID == previousAssignmentID {
-					delete(project.RouteBindings, key)
-				}
+		if stored.AssignmentID == req.AssignmentID {
+			updated = stored
+			return nil
+		}
+		if previous, exists := project.Assignments[stored.AssignmentID]; exists {
+			previous.Status, previous.UpdatedAt = "superseded", b.now()
+			project.Assignments[previous.ID] = previous
+		}
+		for key, binding := range project.RouteBindings {
+			if binding.AssignmentID == stored.AssignmentID {
+				delete(project.RouteBindings, key)
 			}
 		}
-		project.Tickets[req.TicketID] = stored
-		updated = stored
+		stored.AssignmentID, stored.UpdatedAt = req.AssignmentID, b.now()
+		project.Tickets[stored.ID], updated = stored, stored
 		return nil
 	})
-	if err != nil {
-		return TicketState{}, issueConfirmed("ticket issue", ticket.Issue, err)
-	}
-	return updated, nil
+	return updated, err
 }
 
-// AddReport writes the worker report as a top-level ticket comment and records
-// the report reference locally. It never changes the ticket status.
-func (b *TicketBridge) AddReport(ctx context.Context, req AddReportRequest) (TicketState, error) {
-	tracker, err := b.trackerFor(req.ProjectID)
-	if err != nil {
-		return TicketState{}, err
-	}
+func (b *TicketBridge) AddReport(_ context.Context, req AddReportRequest) (TicketState, error) {
 	if err := validateSingleLine("assignment ID", req.AssignmentID, true); err != nil {
 		return TicketState{}, err
 	}
 	if req.Session.SessionID == "" || req.Session.Namespace == "" || req.Session.Name == "" {
 		return TicketState{}, operationError("invalid_argument", "invalid_session_ref", "report must reference a MASS Session ID, namespace, and name")
 	}
+	if err := validateBlockText("report body", req.Body, true); err != nil {
+		return TicketState{}, err
+	}
 	if req.SourceEventID != "" {
 		if err := validateSingleLine("source event ID", req.SourceEventID, true); err != nil {
 			return TicketState{}, err
 		}
 	}
-	if err := validateBlockText("report body", req.Body, true); err != nil {
-		return TicketState{}, err
-	}
-	ticket, err := b.ticket(req.ProjectID, req.TicketID)
+	reportID, err := b.newID("r")
 	if err != nil {
 		return TicketState{}, err
 	}
-	if terminalBusinessState(ticket.BusinessState) {
-		return TicketState{}, operationError("failed_precondition", "ticket_resolved", "resolved tickets cannot receive worker reports")
-	}
-	if ticket.AssignmentID != req.AssignmentID {
-		return TicketState{}, operationError("failed_precondition", "assignment_mismatch", "report does not belong to the ticket's current assignment")
-	}
-
-	if req.SourceEventID != "" {
-		if existing, ok := ticket.reportBySource(req.SourceEventID); ok {
-			switch existing.Status {
-			case "", "confirmed":
-				if existing.CommentID != "" {
-					return ticket, nil
-				}
-				return TicketState{}, operationError("outcome_unknown", "report_write_unconfirmed", "worker report was previously attempted but its comment is not confirmed")
-			case "writing", "unknown":
-				return TicketState{}, operationError("outcome_unknown", "report_write_unconfirmed", "worker report write outcome is unknown; inspect the Issue before retrying")
-			default:
-				return TicketState{}, operationError("failed_precondition", "report_already_failed", "worker report for this event previously failed")
-			}
+	var updated TicketState
+	err = b.store.updateProject(req.ProjectID, func(project *ProjectState) error {
+		ticket, exists := project.Tickets[req.TicketID]
+		if !exists {
+			return operationError("not_found", "ticket_not_found", "ticket was not found in this project")
 		}
-	}
-
-	intent := ReportState{
-		AssignmentID:  req.AssignmentID,
-		Session:       req.Session,
-		SourceEventID: req.SourceEventID,
-		SourceItemID:  req.SourceItemID,
-		SourceTurnID:  req.SourceTurnID,
-		Status:        "writing",
-		Structured:    req.Structured,
-		ParseError:    strings.TrimSpace(req.ParseError),
-		ReportedAt:    b.now(),
-	}
-	if _, err := b.updateTicket(req.ProjectID, req.TicketID, func(stored *TicketState) error {
-		if terminalBusinessState(stored.BusinessState) {
+		if terminalBusinessState(ticket.BusinessState) {
 			return operationError("failed_precondition", "ticket_resolved", "resolved tickets cannot receive worker reports")
 		}
-		if stored.AssignmentID != req.AssignmentID {
+		if ticket.AssignmentID != req.AssignmentID {
 			return operationError("failed_precondition", "assignment_mismatch", "report does not belong to the ticket's current assignment")
 		}
 		if req.SourceEventID != "" {
-			if _, exists := stored.reportBySource(req.SourceEventID); exists {
-				return operationError("already_exists", "report_exists", "worker report source event already exists")
-			}
-		}
-		stored.Reports = append(stored.Reports, intent)
-		stored.UpdatedAt = b.now()
-		return nil
-	}); err != nil {
-		return TicketState{}, err
-	}
-
-	comment, err := tracker.AddComment(ctx, ticket.Issue.ID, workerReportBody(req, b.now()))
-	if err != nil {
-		unknown := IsErrorCode(err, "outcome_unknown")
-		_, _ = b.updateTicket(req.ProjectID, req.TicketID, func(stored *TicketState) error {
-			for index := range stored.Reports {
-				if !sameReportSource(stored.Reports[index], req.SourceEventID, intent.ReportedAt) {
-					continue
+			if existing, ok := ticket.reportBySource(req.SourceEventID); ok {
+				if existing.AssignmentID != req.AssignmentID || existing.Session != req.Session ||
+					existing.SourceItemID != req.SourceItemID || existing.SourceTurnID != req.SourceTurnID ||
+					existing.Structured != req.Structured || existing.ParseError != strings.TrimSpace(req.ParseError) || existing.Body != req.Body {
+					return operationError("already_exists", "report_exists", "worker report source event already identifies different content")
 				}
-				if unknown {
-					stored.Reports[index].Status = "unknown"
-					stored.Reports[index].ErrorReason = operationReason(err)
-					stored.Reports[index].ReportedAt = b.now()
-				} else {
-					stored.Reports = append(stored.Reports[:index], stored.Reports[index+1:]...)
-				}
-				stored.UpdatedAt = b.now()
-				break
+				updated = ticket
+				return nil
 			}
-			return nil
-		})
-		return TicketState{}, err
-	}
-	updated, err := b.updateTicket(req.ProjectID, req.TicketID, func(stored *TicketState) error {
-		if terminalBusinessState(stored.BusinessState) {
-			return operationError("failed_precondition", "ticket_resolved", "resolved tickets cannot receive worker reports")
 		}
-		if stored.AssignmentID != req.AssignmentID {
-			return operationError("failed_precondition", "assignment_mismatch", "report does not belong to the ticket's current assignment")
+		report := ReportState{
+			ID: reportID, AssignmentID: req.AssignmentID, Session: req.Session,
+			SourceEventID: req.SourceEventID, SourceItemID: req.SourceItemID, SourceTurnID: req.SourceTurnID,
+			Status: "confirmed", Structured: req.Structured, ParseError: strings.TrimSpace(req.ParseError),
+			Body: req.Body, ReportedAt: b.now(),
 		}
-		found := false
-		for index := range stored.Reports {
-			if !sameReportSource(stored.Reports[index], req.SourceEventID, intent.ReportedAt) {
-				continue
-			}
-			stored.Reports[index].Status = "confirmed"
-			stored.Reports[index].CommentID = comment.ID
-			stored.Reports[index].ErrorReason = ""
-			stored.Reports[index].ReportedAt = b.now()
-			found = true
-			break
+		if assignment, exists := project.Assignments[req.AssignmentID]; exists && assignment.Session != req.Session {
+			return operationError("failed_precondition", "assignment_mismatch", "report Session does not match its Assignment")
 		}
-		if !found {
-			return operationError("failed_precondition", "report_intent_missing", "worker report intent changed before comment confirmation")
+		if err := recordRouterReport(project, ticket, report); err != nil {
+			return err
 		}
-		stored.UpdatedAt = b.now()
+		ticket.Reports = append(ticket.Reports, report)
+		ticket.UpdatedAt = report.ReportedAt
+		project.Tickets[ticket.ID], updated = ticket, ticket
 		return nil
 	})
-	if err != nil {
-		return TicketState{}, issueConfirmed("ticket report comment", ticket.Issue, err)
-	}
-	return updated, nil
+	return updated, err
 }
 
-// FinishTicket maps the business resolution to the Multica status and confirms
-// it by readback. The ticket stays open until this method succeeds.
-func (b *TicketBridge) FinishTicket(ctx context.Context, req FinishTicketRequest) (TicketState, error) {
-	tracker, err := b.trackerFor(req.ProjectID)
-	if err != nil {
-		return TicketState{}, err
+func recordRouterReport(project *ProjectState, ticket TicketState, report ReportState) error {
+	if project.Router == nil || project.Router.SessionID == "" {
+		return operationError("failed_precondition", "router_session_missing", "project router Session is not available for worker reports")
 	}
+	payload := map[string]any{
+		"ticketId": ticket.ID, "assignmentId": report.AssignmentID, "sessionId": report.Session.SessionID,
+		"session": report.Session.Namespace + "/" + report.Session.Name, "reportId": report.ID,
+		"sourceEventId": report.SourceEventID, "sourceItemId": report.SourceItemID, "sourceTurnId": report.SourceTurnID,
+		"structured": report.Structured, "report": report.Body,
+	}
+	if report.ParseError != "" {
+		payload["parseError"] = report.ParseError
+	}
+	if structured, parseError := parseStructuredReport(report.Body); parseError == "" {
+		payload["structuredResult"] = structured
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return operationError("invalid_argument", "invalid_worker_report", "worker report event cannot be encoded")
+	}
+	id := "report/" + report.ID
+	if _, exists := project.Inbox[id]; exists {
+		return operationError("already_exists", "duplicate_report", "report identifier already exists")
+	}
+	project.NextInboxSeq++
+	project.Inbox[id] = InboxEventState{
+		ID: id, Sequence: project.NextInboxSeq, ProjectID: ticket.ProjectID, RootTicketID: ticket.RootTicketID,
+		Source: "worker:" + report.Session.Name, Kind: "worker_report", Summary: "Worker report for ticket " + ticket.ID,
+		Payload: raw, TargetAssignmentID: report.AssignmentID, TargetWorkerName: project.Router.Name,
+		TargetSession: project.Router.SessionRef, RoutingPath: "router", State: "queued",
+		SourceEventID: report.SourceEventID, AcceptedAt: report.ReportedAt, UpdatedAt: report.ReportedAt,
+	}
+	return nil
+}
+
+func (b *TicketBridge) FinishTicket(_ context.Context, req FinishTicketRequest) (TicketState, error) {
 	if err := req.Resolution.validate(); err != nil {
 		return TicketState{}, err
 	}
 	if err := validateBlockText("resolution summary", req.Summary, true); err != nil {
 		return TicketState{}, err
 	}
-	ticket, err := b.ticket(req.ProjectID, req.TicketID)
-	if err != nil {
-		return TicketState{}, err
-	}
-	if err := b.beginTicketTransition(req); err != nil {
-		return TicketState{}, err
-	}
-	comment, err := tracker.AddComment(ctx, ticket.Issue.ID, resolutionCommentBody(req, ticket, b.now()))
-	if err != nil {
-		return TicketState{}, err
-	}
-	if err := tracker.SetMetadata(ctx, ticket.Issue.ID, map[string]string{
-		MetadataResolution: string(req.Resolution),
-	}); err != nil {
-		return TicketState{}, issueConfirmed("ticket resolution comment", ticket.Issue, err)
-	}
-	// This write-ahead fence contains enough confirmed evidence to finish by
-	// readback after a crash. Recovery never repeats the status mutation.
-	if _, err := b.updateTicket(req.ProjectID, req.TicketID, func(stored *TicketState) error {
-		stored.Transition.CommentID = comment.ID
-		stored.Transition.StatusPending = true
+	var updated TicketState
+	err := b.store.updateProject(req.ProjectID, func(project *ProjectState) error {
+		ticket, exists := project.Tickets[req.TicketID]
+		if !exists {
+			return operationError("not_found", "ticket_not_found", "ticket was not found in this project")
+		}
+		if req.Resolution == ResolutionReopened {
+			if ticket.BusinessState == "" || ticket.BusinessState == string(ResolutionReopened) {
+				return operationError("failed_precondition", "ticket_not_reopenable", "only an explicitly blocked, waiting, or terminated Ticket can be reopened")
+			}
+		} else if terminalBusinessState(ticket.BusinessState) {
+			return operationError("failed_precondition", "ticket_already_resolved", "ticket already has a business resolution")
+		}
+		if ticket.BusinessState == string(req.Resolution) {
+			return operationError("failed_precondition", "ticket_state_unchanged", "Ticket already has this business state")
+		}
+		if req.Resolution == ResolutionCompleted {
+			validReport := false
+			for _, report := range ticket.Reports {
+				if report.AssignmentID == ticket.AssignmentID && report.ID != "" && report.Status == "confirmed" && report.Body != "" {
+					validReport = true
+				}
+			}
+			if !validReport {
+				return operationError("failed_precondition", "ticket_report_missing", "current Assignment has no confirmed worker report")
+			}
+		}
+		if terminalBusinessState(string(req.Resolution)) {
+			if err := requireChildrenDisposed(*project, ticket.ID); err != nil {
+				return err
+			}
+		}
+		ticket.BusinessState = string(req.Resolution)
+		ticket.Revision++
+		ticket.UpdatedAt = b.now()
+		if terminalBusinessState(ticket.BusinessState) {
+			if assignment, ok := project.Assignments[ticket.AssignmentID]; ok {
+				assignment.Status = ticket.BusinessState
+				if ticket.BusinessState == string(ResolutionCompleted) {
+					assignment.ExecutionState = "completed"
+				}
+				assignment.UpdatedAt = ticket.UpdatedAt
+				project.Assignments[assignment.ID] = assignment
+			}
+			for key, binding := range project.RouteBindings {
+				if binding.AssignmentID == ticket.AssignmentID {
+					delete(project.RouteBindings, key)
+				}
+			}
+		}
+		summary := strings.TrimSpace(req.Summary)
+		recordTicketFact(project, ticket, ticket.BusinessState, summary, ticket.UpdatedAt)
+		recordChildLifecycle(project, ticket, ticket.BusinessState, summary, ticket.UpdatedAt)
+		project.Tickets[ticket.ID], updated = ticket, ticket
 		return nil
-	}); err != nil {
-		return TicketState{}, err
-	}
-	issue, err := tracker.ChangeStatus(ctx, ticket.Issue.ID, req.Resolution.issueStatus())
-	if err != nil {
-		return TicketState{}, err
-	}
-
-	updated, err := b.confirmTicketTransition(req.ProjectID, req.TicketID, issue)
-	if err != nil {
-		return TicketState{}, issueConfirmed("ticket issue", ticket.Issue, err)
-	}
-	return updated, nil
-}
-
-func (b *TicketBridge) trackerFor(projectID string) (IssueTracker, error) {
-	tracker, ok := b.trackers[projectID]
-	if !ok {
-		return nil, operationError("not_found", "unknown_project", "project is not configured")
-	}
-	return tracker, nil
+	})
+	return updated, err
 }
 
 func (b *TicketBridge) ticket(projectID, ticketID string) (TicketState, error) {
 	if ticketID == "" {
 		return TicketState{}, operationError("invalid_argument", "invalid_ticket_id", "ticket ID is required")
 	}
-	project := b.store.Snapshot().Projects[projectID]
-	ticket, ok := project.Tickets[ticketID]
+	ticket, ok := b.store.Snapshot().Projects[projectID].Tickets[ticketID]
 	if !ok {
 		return TicketState{}, operationError("not_found", "ticket_not_found", "ticket was not found in this project")
 	}
 	return ticket, nil
-}
-
-func (b *TicketBridge) updateTicket(projectID, ticketID string, mutate func(*TicketState) error) (TicketState, error) {
-	var updated TicketState
-	err := b.store.updateProject(projectID, func(project *ProjectState) error {
-		ticket, ok := project.Tickets[ticketID]
-		if !ok {
-			return operationError("not_found", "ticket_not_found", "ticket was not found in this project")
-		}
-		if err := mutate(&ticket); err != nil {
-			return err
-		}
-		project.Tickets[ticketID] = ticket
-		updated = ticket
-		return nil
-	})
-	if err != nil {
-		return TicketState{}, err
-	}
-	return updated, nil
 }
 
 func (b *TicketBridge) allocateTicketID(projectID string) (string, error) {
@@ -505,63 +369,8 @@ func newRecordID(prefix string) (string, error) {
 	return prefix + "-" + hex.EncodeToString(raw), nil
 }
 
-func ticketDescription(objective, acceptance string) string {
-	var description strings.Builder
-	description.WriteString("## Objective\n\n")
-	description.WriteString(strings.TrimSpace(objective))
-	description.WriteString("\n\n## Acceptance\n\n")
-	description.WriteString(strings.TrimSpace(acceptance))
-	description.WriteString("\n")
-	return description.String()
-}
-
-func workerReportBody(req AddReportRequest, now time.Time) string {
-	var body strings.Builder
-	body.WriteString("## Worker report\n\n")
-	body.WriteString("- Assignment: `" + req.AssignmentID + "`\n")
-	body.WriteString("- MASS Session: `" + req.Session.Namespace + "/" + req.Session.Name + "` (`" + req.Session.SessionID + "`)\n")
-	if req.SourceEventID != "" {
-		body.WriteString("- MASS event: `" + req.SourceEventID + "`\n")
-	}
-	if req.SourceTurnID != "" {
-		body.WriteString("- MASS turn: `" + req.SourceTurnID + "`\n")
-	}
-	body.WriteString("- Structured result: `" + fmt.Sprintf("%t", req.Structured) + "`\n")
-	if req.ParseError != "" {
-		body.WriteString("- Structured parse: `failed`; the original final text is preserved below\n")
-	}
-	body.WriteString("- Reported at: " + now.Format(time.RFC3339) + "\n\n")
-	body.WriteString(strings.TrimSpace(req.Body))
-	body.WriteString("\n")
-	return body.String()
-}
-
-func resolutionCommentBody(req FinishTicketRequest, ticket TicketState, now time.Time) string {
-	var body strings.Builder
-	body.WriteString("## Ticket resolution\n\n")
-	body.WriteString("- Resolution: `" + string(req.Resolution) + "`\n")
-	if ticket.AssignmentID != "" {
-		body.WriteString("- Assignment: `" + ticket.AssignmentID + "`\n")
-	}
-	body.WriteString("- Accepted at: " + now.Format(time.RFC3339) + "\n\n")
-	body.WriteString(strings.TrimSpace(req.Summary))
-	body.WriteString("\n")
-	return body.String()
-}
-
-func createdButUnconfirmed(kind string, issue IssueSnapshot, err error) error {
-	return fmt.Errorf("%s %s was created but its local record was not confirmed: %w", kind, issueDisplay(issue), err)
-}
-
-func issueConfirmed(kind string, issue IssueReference, err error) error {
-	return fmt.Errorf("%s %s was updated but its local record was not confirmed: %w", kind, issue.Identifier, err)
-}
-
-func issueDisplay(issue IssueSnapshot) string {
-	if issue.Identifier != "" {
-		return issue.Identifier
-	}
-	return issue.ID
+func terminalBusinessState(state string) bool {
+	return state == "completed" || state == "failed" || state == "cancelled"
 }
 
 func (ticket TicketState) reportBySource(sourceEventID string) (ReportState, bool) {
@@ -571,13 +380,6 @@ func (ticket TicketState) reportBySource(sourceEventID string) (ReportState, boo
 		}
 	}
 	return ReportState{}, false
-}
-
-func sameReportSource(report ReportState, sourceEventID string, reportedAt time.Time) bool {
-	if sourceEventID != "" {
-		return report.SourceEventID == sourceEventID
-	}
-	return report.SourceEventID == "" && report.ReportedAt.Equal(reportedAt)
 }
 
 func operationReason(err error) string {

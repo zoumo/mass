@@ -1,14 +1,12 @@
 package sa
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRouterBootstrapInjectsStableMCPCapability(t *testing.T) {
@@ -116,7 +114,7 @@ func TestRouterMCPDrivesTicketWorkerReportAcceptanceAndRoot(t *testing.T) {
 		"acceptance": "The router can send, review, finish, and close the root.",
 	})
 	root := ticket
-	if ticket.RootTicketID != ticket.ID || ticket.Issue.ID == "" || harness.multica.issue(ticket.Issue.ID).ParentIssueID != "" {
+	if ticket.RootTicketID != ticket.ID || ticket.ParentTicketID != "" {
 		t.Fatalf("root Ticket = %+v", ticket)
 	}
 	worker := mcpToolResultOf[WorkerView](t, client, "create_worker", map[string]any{
@@ -140,7 +138,7 @@ func TestRouterMCPDrivesTicketWorkerReportAcceptanceAndRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.ReportCommentID == "" || !run.Structured || run.SourceEventID == "" {
+	if run.ReportID == "" || !run.Structured || run.SourceEventID == "" {
 		t.Fatalf("run result = %+v", run)
 	}
 	if run.InputEventIDs[0] != sent.EventID {
@@ -152,7 +150,7 @@ func TestRouterMCPDrivesTicketWorkerReportAcceptanceAndRoot(t *testing.T) {
 		"resolution": "completed",
 		"summary":    "MCP report satisfies the acceptance criteria.",
 	})
-	if finished.BusinessState != "completed" || finished.Status != "done" {
+	if finished.BusinessState != "completed" {
 		t.Fatalf("finished ticket = %+v", finished)
 	}
 
@@ -174,7 +172,7 @@ func TestWorkerExecutionWritesReportToTicketAndRouterInbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	if run.AssignmentID != worker.AssignmentID || run.TicketID != ticket.ID ||
-		run.ReportCommentID == "" || run.RouterInboxEventID == "" {
+		run.ReportID == "" || run.RouterInboxEventID == "" {
 		t.Fatalf("run result = %+v", run)
 	}
 	if !run.Structured || run.ReportFallback || run.ParseError != "" {
@@ -198,11 +196,11 @@ func TestWorkerExecutionWritesReportToTicketAndRouterInbox(t *testing.T) {
 		t.Fatalf("assignment config = %+v", assignment)
 	}
 	ticketAfter := project.Tickets[ticket.ID]
-	if ticketAfter.BusinessState != "" || ticketAfter.Status != "todo" || len(ticketAfter.Reports) != 1 {
+	if ticketAfter.BusinessState != "" || len(ticketAfter.Reports) != 1 {
 		t.Fatalf("ticket changed business state without acceptance: %+v", ticketAfter)
 	}
 	report := ticketAfter.Reports[0]
-	if report.Status != "confirmed" || report.CommentID != run.ReportCommentID ||
+	if report.Status != "confirmed" || report.ID != run.ReportID ||
 		!report.Structured || report.SourceEventID != run.SourceEventID {
 		t.Fatalf("report = %+v", report)
 	}
@@ -212,7 +210,7 @@ func TestWorkerExecutionWritesReportToTicketAndRouterInbox(t *testing.T) {
 		t.Fatalf("router report event = %+v", routerReport)
 	}
 	var payload struct {
-		CommentID        string          `json:"commentId"`
+		ReportID         string          `json:"reportId"`
 		SourceEventID    string          `json:"sourceEventId"`
 		SourceTurnID     string          `json:"sourceTurnId"`
 		Structured       bool            `json:"structured"`
@@ -221,7 +219,7 @@ func TestWorkerExecutionWritesReportToTicketAndRouterInbox(t *testing.T) {
 	if err := json.Unmarshal(routerReport.Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.CommentID != run.ReportCommentID || payload.SourceEventID != run.SourceEventID ||
+	if payload.ReportID != run.ReportID || payload.SourceEventID != run.SourceEventID ||
 		payload.SourceTurnID != "turn-1" || !payload.Structured || len(payload.StructuredResult) == 0 {
 		t.Fatalf("router payload = %+v", payload)
 	}
@@ -243,21 +241,8 @@ func TestWorkerExecutionWritesReportToTicketAndRouterInbox(t *testing.T) {
 	if subscribeAt < 0 || historyAt < subscribeAt || promptAt < historyAt {
 		t.Fatalf("operations = %v", order)
 	}
-	comments := harness.multica.comments(ticket.Issue.ID)
-	if len(comments) != 1 {
-		t.Fatalf("comments = %d", len(comments))
-	}
-	for _, fragment := range []string{
-		"Worker report",
-		worker.AssignmentID,
-		worker.Namespace + "/" + worker.Name,
-		worker.SessionID,
-		"Structured result: `true`",
-		run.ReportText,
-	} {
-		if !strings.Contains(comments[0].Content, fragment) {
-			t.Fatalf("comment omitted %q: %s", fragment, comments[0].Content)
-		}
+	if report.Body != run.ReportText || report.Session != workerSession(worker) || report.AssignmentID != worker.AssignmentID {
+		t.Fatalf("persisted report = %+v", report)
 	}
 }
 
@@ -361,10 +346,9 @@ func TestExecutionFinalSelectionRecoveryAndFallback(t *testing.T) {
 		if payload.Report != run.ReportText || payload.Structured || payload.ParseError == "" {
 			t.Fatalf("router fallback payload = %+v", payload)
 		}
-		comments := harness.multica.comments(ticket.Issue.ID)
-		if len(comments) != 1 || !strings.Contains(comments[0].Content, "All tests passed.") ||
-			!strings.Contains(comments[0].Content, "Structured result: `false`") {
-			t.Fatalf("comments = %+v", comments)
+		reports := harness.store.Snapshot().Projects["mass"].Tickets[ticket.ID].Reports
+		if len(reports) != 1 || reports[0].Body != run.ReportText || reports[0].Structured {
+			t.Fatalf("reports = %+v", reports)
 		}
 	})
 }
@@ -417,9 +401,6 @@ func TestIdleOrChunkOnlyExecutionDoesNotReportSuccess(t *testing.T) {
 					t.Fatal("idle or chunk-only execution enqueued a router report")
 				}
 			}
-			if comments := harness.multica.comments(ticket.Issue.ID); len(comments) != 0 {
-				t.Fatalf("comments = %+v", comments)
-			}
 		})
 	}
 }
@@ -454,48 +435,8 @@ func TestUnknownPromptOutcomeIsPersistedWithoutResend(t *testing.T) {
 	if prompts != 1 {
 		t.Fatalf("prompts after retry = %d, want 1", prompts)
 	}
-	if comments := harness.multica.comments(ticket.Issue.ID); len(comments) != 0 {
-		t.Fatalf("unknown prompt wrote comments: %+v", comments)
-	}
-}
-
-func TestUnknownCommentOutcomeIsPersistedWithoutResend(t *testing.T) {
-	harness := newWorkerHarness(t)
-	root, ticket := harness.rootAndChild(t, "mass", "unknown-comment")
-	worker := harness.createWorker(t, "mass", root.ID, ticket.ID, "worker-comment-unknown", "", "")
-	t.Setenv("FAKE_MULTICA_HANG", "comment add")
-	routerSend(t, harness, root.ID, worker.Name, "Report once; the comment result is lost.")
-	ctx, cancel := context.WithTimeout(t.Context(), 800*time.Millisecond)
-	defer cancel()
-	_, err := harness.service.ExecuteWorkerForProject(ctx, "mass", root.ID, worker.Name)
-	if err == nil || !IsErrorCode(err, "outcome_unknown") {
-		t.Fatalf("error = %v, want outcome_unknown", err)
-	}
-	project := harness.store.Snapshot().Projects["mass"]
-	reports := project.Tickets[ticket.ID].Reports
-	if len(reports) != 1 || reports[0].Status != "unknown" || reports[0].CommentID != "" {
-		t.Fatalf("reports = %+v", reports)
-	}
-	if got := project.Assignments[worker.AssignmentID].ExecutionState; got != "unknown" {
-		t.Fatalf("execution state = %q", got)
-	}
-	for _, event := range project.Inbox {
-		if event.Kind == "worker_report" {
-			t.Fatal("unknown comment enqueued a confirmed router report")
-		}
-	}
-	_, _, prompts := harness.mass.operationCounts()
-	if prompts != 1 {
-		t.Fatalf("prompts = %d, want 1", prompts)
-	}
-	if _, err := harness.service.ExecuteWorkerForProject(t.Context(), "mass", root.ID, worker.Name); err == nil {
-		t.Fatal("unknown comment was automatically retried")
-	} else if reason, _ := errorReason(err); reason != "worker_work_missing" {
-		t.Fatalf("second execution reason = %q", reason)
-	}
-	_, _, prompts = harness.mass.operationCounts()
-	if prompts != 1 {
-		t.Fatalf("prompts after retry = %d, want 1", prompts)
+	if reports := project.Tickets[ticket.ID].Reports; len(reports) != 0 {
+		t.Fatalf("unknown prompt wrote reports: %+v", reports)
 	}
 }
 
@@ -573,9 +514,6 @@ func TestSameAssignmentContinuationAndCurrentReportGatesFinish(t *testing.T) {
 		len(project.Tickets[ticket.ID].Reports) != 2 {
 		t.Fatalf("ticket continuation = %+v", project.Tickets[ticket.ID])
 	}
-	if len(harness.multica.comments(ticket.Issue.ID)) != 2 {
-		t.Fatalf("report comments = %d", len(harness.multica.comments(ticket.Issue.ID)))
-	}
 	if _, ok := project.RouteBindings[routeBindingKey(root.ID, "continuation")]; !ok {
 		t.Fatal("report invalidated the direct route before acceptance")
 	}
@@ -595,13 +533,13 @@ func TestSameAssignmentContinuationAndCurrentReportGatesFinish(t *testing.T) {
 	if len(project.RouteBindings) != 0 {
 		t.Fatalf("old route bindings remain: %+v", project.RouteBindings)
 	}
-	statusBefore := len(harness.multica.invocationsOf("issue", "status"))
+	revisionBefore := project.Tickets[ticket.ID].Revision
 	status, body = harness.callTool(t, harness.routers["mass"].Token, "finish_ticket", finishTicketArgs{
 		TicketID: ticket.ID, Resolution: "completed", Summary: "Old report is not current.",
 	})
 	assertToolError(t, status, body, http.StatusConflict, "ticket_report_missing")
-	if got := len(harness.multica.invocationsOf("issue", "status")); got != statusBefore {
-		t.Fatal("rejected finish called the Multica status command")
+	if got := harness.store.Snapshot().Projects["mass"].Tickets[ticket.ID].Revision; got != revisionBefore {
+		t.Fatal("rejected finish changed the business revision")
 	}
 
 	routerSend(t, harness, root.ID, newWorker.Name, "Complete the current Assignment.")
@@ -619,24 +557,24 @@ func TestSameAssignmentContinuationAndCurrentReportGatesFinish(t *testing.T) {
 		t.Fatalf("finish_ticket status %d: %s", status, body)
 	}
 	finished := decodeToolResult[TicketState](t, body)
-	if finished.BusinessState != "completed" || finished.Status != "done" {
+	if finished.BusinessState != "completed" {
 		t.Fatalf("finished ticket = %+v", finished)
 	}
-	statusCalls := len(harness.multica.invocationsOf("issue", "status"))
+	revision := finished.Revision
 	status, body = harness.callTool(t, harness.routers["mass"].Token, "finish_ticket", finishTicketArgs{
 		TicketID: ticket.ID, Resolution: "completed", Summary: "Repeated finish.",
 	})
 	assertToolError(t, status, body, http.StatusConflict, "ticket_already_resolved")
-	if got := len(harness.multica.invocationsOf("issue", "status")); got != statusCalls {
-		t.Fatal("repeated finish called Multica")
+	if got := harness.store.Snapshot().Projects["mass"].Tickets[ticket.ID].Revision; got != revision {
+		t.Fatal("repeated finish changed the business revision")
 	}
 	_, closeCalls, _ := harness.mass.operationCounts()
 	if closeCalls != 1 {
 		t.Fatalf("close calls = %d, want only the explicit replacement close", closeCalls)
 	}
-	comments := harness.multica.comments(ticket.Issue.ID)
-	if len(comments) != 4 {
-		t.Fatalf("comments = %d, want 3 reports and 1 resolution", len(comments))
+	project = harness.store.Snapshot().Projects["mass"]
+	if len(project.Tickets[ticket.ID].Reports) != 3 || len(project.Outputs) != 1 {
+		t.Fatal("expected three reports and one business fact")
 	}
 }
 
@@ -650,7 +588,7 @@ func TestFinishTicketRejectsPendingAndUnknownReportsAndAcceptsAfterStop(t *testi
 		AssignmentID:  worker.AssignmentID,
 		Session:       workerSession(worker),
 		SourceEventID: "event-gate",
-		Body:          "A confirmed report comment.",
+		Body:          "A confirmed local report.",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -670,8 +608,8 @@ func TestFinishTicketRejectsPendingAndUnknownReportsAndAcceptsAfterStop(t *testi
 		})
 		assertToolError(t, callStatus, callBody, http.StatusConflict, "ticket_report_missing")
 	}
-	if got := len(harness.multica.invocationsOf("issue", "status")); got != 0 {
-		t.Fatalf("report gate changed Issue status %d times", got)
+	if got := len(harness.store.Snapshot().Projects["mass"].Outputs); got != 0 {
+		t.Fatalf("report gate emitted %d business facts", got)
 	}
 
 	if status, body := harness.callTool(t, harness.routers["mass"].Token, "bind_route", bindRouteArgs{
@@ -695,7 +633,7 @@ func TestFinishTicketRejectsPendingAndUnknownReportsAndAcceptsAfterStop(t *testi
 		t.Fatalf("stop_worker failed: %d %s", status, body)
 	}
 	project := harness.store.Snapshot().Projects["mass"]
-	if project.Tickets[ticket.ID].BusinessState != "" || len(harness.multica.comments(ticket.Issue.ID)) != 1 {
+	if project.Tickets[ticket.ID].BusinessState != "" || len(project.Tickets[ticket.ID].Reports) != 1 {
 		t.Fatal("stopping the worker changed business completion")
 	}
 	status, body := harness.callTool(t, harness.routers["mass"].Token, "finish_ticket", finishTicketArgs{
@@ -704,8 +642,8 @@ func TestFinishTicketRejectsPendingAndUnknownReportsAndAcceptsAfterStop(t *testi
 	if status != http.StatusOK {
 		t.Fatalf("finish_ticket status %d: %s", status, body)
 	}
-	if len(harness.multica.invocationsOf("issue", "status")) != 1 {
-		t.Fatal("accepted report after stop did not change Issue status")
+	if got := harness.store.Snapshot().Projects["mass"].Tickets[ticket.ID].BusinessState; got != "completed" {
+		t.Fatal("accepted report after stop did not complete Ticket")
 	}
 }
 
@@ -726,17 +664,12 @@ func TestParentTicketRequiresEveryChildResolution(t *testing.T) {
 	if err != nil || parent.BusinessState != "failed" {
 		t.Fatalf("parent = %+v, %v", parent, err)
 	}
-	for _, call := range h.multica.invocationsOf("issue", "status") {
-		if !hasArg(call, "--no-start") {
-			t.Fatal("status started an Agent run")
-		}
-	}
 }
 
 func TestReportSourceEventIsIdempotentAcrossRestart(t *testing.T) {
-	fake := newFakeMultica(t)
-	bridge := fake.bridge()
-	root := mustCreateRootTicket(t, bridge, fake)
+	fixture := newTicketFixture(t)
+	bridge := fixture.bridge()
+	root := mustCreateRootTicket(t, bridge)
 	ticket := mustCreateTicket(t, bridge, root.ID)
 	request := AddReportRequest{
 		ProjectID:     "mass",
@@ -758,14 +691,14 @@ func TestReportSourceEventIsIdempotentAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Reports) != 1 || second.Reports[0].CommentID != first.Reports[0].CommentID {
+	if len(second.Reports) != 1 || second.Reports[0].ID != first.Reports[0].ID {
 		t.Fatalf("second report = %+v", second.Reports)
 	}
-	store, err := OpenStateStore(fake.config().StateFile)
+	store, err := OpenStateStore(fixture.config().StateFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewTicketBridge(fake.config(), store)
+	restarted, err := NewTicketBridge(fixture.config(), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -773,11 +706,8 @@ func TestReportSourceEventIsIdempotentAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(third.Reports) != 1 || third.Reports[0].CommentID != first.Reports[0].CommentID {
+	if len(third.Reports) != 1 || third.Reports[0].ID != first.Reports[0].ID {
 		t.Fatalf("restart report = %+v", third.Reports)
-	}
-	if comments := fake.comments(ticket.Issue.ID); len(comments) != 1 {
-		t.Fatalf("idempotent reports wrote %d comments", len(comments))
 	}
 }
 

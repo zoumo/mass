@@ -14,7 +14,6 @@ import (
 
 type workerHarness struct {
 	mass       *fakeMASSServer
-	multica    *fakeMultica
 	config     Config
 	store      *StateStore
 	bridge     *TicketBridge
@@ -26,13 +25,9 @@ type workerHarness struct {
 func newWorkerHarness(t *testing.T) *workerHarness {
 	t.Helper()
 	mass := newFakeMASSServer(t, "")
-	multica := newFakeMultica(t)
 	massProject := newTestProject("mass")
-	massProject.Multica = ProjectMultica{WorkspaceID: multica.workspace, ProjectID: multica.project}
 	secondaryProject := newTestProject("mass-other")
-	secondaryProject.Multica = ProjectMultica{WorkspaceID: multica.workspace, ProjectID: multica.project}
-	config := newTestConfig(t, mass.endpoint(), multica.saState, massProject, secondaryProject)
-	config.Multica.Executable = fakeMulticaBinary
+	config := newTestConfig(t, mass.endpoint(), filepath.Join(t.TempDir(), "state.json"), massProject, secondaryProject)
 
 	store, err := OpenStateStore(config.StateFile)
 	if err != nil {
@@ -56,7 +51,6 @@ func newWorkerHarness(t *testing.T) *workerHarness {
 	}
 	harness := &workerHarness{
 		mass:       mass,
-		multica:    multica,
 		config:     config,
 		store:      store,
 		bridge:     bridge,
@@ -330,10 +324,6 @@ func TestRouterCreatesWorkerWithScopedMCPAndConfig(t *testing.T) {
 	ticketAfter := harness.store.Snapshot().Projects["mass"].Tickets[ticket.ID]
 	if ticketAfter.AssignmentID != worker.AssignmentID {
 		t.Fatalf("ticket assignment = %q, want %q", ticketAfter.AssignmentID, worker.AssignmentID)
-	}
-	issue := harness.multica.issue(ticket.Issue.ID)
-	if issue.Metadata[MetadataAssignmentID] != worker.AssignmentID {
-		t.Fatalf("Multica assignment metadata = %q", issue.Metadata[MetadataAssignmentID])
 	}
 	stored := harness.store.Snapshot().Projects["mass"].Workers[workerKey(worker.Namespace, worker.Name)]
 	if stored.Session.SessionID != worker.SessionID || stored.TicketID != ticket.ID || stored.AssignmentID != worker.AssignmentID {

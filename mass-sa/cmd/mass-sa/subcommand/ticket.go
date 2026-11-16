@@ -45,19 +45,7 @@ func newTicketCommand() *cobra.Command {
 		printJSON(result)
 		return nil
 	}}
-	reconcile := &cobra.Command{Use: "reconcile <ticket-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := managementClient(configPath)
-		if err != nil {
-			return err
-		}
-		var result any
-		if err := client.Request(cmd.Context(), "POST", "/tickets/"+url.PathEscape(args[0])+"/reconcile", map[string]string{"projectId": projectID}, &result); err != nil {
-			return err
-		}
-		printJSON(result)
-		return nil
-	}}
-	for _, cmd := range []*cobra.Command{create, get, inspect, reconcile} {
+	for _, cmd := range []*cobra.Command{create, get, inspect} {
 		cmd.Flags().StringVar(&configPath, "config", "", "Configuration path")
 		cmd.Flags().StringVar(&projectID, "project", "mass", "Configured project ID")
 		_ = cmd.MarkFlagRequired("config")
@@ -66,6 +54,6 @@ func newTicketCommand() *cobra.Command {
 	create.Flags().StringVar(&objective, "objective", "", "Requested objective")
 	create.Flags().StringVar(&acceptance, "acceptance", "", "Acceptance criteria")
 	_ = create.MarkFlagRequired("objective")
-	root.AddCommand(create, get, inspect, reconcile)
+	root.AddCommand(create, get, inspect)
 	return root
 }

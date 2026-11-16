@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const stateVersion = 3
+const stateVersion = 4
 
 // State is the durable mass-sa coordination state.
 type State struct {
@@ -50,14 +50,9 @@ type RouterState struct {
 	UpdatedAt           time.Time       `json:"updatedAt"`
 }
 
-// IssueReference is the durable identity of one Multica Issue.
-type IssueReference struct {
-	ID         string `json:"id"`
-	Identifier string `json:"identifier,omitempty"`
-}
-
-// ReportState records one worker report written to a ticket Issue.
+// ReportState records one worker report saved for a ticket.
 type ReportState struct {
+	ID            string     `json:"id"`
 	AssignmentID  string     `json:"assignmentId"`
 	Session       SessionRef `json:"session"`
 	SourceEventID string     `json:"sourceEventId"`
@@ -66,12 +61,11 @@ type ReportState struct {
 	Status        string     `json:"status"`
 	Structured    bool       `json:"structured"`
 	ParseError    string     `json:"parseError,omitempty"`
-	CommentID     string     `json:"commentId,omitempty"`
-	ErrorReason   string     `json:"errorReason,omitempty"`
+	Body          string     `json:"body"`
 	ReportedAt    time.Time  `json:"reportedAt"`
 }
 
-// TicketState is one business task backed by a child Multica Issue.
+// TicketState is one durable business task.
 type TicketState struct {
 	Authorization       *WorkAuthorization `json:"authorization,omitempty"`
 	Execution           *WorkerExecution   `json:"execution,omitempty"`
@@ -83,7 +77,6 @@ type TicketState struct {
 	Revision            uint64             `json:"revision,omitempty"`
 	OutputTriggerID     string             `json:"outputTriggerId,omitempty"`
 	OutputSubscribers   []OutputTarget     `json:"outputSubscribers,omitempty"`
-	Transition          *TicketTransition  `json:"transition,omitempty"`
 	ParentTicketID      string             `json:"parentTicketId,omitempty"`
 	RootTicketID        string             `json:"rootTicketId,omitempty"`
 	Namespace           string             `json:"namespace,omitempty"`
@@ -92,10 +85,7 @@ type TicketState struct {
 	Title               string             `json:"title"`
 	Objective           string             `json:"objective"`
 	Acceptance          string             `json:"acceptance"`
-	Issue               IssueReference     `json:"issue"`
-	Status              string             `json:"status"`
 	AssignmentID        string             `json:"assignmentId,omitempty"`
-	BusinessCommentID   string             `json:"businessCommentId,omitempty"`
 	Reports             []ReportState      `json:"reports,omitempty"`
 	CreatedAt           time.Time          `json:"createdAt"`
 	UpdatedAt           time.Time          `json:"updatedAt"`
@@ -217,7 +207,6 @@ type DeliveryBatchState struct {
 	DeliveredAt        time.Time  `json:"deliveredAt,omitempty"`
 	ResultState        string     `json:"resultState,omitempty"`
 	FinalEventID       string     `json:"finalEventId,omitempty"`
-	FinalCommentID     string     `json:"finalCommentId,omitempty"`
 	Structured         bool       `json:"structured,omitempty"`
 	ParseError         string     `json:"parseError,omitempty"`
 	ResultError        string     `json:"resultError,omitempty"`
@@ -390,10 +379,6 @@ func cloneState(state State) State {
 					ticket.Execution = &execution
 				}
 				ticket.OutputSubscribers = append([]OutputTarget(nil), ticket.OutputSubscribers...)
-				if ticket.Transition != nil {
-					transition := *ticket.Transition
-					ticket.Transition = &transition
-				}
 				if ticket.Reports != nil {
 					ticket.Reports = append([]ReportState(nil), ticket.Reports...)
 				}

@@ -1,7 +1,6 @@
 package sa
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -54,7 +53,7 @@ func waitLifecycleReport(t *testing.T, server *t06Server, ticket TicketState) {
 }
 
 func TestChildLifecycleCurrentParentPublicLoop(t *testing.T) {
-	mass, fake, server, router := delegationServer(t)
+	mass, server, router := delegationServer(t)
 	root, parent, worker := lifecycleRoot(t, server, router)
 	mass.setState(parent.SessionID, "running")
 	args := childRequest("all-states")
@@ -74,7 +73,7 @@ func TestChildLifecycleCurrentParentPublicLoop(t *testing.T) {
 	for _, state := range states {
 		result := decodeT06[TicketState](t, router.call(t, "finish_ticket", finishTicketArgs{TicketID: child.ID, Resolution: state, Summary: "Confirmed child " + state}))
 		require.Equal(t, state, result.BusinessState)
-		require.Equal(t, TicketResolution(state).issueStatus(), fake.issue(child.Issue.ID).Status)
+		require.Equal(t, result, triggerSnapshot(t, server).Tickets[child.ID])
 	}
 	inputs := lifecycleInputs(t, server, router, root.ID)
 	require.Len(t, inputs, 8)
@@ -91,7 +90,7 @@ func TestChildLifecycleCurrentParentPublicLoop(t *testing.T) {
 		} else {
 			require.Equal(t, states[i-1], event.ChildLifecycle.State)
 			require.Equal(t, "Confirmed child "+states[i-1], event.ChildLifecycle.Summary)
-			require.NotEmpty(t, event.ChildLifecycle.ResultCommentID)
+			require.EqualValues(t, i, event.ChildLifecycle.Revision)
 			require.NotNil(t, event.ChildLifecycle.Report)
 			require.Equal(t, childWorker.AssignmentID, event.ChildLifecycle.Report.AssignmentID)
 		}
@@ -144,7 +143,7 @@ func TestChildLifecycleCurrentParentPublicLoop(t *testing.T) {
 }
 
 func TestChildLifecycleAncestorClosureFencePublicLoop(t *testing.T) {
-	mass, fake, server, router := delegationServer(t)
+	mass, server, router := delegationServer(t)
 	root, parent, worker := lifecycleRoot(t, server, router)
 	mass.setState(parent.SessionID, "running")
 	childArgs := childRequest("child-fence")
@@ -155,22 +154,20 @@ func TestChildLifecycleAncestorClosureFencePublicLoop(t *testing.T) {
 	router.call(t, "finish_ticket", finishTicketArgs{TicketID: grand.ID, Resolution: "cancelled", Summary: "Dispose grandchild explicitly"})
 	router.call(t, "finish_ticket", finishTicketArgs{TicketID: child.Ticket.ID, Resolution: "cancelled", Summary: "Dispose child explicitly"})
 	server.stop(t)
-	t.Setenv("FAKE_MULTICA_FAIL", "status")
 	server = startT06Server(t, server.config)
-	require.NotEmpty(t, router.callError(t, "finish_ticket", finishTicketArgs{TicketID: root.ID, Resolution: "cancelled", Summary: "Explicitly close parent"}).Reason)
-	require.NotNil(t, triggerSnapshot(t, server).Tickets[root.ID].Transition)
-	before := len(fake.invocationsOf("issue", "status"))
+	router.call(t, "finish_ticket", finishTicketArgs{TicketID: root.ID, Resolution: "cancelled", Summary: "Explicitly close parent"})
+	require.Equal(t, "cancelled", triggerSnapshot(t, server).Tickets[root.ID].BusinessState)
 	for _, ticketID := range []string{child.Ticket.ID, grand.ID} {
-		require.Equal(t, "parent_transition_pending", router.callError(t, "finish_ticket", finishTicketArgs{TicketID: ticketID, Resolution: "reopened", Summary: "Cannot race ancestor closure"}).Reason)
+		router.call(t, "finish_ticket", finishTicketArgs{TicketID: ticketID, Resolution: "reopened", Summary: "Record late descendant work"})
 	}
-	require.Len(t, fake.invocationsOf("issue", "status"), before)
+	require.Equal(t, "cancelled", triggerSnapshot(t, server).Tickets[root.ID].BusinessState)
 	server.stop(t)
 }
 
 func TestChildLifecycleOfflineAndUnknownPublicLoop(t *testing.T) {
 	for _, mode := range []string{"offline", "unknown"} {
 		t.Run(mode, func(t *testing.T) {
-			mass, _, server, router := delegationServer(t)
+			mass, server, router := delegationServer(t)
 			root, parent, worker := lifecycleRoot(t, server, router)
 			mass.setState(parent.SessionID, "offline")
 			child := decodeT06[ChildTicketResult](t, worker.call(t, "create_child_ticket", childRequest(mode))).Ticket
@@ -205,7 +202,7 @@ func TestChildLifecycleOfflineAndUnknownPublicLoop(t *testing.T) {
 }
 
 func TestChildLifecycleClosureAndLateAuditPublicLoop(t *testing.T) {
-	mass, fake, server, router := delegationServer(t)
+	mass, server, router := delegationServer(t)
 	root, parent, worker := lifecycleRoot(t, server, router)
 	childArgs := childRequest("child")
 	childArgs.WorkerName = "child"
@@ -214,12 +211,13 @@ func TestChildLifecycleClosureAndLateAuditPublicLoop(t *testing.T) {
 	childMCP := startT06MCP(t, "mass", "worker", sessionWorkerCapability(t, server, child.Worker.AssignmentID))
 	grand := decodeT06[ChildTicketResult](t, childMCP.call(t, "create_child_ticket", childRequest("grandchild"))).Ticket
 	waitLifecycleReport(t, server, child.Ticket)
-	before := len(fake.invocationsOf("issue", "status"))
+	before := triggerSnapshot(t, server).Tickets[root.ID].Revision
 	for _, resolution := range []string{"completed", "cancelled", "failed"} {
 		require.Equal(t, "unfinished_child_tickets", router.callError(t, "finish_ticket", finishTicketArgs{TicketID: root.ID, Resolution: resolution, Summary: "Attempt closing with unfinished child"}).Reason)
 		require.Equal(t, "unfinished_child_tickets", router.callError(t, "finish_ticket", finishTicketArgs{TicketID: child.Ticket.ID, Resolution: resolution, Summary: "Attempt closing with unfinished grandchild"}).Reason)
 	}
-	require.Len(t, fake.invocationsOf("issue", "status"), before, "closure rejection must precede external status mutations")
+	require.Equal(t, before, triggerSnapshot(t, server).Tickets[root.ID].Revision)
+	require.Empty(t, triggerSnapshot(t, server).Outputs)
 	// Parent resource lifecycle is independent of still-running child work.
 	router.call(t, "stop_worker", stopWorkerArgs{RootTicketID: root.ID, Name: parent.Name})
 	replacement := decodeT06[WorkerView](t, router.call(t, "create_worker", createWorkerArgs{TicketID: root.ID, Name: "replacement", Action: "replace"}))
@@ -242,7 +240,7 @@ func TestChildLifecycleClosureAndLateAuditPublicLoop(t *testing.T) {
 		return false
 	})
 	router.call(t, "finish_ticket", finishTicketArgs{TicketID: root.ID, Resolution: "completed", Summary: "Accept overall work with explicit child disposition"})
-	require.Equal(t, "done", fake.issue(root.Issue.ID).Status)
+	require.Equal(t, "completed", triggerSnapshot(t, server).Tickets[root.ID].BusinessState)
 	beforeLate := len(promptsForSession(observedPrompts(t, mass), replacement.SessionID))
 	for _, state := range []string{"reopened", "blocked", "cancelled"} {
 		router.call(t, "finish_ticket", finishTicketArgs{TicketID: child.Ticket.ID, Resolution: state, Summary: "Late child " + state})
@@ -276,41 +274,21 @@ func TestChildLifecycleClosureAndLateAuditPublicLoop(t *testing.T) {
 	server.stop(t)
 }
 
-func TestChildLifecycleTransitionRecoveryPublicLoop(t *testing.T) {
-	for _, afterWrite := range []bool{false, true} {
-		t.Run(fmt.Sprint(afterWrite), func(t *testing.T) {
-			mass, fake, server, router := delegationServer(t)
-			root, parent, worker := lifecycleRoot(t, server, router)
-			mass.setState(parent.SessionID, "running")
-			child := decodeT06[ChildTicketResult](t, worker.call(t, "create_child_ticket", childRequest("recover"))).Ticket
-			server.stop(t)
-			t.Setenv("FAKE_MULTICA_FAIL", "status")
-			if afterWrite {
-				t.Setenv("FAKE_MULTICA_FAIL_AFTER_WRITE", "1")
-			}
-			server = startT06Server(t, server.config)
-			require.NotEmpty(t, router.callError(t, "finish_ticket", finishTicketArgs{TicketID: child.ID, Resolution: "cancelled", Summary: "Explicit child cancellation"}).Reason)
-			require.Len(t, lifecycleInputs(t, server, router, root.ID), 1, "unconfirmed writes cannot produce lifecycle facts")
-			require.Equal(t, "unfinished_child_tickets", router.callError(t, "finish_ticket", finishTicketArgs{TicketID: root.ID, Resolution: "cancelled", Summary: "Cannot silently discard uncertain child"}).Reason)
-			calls := len(fake.invocationsOf("issue", "status"))
-			server.stop(t)
-			t.Setenv("FAKE_MULTICA_FAIL", "")
-			t.Setenv("FAKE_MULTICA_FAIL_AFTER_WRITE", "")
-			server = startT06Server(t, server.config)
-			waitT06(t, 15*time.Second, "startup transition readback", func() bool {
-				return strings.Contains(server.logs(), "business transition still needs reconciliation") || strings.Contains(server.logs(), "router ready")
-			})
-			if afterWrite {
-				runT06CLI(t, "ticket", "reconcile", child.ID, "--config", outputTestConfig(t, server), "--project", "mass")
-				inputs := lifecycleInputs(t, server, router, root.ID)
-				require.Len(t, inputs, 2)
-				require.Equal(t, "cancelled", inputs[1].ChildLifecycle.State)
-				require.NotEmpty(t, inputs[1].ChildLifecycle.ResultCommentID)
-			} else {
-				require.Len(t, lifecycleInputs(t, server, router, root.ID), 1)
-			}
-			require.Len(t, fake.invocationsOf("issue", "status"), calls)
-			server.stop(t)
-		})
-	}
+func TestChildLifecyclePersistencePublicLoop(t *testing.T) {
+	mass, server, router := delegationServer(t)
+	root, parent, worker := lifecycleRoot(t, server, router)
+	mass.setState(parent.SessionID, "running")
+	child := decodeT06[ChildTicketResult](t, worker.call(t, "create_child_ticket", childRequest("recover"))).Ticket
+	args := finishTicketArgs{TicketID: child.ID, Resolution: "cancelled", Summary: "Explicit child cancellation"}
+	router.call(t, "finish_ticket", args)
+	inputs := lifecycleInputs(t, server, router, root.ID)
+	require.Len(t, inputs, 2)
+	require.Equal(t, "cancelled", inputs[1].ChildLifecycle.State)
+	require.EqualValues(t, 1, inputs[1].ChildLifecycle.Revision)
+	server.stop(t)
+	server = startT06Server(t, server.config)
+	require.Equal(t, inputs, lifecycleInputs(t, server, router, root.ID))
+	require.Equal(t, "ticket_already_resolved", router.callError(t, "finish_ticket", args).Reason)
+	require.Equal(t, inputs, lifecycleInputs(t, server, router, root.ID))
+	server.stop(t)
 }

@@ -126,7 +126,6 @@ func RunServe(ctx context.Context, config Config, options ...ServeOption) error 
 		return httpServer.Shutdown(shutdownCtx)
 	}
 
-	bridge.recoverTicketTransitions(runCtx)
 	routers, err := BootstrapRouters(runCtx, config, store, WithRouterTools(service))
 	if err != nil {
 		return errors.Join(err, shutdown())

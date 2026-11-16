@@ -99,7 +99,6 @@ type DeliveryBatchView struct {
 	DeliveredAt        time.Time  `json:"deliveredAt,omitempty"`
 	ResultState        string     `json:"resultState,omitempty"`
 	FinalEventID       string     `json:"finalEventId,omitempty"`
-	FinalCommentID     string     `json:"finalCommentId,omitempty"`
 	Structured         bool       `json:"structured,omitempty"`
 	ParseError         string     `json:"parseError,omitempty"`
 	ResultError        string     `json:"resultError,omitempty"`
@@ -697,7 +696,6 @@ func viewDeliveryBatch(batch DeliveryBatchState) DeliveryBatchView {
 		DeliveredAt:        batch.DeliveredAt,
 		ResultState:        batch.ResultState,
 		FinalEventID:       batch.FinalEventID,
-		FinalCommentID:     batch.FinalCommentID,
 		Structured:         batch.Structured,
 		ParseError:         batch.ParseError,
 		ResultError:        batch.ResultError,

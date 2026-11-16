@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -172,67 +171,35 @@ func TestExternalOutputPublicLoop(t *testing.T) {
 	server.stop(t)
 }
 
-func TestOutputBusinessTransitionRecoveryPublicLoop(t *testing.T) {
-	for _, afterWrite := range []bool{false, true} {
-		t.Run(map[bool]string{false: "before_status_write", true: "lost_status_confirmation"}[afterWrite], func(t *testing.T) {
-			mass := newFakeMASSServer(t, "")
-			fake := newFakeMultica(t)
-			project := newTestProject("mass")
-			project.CWD = t.TempDir()
-			project.Multica = ProjectMultica{WorkspaceID: fake.workspace, ProjectID: fake.project}
-			config := newTestConfig(t, mass.endpoint(), filepath.Join(t.TempDir(), "state.json"), project)
-			config.Multica.Executable = fakeMulticaBinary
-			config.Management.Listen = freeLoopbackAddress(t)
-			config.Management.TokenFile = filepath.Join(t.TempDir(), "token")
-			require.NoError(t, os.WriteFile(config.Management.TokenFile, []byte("test-management"), 0600))
-			server := startT06Server(t, config)
-			waitT06(t, 15*time.Second, "Router ready", func() bool { return triggerSnapshot(t, server).Router != nil })
-			router := startT06MCP(t, "mass", "router", triggerSnapshot(t, server).Router.CapabilityFile)
-			mass.setState(triggerSnapshot(t, server).Router.SessionID, "running")
-			trigger := acceptTestTrigger(t, server, "finish", "origin")
-			owned := decodeT06[TriggerState](t, router.call(t, "decide_trigger", decideTriggerArgs{TriggerID: trigger.TriggerID, Action: "create", Title: "Recover output", Objective: "Persist completion", Acceptance: "Explicit review"}))
-			ticket := triggerSnapshot(t, server).Tickets[owned.TicketIDs[0]]
-			worker := decodeT06[WorkerView](t, router.call(t, "create_worker", createWorkerArgs{TicketID: ticket.ID, Name: "worker"}))
-			workerMCP := startT06MCP(t, "mass", "worker", sessionWorkerCapability(t, server, worker.AssignmentID))
-			waitSessionReports(t, server, ticket, 1)
-			server.stop(t)
-			t.Setenv("FAKE_MULTICA_FAIL", "status")
-			if afterWrite {
-				t.Setenv("FAKE_MULTICA_FAIL_AFTER_WRITE", "1")
-			}
-			server = startT06Server(t, config)
-			args := finishTicketArgs{TicketID: ticket.ID, Resolution: "completed", Summary: "Reviewed and accepted work"}
-			require.NotEmpty(t, router.callError(t, "finish_ticket", args).Reason)
-			pending := triggerSnapshot(t, server).Tickets[ticket.ID]
-			require.NotNil(t, pending.Transition)
-			require.True(t, pending.Transition.StatusPending)
-			require.False(t, terminalBusinessState(pending.BusinessState))
-			require.Empty(t, readTestOutputs(t, server, "origin", nil).Outputs)
-			statusCalls := len(fake.invocationsOf("issue", "status"))
-			server.stop(t)
-			t.Setenv("FAKE_MULTICA_FAIL", "")
-			t.Setenv("FAKE_MULTICA_FAIL_AFTER_WRITE", "")
-			server = startT06Server(t, config)
-			// Management health precedes startup reconciliation; await its read.
-			waitT06(t, 15*time.Second, "startup status readback", func() bool {
-				return strings.Contains(server.logs(), "business transition still needs reconciliation") || strings.Contains(server.logs(), "router ready")
-			})
-			result := readTestOutputs(t, server, "origin", nil)
-			if afterWrite {
-				require.Len(t, result.Outputs, 1)
-				require.Equal(t, "ticket.completed", result.Outputs[0].Kind)
-				require.Equal(t, "completed", triggerSnapshot(t, server).Tickets[ticket.ID].BusinessState)
-				require.Equal(t, "capability_invalid", workerMCP.callError(t, "list_workers", emptyArgs{}).Reason)
-				runT06CLI(t, "ticket", "reconcile", ticket.ID, "--config", outputTestConfig(t, server), "--project", "mass")
-				require.Len(t, readTestOutputs(t, server, "origin", nil).Outputs, 1)
-			} else {
-				require.Empty(t, result.Outputs)
-				var reconcile any
-				require.Error(t, server.client.Request(t.Context(), "POST", "/tickets/"+ticket.ID+"/reconcile", map[string]string{"projectId": "mass"}, &reconcile))
-				require.Equal(t, "ticket_transition_unconfirmed", router.callError(t, "finish_ticket", args).Reason)
-			}
-			require.Len(t, fake.invocationsOf("issue", "status"), statusCalls, "recovery must not repeat external status writes")
-			server.stop(t)
-		})
-	}
+func TestOutputBusinessPersistencePublicLoop(t *testing.T) {
+	mass, server, router, ticket := sessionContinuityServer(t)
+	mass.setState(triggerSnapshot(t, server).Router.SessionID, "running")
+	trigger := acceptTestTrigger(t, server, "finish", "origin")
+	router.call(t, "decide_trigger", decideTriggerArgs{TriggerID: trigger.TriggerID, Action: "associate", TicketID: ticket.ID})
+	worker := decodeT06[WorkerView](t, router.call(t, "create_worker", createWorkerArgs{TicketID: ticket.ID, Name: "worker"}))
+	workerMCP := startT06MCP(t, "mass", "worker", sessionWorkerCapability(t, server, worker.AssignmentID))
+	waitSessionReports(t, server, ticket, 1)
+	args := finishTicketArgs{TicketID: ticket.ID, Resolution: "completed", Summary: "Reviewed and accepted work"}
+	finished := decodeT06[TicketState](t, router.call(t, "finish_ticket", args))
+	page := readTestOutputs(t, server, "origin", nil)
+	require.Len(t, page.Outputs, 1)
+	fact := page.Outputs[0]
+	require.Equal(t, "ticket.completed", fact.Kind)
+	require.Contains(t, fact.Evidence, "ticket:"+ticket.ID+":revision:1")
+	require.Contains(t, fact.Evidence, "report:"+finished.Reports[0].ID)
+	server.stop(t)
+	server = startT06Server(t, server.config)
+	require.Equal(t, finished, triggerSnapshot(t, server).Tickets[ticket.ID])
+	require.Equal(t, page.Outputs, readTestOutputs(t, server, "origin", nil).Outputs)
+	require.Equal(t, "ticket_already_resolved", router.callError(t, "finish_ticket", args).Reason)
+	require.Equal(t, "capability_invalid", workerMCP.callError(t, "list_workers", emptyArgs{}).Reason)
+	var removedAPI any
+	require.Error(t, server.client.Request(t.Context(), "POST", "/tickets/"+ticket.ID+"/reconcile", map[string]string{"projectId": "mass"}, &removedAPI))
+	configPath := outputTestConfig(t, server)
+	runT06CLI(t, "output", "ack", fact.ID, "--config", configPath, "--project", "mass", "--consumer", "adapter", "--source", "test/account", "--thread", "origin", "--outcome", "delivered", "--reference", "channel receipt")
+	require.Empty(t, readTestOutputs(t, server, "origin", nil).Outputs)
+	server.stop(t)
+	server = startT06Server(t, server.config)
+	require.Empty(t, readTestOutputs(t, server, "origin", nil).Outputs)
+	server.stop(t)
 }

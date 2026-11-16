@@ -14,13 +14,10 @@ import (
 func sessionContinuityServer(t *testing.T) (*fakeMASSServer, *t06Server, *t06MCP, TicketState) {
 	t.Helper()
 	mass := newFakeMASSServer(t, "")
-	multica := newFakeMultica(t)
 	project := newTestProject("mass")
 	project.CWD = t.TempDir()
 	project.Worker.RuntimeRefs = []string{"alternate-worker-runtime"}
-	project.Multica = ProjectMultica{WorkspaceID: multica.workspace, ProjectID: multica.project}
 	config := newTestConfig(t, mass.endpoint(), filepath.Join(t.TempDir(), "state.json"), project)
-	config.Multica.Executable = fakeMulticaBinary
 	config.Management.Listen = freeLoopbackAddress(t)
 	config.Management.TokenFile = filepath.Join(t.TempDir(), "management-token")
 	require.NoError(t, os.WriteFile(config.Management.TokenFile, []byte("session-continuity-test"), 0600))
@@ -307,12 +304,9 @@ func TestSessionConfigurationMismatchDoesNotCreateAnotherExecutor(t *testing.T) 
 
 func TestIndependentTicketPublicLoop(t *testing.T) {
 	mass := newFakeMASSServer(t, "")
-	multica := newFakeMultica(t)
 	project := newTestProject("mass")
 	project.CWD = t.TempDir()
-	project.Multica = ProjectMultica{WorkspaceID: multica.workspace, ProjectID: multica.project}
 	config := newTestConfig(t, mass.endpoint(), filepath.Join(t.TempDir(), "v2", "state.json"), project)
-	config.Multica.Executable = fakeMulticaBinary
 	config.Management.Listen = freeLoopbackAddress(t)
 	config.Management.TokenFile = filepath.Join(t.TempDir(), "management-token")
 	require.NoError(t, os.WriteFile(config.Management.TokenFile, []byte("test-management"), 0600))
@@ -331,8 +325,7 @@ func TestIndependentTicketPublicLoop(t *testing.T) {
 	inspection := runT06JSON[TicketInspection](t, "ticket", "inspect", ticket.ID, "--config", configPath, "--project", "mass")
 	require.Equal(t, ticket.ID, inspection.Root.ID)
 	require.Empty(t, store.Snapshot().Projects["mass"].Workers)
-	require.Empty(t, multica.issue(ticket.Issue.ID).ParentIssueID)
-	require.Equal(t, ticket.ID, multica.issue(ticket.Issue.ID).Metadata[MetadataTicketID])
+	require.Empty(t, ticket.ParentTicketID)
 	router := startT06MCP(t, "mass", "router", store.Snapshot().Projects["mass"].Router.CapabilityFile)
 	require.Equal(t, "ticket_report_missing", router.callError(t, "finish_ticket", finishTicketArgs{TicketID: ticket.ID, Resolution: "completed", Summary: "Premature"}).Reason)
 	worker := decodeT06[WorkerView](t, router.call(t, "create_worker", createWorkerArgs{TicketID: ticket.ID, Name: "independent"}))
@@ -362,21 +355,13 @@ func TestIndependentTicketPublicLoop(t *testing.T) {
 	finished := decodeT06[TicketState](t, router.call(t, "finish_ticket", finishTicketArgs{TicketID: ticket.ID, Resolution: "completed", Summary: "Evidence accepted"}))
 	require.Equal(t, "completed", finished.BusinessState)
 	readback := runT06JSON[TicketState](t, "ticket", "get", ticket.ID, "--config", configPath)
-	require.Equal(t, "done", readback.Status)
-	require.Equal(t, "done", multica.issue(ticket.Issue.ID).Status)
-	for _, call := range multica.invocationsOf("issue", "status") {
-		require.True(t, hasArg(call, "--no-start"))
-	}
-	for _, call := range multica.invocations() {
-		require.True(t, hasArg(call, "--workspace-id="+multica.workspace))
-		require.False(t, hasArgPrefix(call, "--assignee"))
-	}
-	require.NotEmpty(t, multica.invocationsOf("issue", "get"))
+	require.Equal(t, "completed", readback.BusinessState)
+	require.NotEmpty(t, readback.Reports[0].Body)
 	server.stop(t)
 }
 
 func TestLegacyStateRejectedWithoutRewrite(t *testing.T) {
-	for _, version := range []int{1, 2} {
+	for _, version := range []int{1, 2, 3} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "state.json")
 			raw := []byte(fmt.Sprintf(`{"version":%d,"projects":{}}`, version))

@@ -323,7 +323,7 @@ func (s *WorkerService) subscribeOutput(projectID string, args subscribeOutputAr
 }
 
 // Called in the same transaction that confirms the business transition.
-func recordTicketFact(p *ProjectState, ticket TicketState, transition TicketTransition, now time.Time) OutputRecord {
+func recordTicketFact(p *ProjectState, ticket TicketState, state, summary string, now time.Time) OutputRecord {
 	targets := append([]OutputTarget(nil), ticket.OutputSubscribers...)
 	trigger := p.Triggers[ticket.OutputTriggerID]
 	if trigger.TriggerID != "" {
@@ -332,11 +332,11 @@ func recordTicketFact(p *ProjectState, ticket TicketState, transition TicketTran
 			targets = append(targets, target)
 		}
 	}
-	evidence := []string{"multica:issue:" + ticket.Issue.ID, "multica:comment:" + transition.CommentID}
+	evidence := []string{"ticket:" + ticket.ID + ":revision:" + strconv.FormatUint(ticket.Revision, 10)}
 	for _, report := range ticket.Reports {
 		if report.AssignmentID == ticket.AssignmentID && report.Status == "confirmed" {
-			evidence = append(evidence, "multica:comment:"+report.CommentID)
+			evidence = append(evidence, "report:"+report.ID)
 		}
 	}
-	return appendOutput(p, OutputRecord{ID: "fact/" + ticket.ID + "/" + strconv.FormatUint(ticket.Revision, 10), ProjectID: ticket.ProjectID, Kind: "ticket." + transition.State, TicketID: ticket.ID, TriggerID: ticket.OutputTriggerID, Summary: transition.Summary, Evidence: evidence, Targets: targets, RecordedAt: now})
+	return appendOutput(p, OutputRecord{ID: "fact/" + ticket.ID + "/" + strconv.FormatUint(ticket.Revision, 10), ProjectID: ticket.ProjectID, Kind: "ticket." + state, TicketID: ticket.ID, TriggerID: ticket.OutputTriggerID, Summary: summary, Evidence: evidence, Targets: targets, RecordedAt: now})
 }

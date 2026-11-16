@@ -772,7 +772,7 @@ func (s *WorkerService) finishTicket(ctx context.Context, projectID string, args
 		if report.Status != "confirmed" {
 			continue
 		}
-		if report.CommentID != "" {
+		if report.ID != "" && report.Body != "" {
 			validReport = true
 		}
 	}
