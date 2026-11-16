@@ -23,6 +23,7 @@ func NewRootCommand() *cobra.Command {
 	root.SetErr(os.Stderr)
 	root.AddCommand(
 		newServeCommand(),
+		newObserveCommand(),
 		newTicketCommand(),
 		newTriggerCommand(),
 		newOutputCommand(),
@@ -36,6 +37,7 @@ func NewRootCommand() *cobra.Command {
 
 func newServeCommand() *cobra.Command {
 	var configPath string
+	var observerOnly bool
 	command := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the management API, tools, routers, and dispatcher",
@@ -44,12 +46,17 @@ func newServeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return sa.RunServe(command.Context(), config, sa.WithServeReady(func(ready sa.ServerReady) {
+			options := []sa.ServeOption{sa.WithServeReady(func(ready sa.ServerReady) {
 				printJSON(ready)
-			}))
+			})}
+			if observerOnly {
+				options = append(options, sa.WithObserverOnly())
+			}
+			return sa.RunServe(command.Context(), config, options...)
 		},
 	}
 	command.Flags().StringVar(&configPath, "config", "", "Viper YAML configuration path")
+	command.Flags().BoolVar(&observerOnly, "observer-only", false, "Serve observations without router bootstrap, recovery or dispatch")
 	_ = command.MarkFlagRequired("config")
 	return command
 }

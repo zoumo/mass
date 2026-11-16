@@ -275,6 +275,18 @@ func (f *fakeMASSServer) serveConnection(t *testing.T, conn *websocket.Conn) {
 		f.recordOperation(request.Method)
 
 		switch request.Method {
+		case "runtime.list":
+			f.mu.Lock()
+			names := map[string]bool{}
+			for _, session := range f.sessions {
+				names[session.Spec.RuntimeRef] = true
+			}
+			f.mu.Unlock()
+			rows := []any{}
+			for name := range names {
+				rows = append(rows, map[string]any{"metadata": map[string]string{"name": name}, "spec": map[string]string{"type": "fixture"}, "status": map[string]string{"state": "running"}})
+			}
+			f.writeResult(conn, request.ID, rows)
 		case "session.get":
 			if f.handleGet(conn, request) {
 				return

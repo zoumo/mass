@@ -86,9 +86,11 @@ type SessionPage struct {
 
 // SessionQuery selects one namespace page without crossing a worker scope.
 type SessionQuery struct {
-	Namespace string
-	After     string
-	Limit     int
+	Namespace  string
+	RuntimeRef string
+	State      string
+	After      string
+	Limit      int
 }
 
 // CreateSessionInput is the explicit session.create request shape.
@@ -235,6 +237,12 @@ func (c *MASSClient) ListSessions(ctx context.Context, query SessionQuery) (Sess
 	q := map[string]any{}
 	if query.Namespace != "" {
 		q["namespace"] = query.Namespace
+	}
+	if query.RuntimeRef != "" {
+		q["runtimeRef"] = query.RuntimeRef
+	}
+	if query.State != "" {
+		q["state"] = query.State
 	}
 	if query.After != "" || query.Limit != 0 {
 		q["page"] = map[string]any{"after": query.After, "limit": query.Limit}

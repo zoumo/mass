@@ -130,6 +130,12 @@ func (c *MASSClient) Subscribe(ctx context.Context, ref SessionRef) (sessionEven
 	subscription.conn = conn
 	subscription.stream = stream
 	subscription.cancel = cancel
+	go func() {
+		<-conn.DisconnectNotify()
+		subscription.mu.Lock()
+		subscription.setFinishedLocked(operationError("unavailable", "mass_observation_disconnected", "MASS observation disconnected; preview may be missing"))
+		subscription.mu.Unlock()
+	}()
 	client := &MASSClient{config: c.config, conn: conn, stream: stream, cancel: cancel}
 
 	var initialized initializeResult
@@ -152,7 +158,11 @@ func (c *MASSClient) Subscribe(ctx context.Context, ref SessionRef) (sessionEven
 		SubscriptionID string `json:"subscriptionId"`
 	}
 	if err := client.call(ctx, "session.subscribe", map[string]any{"session": ref}, &result, false); err != nil {
+		terminal := subscription.Err()
 		_ = subscription.closeTransport()
+		if terminal != nil {
+			return nil, terminal
+		}
 		return nil, err
 	}
 	if result.SubscriptionID == "" {
@@ -230,31 +240,41 @@ type MASSEventSubscription struct {
 
 func (s *MASSEventSubscription) activate(id string) error {
 	s.mu.Lock()
-	s.id = id
-	events := append([]SessionEvent(nil), s.pendingEvents...)
-	s.pendingEvents = nil
-	terminal := s.pendingTerminal
-	s.pendingTerminal = nil
-	s.mu.Unlock()
-	if terminal != nil {
-		s.mu.Lock()
-		s.setFinishedLocked(terminal)
-		s.mu.Unlock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return s.terminal
 	}
-	for _, event := range events {
+	s.id = id
+	if s.pendingTerminal != nil {
+		s.setFinishedLocked(s.pendingTerminal)
+		s.pendingEvents = nil
+		return s.terminal
+	}
+	for _, event := range s.pendingEvents {
 		select {
 		case s.queue <- event:
 		default:
-			s.finish("", operationError("resource_exhausted", "slow_subscriber", "MASS subscription queue capacity exceeded"))
-			return operationError("resource_exhausted", "slow_subscriber", "MASS subscription queue capacity exceeded")
+			s.setFinishedLocked(operationError("resource_exhausted", "slow_subscriber", "MASS subscription setup queue capacity exceeded"))
+			return s.terminal
 		}
 	}
+	s.pendingEvents = nil
 	return nil
 }
 
 func (s *MASSEventSubscription) deliver(subscriptionID string, event SessionEvent) {
 	s.mu.Lock()
+	if s.finished {
+		s.mu.Unlock()
+		return
+	}
 	if s.id == "" {
+		if len(s.pendingEvents) >= massEventQueueCapacity {
+			s.setFinishedLocked(operationError("resource_exhausted", "slow_subscriber", "MASS subscription setup queue capacity exceeded"))
+			s.mu.Unlock()
+			go func() { _ = s.closeTransport() }()
+			return
+		}
 		s.pendingEvents = append(s.pendingEvents, event)
 		s.mu.Unlock()
 		return

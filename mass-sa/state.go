@@ -244,12 +244,32 @@ func OpenStateStore(path string) (*StateStore, error) {
 	if err != nil {
 		return nil, operationError("unavailable", "state_unavailable", "state file is unavailable")
 	}
+	loaded, err := decodeState(raw)
+	if err != nil {
+		return nil, err
+	}
+	store.state = loaded
+	return store, nil
+}
+
+// readStateSnapshot opens the current file once, so an atomic rename by the
+// coordination writer cannot mix generations within this detached snapshot.
+// Unlike OpenStateStore, a missing file is an observation failure, not empty state.
+func readStateSnapshot(path string) (State, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return State{}, operationError("unavailable", "state_unavailable", "state file is unavailable; restore it and retry the observation")
+	}
+	return decodeState(raw)
+}
+
+func decodeState(raw []byte) (State, error) {
 	var loaded State
 	if err := json.Unmarshal(raw, &loaded); err != nil {
-		return nil, operationError("invalid_argument", "invalid_state", "state JSON is invalid")
+		return State{}, operationError("invalid_argument", "invalid_state", "state JSON is invalid")
 	}
 	if loaded.Version != stateVersion {
-		return nil, operationError("failed_precondition", "unsupported_state_version", fmt.Sprintf("state version %d is not supported", loaded.Version))
+		return State{}, operationError("failed_precondition", "unsupported_state_version", fmt.Sprintf("state version %d is not supported", loaded.Version))
 	}
 	if loaded.Projects == nil {
 		loaded.Projects = map[string]ProjectState{}
@@ -257,8 +277,7 @@ func OpenStateStore(path string) (*StateStore, error) {
 	if loaded.Capabilities == nil {
 		loaded.Capabilities = map[string]CapabilityState{}
 	}
-	store.state = loaded
-	return store, nil
+	return loaded, nil
 }
 
 // Snapshot returns a detached copy of the current state.
@@ -346,6 +365,15 @@ func cloneState(state State) State {
 		project.Consumers = cloneConsumers(project.Consumers)
 		triggers := make(map[string]TriggerState, len(project.Triggers))
 		for key, trigger := range project.Triggers {
+			if trigger.Admission != nil {
+				evidence := *trigger.Admission
+				evidence.MatchedTicketIDs = append([]string{}, evidence.MatchedTicketIDs...)
+				trigger.Admission = &evidence
+			}
+			trigger.Decisions = append([]TriggerRoutingEvidence(nil), trigger.Decisions...)
+			for i := range trigger.Decisions {
+				trigger.Decisions[i].MatchedTicketIDs = append([]string{}, trigger.Decisions[i].MatchedTicketIDs...)
+			}
 			trigger.Content = append(json.RawMessage(nil), trigger.Content...)
 			trigger.TicketIDs = append([]string(nil), trigger.TicketIDs...)
 			triggers[key] = trigger

@@ -39,6 +39,17 @@ func NewManagementHandler(service *WorkerService, token string) (http.Handler, e
 
 func (s *WorkerService) handleManagement(writer http.ResponseWriter, request *http.Request, path string) {
 	switch {
+	case strings.HasPrefix(path, "/observe/") && request.Method == http.MethodGet:
+		resource := strings.TrimPrefix(path, "/observe/")
+		if strings.HasPrefix(resource, "sessions/") || strings.HasPrefix(resource, "runtimes/") {
+			resource = strings.TrimPrefix(request.URL.EscapedPath(), managementPrefix+"/observe/")
+		}
+		result, err := s.observer.Query(request.Context(), resource, request.URL.Query())
+		if err != nil {
+			writeManagementError(writer, managementStatus(err), err, nil)
+			return
+		}
+		writeJSON(writer, http.StatusOK, result)
 	case path == "/outputs" && request.Method == http.MethodGet:
 		query := request.URL.Query()
 		req := OutputReadRequest{ProjectID: query.Get("projectId"), Consumer: query.Get("consumer"), Source: query.Get("source"), ThreadID: query.Get("threadId")}

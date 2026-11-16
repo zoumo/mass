@@ -19,6 +19,7 @@ const serverShutdownTimeout = 15 * time.Second
 type ServerReady struct {
 	ManagementEndpoint string         `json:"managementEndpoint"`
 	ToolEndpoint       string         `json:"toolEndpoint"`
+	ObserverEndpoint   string         `json:"observerEndpoint"`
 	Routers            []RouterStatus `json:"routers"`
 }
 
@@ -26,8 +27,15 @@ type ServerReady struct {
 type ServeOption func(*serveOptions)
 
 type serveOptions struct {
-	mcpCommand string
-	ready      func(ServerReady)
+	mcpCommand   string
+	ready        func(ServerReady)
+	observerOnly bool
+}
+
+// WithObserverOnly serves the existing state and public MASS reads without
+// bootstrapping routers, recovering transitions or running the dispatcher.
+func WithObserverOnly() ServeOption {
+	return func(options *serveOptions) { options.observerOnly = true }
 }
 
 // WithServeMCPCommand overrides the absolute command placed in Session MCP
@@ -77,6 +85,9 @@ func RunServe(ctx context.Context, config Config, options ...ServeOption) error 
 	if err != nil {
 		return err
 	}
+	if settings.observerOnly {
+		service.observer.stateFile = config.StateFile
+	}
 	if settings.mcpCommand == "" {
 		executable, executableErr := os.Executable()
 		if executableErr != nil {
@@ -101,15 +112,22 @@ func RunServe(ctx context.Context, config Config, options ...ServeOption) error 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/tools/", service.HTTPHandler())
 	mux.Handle(managementPrefix+"/", managementHandler)
+	observerHandler, err := NewObserverHandler(service, listener.Addr().String())
+	if err != nil {
+		return err
+	}
+	mux.Handle("/observer", observerHandler)
+	mux.Handle("/observer/", observerHandler)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	httpServer := &http.Server{
+		BaseContext:       func(net.Listener) context.Context { return runCtx },
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
 		err := httpServer.Serve(listener)
@@ -124,6 +142,22 @@ func RunServe(ctx context.Context, config Config, options ...ServeOption) error 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 		defer shutdownCancel()
 		return httpServer.Shutdown(shutdownCtx)
+	}
+
+	if settings.observerOnly {
+		if settings.ready != nil {
+			settings.ready(ServerReady{
+				ManagementEndpoint: "http://" + listener.Addr().String() + managementPrefix,
+				ToolEndpoint:       toolEndpoint,
+				ObserverEndpoint:   "http://" + listener.Addr().String() + "/observer/",
+			})
+		}
+		select {
+		case <-ctx.Done():
+			return shutdown()
+		case err := <-serveErr:
+			return errors.Join(err, shutdown())
+		}
 	}
 
 	routers, err := BootstrapRouters(runCtx, config, store, WithRouterTools(service))
@@ -142,6 +176,7 @@ func RunServe(ctx context.Context, config Config, options ...ServeOption) error 
 		settings.ready(ServerReady{
 			ManagementEndpoint: "http://" + listener.Addr().String() + managementPrefix,
 			ToolEndpoint:       toolEndpoint,
+			ObserverEndpoint:   "http://" + listener.Addr().String() + "/observer/",
 			Routers:            routers,
 		})
 	}

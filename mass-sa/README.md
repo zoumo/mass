@@ -15,6 +15,22 @@ GOWORK=off go build ./...
 gofmt -l .
 ```
 
+To build the embedded Observer UI, use Node.js 20.19+ or 22.12+ and npm:
+
+```sh
+make observer-build
+./bin/mass-sa serve --config /absolute/run/config.yaml
+# Open the observerEndpoint printed at startup, normally /observer/.
+make observer-check
+cd web && npm run test:e2e
+npx playwright test --config playwright.resources.config.ts
+```
+
+`observer-build` installs locked dependencies, typechecks and builds the Vue app,
+then embeds its assets with the `observerweb` Go build tag. An ordinary Go build
+keeps the observation API/CLI but returns an explicit 503 for unbuilt UI assets.
+Browser suites use installed Chrome and isolated synthetic fixtures.
+
 Tests use real mass-sa serve and stdio MCP subprocesses with a fake MASS
 WebSocket peer. Serve subprocesses have empty executable and home directories,
 so their lifecycle needs no external CLI or personal authentication.
@@ -23,6 +39,71 @@ short reply, root/child/grandchild work, parent close/recovery, explicit accepta
 output recovery and cancellation. Fault, permission and unknown-result cases
 use the existing public harnesses in adjacent tests. These are offline evidence,
 not proof of real model or channel behavior.
+
+## Local Observer
+
+The read-only web console uses Vue 3, TypeScript, Vite, Vue Router and TanStack
+Vue Query, with PrimeVue 4.5.5, Aura (`@primeuix/themes` 2.0.3) and PrimeIcons.
+Events, routers, tickets and execution resources share concise lists and
+right-hand detail drawers. Nothing is selected automatically. Technical IDs,
+configuration, raw content and delivery audit are inside tabs and disclosures.
+Selection, filters, pagination, detail tabs and refresh pause survive URL
+reload and browser back/forward.
+
+Lists poll every five seconds, pause in the background and during pagination,
+and retain selected identity on refresh. Session observation uses native
+history plus SSE preview, with reconnection/backfill and a separate follow
+pause. Failed reads retain successful cached values labelled stale. See
+[OBSERVER-RESOURCES.md](OBSERVER-RESOURCES.md) for resource and preview limits.
+
+```sh
+./bin/mass-sa observe routers --config /absolute/run/config.yaml --project mass
+./bin/mass-sa serve --observer-only --config /absolute/run/config.yaml
+```
+
+Normal `serve` observes its active in-memory coordination state.
+`--observer-only` skips Router bootstrap, recovery and dispatch. Each new query
+opens the current atomic state file and reads one detached snapshot; it never
+reloads or writes the active business store. Missing, corrupt or unsupported
+state produces an explicit error. Restoring the file recovers new queries
+without restarting Observer. The v4 state requirement still applies.
+Loaded configuration does not automatically reload.
+
+Router, Trigger, Ticket, Output and Runtime continuation cursors keep their
+original rows and observation time; refreshing the first page starts a new
+traversal. Session history/list cursors preserve native massd semantics.
+The original single business writer constraint remains in force.
+
+The browser and authenticated `mass-sa observe` CLI share the allowlisted
+`Observer.Query` projection. Browser routes allow GET/HEAD only, require a
+matching loopback Host/port and reject foreign Origin/Fetch Metadata.
+Existing management/tools authentication stays in place. This is a local
+trusted-process boundary, not multi-user authentication.
+
+The projection omits authentication settings, capabilities, raw MCP arguments
+and upstream error bodies. Known credential forms in visible text are masked;
+arbitrary text is not guaranteed secret-free. Each HTML response supplies a
+fresh CSP nonce for PrimeVue styles. Scripts remain same-origin; inline scripts
+and style attributes stay restricted. Content is rendered as text.
+
+Router configuration, durable references and current massd observations remain
+separate. Trigger details distinguish admission, Router decision and fixed
+delivery targets. Historical evidence is recorded with acceptance/decision;
+older records without it explicitly say history was not recorded. `replyCount`
+counts only exact Project/Trigger explicit replies, independently of Output
+pagination, and does not imply channel delivery.
+
+Ticket details retain business state, current/historical Assignment identities,
+independent delegation, local report IDs and complete report bodies. Session
+links use exact recorded identity. Explicit replies, related business facts,
+consumer observations and channel outcomes are displayed separately.
+Viewing pages never consumes Outputs, acknowledges delivery, resumes Sessions
+or dispatches work.
+
+There are no tracker-specific fields, filters, links or external CLI queries.
+Obsolete integration URL filters and their cursors are discarded. Original
+message/report bodies and historical tool JSON stay intact, including any
+historical references to external systems.
 
 ## Model
 

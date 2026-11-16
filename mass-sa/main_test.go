@@ -36,7 +36,12 @@ func TestMain(tests *testing.M) {
 		os.Exit(1)
 	}
 	massSABinary = filepath.Join(dir, "mass-sa")
-	build := exec.Command("go", "build", "-o", massSABinary, "./cmd/mass-sa")
+	buildArgs := []string{"build", "-o", massSABinary}
+	if _, err := observerAssets(); err == nil {
+		buildArgs = append(buildArgs, "-tags=observerweb")
+	}
+	buildArgs = append(buildArgs, "./cmd/mass-sa")
+	build := exec.Command("go", buildArgs...)
 	build.Env = append(os.Environ(), "GOWORK=off")
 	if output, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "mass-sa test binary: build failed: %v\n%s\n", err, output)

@@ -46,6 +46,7 @@ type WorkerServiceOptions struct {
 // its own; assignment mapping delegates to TicketBridge.
 type WorkerService struct {
 	config     Config
+	observer   *Observer
 	store      *StateStore
 	tickets    *TicketBridge
 	openMASS   func(context.Context) (sessionClient, error)
@@ -194,6 +195,7 @@ func NewWorkerService(config Config, store *StateStore, tickets *TicketBridge, o
 	}
 	service := &WorkerService{
 		config:     config,
+		observer:   newObserver(config, store),
 		store:      store,
 		tickets:    tickets,
 		openMASS:   openMASS,
@@ -376,7 +378,7 @@ func (s *WorkerService) CallTool(ctx context.Context, token, tool string, argume
 		if err := decodeToolArgs(arguments, &args); err != nil {
 			return nil, err
 		}
-		return s.decideTrigger(ctx, capability.ProjectID, args)
+		return s.decideTrigger(ctx, capability.ProjectID, args, capabilityDigest(token))
 	case "associate_thread":
 		var args linkThreadArgs
 		if err := decodeToolArgs(arguments, &args); err != nil {

@@ -104,4 +104,5 @@ func TestTicketStoryPublicLoop(t *testing.T) {
 	router.call(t, "finish_ticket", finishTicketArgs{TicketID: cancelRoot.ID, Resolution: "cancelled", Summary: "Operator explicitly cancels overall work"})
 	require.Equal(t, "cancelled", runT06JSON[TicketState](t, "ticket", "get", cancelRoot.ID, "--config", config, "--project", "mass").BusinessState)
 	server.stop(t)
+	verifyIntegratedObserverStory(t, server.config, mass, receipt.TriggerID, root.ID, parent.SessionID)
 }

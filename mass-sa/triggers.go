@@ -33,7 +33,27 @@ type TriggerReceipt struct {
 	AcceptedAt    time.Time `json:"acceptedAt"`
 }
 
+// TriggerRoutingEvidence is captured in the same transaction as acceptance or
+// a decision. It never derives historical ownership from today's Thread links.
+type TriggerRoutingEvidence struct {
+	Reason           string       `json:"reason"`
+	Action           string       `json:"action,omitempty"`
+	Decision         string       `json:"decision"`
+	MatchedTicketIDs []string     `json:"matchedTicketIds"`
+	At               time.Time    `json:"at"`
+	Actor            TriggerActor `json:"actor"`
+}
+
+// Router Session means the authenticated capability was bound to this durable
+// Session at decision time. It is not evidence of a model/provider invocation.
+type TriggerActor struct {
+	Kind      string `json:"kind"`
+	SessionID string `json:"sessionId,omitempty"`
+}
+
 type TriggerState struct {
+	Admission *TriggerRoutingEvidence  `json:"admission,omitempty"`
+	Decisions []TriggerRoutingEvidence `json:"decisions,omitempty"`
 	TriggerReceipt
 	EchoOfOutputID string          `json:"echoOfOutputId,omitempty"`
 	ReplyRequested bool            `json:"replyRequested,omitempty"`
@@ -97,6 +117,7 @@ func (s *WorkerService) AcceptTrigger(req TriggerRequest) (TriggerReceipt, error
 			}
 			trigger.EchoOfOutputID = req.EchoOfOutputID
 			trigger.Decision = "ignored"
+			trigger.Admission = &TriggerRoutingEvidence{Reason: "proven_output_echo", Decision: trigger.Decision, MatchedTicketIDs: []string{}, At: receipt.AcceptedAt, Actor: TriggerActor{Kind: "service"}}
 			p.Triggers[id] = trigger
 			return nil
 		}
@@ -107,6 +128,22 @@ func (s *WorkerService) AcceptTrigger(req TriggerRequest) (TriggerReceipt, error
 				trigger.TicketIDs = []string{ticket.ID}
 			}
 		}
+		reason := "no_association"
+		if len(thread.TicketIDs) > 1 {
+			reason = "ambiguous_association"
+		}
+		if len(thread.TicketIDs) == 1 {
+			reason = "association_unavailable"
+			if len(trigger.TicketIDs) == 1 {
+				reason = "unique_association"
+			}
+		}
+		if req.ReplyRequested {
+			reason = "reply_requested"
+		}
+		matches := append([]string{}, thread.TicketIDs...)
+		sort.Strings(matches)
+		trigger.Admission = &TriggerRoutingEvidence{Reason: reason, Decision: trigger.Decision, MatchedTicketIDs: matches, At: receipt.AcceptedAt, Actor: TriggerActor{Kind: "service"}}
 		p.Triggers[id] = trigger
 		return s.queueTrigger(p, trigger)
 	})
@@ -160,9 +197,9 @@ type decideTriggerArgs struct {
 	Acceptance string `json:"acceptance,omitempty"`
 }
 
-// Create is fenced durably before the external write. An interrupted/failed
+// Create is fenced durably before creating the Ticket. An interrupted/failed
 // creation stays unknown and is not blindly repeated after restart.
-func (s *WorkerService) decideTrigger(ctx context.Context, projectID string, args decideTriggerArgs) (TriggerState, error) {
+func (s *WorkerService) decideTrigger(ctx context.Context, projectID string, args decideTriggerArgs, capabilityDigest string) (TriggerState, error) {
 	if args.Action != "ignore" && args.Action != "associate" && args.Action != "create" {
 		return TriggerState{}, operationError("invalid_argument", "invalid_trigger_action", "action must be ignore, associate, or create")
 	}
@@ -179,6 +216,7 @@ func (s *WorkerService) decideTrigger(ctx context.Context, projectID string, arg
 	}
 	var result TriggerState
 	create := false
+	actor := TriggerActor{Kind: "operator"}
 	err := s.store.updateProject(projectID, func(p *ProjectState) error {
 		trigger, ok := p.Triggers[args.TriggerID]
 		if !ok {
@@ -190,6 +228,9 @@ func (s *WorkerService) decideTrigger(ctx context.Context, projectID string, arg
 				return nil
 			}
 			return operationError("failed_precondition", "trigger_already_decided", "Trigger is already decided or requires reconciliation")
+		}
+		if p.Router != nil && p.Router.SessionID != "" && p.Router.CapabilityDigest == capabilityDigest && capabilityDigest != "" {
+			actor = TriggerActor{Kind: "router_session", SessionID: p.Router.SessionID}
 		}
 		switch args.Action {
 		case "ignore":
@@ -210,6 +251,7 @@ func (s *WorkerService) decideTrigger(ctx context.Context, projectID string, arg
 			trigger.Decision = "creating"
 			create = true
 		}
+		trigger.Decisions = append(trigger.Decisions, TriggerRoutingEvidence{Reason: "explicit_decision", Action: args.Action, Decision: trigger.Decision, MatchedTicketIDs: append([]string{}, trigger.TicketIDs...), At: s.now(), Actor: actor})
 		// A queued Router input can be cancelled by an explicit decision. An
 		// already attempted Router delivery remains immutable evidence.
 		if event, ok := p.Inbox[trigger.TriggerID+"/"]; ok && event.State == "queued" {
@@ -239,6 +281,7 @@ func (s *WorkerService) decideTrigger(ctx context.Context, projectID string, arg
 				return err
 			}
 		}
+		trigger.Decisions = append(trigger.Decisions, TriggerRoutingEvidence{Reason: "creation_result", Action: "create", Decision: trigger.Decision, MatchedTicketIDs: append([]string{}, trigger.TicketIDs...), At: s.now(), Actor: actor})
 		p.Triggers[trigger.TriggerID] = trigger
 		result = trigger
 		return nil
