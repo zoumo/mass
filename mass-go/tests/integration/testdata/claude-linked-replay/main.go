@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -69,6 +70,16 @@ func replay() error {
 				return nil, err
 			}
 			if reply, ok := clipeer.ClaimReply(actual, claimedSessionID); ok {
+				if err := output.Encode(reply); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, err
+			}
+			if reply, ok := clipeer.StatusReply(actual, assignedSessionID, cwd); ok {
 				if err := output.Encode(reply); err != nil {
 					return nil, err
 				}
@@ -157,9 +168,10 @@ func replay() error {
 		}
 	}
 	// Retain the native connection until its owner closes it.
-	var extra any
-	if err := input.Decode(&extra); err == nil {
+	if _, err := readActual(); err == nil {
 		return errors.New("unexpected extra input")
+	} else if !errors.Is(err, io.EOF) {
+		return err
 	}
 	return nil
 }

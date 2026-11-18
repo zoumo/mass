@@ -1,0 +1,97 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - bodyclose       # unclosed HTTP response body
+    - copyloopvar     # loop variable copied unnecessarily
+    - dupword         # repeated words in comments/strings
+    - errchkjson      # unchecked errors from JSON encode/decode
+    - errorlint       # error wrapping issues (Go 1.13+)
+    - exptostd        # x/exp functions replaceable by stdlib
+    - fatcontext      # context.With* in loops/closures (memory leak)
+    - ginkgolinter    # ginkgo/gomega best practices
+    - gocritic        # multi-rule meta linter for bugs/perf/style
+    - intrange        # for-loop to integer range (Go 1.22+)
+    - misspell        # common English typos
+    - modernize       # simplify code with modern Go features
+    - nakedret        # naked returns in long functions
+    - nilerr          # returns nil when err != nil (swallowed error)
+    - noctx           # HTTP requests without context
+    - perfsprint      # fmt.Sprintf replaceable by faster alternatives
+    - protogetter     # proto field direct access → use getters
+    - reassign        # package-level variable reassignment
+    - recvcheck       # receiver type consistency (pointer vs value)
+    - sloglint        # log/slog style consistency
+    - testifylint     # testify best practices
+    - unconvert       # unnecessary type conversions
+    - unparam         # unused function parameters
+    - usestdlibvars   # hardcoded values replaceable by stdlib consts
+    - usetesting      # testing pkg replacements (e.g. t.Setenv)
+    - wastedassign    # assigned but never used afterward
+    - whitespace      # unnecessary newlines at func start/end
+  settings:
+    govet:
+      enable:
+        - shadow
+    misspell:
+      locale: US
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1008"
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        - emptyStringTest
+        - ifElseChain
+        - singleCaseSwitch
+        - hugeParam
+        - unnamedResult
+        - whyNoLint
+        - tooManyResultsChecker
+        - rangeValCopy
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+        - errcheck
+        - unparam
+        path: _test.go
+      - linters:
+          - govet
+        text: declaration of "err" shadows declaration at line
+    paths:
+      - third_party/
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofumpt # drop in replacement for gofmt
+    - gci # format imports
+  settings:
+    gci:
+      custom-order: true
+      sections:
+        - standard
+        - blank
+        - dot
+        - default
+        - localmodule
+    gofumpt:
+      extra-rules: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party/
+      - builtin$
+      - examples$
+issues:
+  max-same-issues: 0
+run:
+  allow-parallel-runners: true
+  timeout: 10m

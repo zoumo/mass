@@ -320,7 +320,8 @@ func claudeReadyBeforeInput(frames []any, start int, sessionID string) bool {
 
 func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string) {
 	t.Helper()
-	work := t.TempDir()
+	work, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, os.RemoveAll(work))
 		_, err := os.Stat(work)

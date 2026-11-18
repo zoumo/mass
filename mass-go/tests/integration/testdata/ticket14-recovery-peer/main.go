@@ -91,6 +91,19 @@ func main() {
 					send(reply)
 					continue
 				}
+				statusID, statusCWD := sessionID, cwd
+				if resumed && mode == "wrong-id" {
+					statusID = "20202020-2020-4020-8020-202020202020"
+				}
+				if resumed && mode == "wrong-cwd" {
+					statusCWD = filepath.Dir(cwd)
+				}
+				if reply, ok := clipeer.StatusReply(v, statusID, statusCWD); ok {
+					if !(resumed && mode == "hold-init") {
+						send(reply)
+					}
+					continue
+				}
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 				if r["subtype"] == "initialize" && !(resumed && mode == "hold-init") {
 					init()

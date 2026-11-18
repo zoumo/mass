@@ -77,6 +77,10 @@ func main() {
 				send(reply)
 				continue
 			}
+			if reply, ok := clipeer.StatusReply(v, nativeSessionID, cwd); ok {
+				send(reply)
+				continue
+			}
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 			switch r["subtype"] {
 			case "initialize":

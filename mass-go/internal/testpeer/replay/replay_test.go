@@ -38,6 +38,39 @@ func runScript(t *testing.T, provider string, directions []scenario.Direction, w
 	return output.String(), err
 }
 
+func TestClaudeResumeIdentityProbePreservesStrictWorkFrames(t *testing.T) {
+	document := scripted("claude", []scenario.Direction{scenario.ClientToServer, scenario.ServerToClient, scenario.ClientToServer}, []string{
+		`{"type":"control_request","request_id":"init","request":{"subtype":"initialize"}}`,
+		`{"type":"control_response","response":{"subtype":"success","request_id":"init","response":{}}}`,
+		`{"type":"user","message":{"role":"user","content":"hello"}}`,
+	})
+	initialize := `{"type":"control_request","request_id":"live-init","request":{"subtype":"initialize"}}` + "\n"
+	probe := `{"type":"control_request","request_id":"status","request":{"subtype":"get_status"}}` + "\n"
+	work := `{"type":"user","message":{"role":"user","content":"hello"}}` + "\n"
+	for _, test := range []struct {
+		name, input string
+		wantError   bool
+	}{
+		{"identity probe", initialize + probe + work, false},
+		{"wrong work", initialize + probe + strings.ReplaceAll(work, "hello", "different"), true},
+		{"duplicate probe", initialize + probe + probe + work, true},
+		{"unexpected control", initialize + strings.ReplaceAll(probe, "get_status", "other") + work, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			err := RunResume(t.Context(), document, scenario.Limits{}, strings.NewReader(test.input), &output, "bound-session", "/bound/work")
+			if test.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+			require.Len(t, lines, 2)
+			assert.JSONEq(t, `{"type":"control_response","response":{"subtype":"success","request_id":"status","response":{"sections":[{"rows":[{"label":"Session ID","value":"bound-session"},{"label":"cwd","value":"/bound/work"}]}]}}}`, lines[1])
+		})
+	}
+}
+
 func TestCodexRebindsLiveIDsAndTracksReverseRequests(t *testing.T) {
 	directions := []scenario.Direction{
 		scenario.ClientToServer,

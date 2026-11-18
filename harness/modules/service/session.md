@@ -192,3 +192,16 @@ SessionService.loadSession 使用新的 namespace/name、Runtime、绝对 cwd �
 load 输入还可在顶层携带可选的 `features` 与 `mcpServers` 显式覆盖。它们作为新 Session 的显式 spec 值持久保存；Service 在调用 Driver 前读取当前 Runtime 默认值并合并，合并结果只用于本次原生恢复，不复制进 Session spec 或恢复材料。空 MCP 列表不删除 Runtime 默认项。
 
 主 Session 的初始 `config.model/effort`、瞬态 setter、原运行在途责任及错误以[配置合同](../runtime/session-config.md)为准。初始值保存在 Session spec，create/resume/load 传给 SDK；setter 不持久，close/resume 重新请求初始值。可变配置不参与恢复身份验证。
+
+## Context injection
+
+`inject` uses the current native binding and the same input admission as `sendPrompt`.
+It cannot implicitly create/resume, request model output or allocate work identity.
+Concurrent input rejects without queueing. An unknown native dispatch seals input on
+that binding until reconciliation and explicit lifecycle recovery; caller wait loss
+alone retains the owner until its actual dispatch settles. Close/stop still drain
+admitted operations, and answer/cancel keep their existing control semantics.
+Injection settlement rearms the existing idle timeout without requiring a new native
+idle event; this does not infer that uncertain input was consumed or unapplied.
+Acceptance and OperationError are both retained. Inject does not expand persisted
+event categories or prove that the model consumed or durably retained the context.

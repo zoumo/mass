@@ -22,7 +22,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-func ticket08Daemon(t *testing.T) *entrypointSuite {
+func ticket08Daemon(t *testing.T, expectedShutdown ...string) *entrypointSuite {
 	t.Helper()
 	s := new(entrypointSuite)
 	s.SetT(t)
@@ -44,7 +44,12 @@ func ticket08Daemon(t *testing.T) *entrypointSuite {
 			go func() { done <- s.daemon.Wait() }()
 			select {
 			case err := <-done:
-				s.NoError(err, s.stderr.String())
+				if len(expectedShutdown) == 0 {
+					s.NoError(err, s.stderr.String())
+				} else {
+					s.Error(err, "fault-injected native observation failure remains visible on shutdown")
+					s.Contains(s.stderr.String(), expectedShutdown[0])
+				}
 			case <-time.After(15 * time.Second):
 				_ = s.daemon.Process.Kill()
 				<-done

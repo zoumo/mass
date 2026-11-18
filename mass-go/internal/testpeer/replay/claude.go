@@ -65,6 +65,27 @@ type claudeAdapter struct {
 	sessionID string
 }
 
+func statusExchange(value rawjson.Value, sessionID, cwd string) (rawjson.Value, bool, error) {
+	if stringMember(value, "type") != "control_request" || stringMember(member(value, "request"), "subtype") != "get_status" {
+		return rawjson.Value{}, false, nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype": "success", "request_id": json.RawMessage(member(value, "request_id").Raw()),
+			"response": map[string]any{"sections": []any{map[string]any{"rows": []any{
+				map[string]any{"label": "Session ID", "value": sessionID},
+				map[string]any{"label": "cwd", "value": cwd},
+			}}}},
+		},
+	})
+	if err != nil {
+		return rawjson.Value{}, true, err
+	}
+	reply, err := rawjson.Parse(payload)
+	return reply, true, err
+}
+
 func control(value rawjson.Value) (string, rawjson.Value, error) {
 	kind := stringMember(value, "type")
 	target := value

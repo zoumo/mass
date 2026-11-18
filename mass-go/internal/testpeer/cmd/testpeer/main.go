@@ -48,12 +48,17 @@ func run(args []string) int {
 	}
 	assignedSessionID := ""
 	claimSession := false
+	resumeSession := false
 	for _, arg := range native {
 		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
 			assignedSessionID = value
 		}
 		if arg == "--await-claim" {
 			claimSession = true
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			assignedSessionID = value
+			resumeSession = true
 		}
 	}
 	if claimSession {
@@ -104,13 +109,17 @@ func run(args []string) int {
 	_ = os.Stdin.SetReadDeadline(deadline)
 	_ = os.Stdout.SetWriteDeadline(deadline)
 
-	if claimSession {
+	if claimSession || resumeSession {
 		cwd, cwdErr := os.Getwd()
 		if cwdErr != nil {
 			fmt.Fprintln(os.Stderr, "mass-testpeer:", cwdErr)
 			return exitConfiguration
 		}
-		err = replay.RunClaim(ctx, document, limits, os.Stdin, os.Stdout, assignedSessionID, cwd)
+		if resumeSession {
+			err = replay.RunResume(ctx, document, limits, os.Stdin, os.Stdout, assignedSessionID, cwd)
+		} else {
+			err = replay.RunClaim(ctx, document, limits, os.Stdin, os.Stdout, assignedSessionID, cwd)
+		}
 	} else {
 		err = replay.Run(ctx, document, limits, os.Stdin, os.Stdout, assignedSessionID)
 	}

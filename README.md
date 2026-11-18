@@ -99,13 +99,25 @@ describes the intended design in detail.
 The checked-in architecture diagram still shows the retired HTTP/SSE binding;
 current transport is WebSocket JSON-RPC.
 
+## Superagent business Core
+
+The new [superagent](superagent/README.md) business entrypoint accepts durable
+messages into an exclusive SQLite directory and provides a read-only
+PrimeVue/Aura Observer. Build it with `make build-superagent`; root `make check`
+also covers its independent Go module and frontend browser suite. The old
+mass-sa executable is retired; existing JSON v4 data remains untouched.
+Optional execution configuration prepares one Router and independent Topic
+Sessions, routes source input and exposes decisions/subscriptions/return history.
+Full delivery scheduling, Issue/Worker and external-channel operations follow in
+subsequent slices.
+
 ## Build
 
 Requires **Go 1.26.9 or later**.
 
 ```sh
 make build
-# Produces bin/massctl and bin/massd
+# Produces bin/massctl, bin/massd and bin/superagent
 ```
 
 | Binary | Role |

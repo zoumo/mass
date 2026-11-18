@@ -188,6 +188,19 @@ func (c *Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input 
 	return c.callWork(ctx, "session.prompt", sessionPromptParams{Session: ref, Input: input}, out)
 }
 
+// Inject appends context without requesting a response. out receives the
+// observed receipt even on a service error; transport loss has no receipt.
+func (c *Client) Inject(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
+	if err := validateSessionRef(ref); err != nil {
+		return err
+	}
+	copied, err := runtime.CopyInput(input)
+	if err != nil {
+		return invalid()
+	}
+	return c.callWork(ctx, "session.inject", sessionPromptParams{Session: ref, Input: copied}, out)
+}
+
 // Answer sends one open JSON value; nil is encoded as an explicit JSON null.
 func (c *Client) Answer(ctx context.Context, ref resource.SessionRef, interaction string, answer, out any) error {
 	if err := validateSessionRef(ref); err != nil {

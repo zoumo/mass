@@ -1,3 +1,7 @@
+> The mass-sa business executable is retired. Use [superagent](../superagent/README.md)
+> with a new SQLite data directory. JSON v4 data is not migrated or removed.
+> The remaining source and Observer fixtures below are retained historical assets.
+
 # mass-sa
 
 An independent Go module coordinating project work through public MASS
@@ -340,7 +344,7 @@ external side effects. State is single-instance with no process lock,
 HA, pruning or separate message broker.
 
 The sibling mass-go module pins remote SDK
-`v0.0.0-20261115111701-ee13cff995ca` with no local SDK replace. Build massd from
+`v0.0.0-20261117073811-4890981672bf` with no local SDK replace. Build massd from
 its normal manifest with `GOWORK=off go build -mod=readonly -o /absolute/run/bin/massd
 ./cmd/massd` in mass-go, then build this module's mass-sa into the same new run.
 Use `go list -m -json github.com/zoumo/agent-sdk-go` and `go version -m` to verify

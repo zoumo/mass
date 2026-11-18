@@ -47,6 +47,7 @@ type RuntimeService interface {
 	StartRuntime(context.Context, string) (resource.Runtime, error)
 }
 type SessionService interface {
+	Inject(context.Context, resource.SessionRef, runtime.Input) (runtime.InjectReceipt, error)
 	SetSessionConfig(context.Context, resource.SessionRef, runtime.ConfigChange) (runtime.ConfigReceipt, error)
 	ResolveSession(namespace, nameOrID string) (resource.SessionRef, error)
 	CreateSession(context.Context, resource.Session) (resource.Session, error)
@@ -108,26 +109,28 @@ type delivery struct {
 	barrier chan struct{}
 }
 type lane struct {
-	load           *historyLoad
-	admission      sync.RWMutex
-	releasing      bool
-	nativeClosed   bool
-	observedState  events.SessionState
-	stateObserved  bool
-	session        resource.Session
-	source         events.Source
-	queue          chan delivery
-	done           chan struct{}
-	err            error
-	closing        bool
-	overloaded     bool
-	retry          chan chan error
-	commitErr      error
-	publicationErr error
-	idleTimer      Timer
-	idleVersion    uint64
-	activeTools    map[string]struct{}
-	interactions   map[string]struct{}
+	input              sync.Mutex
+	unknownInputSource events.Source // protected by input; fences this native run
+	load               *historyLoad
+	admission          sync.RWMutex
+	releasing          bool
+	nativeClosed       bool
+	observedState      events.SessionState
+	stateObserved      bool
+	session            resource.Session
+	source             events.Source
+	queue              chan delivery
+	done               chan struct{}
+	err                error
+	closing            bool
+	overloaded         bool
+	retry              chan chan error
+	commitErr          error
+	publicationErr     error
+	idleTimer          Timer
+	idleVersion        uint64
+	activeTools        map[string]struct{}
+	interactions       map[string]struct{}
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -640,7 +643,7 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, false, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+	return sessionInputWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
 		return run.driver.SendPrompt(owner, id, input)
 	})
 }

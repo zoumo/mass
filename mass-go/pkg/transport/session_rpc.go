@@ -156,6 +156,13 @@ func (c *rpcConnection) prepareSessionCall(method string, raw *json.RawMessage) 
 		}
 		return func(ctx context.Context) (any, error) { return c.api.CloseSession(ctx, ref) }, true, nil
 
+	case "session.inject":
+		ref, input, err := decodeSessionPrompt(raw)
+		if err != nil {
+			return nil, true, err
+		}
+		return func(ctx context.Context) (any, error) { return c.api.Inject(ctx, ref, input) }, true, nil
+
 	case "session.prompt":
 		ref, input, err := decodeSessionPrompt(raw)
 		if err != nil {

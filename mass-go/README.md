@@ -344,11 +344,11 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261113030733-09d4ddf1ff20`,
-source commit `09d4ddf1`, without a local replacement. The external
+The runtime SDK is pinned to `v0.0.0-20261117073811-4890981672bf`,
+source commit `4890981672bf36a5e028ec12cf49f19065bbde54`, without a local replacement. The external
 `agent-sdk-testify` tool is pinned to `v0.2.1` for consumer recording and
 replay and is not a production dependency.
-The active Claude fixtures are bound to the current SDK and testify pins. The
+The active Claude fixtures retain SDK `09d4ddf1ff20` and testify `v0.2.1` as recording provenance. The
 current Codex suite and the historical `recordings/` exports retain their
 original recording versions; that provenance is intentionally not rewritten.
 Codex shares one native Client across its Sessions; Claude owns one native
@@ -656,3 +656,24 @@ outcome_unknown 为 500，确定未发送的 deadline_exceeded 为 504；远端�
 
 此路径的聚焦离线 race 验证覆盖两个 provider 的原生协议/argv、持久 round-trip、
 resume/load、load 后输入及非法值拒绝。未运行真实 Agent 或全量验收；完整证据由 ticket 报告记录。
+
+### Context-only injection
+
+```sh
+massctl session inject review -n demo --text 'Additional context' -o json
+massctl session inject SESSION_ID --input-file context.json -o json
+```
+
+`--input-file` accepts the same SessionInput JSON as create/resume; `-` reads stdin.
+Supply exactly one input flag. `Client.Inject` and JSON-RPC `session.inject` return
+an InjectReceipt with `acceptance`, without submission/work identity. Inspect each
+evidence field: missing is unknown; false is explicitly unconfirmed/not applied.
+Codex native acknowledgement includes nativeAccepted; Claude write evidence alone
+is sent=true. A success response does not prove consumption or persistence.
+
+On service rejection/unknown the CLI writes the observed receipt to stdout, the
+OperationError to stderr, and exits nonzero. RPC error.data includes `receipt`;
+Client decodes it into out while returning the error. Transport loss has no receipt.
+Inject never creates/resumes, queues/retries work or falls back to prompt. Unsupported
+native versions/methods fail explicitly. A valid online binding is required; input
+overlap and unresolved native unknown reject. Normal answer/cancel remain controls.

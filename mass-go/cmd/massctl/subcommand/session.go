@@ -22,7 +22,7 @@ import (
 
 func (o *options) sessionCommands() *cobra.Command {
 	root := group("session", "Manage Sessions and observe future events")
-	for _, action := range []string{"create", "load", "set-config", "get", "list", "close", "resume", "cancel", "cancel-load", "prompt", "history", "watch"} {
+	for _, action := range []string{"create", "load", "set-config", "get", "list", "close", "resume", "cancel", "cancel-load", "inject", "prompt", "history", "watch"} {
 		cmd := &cobra.Command{Use: action + " NAME_OR_ID", Short: action + " Session", Args: cobra.ExactArgs(1)}
 		cmd.Long = "Use NAME -n NAMESPACE or a raw global Session ID without namespace. No default namespace or lookup fallback."
 		cmd.Example = "  massctl session " + action + " review -n demo\n  massctl session " + action + " SESSION_ID"
@@ -60,10 +60,14 @@ func (o *options) sessionCommands() *cobra.Command {
 				_ = cmd.MarkFlagRequired(flag)
 			}
 		}
-		if action == "create" || action == "resume" {
+		if action == "create" || action == "resume" || action == "inject" {
 			cmd.Flags().StringVar(&text, "text", "", "New explicit user text for this operation only")
 			cmd.Flags().StringVar(&inputFile, "input-file", "", "UTF-8 SessionInput JSON file (- for stdin, never replayed)")
 			cmd.MarkFlagsMutuallyExclusive("text", "input-file")
+		}
+		if action == "inject" {
+			cmd.Long += " Append context without requesting a model response. Supply exactly one of --text or --input-file. Receipt reports acceptance only; calls never retry or resume."
+			cmd.MarkFlagsOneRequired("text", "input-file")
 		}
 		if action == "resume" {
 			cmd.Long += " Optional --text or --input-file supplies one NEW input, not history replay. Success requires observed original identity; a receipt is not turn completion."
@@ -218,6 +222,8 @@ func (o *options) sessionCommands() *cobra.Command {
 				call = func(ctx context.Context, out any) error {
 					return o.client.History(ctx, ref, store.HistoryQuery{Limit: limit, After: after}, out)
 				}
+			case "inject":
+				call = func(ctx context.Context, out any) error { return o.client.Inject(ctx, ref, *initial, out) }
 			case "prompt":
 				call = func(ctx context.Context, out any) error {
 					return o.client.SendPrompt(ctx, ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, out)

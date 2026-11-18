@@ -1,0 +1,142 @@
+import { test, expect } from '@playwright/test'
+
+test.use({
+ baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}`,
+ viewport: { width: 1280, height: 1060 },
+})
+
+test('Topic Timer shows the fired revision and followup delivery evidence', async ({ page, request }, testInfo) => {
+ page.on('request', r => {
+  if (r.url().includes('/v1/')) {
+   expect(r.method()).toBe('GET')
+   expect(r.headers()['authorization']).toBeUndefined()
+  }
+ })
+ await page.goto('/observer/?view=topics&mode=records')
+ await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
+ await page.getByRole('button', { name: '查看 Topic 定时器', exact: true }).click()
+ await expect(page).toHaveURL(/view=timers&topicId=/)
+ await page.getByRole('button', { name: 'Review the archived build.', exact: true }).click()
+ const dialog = page.getByRole('dialog')
+ await expect(dialog.getByText('定时器状态', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('已触发')
+ await expect(dialog.getByText('版本', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('2')
+ await expect(dialog.getByText('计划触发时间 (UTC)', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('2020-01-02T00:00:00.012000000Z')
+ await expect(dialog.getByText('实际触发时间 (UTC)', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText(/^\d{4}-.+Z$/)
+ await expect(dialog.getByText('Archive checklist · artifacts/archive-checklist.md', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('已投递', { exact: true })).toBeVisible()
+ await expect(dialog.getByRole('button', { name: /^(设置|编辑|更新|取消|重新安排|重开)/ })).toHaveCount(0)
+ await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
+ await page.screenshot({ path: testInfo.outputPath('timer-followup.png'), fullPage: true, animations: 'disabled' })
+ await dialog.getByRole('button', { name: '跟进事件', exact: true }).click()
+ await expect(dialog.getByText('timer.followup', { exact: true })).toBeVisible()
+ expect((await request.get('/v1/observer/timers')).status()).toBe(200)
+ expect((await request.head('/v1/observer/timers')).status()).toBe(200)
+ expect((await request.post('/v1/observer/timers', { data: {} })).status()).toBe(405)
+})
+
+test('Issue requirements, reports, input evidence and business acceptance are read only', async ({ page, request }, testInfo) => {
+ const methods: string[] = []
+ const errors: string[] = []
+ page.on('pageerror', error => errors.push(error.message))
+ page.on('request', r => {
+  if (r.url().includes('/v1/')) {
+   methods.push(r.method())
+   expect(r.headers()['authorization']).toBeUndefined()
+  }
+ })
+ await page.goto('/observer/?view=topics&mode=records')
+ await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
+ await page.getByRole('button', { name: '查看 Topic 下的 Issue', exact: true }).click()
+ await expect(page).toHaveURL(/view=issues&topicId=/)
+ await page.getByRole('button', { name: 'Verify sample build', exact: true }).click()
+ const dialog = page.getByRole('dialog')
+ await expect(dialog.getByText('Run the sample build and inspect its exit code.', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('Build notes · artifacts/build-notes.md', { exact: true })).toBeVisible()
+ await expect(dialog.getByRole('heading', { name: '业务验收' })).toBeVisible()
+ await expect(dialog.getByText('Reviewed the sample build log', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('artifacts/build.log', { exact: true })).toBeVisible()
+ await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
+ await page.screenshot({ path: testInfo.outputPath('issue-acceptance.png'), fullPage: true, animations: 'disabled' })
+ await dialog.getByRole('button', { name: '报告历史', exact: true }).click()
+ await expect(page).toHaveURL(/view=reports&issueId=/)
+ await page.getByRole('button', { name: 'Sample build verified', exact: true }).click()
+ await expect(dialog.getByText('Build exited with code 0.', { exact: true })).toBeVisible()
+ expect(await dialog.locator('pre.body-text').textContent()).toBe('Build exited with code 0.')
+ await expect(dialog.getByText('artifacts/build.log', { exact: true })).toBeVisible()
+ await dialog.getByRole('button', { name: '查看执行记录', exact: true }).click()
+ await expect(dialog.getByText('历史执行 · 第 1 代')).toBeVisible()
+ await expect(dialog.getByText('报告提醒', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('执行已停用')
+ await expect(dialog.getByText('已投递', { exact: true })).toBeVisible()
+ await expect(dialog.locator('dl pre')).toContainText('"nativeAccepted": true')
+ await expect(dialog.getByText('原生任务状态', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('无活跃任务', { exact: true })).toBeVisible()
+ await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
+ await page.screenshot({ path: testInfo.outputPath('execution-evidence.png'), fullPage: true, animations: 'disabled' })
+ await expect(dialog.getByRole('button', { name: /^(启动|完成|停止|提交报告|取消|重开)$/ })).toHaveCount(0)
+ await dialog.getByRole('button', { name: '此 Issue 的报告历史', exact: true }).click()
+ await expect(page).toHaveURL(/view=reports&issueId=/)
+ await expect(page.getByRole('button', { name: 'Sample build verified', exact: true })).toBeVisible()
+ for (const collection of ['issues', 'executions', 'reports']) {
+  expect((await request.get(`/v1/observer/${collection}`)).status()).toBe(200)
+  expect((await request.head(`/v1/observer/${collection}`)).status()).toBe(200)
+  expect((await request.post(`/v1/observer/${collection}`, { data: {} })).status()).toBe(405)
+ }
+ expect(errors).toEqual([])
+ expect(methods.length).toBeGreaterThan(0)
+ expect(methods.every(method => method === 'GET')).toBeTruthy()
+})
+
+test('Blocked Issue shows separate Worker observation, dependency and requirements delivery', async ({ page }, testInfo) => {
+ await page.goto('/observer/?view=issues&mode=records')
+ await page.getByRole('button', { name: 'Review blocked build', exact: true }).click()
+ const dialog = page.getByRole('dialog')
+ await expect(dialog.getByText('受阻', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('Inspect the archived build output.', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('要求版本', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('2')
+ const session = dialog.getByText('执行器 Session', { exact: true }).locator('xpath=following-sibling::dd[1]')
+ await expect(session).toContainText(/未知 · .+ · massd_session_state_unknown/)
+ await expect(dialog.getByText('Confirm the archive with the reviewer', { exact: false }).first()).toBeVisible()
+ await expect(dialog.getByText('依赖的 Issue', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('已投递 · 要求版本 2', { exact: false }).first()).toBeVisible()
+ const firstObservation = await session.textContent()
+ await expect(session).not.toHaveText(firstObservation ?? '', { timeout: 8000 })
+ await expect(session).toContainText(/未知 · .+ · massd_session_state_unknown/)
+ await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
+ await page.screenshot({ path: testInfo.outputPath('issue-blocked.png'), fullPage: true, animations: 'disabled' })
+ await dialog.getByRole('button', { name: '通知事件', exact: true }).click()
+ await expect(dialog.getByText('issue.requirements_updated', { exact: true })).toBeVisible()
+ await page.goto('/observer/?view=issues&mode=records')
+ await page.getByRole('button', { name: 'Review blocked build', exact: true }).click()
+ await dialog.getByRole('button', { name: /^查看依赖的 Issue issue_/ }).click()
+ await expect(dialog.getByText('Reviewed the sample build log', { exact: true })).toBeVisible()
+})
+
+test('Cancellation and native stop evidence remain separate and read only', async ({ page, request }, testInfo) => {
+ const paths: string[] = []
+ page.on('request', r => {
+  if (r.url().includes('/v1/')) {
+   paths.push(new URL(r.url()).pathname)
+   expect(r.method()).toBe('GET')
+   expect(r.headers()['authorization']).toBeUndefined()
+  }
+ })
+ await page.goto('/observer/?view=issues&mode=records')
+ await page.getByRole('button', { name: 'Canceled sample validation', exact: true }).click()
+ const dialog = page.getByRole('dialog')
+ await expect(dialog.getByText('已取消', { exact: true })).toBeVisible()
+ await expect(dialog.getByTestId('lifecycle-history')).toContainText('The sample build was withdrawn')
+ await dialog.getByRole('button', { name: '执行历史' }).click()
+ await page.getByRole('row').filter({ hasText: '历史执行' }).getByRole('button').click()
+ const evidence = dialog.getByTestId('stop-evidence')
+ await expect(evidence).toContainText('停止请求')
+ await expect(evidence).toContainText('未知')
+ await expect(evidence).toContainText('无活跃任务')
+ await expect(dialog.getByTestId('release-evidence')).toHaveCount(0)
+ await expect(dialog.getByRole('button', { name: /^(取消|重开|恢复|替换|重试|核销)$/ })).toHaveCount(0)
+ await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
+ await page.screenshot({ path: testInfo.outputPath('cancellation-stop-unknown.png'), fullPage: true, animations: 'disabled' })
+ expect(paths.length).toBeGreaterThan(0)
+ expect(paths.every(p => p.startsWith('/v1/observer/'))).toBeTruthy()
+ expect((await request.post('/v1/observer/bindings', { data: {} })).status()).toBe(405)
+ expect((await request.post('/v1/operator/input-recovery', { data: {} })).status()).toBe(404)
+})

@@ -23,7 +23,7 @@ func Run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 	if len(sessionIDs) > 0 {
 		assignedSessionID = sessionIDs[0]
 	}
-	return run(ctx, document, limits, input, output, assignedSessionID, "")
+	return run(ctx, document, limits, input, output, assignedSessionID, "", false)
 }
 
 // RunClaim is Run for a synthetic Claude CLI started with --await-claim. The
@@ -31,10 +31,16 @@ func Run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 // handing the next scripted client frame to the strict replay engine, and
 // reports claimCWD for the synthetic working-directory placeholder.
 func RunClaim(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, claimSessionID, claimCWD string) error {
-	return run(ctx, document, limits, input, output, claimSessionID, claimCWD)
+	return run(ctx, document, limits, input, output, claimSessionID, claimCWD, false)
 }
 
-func run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, assignedSessionID, claimCWD string) (err error) {
+// RunResume additionally answers one read-only identity probe for the Claude
+// process bound to sessionID and cwd; all authored work frames remain strict.
+func RunResume(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, sessionID, cwd string) error {
+	return run(ctx, document, limits, input, output, sessionID, cwd, true)
+}
+
+func run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, assignedSessionID, claimCWD string, resume bool) (err error) {
 	if ctx == nil || document == nil || input == nil || output == nil {
 		return errors.New("context, document and protocol streams required")
 	}
@@ -48,8 +54,12 @@ func run(ctx context.Context, document *scenario.Document, limits scenario.Limit
 	}
 	p := peerIO{input: bufio.NewReader(input), output: output, limits: limits}
 	if claimCWD != "" {
-		p.claimSessionID = assignedSessionID
 		p.claimCWD = claimCWD
+		if resume {
+			p.statusSessionID = assignedSessionID
+		} else {
+			p.claimSessionID = assignedSessionID
+		}
 	}
 	var ordinal int64
 	initializeRequestID := ""
@@ -136,10 +146,23 @@ type peerIO struct {
 	limits                scenario.Limits
 	claimSessionID        string
 	claimCWD              string
+	statusSessionID       string
 	readBytes, writeBytes int64
 }
 
 func (p *peerIO) read() (rawjson.Value, error) {
+	value, err := p.readFrame()
+	if err != nil || p.statusSessionID == "" {
+		return value, err
+	}
+	reply, matched, err := statusExchange(value, p.statusSessionID, p.claimCWD)
+	if err != nil || !matched {
+		return value, err
+	}
+	if err := p.write(reply.Raw()); err != nil {
+		return rawjson.Value{}, err
+	}
+	p.statusSessionID = ""
 	return p.readFrame()
 }
 
