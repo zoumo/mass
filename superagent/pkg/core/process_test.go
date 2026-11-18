@@ -75,6 +75,7 @@ type process struct {
 type fixture struct {
 	t                        *testing.T
 	dir, config, data, token string
+	executable               string
 }
 
 func fixtureAt(t *testing.T) *fixture {
@@ -98,10 +99,17 @@ func write(t *testing.T, p, s string) {
 	}
 }
 
+func (f *fixture) coreExecutable() string {
+	if f.executable != "" {
+		return f.executable
+	}
+	return build(f.t)
+}
+
 func (f *fixture) start(env ...string) *process {
 	f.t.Helper()
 	p := &process{done: make(chan error, 1)}
-	p.cmd = exec.CommandContext(context.Background(), build(f.t), "serve", "--config", f.config)
+	p.cmd = exec.CommandContext(context.Background(), f.coreExecutable(), "serve", "--config", f.config)
 	home := filepath.Join(f.dir, "empty-home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		f.t.Fatal(err)
@@ -280,7 +288,7 @@ func TestPublicIngressDurability(t *testing.T) {
 		t.Fatalf("bad receipt %+v", accepted)
 	}
 	same := submit(t, p, f, r)
-	if same != accepted {
+	if want := accepted; !same.Duplicate || same.MessageID != want.MessageID || same.EventID != want.EventID || same.AcceptedAt != want.AcceptedAt {
 		t.Fatalf("operation replay changed receipt: %+v %+v", accepted, same)
 	}
 	r.OperationID = "replayed-by-other-instance"
@@ -291,7 +299,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	if !duplicate.Duplicate || duplicate.MessageID != accepted.MessageID || duplicate.AcceptedAt != accepted.AcceptedAt || duplicate.EventID != accepted.EventID {
 		t.Fatalf("bad dedup %+v", duplicate)
 	}
-	for _, change := range []string{"text", "actor", "thread", "reply", "meta", "operation"} {
+	for _, change := range []string{"text", "actor", "thread", "reply", "meta"} {
 		t.Run(change, func(t *testing.T) {
 			conflict := input("message-1")
 			conflict.Message.Meta = map[string]any{"a": 1, "b": "reference"}
@@ -310,20 +318,16 @@ func TestPublicIngressDurability(t *testing.T) {
 				conflict.Message.Channel.Type = "other"
 			case "meta":
 				conflict.Message.Meta["a"] = 2
-			case "operation":
-				conflict.OperationID = "op-message-1"
-				conflict.Message.SourceMessageID = "other"
-				conflict.Message.Channel.MessageID = "other"
 			}
 			status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, conflict)
 			errorCode(t, status, b, 409, "conflict")
 		})
 	}
-	if len(page(t, p, "messages").Items) != 1 || len(page(t, p, "threads").Items) != 1 || len(page(t, p, "events").Items) != 1 {
+	if len(page(t, p, "messages").Items) != 1 || len(page(t, p, "threads").Items) != 1 || len(page(t, p, "routing-deliveries").Items) != 1 {
 		t.Fatal("duplicate/failed commands created records")
 	}
-	event := page(t, p, "events")
-	if !bytes.Contains(event.Items[0], []byte(`"status":"pending"`)) || !bytes.Contains(event.Items[0], []byte(`"intent":"act"`)) {
+	event := page(t, p, "routing-deliveries")
+	if !bytes.Contains(event.Items[0], []byte(`"status":"pending"`)) || !bytes.Contains(event.Items[0], []byte(`"kind":"route_request"`)) {
 		t.Fatal("event was not pending")
 	}
 	status, b := request(t, "GET", p.endpoint, "/v1/observer/messages/"+accepted.MessageID, "", nil)
@@ -353,7 +357,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	if got := submit(t, p, f, input("message-2")); got.MessageID == accepted.MessageID {
 		t.Fatal("identity reused")
 	}
-	if len(page(t, p, "messages").Items) != 2 || len(page(t, p, "events").Items) != 2 {
+	if len(page(t, p, "messages").Items) != 2 || len(page(t, p, "routing-deliveries").Items) != 2 {
 		t.Fatal("restart lost commit")
 	}
 	replay := submit(t, p, f, r)
@@ -400,7 +404,7 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 			errorCode(t, gotStatus, gotBody, wantStatus, code)
 		})
 	}
-	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/events", "/v1/observer/health", "/observer/"} {
+	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/routing-deliveries", "/v1/observer/health", "/observer/"} {
 		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 			gotStatus, _ := request(t, method, p.endpoint, path, f.token, map[string]string{"write": "no"})
 			if gotStatus != 405 {
@@ -546,7 +550,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			if stage == "after_commit" {
 				count = 1
 			}
-			for _, kind := range []string{"messages", "threads", "events"} {
+			for _, kind := range []string{"messages", "threads", "routing-deliveries"} {
 				if len(page(t, p, kind).Items) != count {
 					t.Fatalf("partial transaction after %s in %s", stage, kind)
 				}
@@ -555,7 +559,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			if receipt.Status != "accepted" {
 				t.Fatal("recovery replay failed")
 			}
-			for _, kind := range []string{"messages", "threads", "events"} {
+			for _, kind := range []string{"messages", "threads", "routing-deliveries"} {
 				if len(page(t, p, kind).Items) != 1 {
 					t.Fatal("recovery replay duplicated records")
 				}
@@ -600,7 +604,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 	})
 	t.Run("storage_quota", func(t *testing.T) {
 		f := fixtureAt(t)
-		// Leave room for schema 12 and its echo indexes. The 512 KiB body
+		// Leave room for the nine-table schema. The 512 KiB body
 		// alone still exceeds the entire 448 KiB database budget.
 		f.configure(112, "account-1")
 		p := f.start()
@@ -608,7 +612,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		r.Message.Text = strings.Repeat("x", 512*1024)
 		status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
 		errorCode(t, status, b, 503, "unavailable")
-		for _, kind := range []string{"messages", "threads", "events"} {
+		for _, kind := range []string{"messages", "threads", "routing-deliveries"} {
 			if len(page(t, p, kind).Items) != 0 {
 				t.Fatal("failed persistence left partial state")
 			}
@@ -654,7 +658,7 @@ func TestPublicConcurrentDuplicate(t *testing.T) {
 		}
 		id = value
 	}
-	if len(page(t, p, "events").Items) != 1 {
+	if len(page(t, p, "routing-deliveries").Items) != 1 {
 		t.Fatal("concurrent duplicate event")
 	}
 }
@@ -684,10 +688,6 @@ func TestObserverBrowserFixture(t *testing.T) {
 		r.Message.Text = "Browser row " + strconv.Itoa(i)
 		submit(t, p, f, r)
 	}
-	health := healthInput("browser-collector")
-	health["connection"], health["admission"], health["backlog"] = "disconnected", "failed", 100
-	health["lastError"], health["lastErrorAt"], health["stopReason"] = "unavailable", "2026-11-18T01:00:00Z", "buffer_full"
-	sendHealth(t, p, f.token, health)
 	t.Logf("browser fixture: %s message=%s platform=%s/%s", p.endpoint, receipt.MessageID, runtime.GOOS, runtime.GOARCH)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)

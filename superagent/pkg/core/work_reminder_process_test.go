@@ -20,13 +20,13 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-const reportReminder = "issue.report_reminder"
+const reportReminder = "report_reminder"
 
 type reminderExecution struct {
 	core.Execution
-	ReminderScheduled   bool       `json:"reminderScheduled"`
-	ReminderEligibility string     `json:"reminderEligibility"`
-	Reminder            core.Event `json:"reminder"`
+	ReminderScheduled   bool               `json:"reminderScheduled"`
+	ReminderEligibility string             `json:"reminderEligibility"`
+	Reminder            workDeliveryRecord `json:"reminder"`
 }
 
 func waitWorkerObservation(t *testing.T, p *process, x *core.Execution, state string) reminderExecution {
@@ -54,7 +54,7 @@ func startReminderWorker(t *testing.T, f *fixture, p *process, peer *nativeDeliv
 	b := waitBinding(t, p, "worker", work.Execution.ID, "ready")
 	first := peer.next(t, "turn/start")
 	require.Equal(t, b.SessionID, first.session)
-	decodeBatch(t, first, work.Execution.StartEventID)
+	decodeInternalBatch(t, first, work.Execution.StartEventID)
 	return work, b, first
 }
 
@@ -87,12 +87,11 @@ func checkReminderCall(t *testing.T, peer *nativeDeliveryPeer, b core.Binding, o
 	require.Equal(t, observed.ReminderEventID, observed.Reminder.ID)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, b.SessionID, call.session)
-	ev := decodeBatch(t, call, observed.ReminderEventID).Events[0]
-	require.Equal(t, reportReminder, ev.Type)
-	require.Equal(t, "act", ev.Intent)
-	require.Equal(t, b.Generation, ev.TargetGeneration)
-	require.Contains(t, string(ev.Payload), `"executionId":"`+b.OwnerID+`"`)
-	require.Contains(t, string(ev.Payload), "Do not run the Issue again")
+	ev := decodeInternalBatch(t, call, observed.ReminderEventID)[0]
+	require.Equal(t, reportReminder, ev.Kind)
+	require.Equal(t, b.OwnerID, ev.Recipient.ExecutionID)
+	require.Contains(t, string(ev.Content.Body), `"executionId":"`+b.OwnerID+`"`)
+	require.Contains(t, string(ev.Content.Body), "Do not run the Issue again")
 	return call
 }
 
@@ -114,7 +113,7 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	work, b, first := startReminderWorker(t, f, p, peer, topic)
 	sub := watchNative(t, massd, b)
 	first.answer <- nativeDeliveryAnswer{workID: "work-one"}
-	waitDelivery(t, p, work.Execution.StartEventID, "delivered")
+	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
 	initial := waitWorkerObservation(t, p, work.Execution, "observing")
 	require.Equal(t, "work-one", initial.WorkObservation.WorkID)
 	require.True(t, initial.WorkObservation.Continuous)
@@ -128,16 +127,16 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	update := updateReminderWork(t, topic, work)
 	second := peer.next(t, "turn/start")
 	require.Equal(t, b.SessionID, second.session)
-	decodeBatch(t, second, update.NotificationEventID)
+	decodeInternalBatch(t, second, update.NotificationEventID)
 	// The older turn can still produce a real, eligible-shaped terminal fact
 	// while the new native submit is waiting for its response.
 	first.end("work-one")
 	ev = nextNativeMethod(t, sub, "turn/completed")
 	require.Equal(t, "completed", ev.Payload().(events.StateUpdate).StopReason)
 	require.Equal(t, "work-one", ev.Meta["codex"].(map[string]any)["turnId"])
-	require.Empty(t, issueEvents(t, p, reportReminder))
+	require.Empty(t, workDeliveries(t, p, reportReminder))
 	second.answer <- nativeDeliveryAnswer{workID: "work-two"}
-	waitDelivery(t, p, update.NotificationEventID, "delivered")
+	waitWorkDelivery(t, p, update.NotificationEventID, "sent")
 	nextNativeMethod(t, sub, "turn/started")
 	proof := waitWorkerObservation(t, p, work.Execution, "observing").WorkObservation
 	require.Equal(t, "work-two", proof.WorkID)
@@ -155,7 +154,7 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	require.Equal(t, "stale_native_turn", ev.Payload().(events.SessionError).Reason)
 	require.Equal(t, "work-one", ev.Meta["codex"].(map[string]any)["turnId"])
 	peer.quiet(t, 300*time.Millisecond)
-	require.Empty(t, issueEvents(t, p, reportReminder))
+	require.Empty(t, workDeliveries(t, p, reportReminder))
 
 	second.end("work-two")
 	ev = nextNativeMethod(t, sub, "turn/completed")
@@ -170,14 +169,14 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	require.Equal(t, "already_scheduled", ended.ReminderEligibility)
 	reminder := checkReminderCall(t, peer, b, ended)
 	reminder.answer <- nativeDeliveryAnswer{workID: "reminder-turn", complete: true}
-	waitDelivery(t, p, ended.ReminderEventID, "delivered")
+	waitWorkDelivery(t, p, ended.ReminderEventID, "sent")
 	ev = nextNativeMethod(t, sub, "turn/completed")
 	require.Equal(t, "reminder-turn", ev.Meta["codex"].(map[string]any)["turnId"])
 	peer.quiet(t, 300*time.Millisecond)
-	require.Len(t, issueEvents(t, p, reportReminder), 1)
+	require.Len(t, workDeliveries(t, p, reportReminder), 1)
 	saved := readRecord[reminderExecution](t, p, "executions/"+work.Execution.ID)
 	require.Equal(t, ended.WorkObservation, saved.WorkObservation)
-	require.Equal(t, "delivered", saved.Reminder.Status)
+	require.Equal(t, "sent", saved.Reminder.Status)
 	var history store.HistoryPage
 	require.NoError(t, massd.History(t.Context(), resource.SessionRef{SessionID: b.SessionID}, store.HistoryQuery{}, &history))
 	for _, historical := range history.Events {
@@ -206,32 +205,27 @@ func TestReportReminderAfterCrashAndDuplicate(t *testing.T) {
 	ended := waitWorkerObservation(t, p, work.Execution, "ended")
 	require.Equal(t, ev.EventID, ended.WorkObservation.End.EventID)
 	require.True(t, ended.ReminderScheduled)
-	pending := waitDelivery(t, p, ended.ReminderEventID, "pending")
-	require.Zero(t, pending.Attempts)
+	require.Empty(t, waitWorkDelivery(t, p, ended.ReminderEventID, "pending").SentAt)
 	peer.quiet(t, 300*time.Millisecond)
 	p.stop(t, true)
 
 	settleGate := t.TempDir()
-	p = f.start("SUPERAGENT_TEST_GATE_STAGE=delivery_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+settleGate)
+	p = f.start("SUPERAGENT_TEST_GATE_STAGE=internal_delivery_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+settleGate)
 	require.Equal(t, ended.WorkObservation, readRecord[reminderExecution](t, p, "executions/"+work.Execution.ID).WorkObservation)
 	firstReminder := checkReminderCall(t, peer, b, ended)
 	firstReminder.answer <- nativeDeliveryAnswer{workID: "first-reminder", complete: true}
-	waitWorkGate(t, settleGate, "delivery_before_settlement")
-	beforeCrash := waitDelivery(t, p, ended.ReminderEventID, "dispatching")
+	waitWorkGate(t, settleGate, "internal_delivery_before_settlement")
+	require.Empty(t, waitWorkDelivery(t, p, ended.ReminderEventID, "dispatching").SentAt)
 	p.stop(t, true)
 
 	p = f.start()
-	recovered := waitDelivery(t, p, ended.ReminderEventID, "transport_unknown")
-	require.True(t, recovered.PossibleDuplicate)
-	require.Equal(t, beforeCrash.BatchID, recovered.BatchID)
+	waitWorkDelivery(t, p, ended.ReminderEventID, "dispatching")
 	retry := checkReminderCall(t, peer, b, ended)
 	require.Equal(t, firstReminder.text, retry.text)
 	retry.answer <- nativeDeliveryAnswer{workID: "duplicate-reminder", complete: true}
-	d := waitDelivery(t, p, ended.ReminderEventID, "delivered")
-	require.Equal(t, 2, d.Attempts)
-	require.True(t, d.PossibleDuplicate)
+	require.NotEmpty(t, waitWorkDelivery(t, p, ended.ReminderEventID, "sent").SentAt)
 	peer.quiet(t, 350*time.Millisecond)
-	require.Len(t, issueEvents(t, p, reportReminder), 1)
+	require.Len(t, workDeliveries(t, p, reportReminder), 1)
 	t.Log("The CLI sent terminal notification before its prompt response. SIGKILL after scheduling preserved the pending Event; SIGKILL after native reminder acceptance retained the same Event and wire batch on retry.")
 }
 
@@ -266,7 +260,7 @@ func TestReportReminderObservationGaps(t *testing.T) {
 	first.end("work-before-disconnect")
 	nextNativeMethod(t, sub, "turn/completed")
 	peer.quiet(t, 300*time.Millisecond)
-	require.Empty(t, issueEvents(t, p, reportReminder))
+	require.Empty(t, workDeliveries(t, p, reportReminder))
 	select {
 	case <-sockets:
 		t.Fatal("Core reattached the interrupted observation")
@@ -275,7 +269,7 @@ func TestReportReminderObservationGaps(t *testing.T) {
 
 	update := updateReminderWork(t, topic, work)
 	second := peer.next(t, "turn/start")
-	decodeBatch(t, second, update.NotificationEventID)
+	decodeInternalBatch(t, second, update.NotificationEventID)
 	second.answer <- nativeDeliveryAnswer{workID: "work-before-offline"}
 	live := waitWorkerObservation(t, p, work.Execution, "observing")
 	require.Equal(t, "work-before-offline", live.WorkObservation.WorkID)
@@ -289,7 +283,7 @@ func TestReportReminderObservationGaps(t *testing.T) {
 	require.Equal(t, live.WorkObservation.WorkID, restarted.WorkObservation.WorkID)
 	require.False(t, restarted.ReminderScheduled)
 	peer.quiet(t, 350*time.Millisecond)
-	require.Empty(t, issueEvents(t, p, reportReminder))
+	require.Empty(t, workDeliveries(t, p, reportReminder))
 	t.Log("An interrupted public WebSocket and a Core-offline completion each retained unknown. A later explicit submit obtained a fresh subscription and its own work reference.")
 }
 
@@ -315,7 +309,7 @@ func TestReportReminderReportAndCancellationFences(t *testing.T) {
 			sub := watchNative(t, massd, b)
 			first.answer <- nativeDeliveryAnswer{workID: "work-with-report-race"}
 			waitWorkerObservation(t, p, work.Execution, "observing")
-			req := core.ReportRequest{OperationID: "report", Kind: "ready", Summary: "Work was completed before a reminder was needed."}
+			req := core.ReportRequest{OperationID: "report", Kind: "ready", Summary: "Work was completed before a reminder was needed.", GoalRevision: work.Execution.Revision}
 			token := roleToken(t, f, b)
 			if scenario == "report-first" {
 				submitConcurrentReport(t, p, token, req, gate, release, first, sub)
@@ -323,7 +317,7 @@ func TestReportReminderReportAndCancellationFences(t *testing.T) {
 				ended := waitWorkerObservation(t, p, work.Execution, "ended")
 				require.False(t, ended.ReminderScheduled)
 				require.Equal(t, "report_received", ended.ReminderEligibility)
-				require.Empty(t, issueEvents(t, p, reportReminder))
+				require.Empty(t, workDeliveries(t, p, reportReminder))
 				return
 			}
 			require.NoError(t, os.Remove(release))
@@ -332,7 +326,7 @@ func TestReportReminderReportAndCancellationFences(t *testing.T) {
 			ended := waitWorkerObservation(t, p, work.Execution, "ended")
 			require.True(t, ended.ReminderScheduled)
 			waitWorkGate(t, gate, stage)
-			waitDelivery(t, p, ended.ReminderEventID, "dispatching")
+			waitWorkDelivery(t, p, ended.ReminderEventID, "pending")
 			if scenario == "reminder-first" {
 				report := roleWork[core.Report](t, p, token, "report_submit", req)
 				require.Equal(t, b.OwnerID, report.ExecutionID)
@@ -344,10 +338,9 @@ func TestReportReminderReportAndCancellationFences(t *testing.T) {
 				require.Equal(t, "historical", canceled.Execution.Authority)
 			}
 			write(t, release, "")
-			suppressed := waitDelivery(t, p, ended.ReminderEventID, "superseded")
-			require.Equal(t, "dispatch_no_longer_admitted", suppressed.LastError)
+			require.Empty(t, waitWorkDelivery(t, p, ended.ReminderEventID, "superseded").SentAt)
 			peer.quiet(t, 300*time.Millisecond)
-			require.Len(t, issueEvents(t, p, reportReminder), 1)
+			require.Len(t, workDeliveries(t, p, reportReminder), 1)
 			require.Equal(t, ended.ReminderEventID, readRecord[reminderExecution](t, p, "executions/"+b.OwnerID).ReminderEventID)
 		})
 	}
@@ -394,8 +387,8 @@ func deliverReminderTestReport(t *testing.T, p *process, peer *nativeDeliveryPee
 	t.Helper()
 	report := peer.next(t, "turn/start")
 	require.Equal(t, topic.SessionID, report.session)
-	ev := decodeBatch(t, report).Events[0]
-	require.Equal(t, "issue.reported", ev.Type)
+	ev := decodeInternalBatch(t, report)[0]
+	require.Equal(t, "report_submitted", ev.Kind)
 	report.answer <- nativeDeliveryAnswer{workID: "review-worker-report", complete: true}
-	waitDelivery(t, p, ev.EventID, "delivered")
+	waitWorkDelivery(t, p, ev.ID, "sent")
 }

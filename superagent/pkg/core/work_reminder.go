@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/zoumo/agent-sdk-go/agent"
@@ -13,8 +14,6 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
-
-const reportReminderEvent = "issue.report_reminder"
 
 // WorkObservation ties the latest observed Worker input to a particular
 // subscription and attempt. It does not express business or stop status.
@@ -236,7 +235,7 @@ func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence
 		return nil
 	}
 	var current bool
-	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM bindings WHERE id=? AND state='ready'
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM session_bindings WHERE id=? AND state='ready'
  AND json_extract(body,'$.sessionId')=? AND json_extract(body,'$.sessionUid')=?)`,
 		b.ID, evidence.SessionID, evidence.SessionUID).Scan(&current)
 	if err != nil {
@@ -248,12 +247,8 @@ func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence
 	}
 	x.WorkObservation = &evidence
 	if evidence.End != nil && x.ReminderEventID == "" {
-		reported, err := hasWorkerReport(ctx, tx, x.ID)
-		if err != nil {
-			return err
-		}
-		if !reported {
-			if err := enqueueReportReminder(ctx, tx, b, &x, issue.Revision); err != nil {
+		if !issueHasExecutionReport(issue, x.ID) {
+			if err := enqueueReportReminder(ctx, tx, &x, issue); err != nil {
 				return err
 			}
 		}
@@ -264,7 +259,7 @@ func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence
 	return tx.Commit()
 }
 
-func enqueueReportReminder(ctx context.Context, tx *sql.Tx, b Binding, x *Execution, revision int) error {
+func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *Execution, issue Issue) error {
 	payload, err := json.Marshal(struct {
 		ExecutionID string   `json:"executionId"`
 		IssueID     string   `json:"issueId"`
@@ -273,35 +268,21 @@ func enqueueReportReminder(ctx context.Context, tx *sql.Tx, b Binding, x *Execut
 		Instruction string   `json:"instruction"`
 	}{
 		ExecutionID: x.ID, IssueID: x.IssueID, WorkID: x.WorkObservation.WorkID, End: x.WorkObservation.End,
-		Instruction: "Use report_submit to summarize only results, progress, or blockers from work already done on this Execution. Use an operationId stable for this eventId. Do not run the Issue again.",
+		Instruction: "Use report_submit to summarize only results, progress, or blockers from work already done on this Execution. Use an operationId stable for this delivery_id and the goalRevision you actually used. Do not run the Issue again.",
 	})
 	if err != nil {
 		return err
 	}
-	x.ReminderEventID = newID("evt")
-	return EnqueueEvent(ctx, tx, Event{
-		ID: x.ReminderEventID, Type: reportReminderEvent, Intent: "act", BindingID: b.ID,
-		TargetRole: b.Role, TargetID: x.ID, TargetGeneration: x.Generation, Revision: revision, Payload: payload,
+	x.ReminderEventID = newID("delivery")
+	return enqueueInternalDelivery(ctx, tx, internalDelivery{
+		ID: x.ReminderEventID, Kind: reportReminderKind,
+		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
+		Content: deliveryContent{Body: payload, Refs: []deliveryReference{issueGoalRef(issue)}},
 	})
 }
 
-func hasWorkerReport(ctx context.Context, tx *sql.Tx, executionID string) (bool, error) {
-	var reported bool
-	err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM reports WHERE execution_id=?)", executionID).Scan(&reported)
-	return reported, err
-}
-
-func reminderCurrent(ctx context.Context, tx *sql.Tx, b Binding, event Event) (bool, error) {
-	if event.BindingID != b.ID || b.Role != "worker" {
-		return false, nil
-	}
-	_, x, err := currentWorkerIssue(ctx, tx, b)
-	switch {
-	case errorCode(err) == "not_found" || errorCode(err) == "stale_binding":
-		return false, nil
-	case err != nil || event.ID != x.ReminderEventID:
-		return false, err
-	}
-	reported, err := hasWorkerReport(ctx, tx, x.ID)
-	return !reported, err
+func issueHasExecutionReport(issue Issue, executionID string) bool {
+	return slices.ContainsFunc(issue.Reports, func(report Report) bool {
+		return report.ExecutionID == executionID
+	})
 }

@@ -25,7 +25,7 @@ func problem(code, message string) *Error {
 }
 
 func storageError() *Error {
-	return problem("unavailable", "storage operation failed; acceptance is not confirmed; retry the same operationId")
+	return problem("unavailable", "storage operation failed; acceptance is unconfirmed; check the current resource before retrying")
 }
 
 func newID(prefix string) string {
@@ -117,7 +117,7 @@ type Message struct {
 	ThreadKey  string       `json:"threadKey"`
 	ReceivedAt string       `json:"receivedAt"`
 	Acceptance string       `json:"acceptance"`
-	EventID    string       `json:"eventId"`
+	EventID    string       `json:"eventId,omitempty"`
 	Echo       *MessageEcho `json:"echo,omitempty"`
 }
 type Thread struct {
@@ -133,28 +133,7 @@ type Receipt struct {
 	MessageID  string `json:"messageId"`
 	ThreadKey  string `json:"threadKey"`
 	AcceptedAt string `json:"acceptedAt"`
-	EventID    string `json:"eventId"`
-}
-type Event struct {
-	ContentRef *ContentRef     `json:"contentRef,omitempty"`
-	Receipt    json.RawMessage `json:"receipt,omitempty"`
-	LastError  string          `json:"lastError,omitempty"`
-	TargetID   string          `json:"targetId,omitempty"`
-	RouteRound int             `json:"routeRound"`
-	BindingID  string          `json:"bindingId,omitempty"`
-	Payload    json.RawMessage `json:"payload,omitempty"`
-	ID         string          `json:"id"`
-	Type       string          `json:"type"`
-	At         string          `json:"at"`
-	MessageID  string          `json:"messageId,omitempty"`
-	ThreadKey  string          `json:"threadKey,omitempty"`
-	TargetRole string          `json:"targetRole"`
-	Intent     string          `json:"intent"`
-	Status     string          `json:"status"`
-	// Generation fences a command to its original role binding. Zero denotes a transferable fact.
-	TargetGeneration int  `json:"targetGeneration,omitempty"`
-	TopicGeneration  *int `json:"topicGeneration,omitempty"`
-	Revision         int  `json:"revision,omitempty"`
+	EventID    string `json:"eventId,omitempty"`
 }
 type Page struct {
 	Items      []json.RawMessage `json:"items"`

@@ -8,15 +8,6 @@ import (
 	"strings"
 )
 
-const lifecycleSchema = `
-CREATE TABLE binding_stops (binding_id TEXT PRIMARY KEY REFERENCES bindings(id), status TEXT NOT NULL, body BLOB NOT NULL);
-CREATE INDEX binding_stops_requested ON binding_stops(binding_id) WHERE status='requested';
-INSERT INTO binding_stops(binding_id,status,body)
- SELECT binding_id,json_extract(body,'$.stop.status'),json_extract(body,'$.stop') FROM executions
- WHERE json_type(body,'$.stop')='object';
-UPDATE bindings SET body=json_set(body,'$.preparationStarted',json('true'),'$.mcpWorkingDirectory',json_extract(body,'$.workspace'));
-`
-
 type LifecycleRequest struct {
 	OperationID      string `json:"operationId"`
 	ExpectedRevision int    `json:"expectedRevision"`
@@ -67,6 +58,9 @@ func changeIssueLifecycle(tool string, r IssueLifecycleRequest) workMutation {
 		}
 		prior := issue.Status
 		issue.Status, issue.UpdatedAt, issue.Reopening = "pending", change.At, &change
+		if len(issue.Blockers) != 0 {
+			issue.Status = "blocked"
+		}
 		issue.Revision++
 		commitGate("lifecycle_before_transition")
 		return WorkReceipt{Issue: issue}, saveIssueLifecycleTransition(ctx, tx, issue, prior)
@@ -132,11 +126,6 @@ func cancelTopicWork(ctx context.Context, tx *sql.Tx, b Binding, change Lifecycl
 	}
 	// Fence lifecycle commands immediately. Undelivered source and report facts
 	// remain available for the next Topic binding.
-	if err := supersedeEvents(ctx, tx, `SELECT id FROM events WHERE
- json_extract(body,'$.targetRole')='topic' AND json_extract(body,'$.targetId')=?
- AND (COALESCE(json_extract(body,'$.targetGeneration'),0)>0 OR json_type(body,'$.topicGeneration')='integer')`, b.OwnerID); err != nil {
-		return err
-	}
 	if err := revokeBinding(ctx, tx, b.ID); err != nil {
 		return err
 	}
@@ -170,7 +159,7 @@ func cancelTopicWork(ctx context.Context, tx *sql.Tx, b Binding, change Lifecycl
 }
 
 func revokeBinding(ctx context.Context, tx *sql.Tx, id string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE bindings SET state='revoked',next_attempt_at='',
+	_, err := tx.ExecContext(ctx, `UPDATE session_bindings SET state='revoked',next_attempt_at='',
  body=json_set(body,'$.state','revoked','$.nextAttemptAt','') WHERE id=?`, id)
 	if err != nil {
 		return storageError()
@@ -180,7 +169,7 @@ func revokeBinding(ctx context.Context, tx *sql.Tx, id string) error {
 
 func previousWorker(ctx context.Context, tx *sql.Tx, issueID string) (Binding, error) {
 	var b Binding
-	err := readJSON(ctx, tx, `SELECT b.body FROM executions e JOIN bindings b ON b.id=e.binding_id
+	err := readJSON(ctx, tx, `SELECT b.body FROM executions e JOIN session_bindings b ON b.id=e.binding_id
  WHERE e.issue_id=? ORDER BY e.generation DESC LIMIT 1`, &b, issueID)
 	var p *Error
 	if errors.As(err, &p) && p.Code == "not_found" {

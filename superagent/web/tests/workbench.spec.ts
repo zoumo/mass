@@ -18,9 +18,8 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
  await expect(page.getByRole('heading', { name: 'Topic 工作台' })).toBeVisible()
  await page.getByRole('button', { name: /^Observer routing Topic/ }).click()
  const topic = page.getByRole('article', { name: '当前 Topic' })
- await expect(topic.getByText('路由器忽略了消息')).toBeVisible()
  await expect(topic.getByText('Topic 将消息退回路由器')).toBeVisible()
- await expect(topic.getByText('路由器 · 第 2 轮')).toBeVisible()
+ await expect(topic.getByText('Topic · Session 已受理').first()).toBeVisible()
  await expect(topic.getByText('Observer return reason')).toBeVisible()
  const topicURL = page.url()
  await page.screenshot({ path: testInfo.outputPath('topic-workspace.png'), fullPage: true })
@@ -48,7 +47,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
  await expect(message.getByTestId('message-body')).toHaveText('Original input observer-routing')
  expect(await message.getByTestId('message-body').textContent()).toBe('Original input observer-routing')
  await expect(message.getByText('第 2 轮 · 已忽略')).toBeVisible()
- await expect(message.getByText('Observer ignore reason')).toBeVisible()
+ await expect(message.getByText('路由器忽略了消息')).toBeVisible()
  await expect(page.getByRole('textbox', { name: '按线程键筛选' })).toHaveValue(/^dws:/)
  await page.getByRole('complementary', { name: '关联工作' }).getByRole('link', { name: /^Observer routing Topic/ }).click()
  await expect(page).toHaveURL(topicURL)
@@ -57,15 +56,19 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
  expect(errors).toEqual([])
 
  const topicID = new URL(topicURL).searchParams.get('id')!
- const topicDecisions = `${routingURL}/v1/observer/decisions?topicId=${topicID}`
- const first = await (await request.get(`${topicDecisions}&limit=1&order=newest`)).json()
- expect(first.items.map((row: { kind: string }) => row.kind)).toEqual(['ignore'])
+ const topicDeliveries = `${routingURL}/v1/observer/routing-deliveries?topicId=${topicID}`
+ const first = await (await request.get(`${topicDeliveries}&limit=1&order=newest`)).json()
+ expect(first.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
  const cursor = encodeURIComponent(first.nextCursor)
- const next = await (await request.get(`${topicDecisions}&limit=1&order=newest&cursor=${cursor}`)).json()
- expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['route'])
- expect(next.nextCursor).toBeUndefined()
- expect((await request.get(`${topicDecisions}&limit=1&cursor=${cursor}`)).status()).toBe(400)
- expect((await request.get(`${routingURL}/v1/observer/decisions?topicId=unrelated&order=newest&cursor=${cursor}`)).status()).toBe(400)
+ const next = await (await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${cursor}`)).json()
+ expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
+ const timerMessage = await (await request.get(`${routingURL}/v1/observer/messages/${next.items[0].messageId}`)).json()
+ expect(timerMessage.meta.type).toBe('timer.followup')
+ expect(next.nextCursor).toBeTruthy()
+ const third = await (await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)).json()
+ expect(third.items.map((row: { kind: string }) => row.kind)).toEqual(['route_request'])
+ expect((await request.get(`${topicDeliveries}&limit=1&cursor=${cursor}`)).status()).toBe(400)
+ expect((await request.get(`${routingURL}/v1/observer/routing-deliveries?topicId=unrelated&order=newest&cursor=${cursor}`)).status()).toBe(400)
 })
 
 test('Narrow Trigger view shows the original and supports pagination without page overflow', async ({ page, request }, testInfo) => {

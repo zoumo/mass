@@ -42,8 +42,8 @@ func (s *Server) observeWorkerSession(ctx context.Context, executionID string) w
 	defer cancel()
 	var b Binding
 	var body []byte
-	if s.config.Execution == nil || s.store.db.QueryRowContext(ctx, `SELECT bindings.body FROM executions
- JOIN bindings ON bindings.id=executions.binding_id WHERE executions.id=? AND bindings.state='ready'`, executionID).Scan(&body) != nil ||
+	if s.config.Execution == nil || s.store.db.QueryRowContext(ctx, `SELECT session_bindings.body FROM executions
+ JOIN session_bindings ON session_bindings.id=executions.binding_id WHERE executions.id=? AND session_bindings.state='ready'`, executionID).Scan(&body) != nil ||
 		json.Unmarshal(body, &b) != nil ||
 		b.SessionID == "" || b.SessionUID == "" {
 		return observation

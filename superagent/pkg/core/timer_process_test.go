@@ -3,6 +3,7 @@ package core_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,7 +21,16 @@ const (
 
 type timerRecord struct {
 	core.Timer
-	Followup *core.Event `json:"followup"`
+	Followup *timerRoute `json:"followup"`
+}
+
+type timerRoute struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	MessageID string `json:"messageId"`
+	TopicID   string `json:"topicId"`
+	SentAt    string `json:"sentAt"`
 }
 
 func timerInput(op, dueAt string) core.SetTimerRequest {
@@ -45,18 +55,54 @@ func assertTimerFollowup(t *testing.T, p *process, timer timerRecord) {
 	t.Helper()
 	require.NotEmpty(t, timer.FiredAt)
 	require.NotNil(t, timer.Followup)
-	event := readRecord[core.Event](t, p, "events/"+timer.FollowupEventID)
-	require.Equal(t, event.ID, timer.Followup.ID)
-	require.Equal(t, timerEventType, event.Type)
-	require.Equal(t, "act", event.Intent)
-	require.Equal(t, "topic", event.TargetRole)
-	require.Equal(t, timer.TopicID, event.TargetID)
-	require.Equal(t, timer.Revision, event.Revision)
-	require.NotNil(t, event.TopicGeneration)
-	require.Equal(t, timer.TopicGeneration, *event.TopicGeneration)
-	require.Equal(t, timer.FiredAt, event.At)
-	require.Empty(t, event.MessageID)
-	require.Empty(t, event.ThreadKey)
+	require.NotEmpty(t, timer.TriggerMessageID)
+	require.Equal(t, timerEventType, timer.Type)
+	message := readRecord[core.Message](t, p, "messages/"+timer.TriggerMessageID)
+	require.Equal(t, timer.ID, message.SourceMessageID)
+	require.Equal(t, core.ThreadRef{Source: "core:timer", ID: timer.ID}, message.ThreadRef)
+	require.Equal(t, message.ThreadRef.Source, message.Source)
+	require.Equal(t, core.ThreadKey(message.ThreadRef), timer.ThreadKey)
+	require.Equal(t, timer.ThreadKey, message.ThreadKey)
+	require.Equal(t, timer.Content, message.Text)
+	require.Nil(t, message.Channel)
+	require.Equal(t, timerEventType, message.Meta["type"])
+	require.Equal(t, timer.ID, message.Meta["taskId"])
+	require.Equal(t, timer.TopicID, message.Meta["topicId"])
+	require.Equal(t, timer.DueAt, message.Meta["dueAt"])
+	require.EqualValues(t, timer.Revision, message.Meta["taskRevision"])
+	if len(timer.Materials) > 0 {
+		actual, err := json.Marshal(message.Meta["materials"])
+		require.NoError(t, err)
+		expected, err := json.Marshal(timer.Materials)
+		require.NoError(t, err)
+		require.JSONEq(t, string(expected), string(actual))
+	}
+
+	type subscribedThread struct {
+		core.Thread
+		Subscriptions []core.Subscription `json:"subscriptions"`
+	}
+	thread := readRecord[subscribedThread](t, p, "threads/"+url.PathEscape(timer.ThreadKey))
+	require.Equal(t, message.ThreadRef, thread.Ref)
+	require.Len(t, thread.Subscriptions, 1)
+	require.Equal(t, timer.TopicID, thread.Subscriptions[0].TopicID)
+	require.Len(t, page(t, p, "messages?threadKey="+url.QueryEscape(timer.ThreadKey)).Items, 1)
+	require.Len(t, page(t, p, "routing-deliveries?messageId="+message.ID).Items, 1)
+	delivery := readRecord[timerRoute](t, p, "routing-deliveries/"+timer.Followup.ID)
+	require.Equal(t, message.EventID, delivery.ID)
+	require.Equal(t, "routed_message", delivery.Kind)
+	require.Equal(t, timer.TopicID, delivery.TopicID)
+	require.Equal(t, message.ID, delivery.MessageID)
+}
+
+func waitTimerDelivery(t *testing.T, p *process, id, status string) timerRoute {
+	t.Helper()
+	var found timerRoute
+	require.Eventually(t, func() bool {
+		found = readRecord[timerRoute](t, p, "routing-deliveries/"+id)
+		return found.Status == status
+	}, 7*time.Second, 25*time.Millisecond, "Timer delivery %s: waiting for %s", id, status)
+	return found
 }
 
 func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
@@ -64,7 +110,8 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	peer := newNativeDeliveryPeer(t)
 	endpoint, _ := startDeliveryMassd(t, peer)
 	f, _ := deliveryFixture(t, endpoint)
-	p := f.start()
+	clock, advanceClock := processClock(t, f, "SUPERAGENT_TEST_TIMER_CLOCK")
+	p := f.start(clock)
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
 	binding, source := nativeWorkTopic(t, f, p, peer, router, "timer-main")
@@ -108,8 +155,8 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	})
 	require.Empty(t, mcpWork[core.Page](t, foreign, "work_query", core.QueryRequest{Collection: "timers"}).Items)
 
-	// A real short future dueAt tests the ordinary scan, independently of the past-time cases.
-	due := time.Now().Add(750 * time.Millisecond).In(time.FixedZone("UTC+8", 8*60*60))
+	// Fire the revised task only when the controlled clock reaches its due time.
+	due := advanceClock(0).Add(time.Minute).In(time.FixedZone("UTC+8", 8*60*60))
 	update := core.UpdateTimerRequest{
 		CancelTimerRequest: cancelTimerInput("reschedule", scheduled),
 		DueAt:              due.Format(time.RFC3339Nano), Content: "Review the revised build evidence.", Materials: r.Materials,
@@ -118,41 +165,46 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	require.Equal(t, 2, rescheduled.Revision)
 	require.Equal(t, update.Content, rescheduled.Content)
 	require.Equal(t, 2, mcpWorkError(t, topic, "timer_cancel", "conflict", cancelTimerInput("stale-cancel", scheduled)).CurrentRevision)
+	require.Never(t, func() bool {
+		return readRecord[timerRecord](t, p, "timers/"+scheduled.ID).Status == "fired"
+	}, 350*time.Millisecond, 25*time.Millisecond)
+	advanceClock(time.Minute)
 	fired := waitTimer(t, p, scheduled.ID, "fired")
 	at, err := time.Parse(time.RFC3339Nano, fired.FiredAt)
 	require.NoError(t, err)
-	require.False(t, at.Before(due), "Timer fired early")
+	require.True(t, at.Equal(due), "Timer must use the controlled due instant")
 	assertTimerFollowup(t, p, fired)
 	advance := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, advance.session)
-	nativeEvent := decodeBatch(t, advance, fired.FollowupEventID).Events[0]
-	require.Equal(t, timerEventType, nativeEvent.Type)
-	require.Equal(t, 2, nativeEvent.Revision)
-	require.Empty(t, nativeEvent.Message.ID)
-	var payload core.Timer
-	require.NoError(t, json.Unmarshal(nativeEvent.Payload, &payload))
-	require.Equal(t, fired.Timer, payload)
+	nativeEvent := decodeInternalBatch(t, advance, fired.Followup.ID)[0]
+	require.Equal(t, "routed_message", nativeEvent.Kind)
+	require.Equal(t, deliveryParty{Kind: "topic", TopicID: binding.OwnerID}, nativeEvent.Recipient)
+	require.Len(t, nativeEvent.Content.Refs, 1)
+	require.JSONEq(t, `{"kind":"trigger_message","id":"`+fired.TriggerMessageID+`"}`, string(nativeEvent.Content.Refs[0]))
+	message := roleWork[core.Message](t, p, roleToken(t, f, binding), "source_query", core.QueryRequest{Collection: "messages", ID: fired.TriggerMessageID})
+	require.Equal(t, fired.Content, message.Text)
+	mcpWorkError(t, topic, "message_reply", "failed_precondition", core.ReplyRequest{OperationID: "timer-reply", MessageID: message.ID, Text: "fixture"})
 	advance.answer <- nativeDeliveryAnswer{complete: true}
-	d := waitDelivery(t, p, fired.FollowupEventID, "delivered")
-	require.Equal(t, "start_or_steer", readRecord[core.Batch](t, p, "batches/"+d.BatchID).Method)
-	require.Equal(t, "delivered", mcpWork[timerRecord](t, topic, "work_query", query).Followup.Status)
-	require.Equal(t, rescheduled, mcpWork[core.Timer](t, topic, "timer_update", update))
+	d := waitTimerDelivery(t, p, fired.Followup.ID, "sent")
+	require.NotEmpty(t, d.SentAt)
+	require.Equal(t, d, *mcpWork[timerRecord](t, topic, "work_query", query).Followup)
+	mcpWorkError(t, topic, "timer_update", "conflict", update)
 	mcpWorkError(t, topic, "timer_cancel", "failed_precondition", cancelTimerInput("too-late", fired.Timer))
 	update.CancelTimerRequest = cancelTimerInput("update-fired", fired.Timer)
 	mcpWorkError(t, topic, "timer_update", "failed_precondition", update)
-	require.Len(t, issueEvents(t, p, timerEventType), 1)
-	require.Len(t, page(t, p, "messages").Items, 2)
-	require.Len(t, page(t, p, "threads").Items, 2)
+	require.Len(t, page(t, p, "messages").Items, 3)
+	require.Len(t, page(t, p, "threads").Items, 3)
 	require.Empty(t, page(t, p, "issues").Items)
 	require.Empty(t, page(t, p, "executions").Items)
 	require.Equal(t, 1, readRecord[core.Topic](t, p, "topics/"+binding.OwnerID).Revision)
 	p.stop(t, false)
-	p = f.start()
-	require.Equal(t, fired.Timer, readRecord[timerRecord](t, p, "timers/"+fired.ID).Timer)
-	require.Equal(t, d.ID, waitDelivery(t, p, fired.FollowupEventID, "delivered").ID)
+	p = f.start(clock)
+	restarted := readRecord[timerRecord](t, p, "timers/"+fired.ID)
+	require.Equal(t, fired.Timer, restarted.Timer)
+	require.Equal(t, d, *restarted.Followup)
 	peer.quiet(t, 600*time.Millisecond)
-	require.Len(t, issueEvents(t, p, timerEventType), 1)
-	t.Log("Topic MCP scheduled a timezone-aware revision; real massd StartOrSteer delivered it once through a durable batch, with no source or Issue creation.")
+	assertTimerFollowup(t, p, restarted)
+	t.Log("Controlled time fired exactly one normal ingress Message. Real massd StartOrSteer accepted its routed_message.")
 }
 
 func TestTimerRevisionWinsBeforeFire(t *testing.T) {
@@ -176,24 +228,28 @@ func TestTimerRevisionWinsBeforeFire(t *testing.T) {
 				update := core.UpdateTimerRequest{CancelTimerRequest: change, DueAt: timerFuture, Content: "Postpone the followup."}
 				changed = roleWork[core.Timer](t, p, token, "timer_update", update)
 				require.Equal(t, "scheduled", changed.Status)
-				require.Equal(t, changed, roleWork[core.Timer](t, p, token, "timer_update", update))
+				status, data := request(t, http.MethodPost, p.endpoint, "/v1/role/timer_update", token, update)
+				errorCode(t, status, data, http.StatusConflict, "conflict")
 			} else {
 				changed = roleWork[core.Timer](t, p, token, "timer_cancel", change)
 				require.Equal(t, "canceled", changed.Status)
-				require.Equal(t, changed, roleWork[core.Timer](t, p, token, "timer_cancel", change))
-				change.ExpectedRevision++
 				status, data := request(t, http.MethodPost, p.endpoint, "/v1/role/timer_cancel", token, change)
 				errorCode(t, status, data, http.StatusConflict, "conflict")
+				change.ExpectedRevision++
+				status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/timer_cancel", token, change)
+				errorCode(t, status, data, http.StatusConflict, "failed_precondition")
 			}
 			require.Equal(t, 2, changed.Revision)
 			write(t, filepath.Join(gate, "release"), "release")
 			// A newly due Timer reaching delivery proves the held scan resumed.
 			marker := roleWork[core.Timer](t, p, token, "timer_set", timerInput("next-scan", timerPast))
 			fired := waitTimer(t, p, marker.ID, "fired")
-			waitDelivery(t, p, fired.FollowupEventID, "delivered")
+			waitTimerDelivery(t, p, fired.Followup.ID, "sent")
 			require.Equal(t, changed, readRecord[timerRecord](t, p, "timers/"+changed.ID).Timer)
-			require.Equal(t, selected, roleWork[core.Timer](t, p, token, "timer_set", r))
-			require.Len(t, issueEvents(t, p, timerEventType), 1)
+			require.Equal(t, changed, roleWork[core.Timer](t, p, token, "timer_set", r))
+			require.Len(t, page(t, p, "messages").Items, 2)
+			require.Len(t, page(t, p, "threads").Items, 2)
+			assertTimerFollowup(t, p, fired)
 			t.Logf("%s committed after selecting the old due revision and prevented its followup", action)
 		})
 	}
@@ -220,18 +276,18 @@ func TestTimerFireCommitCrash(t *testing.T) {
 			if stage == "timer_before_commit" {
 				waitWorkGate(t, resume, "timer_before_fire")
 				require.Equal(t, "scheduled", readRecord[timerRecord](t, p, "timers/"+timer.ID).Status)
-				require.Empty(t, issueEvents(t, p, timerEventType))
+				require.Len(t, page(t, p, "messages").Items, 1)
+				require.Len(t, page(t, p, "threads").Items, 1)
 			} else {
 				fired := readRecord[timerRecord](t, p, "timers/"+timer.ID)
 				require.Equal(t, "fired", fired.Status)
 				assertTimerFollowup(t, p, fired)
 			}
-			require.Equal(t, timer, roleWork[core.Timer](t, p, token, "timer_set", r))
+			require.Equal(t, timer.ID, roleWork[core.Timer](t, p, token, "timer_set", r).ID)
 			write(t, filepath.Join(resume, "release"), "release")
 			fired := waitTimer(t, p, timer.ID, "fired")
+			waitTimerDelivery(t, p, fired.Followup.ID, "sent")
 			assertTimerFollowup(t, p, fired)
-			waitDelivery(t, p, fired.FollowupEventID, "delivered")
-			require.Len(t, issueEvents(t, p, timerEventType), 1)
 			t.Logf("SIGKILL at %s recovered an all-or-none Timer and followup transaction", stage)
 		})
 	}
@@ -245,17 +301,19 @@ func TestTimerTopicLifecycleFence(t *testing.T) {
 			boundary := newRouteBoundary(t)
 			f := fixtureAt(t)
 			f.execution(boundary)
-			p := f.start()
+			clock, advanceClock := processClock(t, f, "SUPERAGENT_TEST_TIMER_CLOCK")
+			p := f.start(clock)
 			binding, token := workBoundaryTopic(t, f, p)
-			future := roleWork[core.Timer](t, p, token, "timer_set", timerInput("long-lead", timerFuture))
+			due := advanceClock(0).Add(time.Minute).Format(time.RFC3339Nano)
+			future := roleWork[core.Timer](t, p, token, "timer_set", timerInput("long-lead", due))
 			p.stop(t, false)
 			gate := t.TempDir()
-			p = f.start("SUPERAGENT_TEST_GATE_STAGE=topic_before_rpc", "SUPERAGENT_TEST_GATE_DIR="+gate)
+			p = f.start(clock, "SUPERAGENT_TEST_GATE_STAGE=topic_before_rpc", "SUPERAGENT_TEST_GATE_DIR="+gate)
 			t.Cleanup(func() { write(t, filepath.Join(gate, "release"), "release") })
 			past := roleWork[core.Timer](t, p, token, "timer_set", timerInput("claimed-before-terminal", timerPast))
 			fired := waitTimer(t, p, past.ID, "fired")
 			waitWorkGate(t, gate, "topic_before_rpc")
-			require.Equal(t, "dispatching", readRecord[timerRecord](t, p, "timers/"+past.ID).Followup.Status)
+			require.Equal(t, "pending", readRecord[timerRecord](t, p, "timers/"+past.ID).Followup.Status)
 			var terminal core.Topic
 			if action == "complete" {
 				terminal = roleWork[core.Topic](t, p, token, "topic_complete", acceptance("accept-topic", 1, "notes/verified.txt"))
@@ -264,9 +322,10 @@ func TestTimerTopicLifecycleFence(t *testing.T) {
 				terminal = roleWork[core.Topic](t, p, token, "topic_cancel", lifecycle("cancel-topic", 1))
 				require.Equal(t, "canceled", terminal.Status)
 			}
+			require.Equal(t, terminal.Status, readRecord[core.Topic](t, p, "topics/"+binding.OwnerID).Status)
 			invalidated := readRecord[timerRecord](t, p, "timers/"+future.ID)
 			require.Equal(t, "invalidated", invalidated.Status)
-			require.Empty(t, invalidated.FollowupEventID)
+			require.Empty(t, invalidated.TriggerMessageID)
 			require.Equal(t, future.Revision, invalidated.Revision)
 			// Reopen a completed Topic while the old dispatch is still paused.
 			if action == "complete" {
@@ -277,18 +336,21 @@ func TestTimerTopicLifecycleFence(t *testing.T) {
 				require.Greater(t, reopened.LifecycleGeneration, fired.TopicGeneration)
 			}
 			write(t, filepath.Join(gate, "release"), "release")
-			delivery := waitDelivery(t, p, fired.FollowupEventID, "superseded")
-			require.Empty(t, delivery.Receipt)
+			delivery := waitTimerDelivery(t, p, fired.Followup.ID, "superseded")
+			require.Empty(t, delivery.SentAt)
 			boundary.driver.mu.Lock()
 			inputs := len(boundary.driver.inputs[binding.Namespace+"/"+binding.Name])
 			boundary.driver.mu.Unlock()
 			require.Equal(t, 1, inputs, "past Timer did not pass final admission")
 			require.Equal(t, fired.Timer, readRecord[timerRecord](t, p, "timers/"+past.ID).Timer)
 			p.stop(t, false)
-			p = f.start()
+			advanceClock(time.Minute)
+			p = f.start(clock)
+			require.Len(t, page(t, p, "messages").Items, 2)
+			require.Len(t, page(t, p, "threads").Items, 2)
 			require.Equal(t, invalidated, readRecord[timerRecord](t, p, "timers/"+future.ID))
-			require.Equal(t, delivery.ID, waitDelivery(t, p, fired.FollowupEventID, "superseded").ID)
-			require.Len(t, issueEvents(t, p, timerEventType), 1)
+			require.Equal(t, delivery, waitTimerDelivery(t, p, fired.Followup.ID, "superseded"))
+			assertTimerFollowup(t, p, fired)
 			t.Logf("%s invalidated scheduled work and superseded a claimed Timer at final RPC admission", action)
 		})
 	}

@@ -9,26 +9,6 @@ import (
 	"strings"
 )
 
-const workSchema = `
-CREATE TABLE issues (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, topic_id TEXT NOT NULL REFERENCES topics(id),
- created_at TEXT NOT NULL, body BLOB NOT NULL
-);
-CREATE INDEX issues_topic ON issues(topic_id,created_at,id);
-CREATE TABLE executions (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, issue_id TEXT NOT NULL REFERENCES issues(id),
- binding_id TEXT NOT NULL UNIQUE REFERENCES bindings(id), generation INTEGER NOT NULL,
- created_at TEXT NOT NULL, body BLOB NOT NULL, UNIQUE(issue_id,generation)
-);
-CREATE INDEX executions_stop ON executions(binding_id) WHERE json_extract(body,'$.stop.status')='requested';
-CREATE INDEX batches_binding ON batches(binding_id);
-CREATE TABLE reports (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, execution_id TEXT NOT NULL REFERENCES executions(id),
- issue_id TEXT NOT NULL REFERENCES issues(id), created_at TEXT NOT NULL, body BLOB NOT NULL
-);
-CREATE INDEX reports_issue ON reports(issue_id,created_at,id);
-`
-
 type Material struct {
 	Label     string `json:"label,omitempty"`
 	URI       string `json:"uri,omitempty"`
@@ -43,23 +23,26 @@ type Completion struct {
 }
 
 type Issue struct {
-	ID                        string           `json:"id"`
-	TopicID                   string           `json:"topicId"`
-	Title                     string           `json:"title"`
-	Requirements              string           `json:"requirements"`
-	RequirementsRevision      int              `json:"requirementsRevision"`
-	LatestRequirementsEventID string           `json:"latestRequirementsEventId,omitempty"`
-	Blockers                  []Blocker        `json:"blockers,omitempty"`
-	Workspace                 string           `json:"workspace"`
-	Materials                 []Material       `json:"materials,omitempty"`
-	Status                    string           `json:"status"`
-	Revision                  int              `json:"revision"`
-	CurrentExecutionID        string           `json:"currentExecutionId,omitempty"`
-	CreatedAt                 string           `json:"createdAt"`
-	UpdatedAt                 string           `json:"updatedAt"`
-	Completion                *Completion      `json:"completion,omitempty"`
-	Cancellation              *LifecycleChange `json:"cancellation,omitempty"`
-	Reopening                 *LifecycleChange `json:"reopening,omitempty"`
+	ID                        string            `json:"id"`
+	TopicID                   string            `json:"topicId"`
+	Title                     string            `json:"title"`
+	Requirements              string            `json:"goal"`
+	RequirementsRevision      int               `json:"goalRevision"`
+	LatestRequirementsEventID string            `json:"latestRequirementsEventId,omitempty"`
+	Blockers                  []Blocker         `json:"blockers,omitempty"`
+	ResolvedBlockers          []Blocker         `json:"resolvedBlockers,omitempty"`
+	Reports                   []Report          `json:"reports,omitempty"`
+	PullRequests              []pullRequestLink `json:"pullRequests,omitempty"`
+	Workspace                 string            `json:"workspace"`
+	Materials                 []Material        `json:"materials,omitempty"`
+	Status                    string            `json:"status"`
+	Revision                  int               `json:"revision"`
+	CurrentExecutionID        string            `json:"currentExecutionId,omitempty"`
+	CreatedAt                 string            `json:"createdAt"`
+	UpdatedAt                 string            `json:"updatedAt"`
+	Completion                *Completion       `json:"completion,omitempty"`
+	Cancellation              *LifecycleChange  `json:"cancellation,omitempty"`
+	Reopening                 *LifecycleChange  `json:"reopening,omitempty"`
 }
 
 type Execution struct {
@@ -69,9 +52,10 @@ type Execution struct {
 	BindingID               string           `json:"bindingId"`
 	Generation              int              `json:"generation"`
 	CreatedAt               string           `json:"createdAt"`
-	Revision                int              `json:"requirementsRevision"`
+	Revision                int              `json:"goalRevision"`
 	StartEventID            string           `json:"startEventId"`
 	Authority               string           `json:"authority"`
+	RetiredGoalRevision     int              `json:"retiredGoalRevision,omitempty"`
 	RetiredAt               string           `json:"retiredAt,omitempty"`
 	PreparationAtRetirement string           `json:"preparationAtRetirement,omitempty"`
 	Stop                    *StopRequest     `json:"stop,omitempty"`
@@ -82,17 +66,18 @@ type Execution struct {
 type CreateIssueRequest struct {
 	OperationID  string     `json:"operationId"`
 	Title        string     `json:"title"`
-	Requirements string     `json:"requirements"`
+	Requirements string     `json:"requirements,omitempty"`
+	Goal         string     `json:"goal,omitempty"`
 	Workspace    string     `json:"workspace"`
 	Materials    []Material `json:"materials,omitempty"`
 	Start        bool       `json:"start,omitempty"`
 }
 
 type StartIssueRequest struct {
-	OperationID       string   `json:"operationId"`
-	IssueID           string   `json:"issueId"`
-	ExpectedRevision  int      `json:"expectedRevision"`
-	ResolveBlockerIDs []string `json:"resolveBlockerIds,omitempty"`
+	OperationID      string              `json:"operationId"`
+	IssueID          string              `json:"issueId"`
+	ExpectedRevision int                 `json:"expectedRevision"`
+	Resolve          []BlockerResolution `json:"resolve,omitempty"`
 }
 
 type CompleteRequest struct {
@@ -124,6 +109,8 @@ func (s *Store) workCommand(ctx context.Context, b Binding, tool string, raw []b
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r StartIssueRequest) string { return r.OperationID }, s.startIssue)
 	case "issue_update_requirements":
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r UpdateRequirementsRequest) string { return r.OperationID }, updateRequirements)
+	case "issue_worker_update":
+		return decodeWorkCommand(ctx, s, b, tool, raw, func(r WorkerUpdateRequest) string { return r.OperationID }, workerUpdate)
 	case "issue_update_blockers":
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r UpdateBlockersRequest) string { return r.OperationID }, updateBlockers)
 	case "issue_complete":
@@ -154,12 +141,12 @@ func decodeWorkCommand[T any](ctx context.Context, s *Store, b Binding, kind str
 	if err := decodeStrict(raw, &r); err != nil {
 		return nil, err
 	}
-	return s.commitWork(ctx, b, kind, operationID(r), r, apply(r))
+	return s.commitWork(ctx, b, kind, operationID(r), apply(r))
 }
 
 type workMutation func(context.Context, *sql.Tx, Binding) (any, error)
 
-func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID string, request any, apply workMutation) (json.RawMessage, error) {
+func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID string, apply workMutation) (json.RawMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -167,25 +154,16 @@ func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID str
 		return nil, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	if kind != "report_submit" && kind != "topic_cancel" {
-		if err := checkBinding(ctx, tx, b); err != nil {
-			return nil, err
-		}
+	if strings.TrimSpace(operationID) == "" {
+		return nil, problem("invalid_argument", "operationId is required")
 	}
-	saved, fp, err := roleReplay(ctx, tx, b.ID, kind, operationID, request)
-	if err != nil || saved != nil {
-		return saved, err
-	}
-	if kind == "topic_cancel" {
+	if kind != "report_submit" {
 		if err := checkBinding(ctx, tx, b); err != nil {
 			return nil, err
 		}
 	}
 	result, err := apply(ctx, tx, b)
 	if err != nil {
-		return nil, err
-	}
-	if err := roleReceipt(ctx, tx, b.ID, kind, operationID, fp, result); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -243,7 +221,7 @@ func validateMaterials(ctx context.Context, tx *sql.Tx, topicID string, material
 		}
 		if m.MessageID != "" {
 			var scoped bool
-			if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM message_topics WHERE topic_id=? AND message_id=?)", topicID, m.MessageID).Scan(&scoped); err != nil {
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM topic_message_history WHERE topic_id=? AND message_id=?)", topicID, m.MessageID).Scan(&scoped); err != nil {
 				return storageError()
 			}
 			if !scoped {
@@ -256,19 +234,36 @@ func validateMaterials(ctx context.Context, tx *sql.Tx, topicID string, material
 
 func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+		key := creationKey("issue", b.ID, r.OperationID)
+		id := creationID(key, r)
+		if existing, err := existingCreation(ctx, tx, "issues", key, id); err != nil {
+			return nil, err
+		} else if existing {
+			issue, err := topicIssue(ctx, tx, b, id)
+			if err != nil || !r.Start {
+				return WorkReceipt{Issue: issue}, err
+			}
+			var x Execution
+			err = readJSON(ctx, tx, "SELECT body FROM executions WHERE issue_id=? AND generation=1", &x, id)
+			return WorkReceipt{Issue: issue, Execution: &x}, err
+		}
 		t, err := currentTopic(ctx, tx, b)
 		if err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(r.Title) == "" || strings.TrimSpace(r.Requirements) == "" || !filepath.IsAbs(r.Workspace) {
-			return nil, problem("invalid_argument", "title, requirements and an absolute workspace are required")
+		goal, err := issueGoal(r.Goal, r.Requirements)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(r.Title) == "" || !filepath.IsAbs(r.Workspace) {
+			return nil, problem("invalid_argument", "title and an absolute workspace are required")
 		}
 		if err := validateMaterials(ctx, tx, t.ID, r.Materials); err != nil {
 			return nil, err
 		}
 		at := now()
 		issue := Issue{
-			ID: newID("issue"), TopicID: t.ID, Title: r.Title, Requirements: r.Requirements, Workspace: filepath.Clean(r.Workspace),
+			ID: id, TopicID: t.ID, Title: r.Title, Requirements: goal, Workspace: filepath.Clean(r.Workspace),
 			Materials: r.Materials, Status: "pending", Revision: 1, RequirementsRevision: 1, CreatedAt: at, UpdatedAt: at,
 		}
 		if err := checkWorkspace(issue.Workspace); err != nil {
@@ -278,7 +273,7 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 			return nil, err
 		}
 		if r.Start {
-			return s.scheduleIssue(ctx, tx, issue)
+			return s.scheduleIssue(ctx, tx, issue, deliveryIdentity{Kind: "topic", TopicID: b.OwnerID})
 		}
 		return WorkReceipt{Issue: issue}, nil
 	}
@@ -300,19 +295,22 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 		if err := checkWorkspace(issue.Workspace); err != nil {
 			return nil, err
 		}
-		if len(r.ResolveBlockerIDs) != 0 {
-			issue.Blockers, err = removeBlockers(issue.Blockers, r.ResolveBlockerIDs)
-			if err != nil {
-				return nil, err
-			}
+		if issue.CurrentExecutionID != "" {
+			return nil, problem("conflict", "Issue already has a current Execution")
 		}
-		return s.scheduleIssue(ctx, tx, issue)
+		if err := resolveBlockers(ctx, tx, &issue, r.Resolve); err != nil {
+			return nil, err
+		}
+		return s.scheduleIssue(ctx, tx, issue, deliveryIdentity{Kind: "topic", TopicID: b.OwnerID})
 	}
 }
 
-func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue) (WorkReceipt, error) {
+func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, sender deliveryIdentity) (WorkReceipt, error) {
 	if issue.CurrentExecutionID != "" {
 		return WorkReceipt{}, problem("conflict", "Issue already has a current Execution")
+	}
+	if len(issue.Blockers) != 0 {
+		return WorkReceipt{}, problem("failed_precondition", "starting an Execution requires resolving the Issue's blockers")
 	}
 	previous, err := previousWorker(ctx, tx, issue.ID)
 	if err != nil {
@@ -321,7 +319,7 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue) (Wor
 	at := now()
 	x := Execution{
 		ID: newID("exec"), IssueID: issue.ID, TopicID: issue.TopicID, Generation: previous.Generation + 1,
-		CreatedAt: at, StartEventID: newID("evt"), Authority: "current",
+		CreatedAt: at, StartEventID: newID("delivery"), Authority: "current",
 	}
 	b, err := createWorkerBinding(ctx, tx, s.config, x, issue.Workspace, previous)
 	if err != nil {
@@ -329,9 +327,6 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue) (Wor
 	}
 	x.BindingID = b.ID
 	issue.Status = "active"
-	if len(issue.Blockers) != 0 {
-		issue.Status = "blocked"
-	}
 	issue.Revision++
 	issue.UpdatedAt, issue.CurrentExecutionID = at, x.ID
 	x.Revision = issue.RequirementsRevision
@@ -349,9 +344,11 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue) (Wor
 	if err != nil {
 		return WorkReceipt{}, err
 	}
-	err = EnqueueEvent(ctx, tx, Event{
-		ID: x.StartEventID, Type: "issue.started", At: at, Intent: "act",
-		BindingID: b.ID, TargetRole: "worker", TargetID: x.ID, TargetGeneration: x.Generation, Revision: x.Revision, Payload: payload,
+	err = enqueueInternalDelivery(ctx, tx, internalDelivery{
+		ID: x.StartEventID, Kind: workerStarted,
+		Sender:    sender,
+		Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
+		Content:   deliveryContent{Body: payload, Refs: []deliveryReference{issueGoalRef(issue)}},
 	})
 	return WorkReceipt{Issue: issue, Execution: &x}, err
 }
@@ -433,9 +430,7 @@ func completeTopic(r CompleteRequest) workMutation {
 		if err := invalidateTimers(ctx, tx, t.ID, at); err != nil {
 			return nil, err
 		}
-		if err := supersedeEvents(ctx, tx, `SELECT json_extract(body,'$.followupEventId') FROM timers WHERE topic_id=?`, t.ID); err != nil {
-			return nil, err
-		}
+
 		return t, putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", t, t.ID)
 	}
 }

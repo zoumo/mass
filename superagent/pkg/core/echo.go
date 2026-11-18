@@ -11,34 +11,10 @@ import (
 	"time"
 )
 
-const echoSchema = `
-CREATE TABLE outbound_message_ids (
- source TEXT NOT NULL, conversation_id TEXT NOT NULL, native_id TEXT NOT NULL,
- outbox_id TEXT NOT NULL REFERENCES outbox(id), attempt_id TEXT NOT NULL REFERENCES outbox_attempts(id),
- PRIMARY KEY(source,conversation_id,native_id)
-);
-INSERT OR IGNORE INTO outbound_message_ids(source,conversation_id,native_id,outbox_id,attempt_id)
- SELECT o.source,json_extract(r.value,'$.conversationId'),json_extract(r.value,'$.messageId'),o.id,a.id
- FROM outbox o JOIN outbox_attempts a ON a.outbox_id=o.id, json_each(a.body,'$.results') r
- WHERE json_extract(o.body,'$.channel.type')='dws'
- AND json_extract(r.value,'$.outcome')='sent' AND json_extract(r.value,'$.conversationId')<>''
- AND json_extract(r.value,'$.messageId')<>'' ORDER BY a.seq,r.key;
-CREATE TABLE message_echo (
- message_id TEXT PRIMARY KEY REFERENCES messages(id), state TEXT NOT NULL, deadline TEXT NOT NULL
-);
-CREATE INDEX message_echo_deadline ON message_echo(deadline,message_id) WHERE state='held';
-CREATE TABLE message_echo_candidates (
- message_id TEXT NOT NULL REFERENCES message_echo(message_id), attempt_id TEXT NOT NULL REFERENCES outbox_attempts(id),
- PRIMARY KEY(message_id,attempt_id)
-);
-CREATE INDEX echo_by_attempt ON message_echo_candidates(attempt_id,message_id);
-`
-
 const echoWait = 60 * time.Second
 
 type EchoReference struct {
-	OutboxID  string `json:"outboxId"`
-	AttemptID string `json:"attemptId"`
+	OutboxID string `json:"outboxId"`
 }
 
 type MessageEcho struct {
@@ -60,21 +36,20 @@ func classifyEcho(ctx context.Context, tx *sql.Tx, m Message, selfSent bool) (*M
 	if err != nil {
 		return nil, err
 	}
+	at := outboxNow()
 	if ref != nil {
-		return &MessageEcho{Status: "outbound_echo", Match: ref, ResolvedAt: outboxNow().Format(utcTimestamp)}, nil
+		return &MessageEcho{Status: "outbound_echo", Match: ref, ResolvedAt: at.Format(utcTimestamp)}, nil
 	}
 	if !selfSent {
 		return nil, nil
 	}
-	at := outboxNow()
-	rows, err := tx.QueryContext(ctx, `SELECT o.id,a.id FROM messages target
- JOIN outbox o ON o.message_id=target.id JOIN outbox_attempts a ON a.outbox_id=o.id
- WHERE target.thread_key=? AND o.source=?
- AND json_extract(o.body,'$.channel.type')='dws'
- AND json_extract(o.body,'$.channel.conversationId')=?
- AND (a.state IN ('started','task') OR (a.state='unknown' AND
-   (json_extract(a.body,'$.taskId') IS NOT NULL OR json_extract(a.body,'$.retryAt')>?)))
- ORDER BY a.seq`, m.ThreadKey, m.Source, m.Channel.ConversationID, at.Format(utcTimestamp))
+	rows, err := tx.QueryContext(ctx, `SELECT o.id FROM outbox o
+ JOIN trigger_messages origin ON origin.id=o.message_id
+ WHERE origin.thread_key=? AND origin.source=? AND json_extract(origin.body,'$.accountId')=?
+ AND json_extract(origin.body,'$.channel.type')='dws' AND json_extract(origin.body,'$.channel.conversationId')=?
+ AND (o.status='pending' OR (o.status='failed' AND json_extract(o.receipt,'$.uncertain')
+  AND json_extract(o.receipt,'$.retryAt')>?))
+ ORDER BY o.rowid`, m.ThreadKey, m.Source, m.AccountID, m.Channel.ConversationID, at.Format(utcTimestamp))
 	if err != nil {
 		return nil, storageError()
 	}
@@ -82,7 +57,7 @@ func classifyEcho(ctx context.Context, tx *sql.Tx, m Message, selfSent bool) (*M
 	echo := &MessageEcho{Status: "held", Deadline: at.Add(echoWait).Format(utcTimestamp)}
 	for rows.Next() {
 		var candidate EchoReference
-		if err = rows.Scan(&candidate.OutboxID, &candidate.AttemptID); err != nil {
+		if err = rows.Scan(&candidate.OutboxID); err != nil {
 			return nil, storageError()
 		}
 		echo.Candidates = append(echo.Candidates, candidate)
@@ -98,8 +73,12 @@ func classifyEcho(ctx context.Context, tx *sql.Tx, m Message, selfSent bool) (*M
 
 func findEchoIdentity(ctx context.Context, tx *sql.Tx, m Message) (*EchoReference, error) {
 	var ref EchoReference
-	err := tx.QueryRowContext(ctx, `SELECT outbox_id,attempt_id FROM outbound_message_ids
- WHERE source=? AND conversation_id=? AND native_id=?`, m.Source, m.Channel.ConversationID, m.SourceMessageID).Scan(&ref.OutboxID, &ref.AttemptID)
+	err := tx.QueryRowContext(ctx, `SELECT o.id FROM outbox o
+ JOIN trigger_messages origin ON origin.id=o.message_id
+ WHERE o.status='sent' AND origin.source=? AND json_extract(origin.body,'$.accountId')=?
+ AND json_extract(origin.body,'$.channel.type')='dws'
+ AND json_extract(o.receipt,'$.conversationId')=? AND json_extract(o.receipt,'$.messageId')=?
+ ORDER BY o.rowid LIMIT 1`, m.Source, m.AccountID, m.Channel.ConversationID, m.SourceMessageID).Scan(&ref.OutboxID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
@@ -110,59 +89,34 @@ func findEchoIdentity(ctx context.Context, tx *sql.Tx, m Message) (*EchoReferenc
 	}
 }
 
-func recordEchoAdmission(ctx context.Context, tx *sql.Tx, m Message, e Event) error {
-	if _, err := tx.ExecContext(ctx, "INSERT INTO message_echo(message_id,state,deadline) VALUES(?,?,?)", m.ID, m.Echo.Status, m.Echo.Deadline); err != nil {
-		return storageError()
-	}
-	for _, candidate := range m.Echo.Candidates {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO message_echo_candidates(message_id,attempt_id) VALUES(?,?)", m.ID, candidate.AttemptID); err != nil {
-			return storageError()
-		}
-	}
-	// The receipt points at this audit event. It has no role or delivery.
-	e.Type, e.Status = "message."+m.Echo.Status, m.Echo.Status
-	e.TargetRole, e.Intent, e.RouteRound = "", "", 0
-	return putJSON(ctx, tx, "INSERT INTO events(id,message_id,at,body) VALUES(?,?,?,?)", e, e.ID, e.MessageID, e.At)
-}
-
 func saveEcho(ctx context.Context, tx *sql.Tx, m Message) error {
-	if _, err := tx.ExecContext(ctx, "UPDATE message_echo SET state=? WHERE message_id=?", m.Echo.Status, m.ID); err != nil {
-		return storageError()
-	}
-	return putJSON(ctx, tx, "UPDATE messages SET body=?2 WHERE id=?1", m, m.ID)
+	return putJSON(ctx, tx, "UPDATE trigger_messages SET body=?2 WHERE id=?1", m, m.ID)
 }
 
 func routeEchoInput(ctx context.Context, tx *sql.Tx, m Message, at string) error {
-	m.Echo.RoutingEventID = newID("evt")
-	e := Event{
-		ID: m.Echo.RoutingEventID, Type: "message.received", At: at, MessageID: m.ID,
-		ThreadKey: m.ThreadKey, TargetRole: "router", Intent: "act", RouteRound: 1,
-	}
-	if err := acceptRoute(ctx, tx, &e); err != nil {
+	m.Echo.RoutingEventID = newID("dlv")
+	if err := acceptRoute(ctx, tx, m, m.Echo.RoutingEventID, at); err != nil {
 		return err
 	}
 	return saveEcho(ctx, tx, m)
 }
 
-func reconcileEchoResult(ctx context.Context, tx *sql.Tx, item OutboxItem, attemptID string, result OutboxResult) error {
-	if item.Channel.Type != "dws" {
-		return nil
-	}
-	exact := result.Outcome == "sent" && result.ConversationID != "" && result.MessageID != ""
+func reconcileEchoResult(ctx context.Context, tx *sql.Tx, item OutboxItem, source Source, at time.Time) error {
+	receipt := receiptValue(item.OutboxState)
+	stamp := at.Format(utcTimestamp)
+	exact := item.Status == "sent" && receipt.ConversationID != "" && receipt.MessageID != ""
 	if exact {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO outbound_message_ids(source,conversation_id,native_id,outbox_id,attempt_id)
- VALUES(?,?,?,?,?)`, item.Source, result.ConversationID, result.MessageID, item.ID, attemptID); err != nil {
-			return storageError()
-		}
 		var m Message
-		err := readJSON(ctx, tx, `SELECT m.body FROM messages m JOIN message_echo e ON m.id=e.message_id
- WHERE m.source=? AND m.thread_key=? AND m.native_id=? AND e.state IN ('held','echo_unknown','released','cleared')`,
-			&m, item.Source, ThreadKey(ThreadRef{Source: item.Source, ID: result.ConversationID}), result.MessageID)
+		err := readJSON(ctx, tx, `SELECT body FROM trigger_messages
+ WHERE source=? AND native_id=? AND json_extract(body,'$.accountId')=?
+ AND json_extract(body,'$.channel.type')='dws' AND json_extract(body,'$.channel.conversationId')=?
+ AND json_extract(body,'$.echo.status') IN ('held','echo_unknown','released','cleared')`,
+			&m, source.Source, receipt.MessageID, source.AccountID, receipt.ConversationID)
 		var p *Error
 		if err == nil && m.Echo.Match == nil {
-			m.Echo.Match = &EchoReference{OutboxID: item.ID, AttemptID: attemptID}
+			m.Echo.Match = &EchoReference{OutboxID: item.ID}
 			if m.Echo.RoutingEventID == "" {
-				m.Echo.Status, m.Echo.ResolvedAt = "outbound_echo", result.At
+				m.Echo.Status, m.Echo.ResolvedAt = "outbound_echo", stamp
 			}
 			if err := saveEcho(ctx, tx, m); err != nil {
 				return err
@@ -171,19 +125,18 @@ func reconcileEchoResult(ctx context.Context, tx *sql.Tx, item OutboxItem, attem
 			return err
 		}
 	}
-	if !exact && result.Outcome != "retryable_failure" && result.Outcome != "permanent_failure" {
+	if !exact && (item.Status != "failed" || receipt.Uncertain) {
 		return nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT m.body FROM message_echo_candidates c
- JOIN message_echo e ON e.message_id=c.message_id JOIN messages m ON m.id=e.message_id
- WHERE c.attempt_id=? AND e.state='held' AND e.deadline>?
- AND NOT EXISTS (
-  SELECT 1 FROM message_echo_candidates x JOIN outbox_attempts a ON a.id=x.attempt_id
-  WHERE x.message_id=e.message_id AND a.state<>'failed' AND NOT EXISTS (
-   SELECT 1 FROM json_each(a.body,'$.results') r WHERE json_extract(r.value,'$.outcome')='sent'
-   AND json_extract(r.value,'$.conversationId')<>'' AND json_extract(r.value,'$.messageId')<>''
-  )
- ) ORDER BY m.seq`, attemptID, result.At)
+	rows, err := tx.QueryContext(ctx, `SELECT m.body FROM trigger_messages m
+ WHERE json_extract(m.body,'$.echo.status')='held' AND json_extract(m.body,'$.echo.deadline')>?
+ AND EXISTS(SELECT 1 FROM json_each(m.body,'$.echo.candidates') c WHERE json_extract(c.value,'$.outboxId')=?)
+ AND NOT EXISTS(
+  SELECT 1 FROM json_each(m.body,'$.echo.candidates') c JOIN outbox o ON o.id=json_extract(c.value,'$.outboxId')
+  WHERE o.status='pending'
+   OR json_extract(o.receipt,'$.uncertain')
+   OR (o.status='sent' AND COALESCE(json_extract(o.receipt,'$.messageId'),'')='')
+ ) ORDER BY m.seq`, stamp, item.ID)
 	if err != nil {
 		return storageError()
 	}
@@ -201,8 +154,8 @@ func reconcileEchoResult(ctx context.Context, tx *sql.Tx, item OutboxItem, attem
 		return storageError()
 	}
 	for _, m := range messages {
-		m.Echo.Status, m.Echo.ResolvedAt = "cleared", result.At
-		if err := routeEchoInput(ctx, tx, m, result.At); err != nil {
+		m.Echo.Status, m.Echo.ResolvedAt = "cleared", stamp
+		if err := routeEchoInput(ctx, tx, m, stamp); err != nil {
 			return err
 		}
 	}
@@ -211,20 +164,10 @@ func reconcileEchoResult(ctx context.Context, tx *sql.Tx, item OutboxItem, attem
 
 func (s *Store) expireEchoHolds(ctx context.Context) error {
 	at := outboxNow().Format(utcTimestamp)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return storageError()
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, `UPDATE messages
+	_, err := s.db.ExecContext(ctx, `UPDATE trigger_messages
  SET body=json_set(body,'$.echo.status','echo_unknown','$.echo.resolvedAt',?)
- WHERE id IN (SELECT message_id FROM message_echo WHERE state='held' AND deadline<=?)`, at, at); err != nil {
-		return storageError()
-	}
-	if _, err = tx.ExecContext(ctx, "UPDATE message_echo SET state='echo_unknown' WHERE state='held' AND deadline<=?", at); err != nil {
-		return storageError()
-	}
-	if err = tx.Commit(); err != nil {
+ WHERE json_extract(body,'$.echo.status')='held' AND json_extract(body,'$.echo.deadline')<=?`, at, at)
+	if err != nil {
 		return storageError()
 	}
 	return nil
@@ -270,7 +213,7 @@ func (s *Store) releaseEcho(ctx context.Context, req EchoReleaseRequest) (Messag
 		return m, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := readJSON(ctx, tx, "SELECT body FROM messages WHERE id=?", &m, req.MessageID); err != nil {
+	if err := readJSON(ctx, tx, "SELECT body FROM trigger_messages WHERE id=?", &m, req.MessageID); err != nil {
 		return m, err
 	}
 	if m.Echo != nil && m.Echo.Status == "released" && m.Echo.ReleaseID == req.OperationID && m.Echo.ReleaseReason == req.Reason {

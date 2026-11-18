@@ -1,9 +1,7 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -22,8 +20,8 @@ func (s *Server) channelOutbox(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, problem("unauthorized", "valid source credential is required"))
 		return
 	}
-	if source.InstanceID == "" {
-		s.fail(w, problem("forbidden", "Outbox requires an instance-bound credential"))
+	if source.InstanceID == "" || s.store.config.outboxConsumer(source.Source, source.AccountID) != source.InstanceID {
+		s.fail(w, problem("forbidden", "Outbox requires the configured account consumer"))
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/v1/channel/outbox")
@@ -55,12 +53,14 @@ func (s *Server) channelOutbox(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.write(w, http.StatusOK, result)
+	case path == "/result":
+		s.outboxResult(w, r, source)
 	default:
-		s.outboxCommand(w, r, source, strings.TrimPrefix(path, "/"))
+		s.fail(w, problem("not_found", "unknown Outbox path"))
 	}
 }
 
-func (s *Server) outboxCommand(w http.ResponseWriter, r *http.Request, source Source, command string) {
+func (s *Server) outboxResult(w http.ResponseWriter, r *http.Request, source Source) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -72,145 +72,183 @@ func (s *Server) outboxCommand(w http.ResponseWriter, r *http.Request, source So
 		return
 	}
 	var req OutboxCommand
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	dec.DisallowUnknownFields()
 	if err = dec.Decode(&req); err != nil || dec.Decode(new(any)) != io.EOF {
 		s.fail(w, problem("invalid_argument", "invalid Outbox command JSON"))
 		return
 	}
-	if err = req.validate(command); err != nil {
+	if err = req.validate(); err != nil {
 		s.fail(w, err)
 		return
 	}
-	result, err := s.store.changeOutbox(r.Context(), source, command, req)
+	result, err := s.store.changeOutbox(r.Context(), source, req)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	s.write(w, http.StatusOK, result)
+	s.write(w, http.StatusOK, struct {
+		ID string `json:"id"`
+		OutboxState
+	}{ID: result.ID, OutboxState: result.OutboxState})
 }
 
-func (r OutboxCommand) validate(command string) error {
-	if !instanceIDFormat.MatchString(r.OperationID) || strings.TrimSpace(r.OutboxID) == "" {
-		return problem("invalid_argument", "operationId and outboxId are required")
+type OutboxCommand struct {
+	OutboxID       string      `json:"outboxId"`
+	Expected       OutboxState `json:"expected"`
+	Outcome        string      `json:"outcome"`
+	TaskID         string      `json:"taskId,omitempty"`
+	ErrorCode      string      `json:"errorCode,omitempty"`
+	ConversationID string      `json:"conversationId,omitempty"`
+	MessageID      string      `json:"messageId,omitempty"`
+}
+
+const outboxRetryDelay = time.Minute
+
+func (r OutboxCommand) validate() error {
+	if r.OutboxID == "" || (r.Expected.Status != "pending" && r.Expected.Status != "failed") {
+		return problem("invalid_argument", "outboxId and expected pending or failed state are required")
 	}
-	if command == "begin-attempt" {
-		if r.AttemptID != "" || r.ClaimID != "" {
-			return problem("invalid_argument", "beginAttempt takes only operationId and outboxId")
+	for _, id := range []string{r.TaskID, r.ConversationID, r.MessageID} {
+		if id != "" && strings.TrimSpace(id) == "" {
+			return problem("invalid_argument", "channel identities cannot be blank")
 		}
-	} else if strings.TrimSpace(r.AttemptID) == "" || strings.TrimSpace(r.ClaimID) == "" {
-		return problem("invalid_argument", "attemptId and claimId are required")
-	}
-	switch command {
-	case "begin-attempt", "confirm-send", "renew-lease", "record-task", "finish-attempt":
-	default:
-		return problem("not_found", "unknown Outbox command")
-	}
-	if command == "record-task" {
-		if strings.TrimSpace(r.TaskID) == "" {
-			return problem("invalid_argument", "taskId is required")
-		}
-	} else if r.TaskID != "" {
-		return problem("invalid_argument", "taskId belongs in recordTask")
-	}
-	if command != "finish-attempt" {
-		if r.Outcome != "" || r.ErrorCode != "" || r.MessageID != "" || r.ConversationID != "" {
-			return problem("invalid_argument", "result fields belong in finishAttempt")
-		}
-		return nil
 	}
 	switch r.Outcome {
+	case "pending":
+		if r.TaskID == "" || r.ErrorCode != "" || r.ConversationID != "" || r.MessageID != "" {
+			return problem("invalid_argument", "pending requires a taskId alone")
+		}
 	case "sent":
-		if r.ErrorCode != "" || (r.MessageID != "" && (strings.TrimSpace(r.MessageID) == "" || strings.TrimSpace(r.ConversationID) == "")) ||
-			(r.ConversationID != "" && strings.TrimSpace(r.ConversationID) == "") {
-			return problem("invalid_argument", "sent must omit errorCode and provide conversationId with any actual messageId")
+		if r.ErrorCode != "" || (r.MessageID != "" && r.ConversationID == "") {
+			return problem("invalid_argument", "sent requires a conversationId with any messageId and omits errorCode")
 		}
 	case "retryable_failure", "permanent_failure", "unknown":
 		if !instanceIDFormat.MatchString(r.ErrorCode) || r.MessageID != "" || r.ConversationID != "" {
-			return problem("invalid_argument", "unsuccessful outcomes require an errorCode and omit actual message references")
+			return problem("invalid_argument", "unsuccessful outcomes require a safe errorCode and omit native message references")
 		}
 	default:
-		return problem("invalid_argument", "outcome must be sent, retryable_failure, permanent_failure, or unknown")
+		return problem("invalid_argument", "invalid Outbox outcome")
 	}
 	return nil
 }
 
-func (s *Store) changeOutbox(ctx context.Context, source Source, command string, req OutboxCommand) (json.RawMessage, error) {
+func (r OutboxCommand) result(at time.Time) OutboxState {
+	state := OutboxState{Status: r.Outcome}
+	receipt := OutboxReceipt{
+		TaskID: r.TaskID, ErrorCode: r.ErrorCode, ConversationID: r.ConversationID, MessageID: r.MessageID,
+		Uncertain: receiptValue(r.Expected).Uncertain || r.Outcome == "unknown",
+	}
+	switch r.Outcome {
+	case "unknown", "retryable_failure", "permanent_failure":
+		state.Status = "failed"
+		if r.Outcome != "permanent_failure" {
+			receipt.RetryAt = at.Add(outboxRetryDelay).Format(utcTimestamp)
+		}
+	}
+	if receipt != (OutboxReceipt{}) {
+		state.Receipt = &receipt
+	}
+	return state
+}
+
+func receiptValue(state OutboxState) OutboxReceipt {
+	if state.Receipt == nil {
+		return OutboxReceipt{}
+	}
+	return *state.Receipt
+}
+
+func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxCommand) (OutboxItem, error) {
+	var item OutboxItem
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, storageError()
+		return item, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	change := outboxChange{tx: tx, at: outboxNow()}
-	if err := readJSON(ctx, tx, "SELECT body FROM outbox WHERE id=? AND source=? AND instance_id=?", &change.item, req.OutboxID, source.Source, source.InstanceID); err != nil {
-		return nil, err
+	if err := readJSON(ctx, tx, "SELECT "+outboxProjection+" FROM outbox WHERE id=?"+channelOutboxScope,
+		&item, req.OutboxID, source.Source, source.AccountID); err != nil {
+		return item, err
 	}
-	rawReq, err := json.Marshal(req)
-	if err != nil {
-		return nil, storageError()
-	}
-	fingerprint := sha256.Sum256(rawReq)
-	kind := "outbox:" + command + ":" + source.InstanceID
-	var saved, fp []byte
-	err = tx.QueryRowContext(ctx, "SELECT fingerprint,receipt FROM operations WHERE source=? AND kind=? AND operation_id=?",
-		source.Source, kind, req.OperationID).Scan(&fp, &saved)
-	if err == nil {
-		if !bytes.Equal(fp, fingerprint[:]) {
-			return nil, problem("conflict", "operationId has different parameters")
+	at := outboxNow()
+	current, expected := receiptValue(item.OutboxState), receiptValue(req.Expected)
+	next := req.result(at)
+	expectedResult := receiptValue(next)
+	if item.Status != req.Expected.Status || current != expected {
+		// The server sets retryAt. An otherwise identical replay returns the
+		// stored deadline and has no effect on later polling.
+		currentForReplay := current
+		if currentForReplay.RetryAt != "" && expectedResult.RetryAt != "" {
+			currentForReplay.RetryAt = expectedResult.RetryAt
 		}
-		return saved, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, storageError()
-	}
-	// Success and task receipts can settle at any time, including immediately
-	// after lease expiry. Apply them before considering timeout escalation.
-	if command == "begin-attempt" {
-		if err := change.expire(ctx); err != nil {
-			return nil, err
+		if item.Status == next.Status && currentForReplay == expectedResult {
+			return item, nil
 		}
-	} else if err := change.checkClaim(ctx, req); err != nil {
-		return nil, err
+		return item, problem("conflict", "Outbox receipt changed since the pull")
 	}
-	var result any
-	switch command {
-	case "begin-attempt":
-		result, err = change.begin(ctx)
-	case "confirm-send":
-		result, err = change.confirm(ctx)
-	case "renew-lease":
-		result, err = change.renew(ctx)
-	case "record-task":
-		result, err = change.recordTask(ctx, req.TaskID)
-	case "finish-attempt":
-		result, err = change.finish(ctx, req)
+	if item.Status == "failed" && (current.RetryAt == "" || current.RetryAt > at.Format(utcTimestamp)) {
+		return item, problem("failed_precondition", "Outbox is not eligible for retry")
+	}
+	if item.Status == "pending" && current.TaskID != "" && current.TaskID != req.TaskID {
+		return item, problem("conflict", "result must refer to the recorded channel task")
+	}
+	if item.Status == next.Status && current == expectedResult {
+		return item, nil
+	}
+	var rawReceipt any
+	if next.Receipt != nil {
+		raw, err := json.Marshal(next.Receipt)
+		if err != nil {
+			return item, storageError()
+		}
+		rawReceipt = string(raw)
+	}
+	item.OutboxState = next
+	if _, err := tx.ExecContext(ctx, "UPDATE outbox SET status=?,receipt=? WHERE id=?", item.Status, rawReceipt, item.ID); err != nil {
+		return item, storageError()
+	}
+	if err := reconcileEchoResult(ctx, tx, item, source, at); err != nil {
+		return item, err
+	}
+	if req.Outcome == "permanent_failure" {
+		if err := enqueueOutboxFailure(ctx, tx, item); err != nil {
+			return item, err
+		}
+	}
+	commitGate("outbox_result_before_commit")
+	if err := tx.Commit(); err != nil {
+		return item, storageError()
+	}
+	commitGate("outbox_result_after_commit")
+	return item, nil
+}
+
+func enqueueOutboxFailure(ctx context.Context, tx *sql.Tx, item OutboxItem) error {
+	var recipient deliveryIdentity
+	err := tx.QueryRowContext(ctx, `SELECT b.role,b.owner_id FROM outbox JOIN session_bindings b
+ ON b.id=`+outboxAuthorID+` WHERE outbox.id=?`, item.ID).Scan(&recipient.Kind, &recipient.TopicID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
 	}
 	if err != nil {
-		return nil, err
+		return storageError()
 	}
-	raw, err := json.Marshal(result)
+	body, err := json.Marshal(map[string]string{"errorCode": item.Receipt.ErrorCode})
 	if err != nil {
-		return nil, storageError()
+		return storageError()
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO operations(source,kind,operation_id,fingerprint,receipt) VALUES(?,?,?,?,?)",
-		source.Source, kind, req.OperationID, fingerprint[:], raw); err != nil {
-		return nil, storageError()
-	}
-	commitGate("outbox_" + command + "_before_commit")
-	if err = tx.Commit(); err != nil {
-		return nil, storageError()
-	}
-	commitGate("outbox_" + command + "_after_commit")
-	return raw, nil
+	return enqueueInternalDelivery(ctx, tx, internalDelivery{
+		ID: newID("dlv"), Kind: "outbox_failed", Sender: deliveryIdentity{Kind: "core"}, Recipient: recipient,
+		Content: deliveryContent{Body: body, Refs: []deliveryReference{
+			{Kind: "outbox", ID: item.ID}, {Kind: messageRefKind, ID: item.MessageID},
+		}},
+	})
 }
 
 func (s *Store) outboxMaintenance(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if err := s.expireOutboxClaims(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("Outbox lease reconciliation failed", "error", err)
-		}
 		if err := s.expireEchoHolds(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("Echo hold reconciliation failed", "error", err)
 		}
@@ -220,50 +258,4 @@ func (s *Store) outboxMaintenance(ctx context.Context) {
 			return
 		}
 	}
-}
-
-func (s *Store) expireOutboxClaims(ctx context.Context) error {
-	at := outboxNow()
-	rows, err := s.db.QueryContext(ctx, `SELECT outbox_id FROM outbox_claims
- WHERE released_at IS NULL AND expires_at<=? ORDER BY expires_at,outbox_id LIMIT 100`, at.Format(utcTimestamp))
-	if err != nil {
-		return storageError()
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return storageError()
-		}
-		ids = append(ids, id)
-	}
-	if err = rows.Close(); err != nil || rows.Err() != nil {
-		return storageError()
-	}
-	for _, id := range ids {
-		if err := s.expireOutboxClaim(ctx, id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Store) expireOutboxClaim(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return storageError()
-	}
-	defer func() { _ = tx.Rollback() }()
-	change := outboxChange{tx: tx, at: outboxNow()}
-	if err := readJSON(ctx, tx, "SELECT body FROM outbox WHERE id=?", &change.item, id); err != nil {
-		return err
-	}
-	if err := change.expire(ctx); err != nil {
-		return err
-	}
-	if err = tx.Commit(); err != nil {
-		return storageError()
-	}
-	return nil
 }

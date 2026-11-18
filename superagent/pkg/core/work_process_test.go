@@ -53,15 +53,32 @@ func acceptance(op string, revision int, ref string) core.CompleteRequest {
 	return core.CompleteRequest{OperationID: op, ExpectedRevision: revision, Reason: "Reviewed the checks", Evidence: []string{ref}}
 }
 
-func issueEvents(t *testing.T, p *process, kind string) []core.Event {
+type workDeliveryRecord struct {
+	internalEvent
+	Status   string `json:"status"`
+	SentAt   string `json:"sentAt"`
+	Revision int    `json:"revision"`
+}
+
+func workDeliveries(t *testing.T, p *process, kind string) []workDeliveryRecord {
 	t.Helper()
-	records := readRecord[struct{ Items []core.Event }](t, p, "events?limit=200")
-	var found []core.Event
-	for _, e := range records.Items {
-		if e.Type == kind {
-			found = append(found, e)
+	records := readRecord[struct{ Items []workDeliveryRecord }](t, p, "internal-deliveries?limit=200")
+	var found []workDeliveryRecord
+	for _, item := range records.Items {
+		if item.Kind == kind {
+			found = append(found, item)
 		}
 	}
+	return found
+}
+
+func waitWorkDelivery(t *testing.T, p *process, id, status string) workDeliveryRecord {
+	t.Helper()
+	var found workDeliveryRecord
+	require.Eventually(t, func() bool {
+		found = readRecord[workDeliveryRecord](t, p, "internal-deliveries/"+id)
+		return found.Status == status
+	}, 7*time.Second, 20*time.Millisecond, "%s should be %s", id, status)
 	return found
 }
 
@@ -71,10 +88,14 @@ func nativeWorkTopic(t *testing.T, f *fixture, p *process, peer *nativeDeliveryP
 	msg.Message.ThreadRef.ID, msg.Message.Channel = name, nil
 	source := submit(t, p, f, msg)
 	start := peer.next(t, "turn/start")
-	decodeBatch(t, start, source.EventID)
+	decodeInternalBatch(t, start, source.EventID)
 	start.accept()
-	waitDelivery(t, p, source.EventID, "delivered")
-	decision := mcpWork[core.RouteDecision](t, router, "route_decide", newRoute(name, []string{source.MessageID}, f.dir))
+	waitRouteStatus(t, p, source.EventID, "sent")
+	route := newRoute(name, []string{source.MessageID}, f.dir)
+	route.Targets[0].Create.Goal = "Complete " + name
+	decision := mcpWork[core.RouteDecision](t, router, "route_decide", route)
+	summary := mcpWork[core.Topic](t, router, "topic_query", core.QueryRequest{Collection: "topics", ID: decision.Targets[0].TopicID})
+	require.Equal(t, route.Targets[0].Create.Goal, summary.Goal)
 	topic := waitBinding(t, p, "topic", decision.Targets[0].TopicID, "ready")
 	first := peer.next(t, "turn/start")
 	require.Equal(t, topic.SessionID, first.session)
@@ -97,17 +118,18 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	token := roleToken(t, f, mainBinding)
 
 	create := issueInput(f.dir, "create")
+	create.Goal, create.Requirements = create.Requirements, ""
 	create.Materials = []core.Material{{Label: "Original request", MessageID: source.MessageID}, {URI: "notes/check.txt"}}
 	pending := mcpWork[core.WorkReceipt](t, topic, "issue_create", create)
 	require.Equal(t, pending, mcpWork[core.WorkReceipt](t, topic, "issue_create", create))
 	require.Equal(t, "pending", pending.Issue.Status)
 	require.Equal(t, mainBinding.OwnerID, pending.Issue.TopicID)
-	require.Equal(t, create.Requirements, pending.Issue.Requirements)
+	require.Equal(t, create.Goal, pending.Issue.Requirements)
 	require.Equal(t, create.Workspace, pending.Issue.Workspace)
 	require.Equal(t, create.Materials, pending.Issue.Materials)
 	require.Nil(t, pending.Execution)
 	require.Empty(t, page(t, p, "executions").Items)
-	require.Empty(t, issueEvents(t, p, "issue.started"))
+	require.Empty(t, workDeliveries(t, p, "worker_started"))
 	require.Len(t, bindings(t, p), 3)
 	peer.quiet(t, 300*time.Millisecond)
 
@@ -151,18 +173,16 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, winning)
-	if winning[0].request.OperationID == "start-a" {
-		require.Len(t, winning, 2)
-		require.JSONEq(t, string(winning[0].body), string(winning[1].body))
-	} else {
-		require.Len(t, winning, 1)
-	}
-	started := mcpWork[core.WorkReceipt](t, topic, "issue_start", winning[0].request)
+	require.Len(t, winning, 1)
+	var created struct{ Result core.WorkReceipt }
+	require.NoError(t, json.Unmarshal(winning[0].body, &created))
+	started := created.Result
+	mcpWorkError(t, topic, "issue_start", "conflict", winning[0].request)
 	require.NotNil(t, started.Execution)
 	x := *started.Execution
 	require.Equal(t, x.ID, started.Issue.CurrentExecutionID)
 	require.Len(t, page(t, p, "executions").Items, 1)
-	require.Len(t, issueEvents(t, p, "issue.started"), 1)
+	require.Len(t, workDeliveries(t, p, "worker_started"), 1)
 	workerBinding := waitBinding(t, p, "worker", x.ID, "ready")
 	require.Equal(t, mainBinding.Namespace, workerBinding.Namespace)
 	require.Equal(t, x.Generation, workerBinding.Generation)
@@ -170,9 +190,9 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, mainBinding.OwnerID, workerBinding.TopicID)
 	start := peer.next(t, "turn/start")
 	require.Equal(t, workerBinding.SessionID, start.session)
-	decodeBatch(t, start, x.StartEventID)
+	decodeInternalBatch(t, start, x.StartEventID)
 	start.accept()
-	waitDelivery(t, p, x.StartEventID, "delivered")
+	waitWorkDelivery(t, p, x.StartEventID, "sent")
 	var session resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: workerBinding.SessionID}, &session))
 	require.Contains(t, session.Spec.SystemPrompt, "verify it")
@@ -225,12 +245,12 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 		mcpWorkError(t, worker, "report_submit", "conflict", r)
 		notice := peer.next(t, "turn/start")
 		require.Equal(t, mainBinding.SessionID, notice.session)
-		decodeBatch(t, notice, report.EventID)
+		decodeInternalBatch(t, notice, report.EventID)
 		notice.answer <- nativeDeliveryAnswer{complete: true}
-		waitDelivery(t, p, report.EventID, "delivered")
+		waitWorkDelivery(t, p, report.EventID, "sent")
 		ready = report
 	}
-	require.Len(t, issueEvents(t, p, "issue.reported"), 4)
+	require.Len(t, workDeliveries(t, p, "report_submitted"), 4)
 	require.Len(t, page(t, p, "reports").Items, 4)
 	require.Equal(t, "active", readRecord[core.Issue](t, p, "issues/"+started.Issue.ID).Status)
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+mainBinding.OwnerID).Status)
@@ -252,7 +272,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 
 	complete := core.CompleteIssueRequest{IssueID: started.Issue.ID, CompleteRequest: acceptance("accept", started.Issue.Revision, ready.ID)}
 	done := mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
-	require.Equal(t, done, mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete))
+	mcpWorkError(t, topic, "issue_complete", "conflict", complete)
 	require.Equal(t, "completed", done.Issue.Status)
 	require.Empty(t, done.Issue.CurrentExecutionID)
 	require.Equal(t, complete.Evidence, done.Issue.Completion.Evidence)
@@ -261,7 +281,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, "requested", done.Execution.Stop.Status)
 	mcpWorkError(t, worker, "issue_get_current", "stale_binding", struct{}{})
 	mcpWorkError(t, worker, "issue_material_get", "stale_binding", map[string]string{"messageId": source.MessageID})
-	mcpWorkError(t, worker, "event_get", "stale_binding", map[string]string{"eventId": x.StartEventID})
+	mcpWorkError(t, worker, "delivery_get", "stale_binding", map[string]string{"delivery_id": x.StartEventID})
 	var stopped core.Execution
 	require.Eventually(t, func() bool {
 		stopped = readRecord[core.Execution](t, p, "executions/"+x.ID)
@@ -276,16 +296,16 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	t.Logf("native interrupt acknowledged; native outcome %s, observation gap %s", stopped.Stop.WorkState, stopped.Stop.ObservationGap)
 
 	historicalWorker := startRoleMCP(t, f, workerBinding)
-	late := core.ReportRequest{OperationID: "late", Kind: "progress", Summary: "Late report from retired Worker"}
+	late := core.ReportRequest{OperationID: "late", Kind: "progress", Summary: "Late report from retired Worker", GoalRevision: x.Revision}
 	report := mcpWork[core.Report](t, historicalWorker, "report_submit", late)
 	require.True(t, report.Historical)
 	require.Equal(t, x.ID, report.ExecutionID)
 	require.Equal(t, report, mcpWork[core.Report](t, worker, "report_submit", late))
 	context := peer.next(t, "thread/inject_items")
 	require.Equal(t, mainBinding.SessionID, context.session)
-	require.Equal(t, "context", decodeBatch(t, context, report.EventID).Events[0].Intent)
+	require.Equal(t, "context_supplement", decodeInternalBatch(t, context, report.EventID)[0].Kind)
 	context.accept()
-	waitDelivery(t, p, report.EventID, "delivered")
+	waitWorkDelivery(t, p, report.EventID, "sent")
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+mainBinding.OwnerID).Status)
 
 	auto := issueInput(f.dir, "create-start")
@@ -295,13 +315,13 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	secondBinding := waitBinding(t, p, "worker", second.Execution.ID, "ready")
 	final := peer.next(t, "turn/start")
 	require.Equal(t, secondBinding.SessionID, final.session)
-	decodeBatch(t, final, second.Execution.StartEventID)
+	decodeInternalBatch(t, final, second.Execution.StartEventID)
 	final.answer <- nativeDeliveryAnswer{complete: true, final: "Verified the result. This is ordinary model output."}
-	waitDelivery(t, p, second.Execution.StartEventID, "delivered")
+	waitWorkDelivery(t, p, second.Execution.StartEventID, "sent")
 	ended := waitWorkerObservation(t, p, second.Execution, "ended")
 	reminder := checkReminderCall(t, peer, secondBinding, ended)
 	reminder.answer <- nativeDeliveryAnswer{workID: "ordinary-output-reminder", complete: true}
-	waitDelivery(t, p, ended.ReminderEventID, "delivered")
+	waitWorkDelivery(t, p, ended.ReminderEventID, "sent")
 	require.Eventually(t, func() bool {
 		var ended resource.Session
 		return massd.GetSession(t.Context(), resource.SessionRef{SessionID: secondBinding.SessionID}, &ended) == nil && ended.Status.State == "idle"
@@ -321,16 +341,16 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	finished := mcpWork[core.Topic](t, topic, "topic_complete", topicComplete)
 	require.Equal(t, "completed", finished.Status)
 	require.Equal(t, topicComplete.Reason, finished.Completion.Reason)
-	require.Equal(t, finished, mcpWork[core.Topic](t, topic, "topic_complete", topicComplete))
+	mcpWorkError(t, topic, "topic_complete", "failed_precondition", topicComplete)
 	mcpWorkError(t, topic, "issue_create", "failed_precondition", issueInput(f.dir, "after-completion"))
 	followUp := input("new-source-after-complete")
 	followUp.Message.ThreadRef.ID, followUp.Message.Channel = "work-main", nil
 	follow := submit(t, p, f, followUp)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, mainBinding.SessionID, call.session)
-	decodeBatch(t, call, follow.EventID)
+	decodeInternalBatch(t, call, follow.EventID)
 	call.accept()
-	waitDelivery(t, p, follow.EventID, "delivered")
+	waitRouteStatus(t, p, follow.EventID, "sent")
 	require.Equal(t, finished, readRecord[core.Topic](t, p, "topics/"+mainBinding.OwnerID))
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+otherBinding.OwnerID).Status)
 	require.Len(t, page(t, p, "executions").Items, 2)
@@ -361,8 +381,8 @@ func TestIssueReportCommitCrash(t *testing.T) {
 			work := roleWork[core.WorkReceipt](t, p, token, "issue_create", create)
 			binding := waitBinding(t, p, "worker", work.Execution.ID, "ready")
 			worker := roleToken(t, f, binding)
-			waitDelivery(t, p, work.Execution.StartEventID, "delivered")
-			r := core.ReportRequest{OperationID: "crash-report", Kind: "ready", Summary: "Verified before crash"}
+			waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
+			r := core.ReportRequest{OperationID: "crash-report", Kind: "ready", Summary: "Verified before crash", GoalRevision: work.Execution.Revision}
 			payload, err := json.Marshal(r)
 			require.NoError(t, err)
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.endpoint+"/v1/role/report_submit", bytes.NewReader(payload))
@@ -385,13 +405,15 @@ func TestIssueReportCommitCrash(t *testing.T) {
 				expected = 1
 			}
 			require.Len(t, page(t, p, "reports").Items, expected)
-			require.Len(t, issueEvents(t, p, "issue.reported"), expected)
+			require.Len(t, readRecord[core.Issue](t, p, "issues/"+work.Issue.ID).Reports, expected)
+			require.Len(t, workDeliveries(t, p, "report_submitted"), expected)
 			mcp := startRoleMCP(t, f, binding)
 			saved := mcpWork[core.Report](t, mcp, "report_submit", r)
 			require.Equal(t, saved, mcpWork[core.Report](t, mcp, "report_submit", r))
 			require.Len(t, page(t, p, "reports").Items, 1)
-			require.Len(t, issueEvents(t, p, "issue.reported"), 1)
-			require.Equal(t, topic.ID, waitDelivery(t, p, saved.EventID, "delivered").BindingID)
+			require.Equal(t, []core.Report{saved}, readRecord[core.Issue](t, p, "issues/"+work.Issue.ID).Reports)
+			require.Len(t, workDeliveries(t, p, "report_submitted"), 1)
+			require.Equal(t, topic.OwnerID, waitWorkDelivery(t, p, saved.EventID, "sent").Recipient.TopicID)
 			t.Logf("%s restart had %d Reports and %d notifications before replay; exactly one of each after", stage, expected, expected)
 		})
 	}
@@ -423,12 +445,12 @@ func TestIssueCompleteFencesUnclaimedStart(t *testing.T) {
 	require.Nil(t, done.Execution.Stop)
 	require.Equal(t, "historical", done.Execution.Authority)
 	write(t, filepath.Join(gate, "release"), "release")
-	require.Zero(t, waitDelivery(t, p, work.Execution.StartEventID, "superseded").Attempts)
-	require.Zero(t, waitDelivery(t, p, updated.NotificationEventID, "superseded").Attempts)
+	require.Empty(t, waitWorkDelivery(t, p, work.Execution.StartEventID, "superseded").SentAt)
+	require.Empty(t, waitWorkDelivery(t, p, updated.NotificationEventID, "superseded").SentAt)
 	p.stop(t, false)
 	p = f.start()
-	require.Zero(t, waitDelivery(t, p, work.Execution.StartEventID, "superseded").Attempts)
-	require.Zero(t, waitDelivery(t, p, updated.NotificationEventID, "superseded").Attempts)
+	require.Empty(t, waitWorkDelivery(t, p, work.Execution.StartEventID, "superseded").SentAt)
+	require.Empty(t, waitWorkDelivery(t, p, updated.NotificationEventID, "superseded").SentAt)
 	require.Equal(t, done.Execution.BindingID, waitBinding(t, p, "worker", work.Execution.ID, "revoked").ID)
 	t.Log("prepared but unclaimed startup and requirements update remained superseded on restart, with no native input attempt or stop request")
 }
@@ -444,7 +466,7 @@ func TestIssueStopDispatchCrashStaysUnknown(t *testing.T) {
 	create := issueInput(f.dir, "create-stop")
 	create.Start = true
 	work := roleWork[core.WorkReceipt](t, p, token, "issue_create", create)
-	waitDelivery(t, p, work.Execution.StartEventID, "delivered")
+	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
 	complete := core.CompleteIssueRequest{IssueID: work.Issue.ID, CompleteRequest: acceptance("complete-stop", work.Issue.Revision, "verified.txt")}
 	receipt := roleWork[core.WorkReceipt](t, p, token, "issue_complete", complete)
 	require.Equal(t, "requested", receipt.Execution.Stop.Status)
@@ -457,7 +479,9 @@ func TestIssueStopDispatchCrashStaysUnknown(t *testing.T) {
 	require.Equal(t, "unknown", stop.WorkState)
 	require.Equal(t, "core_stopped_before_stop_settlement", stop.ObservationGap)
 	require.Nil(t, stop.Receipt)
-	require.Equal(t, receipt, roleWork[core.WorkReceipt](t, p, token, "issue_complete", complete))
+	status, raw := request(t, http.MethodPost, p.endpoint, "/v1/role/issue_complete", token, complete)
+	errorCode(t, status, raw, http.StatusConflict, "conflict")
+	require.Equal(t, receipt.Issue, readRecord[core.Issue](t, p, "issues/"+receipt.Issue.ID))
 	require.Equal(t, stop, readRecord[core.Execution](t, p, "executions/"+work.Execution.ID).Stop)
 	t.Log("restart retained the Issue acceptance receipt and the original unresolved stop without resubmitting")
 }

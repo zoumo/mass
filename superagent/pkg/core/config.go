@@ -7,18 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
 )
 
 type Source struct {
-	Source     string `mapstructure:"source"`
-	AccountID  string `mapstructure:"accountId"`
-	InstanceID string `mapstructure:"instanceId"`
-	TokenFile  string `mapstructure:"tokenFile"`
-	tokenHash  [32]byte
-	token      string
+	Source         string `mapstructure:"source"`
+	AccountID      string `mapstructure:"accountId"`
+	InstanceID     string `mapstructure:"instanceId"`
+	OutboxConsumer bool   `mapstructure:"outboxConsumer"`
+	TokenFile      string `mapstructure:"tokenFile"`
+	tokenHash      [32]byte
+	token          string
 }
 
 var instanceIDFormat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
@@ -37,6 +39,7 @@ func LoadConfig(path string) (Config, error) {
 	v := viper.New()
 	v.SetConfigFile(path)
 	v.SetConfigType("yaml")
+	v.SetDefault("dataDir", "./superagent-core-data")
 	v.SetDefault("listen", "127.0.0.1:24370")
 	if err := v.ReadInConfig(); err != nil {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
@@ -63,9 +66,13 @@ func LoadConfig(path string) (Config, error) {
 	if c.DataDir == "" || len(c.Sources) == 0 || c.StorageMaxPages < 0 {
 		return c, problem("invalid_argument", "dataDir and at least one source are required; storageMaxPages must be nonnegative")
 	}
-	host, _, err := net.SplitHostPort(c.Listen)
-	if err != nil || net.ParseIP(host) == nil {
+	host, port, err := net.SplitHostPort(c.Listen)
+	portNumber, portErr := strconv.ParseUint(port, 10, 16)
+	if err != nil || net.ParseIP(host) == nil || portErr != nil {
 		return c, problem("invalid_argument", "listen must use a numeric IP and port")
+	}
+	if c.Execution != nil && portNumber == 0 {
+		return c, problem("invalid_argument", "execution requires a fixed listen port for role MCP across Core restarts")
 	}
 	if c.Execution != nil && c.Execution.operatorToken != "" && !net.ParseIP(host).IsLoopback() {
 		return c, problem("invalid_argument", "operator recovery requires a loopback Core listener")
@@ -73,6 +80,7 @@ func LoadConfig(path string) (Config, error) {
 	seenSource := map[string]string{}
 	seenAccount := map[string]string{}
 	seenInstance := map[[2]string]bool{}
+	seenOutboxConsumer := map[string]bool{}
 	seenToken := map[[32]byte]bool{}
 	for i := range c.Sources {
 		s := &c.Sources[i]
@@ -88,6 +96,12 @@ func LoadConfig(path string) (Config, error) {
 		binding := [2]string{s.Source, s.InstanceID}
 		if seenInstance[binding] || (s.InstanceID != "" && !instanceIDFormat.MatchString(s.InstanceID)) {
 			return c, problem("invalid_argument", "instanceId must be valid and unique within its source")
+		}
+		if s.OutboxConsumer {
+			if s.InstanceID == "" || seenOutboxConsumer[s.AccountID] {
+				return c, problem("invalid_argument", "one instance-bound credential per account may set outboxConsumer")
+			}
+			seenOutboxConsumer[s.AccountID] = true
 		}
 		seenSource[s.Source] = s.AccountID
 		seenAccount[s.AccountID] = s.Source
@@ -120,4 +134,29 @@ func LoadConfig(path string) (Config, error) {
 
 func (c Config) String() string {
 	return fmt.Sprintf("superagent configuration (%d sources)", len(c.Sources))
+}
+
+// outboxConsumer returns the explicitly selected sender, or the sole
+// instance-bound credential when no sender has been selected.
+func (c Config) outboxConsumer(source, account string) string {
+	var instance string
+	var candidates int
+	for _, s := range c.Sources {
+		if s.Source != source || s.AccountID != account || s.InstanceID == "" {
+			continue
+		}
+		if s.OutboxConsumer {
+			return s.InstanceID
+		}
+		instance = s.InstanceID
+		candidates++
+	}
+	if candidates == 1 {
+		return instance
+	}
+	return ""
+}
+
+func (c Config) hasOutboxConsumer(source, account string) bool {
+	return c.outboxConsumer(source, account) != ""
 }

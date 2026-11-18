@@ -15,6 +15,17 @@ test('Topic and Issue link to PR Threads, subscriptions and source messages', as
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
+ await page.goto('/observer/?view=topics')
+ await page.getByRole('button', { name: /^Observer routing Topic/ }).click()
+ const workContext = page.getByRole('complementary', { name: '工作背景' })
+ await expect(workContext.getByRole('link', { name: internal, exact: true })).toBeVisible()
+ await expect(workContext.getByRole('link', { name: github, exact: true })).toBeVisible()
+ await workContext.getByRole('link', { name: /^Verify sample build/ }).click()
+ await expect(workContext.getByRole('link', { name: github, exact: true })).toBeVisible()
+ await expect(workContext.getByRole('link', { name: internal, exact: true })).toHaveCount(0)
+ await workContext.getByRole('link', { name: '查看订阅', exact: true }).click()
+ await expect(page.getByRole('dialog').getByRole('button', { name: `查看线程 ${github}`, exact: true })).toBeVisible()
+
  await page.goto('/observer/?view=topics&mode=records')
  await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
  await page.getByRole('button', { name: '查看 Topic 拉取请求' }).click()

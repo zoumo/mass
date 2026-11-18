@@ -5,13 +5,13 @@ test.use({
  viewport: { width: 1280, height: 1060 },
 })
 
-test('Outbound echo links to the matched attempt in read-only reply history', async ({ page }) => {
+test('Outbound echo links to its Outbox receipt in read-only reply history', async ({ page }) => {
  await page.goto('/observer/?view=messages&mode=records')
  await page.getByRole('button', { name: 'Original input observer-actual-message', exact: true }).click()
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByRole('heading', { name: '自身回声', exact: true })).toBeVisible()
- await expect(dialog.getByRole('button', { name: /^(放行|路由事件)$/ })).toHaveCount(0)
- await dialog.getByRole('button', { name: /^send_/ }).click()
+ await expect(dialog.getByRole('button', { name: /^(放行|回声放行后的投递)$/ })).toHaveCount(0)
+ await dialog.getByRole('button', { name: /^outbox_/ }).click()
  await expect(dialog.getByText('observer-actual-message', { exact: true })).toBeVisible()
  await expect(dialog.getByText('actual:conversation', { exact: true })).toBeVisible()
 })
@@ -30,13 +30,12 @@ test('Message and Thread link to read-only reply history and channel evidence', 
  await dialog.getByRole('button', { name: '查看消息回执' }).click()
  await expect(page).toHaveURL(/view=outbox&messageId=msg_/)
  const table = page.getByRole('table')
- for (const status of ['待处理', '发送中', '未知', '失败', '已发送']) {
-  await expect(table.getByRole('cell', { name: status, exact: true })).toBeVisible()
+ for (const status of ['待发送', '失败', '已发送']) {
+  await expect(table.getByRole('cell', { name: status, exact: true }).first()).toBeVisible()
  }
  await table.getByRole('button', { name: 'Observer reply task', exact: true }).click()
- await expect(dialog.getByText(/^observer-task-42 · /)).toBeVisible()
- await expect(dialog.getByText(/发送 · 租约到期/)).toBeVisible()
- await expect(dialog.getByText('渠道发送结果中的消息', { exact: true })).toHaveCount(0)
+ await expect(dialog.getByText('observer-task-42', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('渠道消息', { exact: true })).toHaveCount(0)
  await dialog.getByRole('button', { name: '查看目标消息' }).click()
  await dialog.getByRole('button', { name: '查看线程 dws:outbox-observer-conversation', exact: true }).click()
  await dialog.getByRole('button', { name: '查看线程回执' }).click()
@@ -47,8 +46,7 @@ test('Message and Thread link to read-only reply history and channel evidence', 
  await expect(dialog.getByRole('button', { name: /^(重试|取消|恢复)$/ })).toHaveCount(0)
  await dialog.getByRole('button', { name: '关闭' }).click()
  await table.getByRole('button', { name: 'Observer reply permanent_failure', exact: true }).click()
- await dialog.getByRole('button', { name: '查看失败事件' }).click()
- await expect(dialog.getByRole('heading', { name: 'outbox.failed' })).toBeVisible()
+ await expect(dialog.getByText('observer_permanent_failure', { exact: true })).toBeVisible()
  await dialog.getByRole('button', { name: '关闭' }).click()
  await page.getByRole('navigation').getByRole('button', { name: '回执', exact: true }).click()
  await table.getByRole('button', { name: 'Observer reply sent', exact: true }).click()

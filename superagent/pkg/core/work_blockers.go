@@ -16,15 +16,27 @@ type BlockerInput struct {
 type Blocker struct {
 	ID string `json:"id"`
 	BlockerInput
+	Resolution *BlockerResolutionRecord `json:"resolution,omitempty"`
 }
 
+type BlockerResolution struct {
+	BlockerID string `json:"blockerId"`
+	Reason    string `json:"reason"`
+	MessageID string `json:"messageId,omitempty"`
+}
+
+type BlockerResolutionRecord struct {
+	BlockerResolution
+	At string `json:"at"`
+}
 type UpdateBlockersRequest struct {
-	OperationID       string         `json:"operationId"`
-	IssueID           string         `json:"issueId"`
-	ExpectedRevision  int            `json:"expectedRevision"`
-	Add               []BlockerInput `json:"add,omitempty"`
-	ResolveBlockerIDs []string       `json:"resolveBlockerIds,omitempty"`
-	UnblockedStatus   string         `json:"unblockedStatus,omitempty"`
+	OperationID      string              `json:"operationId"`
+	IssueID          string              `json:"issueId"`
+	ExpectedRevision int                 `json:"expectedRevision"`
+	Add              []BlockerInput      `json:"add,omitempty"`
+	Resolve          []BlockerResolution `json:"resolve,omitempty"`
+	NotifyWorker     bool                `json:"notifyWorker,omitempty"`
+	UnblockedStatus  string              `json:"unblockedStatus,omitempty"`
 }
 
 func updateBlockers(r UpdateBlockersRequest) workMutation {
@@ -33,11 +45,10 @@ func updateBlockers(r UpdateBlockersRequest) workMutation {
 		if err != nil {
 			return nil, err
 		}
-		if len(r.Add) == 0 && len(r.ResolveBlockerIDs) == 0 {
+		if len(r.Add) == 0 && len(r.Resolve) == 0 {
 			return nil, problem("invalid_argument", "supply blockers to add or resolve")
 		}
-		issue.Blockers, err = removeBlockers(issue.Blockers, r.ResolveBlockerIDs)
-		if err != nil {
+		if err := resolveBlockers(ctx, tx, &issue, r.Resolve); err != nil {
 			return nil, err
 		}
 		for _, input := range r.Add {
@@ -59,33 +70,72 @@ func updateBlockers(r UpdateBlockersRequest) workMutation {
 		}
 		issue.Revision++
 		issue.UpdatedAt = now()
-		return WorkReceipt{Issue: issue}, saveIssue(ctx, tx, issue)
+		if r.UnblockedStatus == "active" && issue.CurrentExecutionID == "" {
+			return nil, problem("failed_precondition", "active requires a current Execution")
+		}
+		var retired *Execution
+		if r.UnblockedStatus == "pending" && issue.CurrentExecutionID != "" {
+			x, err := retireExecution(ctx, tx, issue.CurrentExecutionID, issue.UpdatedAt, false)
+			if err != nil {
+				return nil, err
+			}
+			retired, issue.CurrentExecutionID = &x, ""
+		}
+		if err := saveIssue(ctx, tx, issue); err != nil {
+			return nil, err
+		}
+		if r.NotifyWorker {
+			var materials []Material
+			for _, item := range r.Resolve {
+				if item.MessageID != "" {
+					materials = append(materials, Material{MessageID: item.MessageID})
+				}
+			}
+			return notifyWorker(ctx, tx, issue, newID("delivery"), workerUpdateKind, "", materials)
+		}
+		return WorkReceipt{Issue: issue, Execution: retired}, nil
 	}
 }
 
-func removeBlockers(blockers []Blocker, ids []string) ([]Blocker, error) {
-	if len(ids) == 0 {
-		return blockers, nil
+// resolveBlockers only resolves blockers currently open on this Issue. A
+// caller may quote an associated Message as a resolution basis and material.
+func resolveBlockers(ctx context.Context, tx *sql.Tx, issue *Issue, resolutions []BlockerResolution) error {
+	if len(resolutions) == 0 {
+		return nil
 	}
-	remove := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		if id == "" || remove[id] {
-			return nil, problem("invalid_argument", "resolveBlockerIds must contain distinct nonempty IDs")
+	matches := make(map[string]BlockerResolution, len(resolutions))
+	for _, item := range resolutions {
+		if _, duplicate := matches[item.BlockerID]; duplicate || item.BlockerID == "" || strings.TrimSpace(item.Reason) == "" {
+			return problem("invalid_argument", "resolve requires distinct blocker IDs and a reason for each")
 		}
-		remove[id] = true
+		matches[item.BlockerID] = item
 	}
 	var remaining []Blocker
-	for _, blocker := range blockers {
-		if remove[blocker.ID] {
-			delete(remove, blocker.ID)
-		} else {
+	for _, blocker := range issue.Blockers {
+		item, matched := matches[blocker.ID]
+		if !matched {
 			remaining = append(remaining, blocker)
+			continue
 		}
+		if item.MessageID != "" {
+			materials := []Material{{MessageID: item.MessageID}}
+			if err := validateMaterials(ctx, tx, issue.TopicID, materials); err != nil {
+				return err
+			}
+			if err := checkQuotedBlocker(ctx, tx, item.MessageID, issue.ID, item.BlockerID); err != nil {
+				return err
+			}
+			appendMaterials(issue, materials)
+		}
+		blocker.Resolution = &BlockerResolutionRecord{BlockerResolution: item, At: now()}
+		issue.ResolvedBlockers = append(issue.ResolvedBlockers, blocker)
+		delete(matches, blocker.ID)
 	}
-	if len(remove) != 0 {
-		return nil, problem("not_found", "blocker not found on this Issue")
+	if len(matches) != 0 {
+		return problem("not_found", "open blocker not found on this Issue")
 	}
-	return remaining, nil
+	issue.Blockers = remaining
+	return nil
 }
 
 func validateBlocker(ctx context.Context, tx *sql.Tx, b Binding, issueID string, input BlockerInput) error {
@@ -150,17 +200,23 @@ func saveIssueLifecycleTransition(ctx context.Context, tx *sql.Tx, issue Issue, 
 		return nil
 	}
 	payload, err := json.Marshal(struct {
+		Type              string          `json:"type"`
 		TopicID           string          `json:"topicId"`
 		DependencyIssueID string          `json:"dependencyIssueId"`
 		PreviousStatus    string          `json:"previousStatus"`
 		Status            string          `json:"status"`
 		DependentIssueIDs json.RawMessage `json:"dependentIssueIds"`
-	}{issue.TopicID, issue.ID, previousStatus, issue.Status, json.RawMessage(raw)})
+	}{"issue.dependency_changed", issue.TopicID, issue.ID, previousStatus, issue.Status, json.RawMessage(raw)})
 	if err != nil {
 		return err
 	}
-	return EnqueueEvent(ctx, tx, Event{
-		ID: newID("evt"), Type: "issue.dependency_changed", At: issue.UpdatedAt, Intent: "context",
-		TargetID: issue.TopicID, TargetRole: "topic", Revision: issue.Revision, Payload: payload,
-	})
+	if err := enqueueInternalDelivery(ctx, tx, internalDelivery{
+		ID: newID("delivery"), Kind: contextSupplement,
+		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "topic", TopicID: issue.TopicID},
+		Content: deliveryContent{Body: payload, Refs: []deliveryReference{{Kind: "issue", ID: issue.ID}}},
+	}); err != nil {
+		return err
+	}
+	commitGate("dependency_before_commit")
+	return nil
 }

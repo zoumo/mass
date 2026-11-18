@@ -3,12 +3,13 @@ package core
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,7 +22,7 @@ import (
 )
 
 const (
-	schemaVersion = 12
+	schemaVersion = 19
 	applicationID = 1398096210
 )
 
@@ -60,6 +61,10 @@ func Open(c Config) (_ *Store, retErr error) {
 			return nil, problem("failed_precondition", "data directory contains a non-regular Core file")
 		}
 	}
+	dbPath := filepath.Join(c.DataDir, "core.sqlite")
+	if err := checkDatabaseHeader(dbPath); err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(filepath.Join(c.DataDir, ".core.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, problem("unavailable", "cannot open Core ownership lock")
@@ -74,58 +79,30 @@ func Open(c Config) (_ *Store, retErr error) {
 			_ = s.Close()
 		}
 	}()
-	dbPath := filepath.Join(c.DataDir, "core.sqlite")
+	if err := checkDatabaseHeader(dbPath); err != nil {
+		return nil, err
+	}
 	df, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, storageError()
 	}
-	_ = df.Close()
-	s.db, err = sql.Open("sqlite", (&url.URL{Scheme: "file", Path: dbPath}).String())
+	if err = df.Close(); err != nil {
+		return nil, storageError()
+	}
+	dbURL := url.URL{Scheme: "file", Path: dbPath}
+	pragmas := url.Values{"_pragma": {"busy_timeout(5000)", "foreign_keys(ON)", "synchronous(FULL)"}}
+	if c.StorageMaxPages > 0 {
+		pragmas.Add("_pragma", fmt.Sprintf("max_page_count(%d)", c.StorageMaxPages))
+	}
+	dbURL.RawQuery = pragmas.Encode()
+	s.db, err = sql.Open("sqlite", dbURL.String())
 	if err != nil {
 		return nil, storageError()
 	}
 	s.db.SetMaxOpenConns(1)
-	var version, app int
+	var version int
 	if err = s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return nil, problem("failed_precondition", "invalid SQLite database")
-	}
-	if err = s.db.QueryRowContext(ctx, "PRAGMA application_id").Scan(&app); err != nil {
 		return nil, storageError()
-	}
-	if version != 0 && (version < 2 || version > schemaVersion) {
-		return nil, problem("unsupported", fmt.Sprintf("unsupported schema version %d; supported version is %d; data was not migrated", version, schemaVersion))
-	}
-	if (version != 0 && app != applicationID) || (version == 0 && app != 0 && app != applicationID) {
-		return nil, problem("failed_precondition", "database belongs to another application")
-	}
-	if version == 0 {
-		var n int
-		if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").Scan(&n); err != nil {
-			return nil, storageError()
-		}
-		if n != 0 {
-			return nil, problem("failed_precondition", "unversioned nonempty database; use a new directory")
-		}
-	}
-	rebuildThreads := version > 0 && version < 10
-	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL"} {
-		if _, err = s.db.ExecContext(ctx, q); err != nil {
-			return nil, storageError()
-		}
-	}
-	// SQLite's table rebuild preserves the names in dependent foreign keys.
-	// Foreign-key enforcement must be off before beginning that transaction.
-	foreignKeys := "PRAGMA foreign_keys=ON"
-	if rebuildThreads {
-		foreignKeys = "PRAGMA foreign_keys=OFF"
-	}
-	if _, err = s.db.ExecContext(ctx, foreignKeys); err != nil {
-		return nil, storageError()
-	}
-	if c.StorageMaxPages > 0 {
-		if _, err = s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA max_page_count=%d", c.StorageMaxPages)); err != nil {
-			return nil, storageError()
-		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -133,90 +110,16 @@ func Open(c Config) (_ *Store, retErr error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	if version == 0 {
-		_, err = tx.ExecContext(ctx, `
-CREATE TABLE source_bindings (source TEXT PRIMARY KEY, account_id TEXT NOT NULL UNIQUE);
-CREATE TABLE threads (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, source TEXT NOT NULL, native_id TEXT NOT NULL, created_at TEXT NOT NULL, last_message_at TEXT NOT NULL, UNIQUE(source,native_id));
-CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, source TEXT NOT NULL REFERENCES source_bindings(source), native_id TEXT NOT NULL, thread_key TEXT NOT NULL REFERENCES threads(key), accepted_at TEXT NOT NULL, canonical BLOB NOT NULL, body BLOB NOT NULL, receipt BLOB NOT NULL, UNIQUE(source,native_id));
-CREATE INDEX messages_thread ON messages(thread_key,accepted_at,id);
-CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, message_id TEXT NOT NULL REFERENCES messages(id), at TEXT NOT NULL, status TEXT NOT NULL, binding_id TEXT NOT NULL DEFAULT '', next_attempt_at TEXT NOT NULL DEFAULT '', body BLOB NOT NULL);
-CREATE TABLE operations (source TEXT NOT NULL REFERENCES source_bindings(source), kind TEXT NOT NULL, operation_id TEXT NOT NULL, fingerprint BLOB NOT NULL, receipt BLOB NOT NULL, PRIMARY KEY(source,kind,operation_id));
-PRAGMA application_id=1398096210;`)
-		if err != nil {
-			return nil, storageError()
-		}
-		if _, err = tx.ExecContext(ctx, routingSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 3 {
-		if _, err = tx.ExecContext(ctx, heartbeatSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 4 {
-		if _, err = tx.ExecContext(ctx, deliverySchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 5 {
-		if _, err = tx.ExecContext(ctx, workSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 6 {
-		if _, err = tx.ExecContext(ctx, `UPDATE issues SET body=json_set(body,'$.requirementsRevision',json_extract(body,'$.revision'))`); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 7 {
-		if _, err = tx.ExecContext(ctx, lifecycleSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 8 {
-		if _, err = tx.ExecContext(ctx, "CREATE INDEX reports_execution ON reports(execution_id)"); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 9 {
-		if _, err = tx.ExecContext(ctx, timerSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if rebuildThreads {
-		if _, err = tx.ExecContext(ctx, `
-CREATE TABLE new_threads (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, source TEXT NOT NULL, native_id TEXT NOT NULL, created_at TEXT NOT NULL, last_message_at TEXT NOT NULL, UNIQUE(source,native_id));
-INSERT INTO new_threads(seq,key,source,native_id,created_at,last_message_at)
- SELECT seq,key,source,native_id,created_at,last_message_at FROM threads;
-DROP TABLE threads;
-ALTER TABLE new_threads RENAME TO threads;`); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 10 {
-		if _, err = tx.ExecContext(ctx, pullRequestSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 11 {
-		if _, err = tx.ExecContext(ctx, outboxSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < 12 {
-		if _, err = tx.ExecContext(ctx, echoSchema); err != nil {
-			return nil, storageError()
-		}
-	}
-	if version < schemaVersion {
-		if _, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
+		// Put the schema identity in the main file before enabling WAL. Startup
+		// can then reject earlier databases without touching their sidecars.
+		if _, err = tx.ExecContext(ctx, schema+fmt.Sprintf("PRAGMA application_id=%d; PRAGMA user_version=%d;", applicationID, schemaVersion)); err != nil {
 			return nil, storageError()
 		}
 	}
 	if err := initializeRouter(ctx, tx, c); err != nil {
 		return nil, err
 	}
-	if err := recoverDispatches(ctx, tx); err != nil {
+	if err := recoverInternalDeliveries(ctx, tx); err != nil {
 		return nil, err
 	}
 	if err := recoverStops(ctx, tx); err != nil {
@@ -225,35 +128,54 @@ ALTER TABLE new_threads RENAME TO threads;`); err != nil {
 	if err := recoverWorkerObservations(ctx, tx); err != nil {
 		return nil, err
 	}
-	// A source can never silently switch account on restart or take another source's account.
 	for _, source := range c.Sources {
-		var account string
-		err = tx.QueryRowContext(ctx, "SELECT account_id FROM source_bindings WHERE source=?", source.Source).Scan(&account)
-		if err == nil && account != source.AccountID {
-			return nil, problem("failed_precondition", "configured source account differs from persisted binding")
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			_, err = tx.ExecContext(ctx, "INSERT INTO source_bindings(source,account_id) VALUES(?,?)", source.Source, source.AccountID)
-		}
+		var mismatch bool
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM trigger_messages
+ WHERE (source=?1 AND account_id<>?2) OR (account_id=?2 AND source<>?1))`, source.Source, source.AccountID).Scan(&mismatch)
 		if err != nil {
-			return nil, problem("failed_precondition", "source/account binding cannot be established")
-		}
-	}
-	if rebuildThreads {
-		var violations int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM pragma_foreign_key_check").Scan(&violations); err != nil || violations != 0 {
 			return nil, storageError()
+		}
+		if mismatch {
+			return nil, problem("failed_precondition", "configured source/account differs from admitted messages; use a new dataDir")
 		}
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, storageError()
 	}
-	if rebuildThreads {
-		if _, err = s.db.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
-			return nil, storageError()
-		}
+	if _, err = s.db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		return nil, storageError()
 	}
 	return s, nil
+}
+
+// Read the main SQLite file directly. Even a read-only SQLite connection can
+// create or modify WAL shared-memory files when opening an earlier database.
+func checkDatabaseHeader(path string) error {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return storageError()
+	}
+	defer func() { _ = f.Close() }()
+	var header [100]byte
+	n, err := f.ReadAt(header[:], 0)
+	if n == 0 && errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err != nil || string(header[:16]) != "SQLite format 3\x00" {
+		return problem("failed_precondition", "invalid SQLite database; set dataDir to a new empty directory")
+	}
+	version := binary.BigEndian.Uint32(header[60:64])
+	app := binary.BigEndian.Uint32(header[68:72])
+	if app != applicationID {
+		return problem("failed_precondition", "database belongs to another format; set dataDir to a new empty directory")
+	}
+	if version != schemaVersion {
+		return problem("unsupported", fmt.Sprintf("schema version %d is unsupported; set dataDir to a new empty directory for schema %d", version, schemaVersion))
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
@@ -280,7 +202,6 @@ func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (Rec
 	if err != nil {
 		return result, problem("invalid_argument", "message cannot be encoded")
 	}
-	fingerprint := sha256.Sum256(canonical)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -288,72 +209,9 @@ func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (Rec
 		return result, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	var saved, fp []byte
-	err = tx.QueryRowContext(ctx, "SELECT fingerprint,receipt FROM operations WHERE source=? AND kind='submitMessage' AND operation_id=?", source.Source, r.OperationID).Scan(&fp, &saved)
-	if err == nil {
-		if !bytes.Equal(fp, fingerprint[:]) {
-			return result, problem("conflict", "operationId was used with different business parameters")
-		}
-		if json.Unmarshal(saved, &result) != nil {
-			return result, storageError()
-		}
-		return result, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return result, storageError()
-	}
-	err = tx.QueryRowContext(ctx, "SELECT canonical,receipt FROM messages WHERE source=? AND native_id=?", source.Source, r.Message.SourceMessageID).Scan(&fp, &saved)
-	if err == nil {
-		if !bytes.Equal(fp, canonical) {
-			return result, problem("conflict", "sourceMessageId already has different business content")
-		}
-		if json.Unmarshal(saved, &result) != nil {
-			return result, storageError()
-		}
-		result.Duplicate = true
-	} else if errors.Is(err, sql.ErrNoRows) {
-		at := now()
-		key := ThreadKey(r.Message.ThreadRef)
-		messageID, eventID := newID("msg"), newID("evt")
-		result = Receipt{Status: "accepted", MessageID: messageID, ThreadKey: key, AcceptedAt: at, EventID: eventID}
-		m := Message{MessageInput: r.Message, ID: messageID, ThreadKey: key, ReceivedAt: at, Acceptance: "accepted", EventID: eventID}
-		e := Event{ID: eventID, Type: "message.received", At: at, MessageID: messageID, ThreadKey: key, TargetRole: "router", Intent: "act", Status: "pending"}
-		m.Echo, err = classifyEcho(ctx, tx, m, r.SelfSent && source.InstanceID != "")
-		if err != nil {
-			return Receipt{}, err
-		}
-		body, encodeErr := json.Marshal(m)
-		if encodeErr != nil {
-			return Receipt{}, problem("invalid_argument", "message cannot be encoded")
-		}
-		e.RouteRound = 1
-		receipt, encodeErr := json.Marshal(result)
-		if encodeErr != nil {
-			return Receipt{}, storageError()
-		}
-		if err := upsertThread(ctx, tx, key, r.Message.ThreadRef, at, at); err != nil {
-			return Receipt{}, err
-		}
-		if _, err = tx.ExecContext(ctx, "INSERT INTO messages(id,source,native_id,thread_key,accepted_at,canonical,body,receipt,reply_instance) VALUES(?,?,?,?,?,?,?,?,?)", messageID, source.Source, r.Message.SourceMessageID, key, at, canonical, body, receipt, source.InstanceID); err != nil {
-			return Receipt{}, storageError()
-		}
-		if m.Echo == nil {
-			err = acceptRoute(ctx, tx, &e)
-		} else {
-			err = recordEchoAdmission(ctx, tx, m, e)
-		}
-		if err != nil {
-			return Receipt{}, err
-		}
-	} else {
-		return result, storageError()
-	}
-	receipt, encodeErr := json.Marshal(result)
-	if encodeErr != nil {
-		return Receipt{}, storageError()
-	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO operations(source,kind,operation_id,fingerprint,receipt) VALUES(?,'submitMessage',?,?,?)", source.Source, r.OperationID, fingerprint[:], receipt); err != nil {
-		return Receipt{}, storageError()
+	result, err = admitTriggerMessage(ctx, tx, source, r, canonical)
+	if err != nil {
+		return Receipt{}, err
 	}
 	commitGate("before_commit")
 	if err = tx.Commit(); err != nil {
@@ -361,6 +219,55 @@ func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (Rec
 	}
 	commitGate("after_commit")
 	return result, nil
+}
+
+// admitTriggerMessage takes a validated input and its canonical form. Keeping
+// this inside the caller's transaction lets scheduled intake commit its firing
+// state with the same Message, Thread and delivery facts as channel intake.
+func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r SubmitRequest, canonical []byte) (Receipt, error) {
+	var result Receipt
+	var fingerprint, saved []byte
+	var stored Message
+	err := tx.QueryRowContext(ctx, "SELECT canonical,body FROM trigger_messages WHERE source=? AND account_id=? AND native_id=?",
+		source.Source, source.AccountID, r.Message.SourceMessageID).Scan(&fingerprint, &saved)
+	if err == nil {
+		if !bytes.Equal(fingerprint, canonical) {
+			return result, problem("conflict", "sourceMessageId already has different business content")
+		}
+		if json.Unmarshal(saved, &stored) != nil {
+			return result, storageError()
+		}
+		return messageReceipt(stored, true), nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return result, storageError()
+	}
+
+	at, key := now(), ThreadKey(r.Message.ThreadRef)
+	m := Message{MessageInput: r.Message, ID: newID("msg"), ThreadKey: key, ReceivedAt: at, Acceptance: "accepted"}
+	m.Echo, err = classifyEcho(ctx, tx, m, r.SelfSent && source.InstanceID != "")
+	if err != nil {
+		return result, err
+	}
+	if m.Echo == nil {
+		m.EventID = newID("dlv")
+	}
+	result = messageReceipt(m, false)
+	if err := upsertThread(ctx, tx, key, r.Message.ThreadRef, at, at); err != nil {
+		return Receipt{}, err
+	}
+	if err := putJSON(ctx, tx, `INSERT INTO trigger_messages(id,source,account_id,native_id,thread_key,accepted_at,canonical,body)
+ VALUES(?,?,?,?,?,?,?,?)`, m, m.ID, source.Source, source.AccountID, r.Message.SourceMessageID, key, at, canonical); err != nil {
+		return Receipt{}, err
+	}
+	if m.Echo == nil {
+		err = acceptRoute(ctx, tx, m, m.EventID, at)
+	}
+	return result, err
+}
+
+func messageReceipt(m Message, duplicate bool) Receipt {
+	return Receipt{Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID, ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID}
 }
 
 func upsertThread(ctx context.Context, tx *sql.Tx, key string, ref ThreadRef, createdAt, lastMessageAt string) error {
@@ -405,15 +312,14 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	var parentColumn, parent string
 	var relatedFilter string
 	switch {
-	case q.TopicID != "" && q.IssueID == "" && (kind == "issues" || kind == "timers" || kind == "pull-requests" || kind == "subscriptions" || kind == "relations"):
+	case q.TopicID != "" && q.IssueID == "" && (kind == "issues" || kind == "timers" || kind == "pull-requests" || kind == "subscriptions" || kind == "relations" || kind == "routing-deliveries"):
 		parentColumn, parent = "topic_id", q.TopicID
-	case q.TopicID != "" && q.IssueID == "" && binding == nil && (kind == "decisions" || kind == "outbox"):
-		parentColumn, parent = "related_topic", q.TopicID
-		if kind == "decisions" {
-			relatedFilter = "EXISTS (SELECT 1 FROM json_each(decisions.body,'$.messageIds') WHERE value IN (SELECT message_id FROM relations WHERE topic_id=?))"
-		} else {
-			relatedFilter = "message_id IN (SELECT message_id FROM relations WHERE topic_id=?)"
+		if kind == "pull-requests" {
+			relatedFilter = "topic_id=? AND issue_id IS NULL"
 		}
+	case q.TopicID != "" && q.IssueID == "" && binding == nil && kind == "outbox":
+		parentColumn, parent = "related_topic", q.TopicID
+		relatedFilter = "message_id IN (SELECT message_id FROM topic_message_history WHERE topic_id=?)"
 	case q.IssueID != "" && q.TopicID == "" && (kind == "reports" || kind == "executions" || kind == "pull-requests"):
 		parentColumn, parent = "issue_id", q.IssueID
 	case q.TopicID != "" || q.IssueID != "":
@@ -427,17 +333,27 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	var table, timeCol, idCol string
 	switch kind {
 	case "messages":
-		table, timeCol, idCol = "messages", "accepted_at", "id"
+		table, timeCol, idCol = "trigger_messages", "accepted_at", "id"
 	case "threads":
 		table, timeCol, idCol = "threads", "created_at", "key"
-	case "events":
-		table, timeCol, idCol = "events", "at", "id"
-	case "topics", "decisions", "subscriptions", "relations", "bindings", "deliveries", "batches", "attempts", "recoveries", "issues", "executions", "reports", "timers", "outbox":
+	case "subscriptions":
+		table, timeCol, idCol = "thread_subscriptions", "created_at", "id"
+	case "relations":
+		table, timeCol, idCol = "routing_relations", "created_at", "id"
+	case "internal-deliveries":
+		table, timeCol, idCol = "(SELECT rowid AS seq,* FROM internal_deliveries)", "created_at", "id"
+	case "routing-deliveries":
+		table, timeCol, idCol = "routing_deliveries", "created_at", "id"
+	case "bindings":
+		table, timeCol, idCol = "session_bindings", "created_at", "id"
+	case "outbox":
+		table, timeCol, idCol = "(SELECT rowid AS seq,* FROM outbox) AS outbox", "printf('%020d',outbox.seq)", "id"
+	case "topics", "issues", "executions", "reports":
 		table, timeCol, idCol = kind, "created_at", "id"
-	case "channel-health":
-		table, timeCol, idCol = "channel_health", "created_at", "id"
+	case "timers":
+		table, timeCol, idCol = "scheduled_tasks", "created_at", "id"
 	case "pull-requests":
-		table, timeCol, idCol = "pull_requests", "created_at", "id"
+		table, timeCol, idCol = "work_pull_requests", "created_at", "id"
 	default:
 		return p, problem("not_found", "unknown collection")
 	}
@@ -445,14 +361,10 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		return p, problem("invalid_argument", "threadKey filters Messages, subscriptions and Outbox")
 	}
 	if q.MessageID != "" {
-		if parent == "" && kind == "decisions" && binding == nil {
-			parentColumn, parent, c.Parent = "decision_message", q.MessageID, q.MessageID
-			relatedFilter = "EXISTS (SELECT 1 FROM json_each(decisions.body,'$.messageIds') WHERE value=?)"
-		} else if parent != "" || (kind != "outbox" && kind != "relations" && kind != "events") {
-			return p, problem("invalid_argument", "messageId filters Outbox, routing relations and Events; use only one parent")
-		} else {
-			parentColumn, parent, c.Parent = "message_id", q.MessageID, q.MessageID
+		if parent != "" || (kind != "outbox" && kind != "relations" && kind != "routing-deliveries") {
+			return p, problem("invalid_argument", "messageId filters Outbox and routing facts; use only one parent")
 		}
+		parentColumn, parent, c.Parent = "message_id", q.MessageID, q.MessageID
 	}
 	c.Filter = parentColumn
 	// One read transaction binds the high-water mark and first-page data to one snapshot.
@@ -470,18 +382,21 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		c = cursor{}
 		b, err := base64.RawURLEncoding.DecodeString(token)
 		if err != nil || json.Unmarshal(b, &c) != nil || c.Kind != kind || c.Scope != scopeID || c.Thread != thread || c.Parent != parent || c.Newest != q.newest ||
-			(c.Filter != parentColumn && (c.Filter != "" || kind == "pull-requests" || kind == "relations")) || c.Upper < 1 || c.At == "" || c.ID == "" {
+			c.Filter != parentColumn || c.Upper < 1 || c.At == "" || c.ID == "" {
 			return p, problem("invalid_argument", "invalid or mismatched cursor")
 		}
 	} else if err = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0) FROM "+table).Scan(&c.Upper); err != nil {
 		return p, storageError()
 	}
 	projection := projection(kind, binding)
+	if source != nil {
+		projection = channelOutboxProjection
+	}
 	if q.preview {
 		projection = observerListProjection(kind, projection)
 	}
 	query := "SELECT " + projection + "," + timeCol + "," + idCol + " FROM " + table + " WHERE seq<=?"
-	args := []any{c.Upper}
+	args := append(projectionArgs(kind, binding), c.Upper)
 	operator, order := ">", " ASC"
 	if q.newest {
 		operator, order = "<", " DESC"
@@ -492,7 +407,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	}
 	if thread != "" {
 		if kind == "outbox" {
-			query += " AND message_id IN (SELECT id FROM messages WHERE thread_key=?)"
+			query += " AND message_id IN (SELECT id FROM trigger_messages WHERE thread_key=?)"
 		} else {
 			query += " AND thread_key=?"
 		}
@@ -508,13 +423,9 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	query += scope
 	args = append(args, scopeArgs...)
 	if source != nil {
-		at := outboxNow().Format(utcTimestamp)
-		query += ` AND source=? AND instance_id=?
- AND NOT EXISTS(SELECT 1 FROM outbox_claims c WHERE c.outbox_id=outbox.id AND c.released_at IS NULL AND c.expires_at>?)
- AND (json_extract(body,'$.status')='pending'
-   OR (json_extract(body,'$.status')='unknown' AND json_extract(body,'$.retryAt')<=?)
-   OR EXISTS(SELECT 1 FROM outbox_attempts a WHERE a.outbox_id=outbox.id AND ` + outboxRecoverableTask + `))`
-		args = append(args, source.Source, source.InstanceID, at, at)
+		query += channelOutboxScope + ` AND (outbox.status='pending'
+ OR (outbox.status='failed' AND json_extract(outbox.receipt,'$.retryAt')<=?))`
+		args = append(args, source.Source, source.AccountID, outboxNow().Format(utcTimestamp))
 	}
 	query += " ORDER BY " + timeCol + order + "," + idCol + order + " LIMIT ?"
 	args = append(args, limit+1)
@@ -560,13 +471,25 @@ func (s *Store) getScoped(ctx context.Context, kind, id string, binding *Binding
 	}
 	table, idCol := kind, "id"
 	switch kind {
-	case "messages", "events", "topics", "decisions", "subscriptions", "relations", "bindings", "deliveries", "batches", "attempts", "recoveries", "issues", "executions", "reports", "timers", "outbox":
+	case "messages":
+		table = "trigger_messages"
+	case "subscriptions":
+		table = "thread_subscriptions"
+	case "relations":
+		table = "routing_relations"
+	case "internal-deliveries":
+		table = "internal_deliveries"
+	case "routing-deliveries":
+		table = "routing_deliveries"
+	case "bindings":
+		table = "session_bindings"
+	case "topics", "issues", "executions", "reports", "outbox":
+	case "timers":
+		table = "scheduled_tasks"
 	case "threads":
 		idCol = "key"
-	case "channel-health":
-		table = "channel_health"
 	case "pull-requests":
-		table = "pull_requests"
+		table = "work_pull_requests"
 	default:
 		return nil, problem("not_found", "unknown collection")
 	}
@@ -581,14 +504,12 @@ func (s *Store) getScoped(ctx context.Context, kind, id string, binding *Binding
 		}
 	}
 	var body []byte
-	args = append([]any{id}, args...)
+	args = append(append(projectionArgs(kind, binding), id), args...)
 	project := projection(kind, binding)
-	if kind == "outbox" {
-		project = outboxDetailProjection
-	}
 	if source != nil {
-		scope += " AND source=? AND instance_id=?"
-		args = append(args, source.Source, source.InstanceID)
+		project = channelOutboxProjection
+		scope += channelOutboxScope
+		args = append(args, source.Source, source.AccountID)
 	}
 	err = tx.QueryRowContext(ctx, "SELECT "+project+" FROM "+table+" WHERE "+idCol+"=?"+scope, args...).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -1,11 +1,9 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	goruntime "runtime"
@@ -126,10 +124,6 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 	var r Recovery
 	var b Binding
 	var spec resource.SessionSpec
-	fingerprint, err := json.Marshal(req)
-	if err != nil {
-		return r, b, spec, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -137,35 +131,25 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 		return r, b, spec, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	var saved, raw []byte
-	err = tx.QueryRowContext(ctx, "SELECT request,body FROM recoveries WHERE id=?", req.OperationID).Scan(&saved, &raw)
-	known := err == nil
-	switch {
-	case known:
-		if !bytes.Equal(saved, fingerprint) {
+	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &b, req.BindingID); err != nil {
+		return r, b, spec, err
+	}
+	known := b.Recovery != nil && b.Recovery.ID == req.OperationID
+	if known {
+		r = *b.Recovery
+		if r.RecoveryRequest != req {
 			return r, b, spec, problem("conflict", "operationId already has different recovery input")
-		}
-		if json.Unmarshal(raw, &r) != nil {
-			return r, b, spec, storageError()
 		}
 		if r.Status == "completed" {
 			return r, b, spec, nil
 		}
-	case !errors.Is(err, sql.ErrNoRows):
-		return r, b, spec, storageError()
-	}
-	if err := readJSON(ctx, tx, "SELECT body FROM bindings WHERE id=?", &b, req.BindingID); err != nil {
-		return r, b, spec, err
 	}
 	retired := b.State == "revoked"
 	if retired {
 		if req.Mode == "retry" || b.Role == "router" {
 			return r, b, spec, problem("failed_precondition", "retired bindings permit only Worker or Topic settlement")
 		}
-		var stopping bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM binding_stops WHERE binding_id=? AND status IN ('requested','dispatching'))", b.ID).Scan(&stopping); err != nil {
-			return r, b, spec, storageError()
-		}
+		stopping := b.Stop != nil && (b.Stop.Status == "requested" || b.Stop.Status == "dispatching")
 		if stopping {
 			return r, b, spec, problem("failed_precondition", "the binding's cancellation request is still queued or in flight")
 		}
@@ -173,23 +157,20 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 		if req.Mode == "settle" {
 			return r, b, spec, problem("failed_precondition", "settle requires a retired binding")
 		}
-		if known && (b.State != "recovering" || b.RecoveryOperationID != "" && b.RecoveryOperationID != r.ID) {
+		if known && b.State != "recovering" {
 			return r, b, spec, problem("stale_binding", "recovery operation no longer owns this binding")
 		}
-		if !known && b.State == "recovering" {
-			var prior Recovery
-			if err := readJSON(ctx, tx, "SELECT body FROM recoveries WHERE id=?", &prior, b.RecoveryOperationID); err != nil || prior.Status != "blocked" {
-				return r, b, spec, problem("failed_precondition", "retry the in-flight recovery with its original operationId")
-			}
-		}
 	}
-	if err := readJSON(ctx, tx, "SELECT spec FROM bindings WHERE id=?", &spec, b.ID); err != nil {
+	if !known && b.Recovery != nil && b.Recovery.Status == "reconciling" {
+		return r, b, spec, problem("failed_precondition", "retry the in-flight recovery with its original operationId")
+	}
+	if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, b.ID); err != nil {
 		return r, b, spec, err
 	}
 	if !known {
 		if req.Mode == "retry" {
 			var blocked bool
-			err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM deliveries WHERE binding_id=? AND status='blocked_unknown')", b.ID).Scan(&blocked)
+			err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM internal_deliveries WHERE "+deliveryRecipientKind+"=? AND "+deliveryRecipientOwner+"=? AND status='dispatching')", b.Role, b.OwnerID).Scan(&blocked)
 			if err != nil {
 				return r, b, spec, storageError()
 			}
@@ -198,14 +179,13 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 			}
 		}
 		r = Recovery{ID: req.OperationID, RecoveryRequest: req, CreatedAt: now(), Status: "reconciling", SessionID: b.SessionID, SessionUID: b.SessionUID}
-		if err := putJSON(ctx, tx, "INSERT INTO recoveries(id,created_at,request,body) VALUES(?,?,?,?)", r, r.ID, r.CreatedAt, fingerprint); err != nil {
-			return r, b, spec, err
-		}
+		b.Recovery = &r
 		if !retired {
-			b.State, b.NextAttemptAt, b.RecoveryOperationID = "recovering", "", r.ID
-			if err := putJSON(ctx, tx, "UPDATE bindings SET state=?2,next_attempt_at='',body=?3 WHERE id=?1", b, b.ID, b.State); err != nil {
-				return r, b, spec, err
-			}
+			b.State, b.NextAttemptAt = "recovering", ""
+		}
+		if err := putJSON(ctx, tx, "UPDATE session_bindings SET state=?2,next_attempt_at=?3,body=?4 WHERE id=?1",
+			b, b.ID, b.State, b.NextAttemptAt); err != nil {
+			return r, b, spec, err
 		}
 	}
 	return r, b, spec, tx.Commit()
@@ -228,7 +208,7 @@ func (s *Server) reconcileSession(ctx context.Context, b Binding, spec resource.
 		// The same authority may use the public resume path. Neither state
 		// certifies old work stopped or allows a replacement binding.
 		if ownershipUnconfirmed(found) {
-			affected, err := s.store.db.ExecContext(ctx, `UPDATE bindings SET body=json_set(body,'$.previousOwnerUnknown',json('true'))
+			affected, err := s.store.db.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,'$.previousOwnerUnknown',json('true'))
  WHERE id=? AND state='recovering'`, b.ID)
 			if err != nil {
 				return storageError()
@@ -376,7 +356,8 @@ func (s *Store) saveRecoveryFailure(ctx context.Context, r Recovery) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, "UPDATE recoveries SET body=? WHERE id=? AND json_extract(body,'$.status')<>'completed'", raw, r.ID)
+	_, err = s.db.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,'$.recovery',json(?))
+ WHERE id=? AND json_extract(body,'$.recovery.id')=? AND json_extract(body,'$.recovery.status')='reconciling'`, raw, r.BindingID, r.ID)
 	return err
 }
 
@@ -389,13 +370,13 @@ func (s *Store) completeRecovery(ctx context.Context, b Binding, r Recovery) (Re
 	}
 	defer func() { _ = tx.Rollback() }()
 	var current Binding
-	if err := readJSON(ctx, tx, "SELECT body FROM bindings WHERE id=?", &current, b.ID); err != nil {
+	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &current, b.ID); err != nil {
 		return r, err
 	}
 	if current.State != b.State || current.State != "revoked" && current.State != "recovering" {
 		return r, problem("stale_binding", "binding changed during recovery")
 	}
-	if current.State == "recovering" && current.RecoveryOperationID != "" && current.RecoveryOperationID != r.ID {
+	if current.Recovery == nil || current.Recovery.ID != r.ID {
 		return r, problem("stale_binding", "binding has a newer recovery operation")
 	}
 	b = current
@@ -409,7 +390,7 @@ func (s *Store) completeRecovery(ctx context.Context, b Binding, r Recovery) (Re
 			release.Reusable = false
 			b.Close, r.Close = &release, &release
 		}
-		if err := putJSON(ctx, tx, "UPDATE bindings SET body=?2 WHERE id=?1", b, b.ID); err != nil {
+		if err := putJSON(ctx, tx, "UPDATE session_bindings SET body=?2 WHERE id=?1", b, b.ID); err != nil {
 			return r, err
 		}
 		if err := saveRelatedReleases(ctx, tx, r.RelatedReleases); err != nil {
@@ -425,36 +406,14 @@ func (s *Store) completeRecovery(ctx context.Context, b Binding, r Recovery) (Re
 			return r, err
 		}
 	} else {
-		pending, err := pendingDeliveries(ctx, tx, b.ID, true)
-		if err != nil {
-			return r, err
-		}
-		for _, item := range pending {
-			d := item.delivery
-			if d.Status != "blocked_unknown" {
-				continue
-			}
-			valid, err := eventCurrent(ctx, tx, b, item)
-			if err != nil {
-				return r, err
-			}
-			if valid {
-				d.Status, d.PossibleDuplicate, d.NextAttemptAt = "pending", true, now()
-			} else {
-				d.Status, d.NextAttemptAt = "superseded", ""
-			}
-			if err := saveDelivery(ctx, tx, d); err != nil {
-				return r, err
-			}
-		}
-		b.State, b.LastError, b.NextAttemptAt, b.RecoveryOperationID = "ready", "", "", ""
+		b.State, b.LastError, b.NextAttemptAt = "ready", "", ""
 		b.SessionID, b.SessionUID = r.SessionID, r.SessionUID
-		if err := putJSON(ctx, tx, "UPDATE bindings SET state=?2,next_attempt_at='',body=?3 WHERE id=?1", b, b.ID, b.State); err != nil {
+		if err := putJSON(ctx, tx, "UPDATE session_bindings SET state=?2,next_attempt_at='',body=?3 WHERE id=?1", b, b.ID, b.State); err != nil {
 			return r, err
 		}
 	}
 	r.Status, r.LastError, r.CompletedAt = "completed", "", now()
-	if err := putJSON(ctx, tx, "UPDATE recoveries SET body=?2 WHERE id=?1", r, r.ID); err != nil {
+	if err := putJSON(ctx, tx, "UPDATE session_bindings SET body=json_set(body,'$.recovery',json(?2)) WHERE id=?1", r, b.ID); err != nil {
 		return r, err
 	}
 	return r, tx.Commit()
@@ -479,62 +438,29 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 		return err
 	}
 	r.ReplacementBinding = next.ID
-	var topic *ContentRef
 	if b.Role == "topic" {
 		if _, err := tx.ExecContext(ctx, "UPDATE topics SET body=json_set(body,'$.bindingId',?) WHERE id=?", next.ID, b.OwnerID); err != nil {
 			return storageError()
 		}
-		topic = &ContentRef{Collection: "topics", ID: b.OwnerID}
-		if err := attachUnboundEvents(ctx, tx, next); err != nil {
-			return err
-		}
 	}
-	pending, err := pendingDeliveries(ctx, tx, b.ID, true)
-	if err != nil {
-		return err
-	}
-	retained := []string{}
-	for _, item := range pending {
-		current, err := eventCurrent(ctx, tx, next, item)
-		if err != nil {
-			return err
-		}
-		d := item.delivery
-		d.Status, d.NextAttemptAt = "superseded", ""
-		if err := saveDelivery(ctx, tx, d); err != nil {
-			return err
-		}
-		if current {
-			rebound := newDelivery(item.event, next, at, d.PossibleDuplicate)
-			if err := insertDelivery(ctx, tx, rebound); err != nil {
-				return err
-			}
-			retained = append(retained, item.event.ID)
-		}
-	}
-	payload, err := json.Marshal(struct {
-		PreviousBindingID string      `json:"previousBindingId"`
-		PendingEventIDs   []string    `json:"pendingEventIds"`
-		Topic             *ContentRef `json:"topic,omitempty"`
-	}{b.ID, retained, topic})
-	if err != nil {
-		return err
-	}
-	// A canceled Topic can receive new source input to explain or reopen. The
-	// recovery notification itself must not initiate a new turn.
-	intent := "act"
+	recipient := deliveryIdentity{Kind: b.Role, TopicID: b.OwnerID}
+	kind := "binding_recovered"
 	if b.Role == "topic" {
 		var t Topic
 		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
 			return err
 		}
 		if terminal(t.Status) {
-			intent = "context"
+			kind = contextSupplement
 		}
 	}
-	return EnqueueEvent(ctx, tx, Event{
-		ID: newID("evt"), Type: "binding.recovered", TargetRole: next.Role, TargetID: next.OwnerID,
-		TargetGeneration: next.Generation, Intent: intent, Payload: payload, At: at,
+	payload, err := json.Marshal(map[string]string{"previousBindingId": b.ID, "recovery": "binding_recovered"})
+	if err != nil {
+		return storageError()
+	}
+	return enqueueInternalDelivery(ctx, tx, internalDelivery{
+		ID: newID("dlv"), Kind: kind, Sender: deliveryIdentity{Kind: "core"}, Recipient: recipient,
+		Content: deliveryContent{Body: payload},
 	})
 }
 
@@ -543,11 +469,17 @@ func (s *Store) replaceWorker(ctx context.Context, tx *sql.Tx, b Binding, r *Rec
 	if err != nil {
 		return err
 	}
-	if _, err := retireExecution(ctx, tx, x.ID, now(), false); err != nil {
+	at := now()
+	if _, err := retireExecution(ctx, tx, x.ID, at, false); err != nil {
 		return err
 	}
 	issue.CurrentExecutionID = ""
-	next, err := s.scheduleIssue(ctx, tx, issue)
+	if !canContinueIssue(issue) {
+		issue.Revision++
+		issue.UpdatedAt = at
+		return saveIssue(ctx, tx, issue)
+	}
+	next, err := s.scheduleIssue(ctx, tx, issue, deliveryIdentity{Kind: "core"})
 	if err != nil {
 		return err
 	}

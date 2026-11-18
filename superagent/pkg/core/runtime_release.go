@@ -23,7 +23,7 @@ func (s *Server) observeRuntimeReleases(ctx context.Context, c *client.Client, r
 		binding Binding
 		spec    resource.SessionSpec
 	}
-	rows, err := s.store.db.QueryContext(ctx, `SELECT body,spec FROM bindings WHERE state='revoked' AND id<>?
+	rows, err := s.store.db.QueryContext(ctx, `SELECT body,spec FROM session_bindings WHERE state='revoked' AND id<>?
  AND json_extract(body,'$.runtimeUid')=? AND json_extract(body,'$.runtimeResourceVersion')=?
  AND json_type(body,'$.close') IS NULL AND NOT COALESCE(json_extract(body,'$.previousOwnerUnknown'),0)`,
 		targetID, rt.Metadata.UID, rt.Metadata.ResourceVersion)
@@ -68,7 +68,7 @@ func saveRelatedReleases(ctx context.Context, tx *sql.Tx, releases []RuntimeBind
 		if err != nil {
 			return storageError()
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE bindings SET body=json_set(body,'$.close',json(?))
+		_, err = tx.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,'$.close',json(?))
  WHERE id=? AND state='revoked' AND json_type(body,'$.close') IS NULL
  AND json_extract(body,'$.sessionId')=? AND json_extract(body,'$.sessionUid')=?`,
 			raw, release.BindingID, release.SessionID, release.SessionUID)

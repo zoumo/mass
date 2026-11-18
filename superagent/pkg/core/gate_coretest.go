@@ -11,42 +11,39 @@ import (
 	"time"
 )
 
-// This fixture plays a future Core event producer using the production
+// This fixture plays a Core delivery producer using the production
 // transactional queue API. It is never compiled into the released binary.
 func (s *Server) testDispatch(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.Path != "/_test/events" || r.Method != http.MethodPost {
+	if r.Method != http.MethodPost || r.URL.Path != "/_test/internal-deliveries" {
 		return false
 	}
 	token := os.Getenv("SUPERAGENT_TEST_EVENTS")
 	if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 		return false
 	}
-	var items []Event
+	var deliveries []internalDelivery
 	data, err := io.ReadAll(r.Body)
-	if err != nil || decodeStrict(data, &items) != nil || len(items) == 0 {
-		s.fail(w, problem("invalid_argument", "expected test events"))
+	if err != nil || decodeStrict(data, &deliveries) != nil || len(deliveries) == 0 {
+		s.fail(w, problem("invalid_argument", "expected test deliveries"))
 		return true
 	}
-	if err := s.enqueueTestEvents(r, items); err != nil {
+	if err := s.enqueueTestDeliveries(r, deliveries); err != nil {
 		s.fail(w, err)
-		return true
+	} else {
+		s.write(w, http.StatusOK, deliveries)
 	}
-	s.write(w, http.StatusOK, items)
 	return true
 }
 
-func (s *Server) enqueueTestEvents(r *http.Request, items []Event) error {
+func (s *Server) enqueueTestDeliveries(r *http.Request, items []internalDelivery) error {
 	ctx := r.Context()
-	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
 	tx, err := s.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, e := range items {
-		e.At = ""
-		if err := EnqueueEvent(ctx, tx, e); err != nil {
+	for _, d := range items {
+		if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
 			return err
 		}
 	}
@@ -73,10 +70,13 @@ func commitGate(stage string) {
 	}
 }
 
-// The file holds a fixed absolute timestamp so the test can advance the same
-// clock across isolated Core restarts without waiting for production leases.
-func outboxNow() time.Time {
-	path := os.Getenv("SUPERAGENT_TEST_OUTBOX_CLOCK")
+func outboxNow() time.Time { return readTestClock("SUPERAGENT_TEST_OUTBOX_CLOCK") }
+
+func timerNow() time.Time { return readTestClock("SUPERAGENT_TEST_TIMER_CLOCK") }
+
+// The file holds a fixed absolute timestamp that tests can advance across Core restarts.
+func readTestClock(env string) time.Time {
+	path := os.Getenv(env)
 	if path == "" {
 		return time.Now().UTC()
 	}

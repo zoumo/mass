@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
-	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -56,20 +55,11 @@ func (s *Server) inspectBinding(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback() }()
 	var inspection BindingInspection
 	var spec resource.SessionSpec
-	if err := readJSON(r.Context(), tx, "SELECT body FROM bindings WHERE id=?", &inspection.Binding, id); err != nil {
+	if err := readJSON(r.Context(), tx, "SELECT body FROM session_bindings WHERE id=?", &inspection.Binding, id); err != nil {
 		s.fail(w, err)
 		return
 	}
-	if err := readJSON(r.Context(), tx, "SELECT spec FROM bindings WHERE id=?", &spec, id); err != nil {
-		s.fail(w, err)
-		return
-	}
-	var stop StopRequest
-	var p *Error
-	err = readJSON(r.Context(), tx, "SELECT body FROM binding_stops WHERE binding_id=?", &stop, id)
-	if err == nil {
-		inspection.Stop = &stop
-	} else if !errors.As(err, &p) || p.Code != "not_found" {
+	if err := readJSON(r.Context(), tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, id); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -77,6 +67,7 @@ func (s *Server) inspectBinding(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, storageError())
 		return
 	}
+	inspection.Stop = inspection.Binding.Stop
 	s.observeBinding(r.Context(), spec, &inspection)
 	s.write(w, http.StatusOK, inspection)
 }

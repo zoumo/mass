@@ -31,7 +31,7 @@ test('committed lists, full original text, Thread navigation and safe rendering'
 })
 
 test('read-only API, source isolation, cursor validation and HEAD', async ({ request }) => {
- for (const collection of ['messages', 'threads', 'events', 'health', 'channel-health']) {
+ for (const collection of ['messages', 'threads', 'internal-deliveries', 'routing-deliveries', 'health']) {
   const read = await request.get(`/v1/observer/${collection}`)
   expect(read.status()).toBe(200)
   const head = await request.head(`/v1/observer/${collection}`)
@@ -45,32 +45,20 @@ test('read-only API, source isolation, cursor validation and HEAD', async ({ req
  expect((await request.post('/v1/channel/messages', { data: {} })).status()).toBe(401)
  expect((await request.get('/v1/observer/messages?cursor=invalid')).status()).toBe(400)
  expect((await request.get('/v1/observer/messages', { headers: { Origin: 'https://foreign.example' } })).status()).toBe(403)
- const event = (await (await request.get('/v1/observer/events')).json()).items[0]
+ const event = (await (await request.get('/v1/observer/routing-deliveries')).json()).items[0]
  expect(event.status).toBe('pending')
- expect(event.intent).toBe('act')
+ expect(event.kind).toBe('route_request')
 })
 
-test('channel health shows reported disconnect, failed admission and buffered count', async ({ page }) => {
- const channelMethods: string[] = []
- page.on('request', request => {
-  if (!request.url().includes('/channel-health')) return
-  channelMethods.push(request.method())
-  expect(request.headers()['authorization']).toBeUndefined()
- })
+test('retired collections are absent from Observer', async ({ page, request }) => {
  await page.goto('/observer/')
  await page.getByText('诊断', { exact: true }).click()
- await page.getByRole('button', { name: '渠道健康状态', exact: true }).click()
- const row = page.getByRole('row', { name: /browser-collector/ })
- await expect(row).toContainText('已断开')
- await expect(row).toContainText('100 / 100')
- await row.getByRole('button', { name: 'browser-collector' }).click()
- const drawer = page.getByRole('dialog')
- await expect(drawer).toContainText('渠道健康状态详情')
- await expect(drawer).toContainText('失败 · 100 / 100 已缓冲')
- await expect(drawer).toContainText('不可用')
- await expect(drawer).toContainText('到期时间')
- expect(channelMethods.length).toBeGreaterThanOrEqual(2)
- expect(channelMethods.every(method => method === 'GET')).toBeTruthy()
+ await expect(page.getByRole('button', { name: '内部投递', exact: true })).toBeVisible()
+ await expect(page.getByRole('button', { name: '渠道健康状态', exact: true })).toHaveCount(0)
+ for (const collection of ['channel-health', 'events', 'decisions', 'deliveries', 'batches', 'attempts', 'recoveries']) {
+  expect((await request.get(`/v1/observer/${collection}`)).status()).toBe(404)
+ }
+ expect((await request.post('/v1/channel/heartbeat', { data: {} })).status()).toBe(404)
 })
 
 test('offline snapshot stays visible and reconnect gets fresh filtered pages and selected detail', async ({ page, context, request }, testInfo) => {

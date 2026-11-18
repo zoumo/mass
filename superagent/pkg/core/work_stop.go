@@ -37,13 +37,14 @@ func retireExecution(ctx context.Context, tx *sql.Tx, id, at string, cancel bool
 	if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=?", &x, id); err != nil {
 		return x, err
 	}
-	if err := supersedeEvents(ctx, tx, "SELECT event_id FROM deliveries WHERE binding_id=?", x.BindingID); err != nil {
-		return x, err
-	}
 	var dispatched bool
 	if err := tx.QueryRowContext(ctx, `SELECT json_type(b.body,'$.close') IS NULL AND
- (? OR EXISTS (SELECT 1 FROM batches WHERE binding_id=b.id)) FROM bindings b WHERE b.id=?`, cancel, x.BindingID).Scan(&dispatched); err != nil {
+ (? OR EXISTS (SELECT 1 FROM internal_deliveries WHERE `+deliveryRecipientKind+`='worker' AND `+deliveryRecipientOwner+`=b.owner_id
+ AND status IN ('dispatching','sent'))) FROM session_bindings b WHERE b.id=?`, cancel, x.BindingID).Scan(&dispatched); err != nil {
 		return x, storageError()
+	}
+	if err := supersedeExecutionDeliveries(ctx, tx, x.ID); err != nil {
+		return x, err
 	}
 	if dispatched {
 		var err error
@@ -52,10 +53,14 @@ func retireExecution(ctx context.Context, tx *sql.Tx, id, at string, cancel bool
 			return x, err
 		}
 	}
-	if err := tx.QueryRowContext(ctx, "SELECT state FROM bindings WHERE id=?", x.BindingID).Scan(&x.PreparationAtRetirement); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT state FROM session_bindings WHERE id=?", x.BindingID).Scan(&x.PreparationAtRetirement); err != nil {
 		return x, storageError()
 	}
-	x.Authority, x.RetiredAt = "historical", at
+	issue, err := issueForExecution(ctx, tx, x)
+	if err != nil {
+		return x, err
+	}
+	x.Authority, x.RetiredAt, x.RetiredGoalRevision = "historical", at, issue.RequirementsRevision
 	if observation := x.WorkObservation; observation != nil && observation.inProgress() {
 		observation.loseContinuity("execution_retired")
 	}
@@ -70,15 +75,15 @@ func saveExecution(ctx context.Context, tx *sql.Tx, x Execution) error {
 }
 
 func recoverStops(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `UPDATE binding_stops SET status='unknown',body=json_set(body,'$.status','unknown',
- '$.errorCode','stop_response_unconfirmed','$.observationGap','core_stopped_before_stop_settlement',
- '$.observedAt',?) WHERE status='dispatching'`, now())
+	_, err := tx.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,'$.stop.status','unknown',
+ '$.stop.errorCode','stop_response_unconfirmed','$.stop.observationGap','core_stopped_before_stop_settlement',
+ '$.stop.observedAt',?) WHERE json_extract(body,'$.stop.status')='dispatching'`, now())
 	return err
 }
 
 func requestBindingStop(ctx context.Context, tx *sql.Tx, bindingID, at string) (*StopRequest, error) {
 	stop := &StopRequest{Status: "requested", RequestedAt: at, WorkState: "unknown"}
-	err := putJSON(ctx, tx, "INSERT INTO binding_stops(binding_id,status,body) VALUES(?,?,?)", stop, bindingID, stop.Status)
+	err := putJSON(ctx, tx, "UPDATE session_bindings SET body=json_set(body,'$.stop',json(?2)) WHERE id=?1", stop, bindingID)
 	return stop, err
 }
 
@@ -91,12 +96,12 @@ func (s *Store) claimStop(ctx context.Context, bindingID string) (StopRequest, e
 		return stop, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	err = readJSON(ctx, tx, "SELECT body FROM binding_stops WHERE binding_id=? AND status='requested'", &stop, bindingID)
+	err = readJSON(ctx, tx, "SELECT json_extract(body,'$.stop') FROM session_bindings WHERE id=? AND json_extract(body,'$.stop.status')='requested'", &stop, bindingID)
 	if err != nil {
 		return stop, err
 	}
 	stop.Status, stop.DispatchedAt = "dispatching", now()
-	if err := putJSON(ctx, tx, "UPDATE binding_stops SET status=?2,body=?3 WHERE binding_id=?1", stop, bindingID, stop.Status); err != nil {
+	if err := putJSON(ctx, tx, "UPDATE session_bindings SET body=json_set(body,'$.stop',json(?2)) WHERE id=?1", stop, bindingID); err != nil {
 		return stop, err
 	}
 	return stop, tx.Commit()
@@ -137,7 +142,7 @@ func (s *Store) finishStop(ctx context.Context, bindingID string, stop StopReque
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err = s.db.ExecContext(ctx, "UPDATE binding_stops SET status=?,body=? WHERE binding_id=? AND status='dispatching'", stop.Status, raw, bindingID)
+	_, err = s.db.ExecContext(ctx, "UPDATE session_bindings SET body=json_set(body,'$.stop',json(?)) WHERE id=? AND json_extract(body,'$.stop.status')='dispatching'", raw, bindingID)
 	return err
 }
 

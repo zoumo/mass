@@ -19,13 +19,13 @@ func TestEchoUsesActualSourceConversationAndMessage(t *testing.T) {
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
 	target := submit(t, p, f, input("echo-original"))
-	item := roleWork[core.OutboxItem](t, p, roleToken(t, f, router), "message_reply", core.ReplyRequest{
-		OperationID: "echo-reply", MessageID: target.MessageID, Text: "outbound",
-	})
-	grant := beginOutbox(t, p, f.token, "echo-claim", item.ID)
-	channelCommand[core.OutboxClaim](t, p.endpoint, f.token, "confirm-send", claimCommand("echo-confirm", grant))
+	var sentIDs []string
 	for _, native := range []string{"native-exact", "native-other-conversation"} {
-		channelCommand[core.OutboxAttempt](t, p.endpoint, f.token, "finish-attempt", finishCommand(native, grant, "sent", "", native))
+		item := roleWork[core.OutboxItem](t, p, roleToken(t, f, router), "message_reply", core.ReplyRequest{
+			OperationID: "echo-reply-" + native, MessageID: target.MessageID, Text: "outbound",
+		})
+		resultOutbox(t, p, f.token, outboxResult(item, "sent", "", native))
+		sentIDs = append(sentIDs, item.ID)
 	}
 
 	foreign := input("native-exact")
@@ -47,8 +47,9 @@ func TestEchoUsesActualSourceConversationAndMessage(t *testing.T) {
 	msg := readRecord[core.Message](t, p, "messages/"+receipt.MessageID)
 	require.NotNil(t, msg.Echo)
 	require.Equal(t, "outbound_echo", msg.Echo.Status)
-	require.Equal(t, &core.EchoReference{OutboxID: item.ID, AttemptID: grant.AttemptID}, msg.Echo.Match)
-	require.Empty(t, deliveriesFor(t, p, msg.EventID))
-	require.Equal(t, "message.outbound_echo", readRecord[core.Event](t, p, "events/"+msg.EventID).Type)
+	require.Equal(t, &core.EchoReference{OutboxID: sentIDs[0]}, msg.Echo.Match)
+	require.Empty(t, routingDeliveries(t, p, msg.ID))
+	require.Empty(t, receipt.EventID)
+	receipt.Duplicate = true
 	require.Equal(t, receipt, submit(t, p, f, exact))
 }

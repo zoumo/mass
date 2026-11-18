@@ -4,14 +4,14 @@ const corePort = process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'
 const audit = `http://127.0.0.1:${process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795'}`
 test.use({ baseURL: `http://127.0.0.1:${corePort}`, viewport: { width: 1340, height: 980 } })
 
-test('Message and Thread lead to scoped work, reports, explicit acceptance and native receipts', async ({ page }, testInfo) => {
+test('Message and Thread lead to scoped work, reports, explicit acceptance and Session delivery', async ({ page }, testInfo) => {
  await page.goto('/observer/?view=messages&mode=records')
  const drawer = page.getByRole('dialog')
  const overview = page.getByRole('region', { name: '运行概况' })
  await expect(overview.getByText('路由器准备状态')).toBeVisible()
  await expect(overview.getByText(/1 进行中 · 1 已完成/)).toBeVisible()
  await expect(overview.getByText(/1 受阻 · 1 已取消 · 1 已完成/)).toBeVisible()
- await expect(overview.getByText(/1 失败/)).toBeVisible()
+ await expect(overview.getByText(/2 失败/)).toBeVisible()
  await page.getByRole('button', { name: 'Original input observer-routing', exact: true }).click()
  const routing = drawer.getByRole('region', { name: '路由历史' })
  await expect(routing).toContainText('Observer return reason')
@@ -28,7 +28,7 @@ test('Message and Thread lead to scoped work, reports, explicit acceptance and n
  await drawer.getByRole('button', { name: '当前执行', exact: true }).click()
  await expect(drawer.getByText('当前执行 · 第 1 代')).toBeVisible()
  await expect(drawer.getByText('准备状态', { exact: true }).locator('xpath=following-sibling::dd[1]')).toContainText('已就绪')
- await expect(drawer.getByText('已投递', { exact: true })).toBeVisible()
+ await expect(drawer.getByText('Session 已受理', { exact: true })).toBeVisible()
  await page.goBack()
  await expect(drawer.getByRole('heading', { name: 'Review blocked build' })).toBeVisible()
  await drawer.getByRole('button', { name: /^查看依赖的 Issue issue_/ }).click()
@@ -36,7 +36,7 @@ test('Message and Thread lead to scoped work, reports, explicit acceptance and n
  await page.getByRole('button', { name: 'Sample build verified' }).click()
  await expect(drawer.getByText(/^已就绪 · /)).toBeVisible()
  await drawer.getByRole('button', { name: 'Topic 通知' }).click()
- await expect(drawer.getByText('已投递', { exact: true })).toBeVisible()
+ await expect(drawer.getByText('Session 已受理', { exact: true })).toBeVisible()
  await drawer.getByRole('button', { name: '关闭', exact: true }).click()
  await page.getByRole('navigation').getByRole('button', { name: 'Topic', exact: true }).click()
  await page.getByRole('button', { name: 'Archived sample Topic' }).click()
@@ -53,6 +53,9 @@ test('Session reconnect rereads durable history while browsing produces no depen
  const before = await state()
  const sentPath = `/v1/observer/outbox/${before.sentId}`
  const sentBefore = await (await request.get(sentPath)).json()
+ expect(sentBefore).toMatchObject({
+  status: 'sent', receipt: { conversationId: 'actual:conversation', messageId: 'observer-actual-message' },
+ })
  const errors: string[] = []
  const headers: Promise<Record<string, string>>[] = []
  await page.context().addCookies([{ name: 'observer_fixture', value: 'browser-cookie', url: `http://127.0.0.1:${corePort}` }])
@@ -108,7 +111,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
   expect(result.status()).toBe(405)
   expect(result.headers()['allow']).toBe('GET, HEAD')
  }
- for (const path of ['/v1/role/report_submit', '/v1/channel/outbox/begin-attempt', '/v1/channel/outbox/confirm-send']) {
+ for (const path of ['/v1/role/report_submit', '/v1/channel/outbox/result']) {
   expect((await request.post(path, { data: {} })).ok()).toBeFalsy()
  }
  const after = await state()
@@ -133,7 +136,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  await testInfo.attach('dependency-calls', {
   body: JSON.stringify({
    methods, newChannelPolls: after.polls - before.polls, pendingOffers: after.pendingOffers - before.pendingOffers,
-   sentOffers: after.sentOffers, channelSends: { before: before.channelSends, after: after.channelSends }, sentAttempts: sentBefore.attempts.length,
+   sentOffers: after.sentOffers, channelSends: { before: before.channelSends, after: after.channelSends }, sentReceipt: sentBefore.receipt,
   }, null, 2),
   contentType: 'application/json',
  })

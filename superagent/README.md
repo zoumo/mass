@@ -17,9 +17,8 @@ make build-superagent
 bin/superagent serve --config /absolute/run/core.yaml
 bin/superagent observe messages --endpoint http://127.0.0.1:24370
 bin/superagent observe threads --endpoint http://127.0.0.1:24370
-bin/superagent observe events --endpoint http://127.0.0.1:24370
-bin/superagent observe channel-health --endpoint http://127.0.0.1:24370
-bin/superagent observe deliveries --endpoint http://127.0.0.1:24370
+bin/superagent observe routing-deliveries --endpoint http://127.0.0.1:24370
+bin/superagent observe internal-deliveries --endpoint http://127.0.0.1:24370
 bin/superagent observe issues --topic-id TOPIC_ID
 bin/superagent observe reports --issue-id ISSUE_ID
 bin/superagent observe timers --topic-id TOPIC_ID
@@ -27,12 +26,11 @@ bin/superagent observe pull-requests --issue-id ISSUE_ID
 bin/superagent observe outbox --message-id MESSAGE_ID
 ```
 
-Use a new empty data directory or an existing superagent schema 2–12 directory.
-Superagent upgrades schema 2–11 transactionally. Old mass-sa JSON v4
-directories, foreign files, invalid databases and unsupported schema versions
-(including schema 1) are refused. The old mass-sa executable is retired. Its source and Observer
-fixtures remain available as reusable historical assets. Existing massd data
-and commands retain their own directories and lifecycle.
+The default data directory is `./superagent-core-data`, relative to the YAML
+file. Use an empty directory for your first schema 19 startup. Startup rejects
+earlier SQLite schemas and mass-sa JSON and preserves the original files.
+Set `dataDir` to another empty directory if the configured path contains
+earlier data. Use the original executable to inspect retained MVP history.
 
 Configuration uses [Viper](https://github.com/spf13/viper), CLI commands use
 [Cobra](https://github.com/spf13/cobra), and SQLite uses the pure-Go
@@ -49,34 +47,37 @@ DWS credentials are never embedded in startup output or browser configuration.
 Configuration paths resolve relative to the YAML file.
 
 `listen` defaults to numeric loopback `127.0.0.1:24370`; an explicit numeric
-address can bind another interface. `0` as the port requests an ephemeral port.
+address can bind another interface. Intake-only Core accepts port `0` for
+an ephemeral listener. Execution requires a fixed port.
 The startup JSON prints the actual listener, which may be a wildcard address;
 clients must use a concrete numeric interface address and the matching Host.
 All ingress requires a bound source token. Observer is a read-only trusted
 network surface with Host/Origin checks, not multi-user authentication; expose
 it only to trusted readers when explicitly binding a wider interface.
 
-For heartbeat and Outbox, set `sources[].instanceId` to the Trigger's stable instance ID.
+For Outbox, set `sources[].instanceId` to the Trigger's stable instance ID.
 See [DWS outbound echoes](API.md#dws-outbound-echoes) for the read-only message
 projection and the local `release-echo` command.
-Configure a separate token for each instance of a source. Channel health shows
-the latest report, its backlog and its expiration. See [the heartbeat contract](API.md#trigger-heartbeat).
-The [Outbox contract](API.md#trigger-outbox) defines consumer claims, task
-recovery and result writeback. All send history lives in Core.
+Configure a separate token for each instance of a source. Use the Trigger’s
+local status command and logs for consumer health and backlog.
+Run one active Outbox consumer per account. When an account has multiple
+instance-bound credentials, select the consumer with `outboxConsumer: true`.
+The [Outbox contract](API.md#trigger-outbox) covers task recovery and result
+writeback.
 
 Optional `execution` config selects massdEndpoint, fixed runtimeRef,
 routerWorkspace and namespace. See [API.md](API.md#execution-configuration-and-fixed-session-preparation).
 Core persists role identity and configuration before creation, reconciles lost
 create responses by querying the same Session, and retains failed preparation
-on the same Topic. With execution enabled, the first listener address is fixed
-in the store so existing MCP processes retain a stable endpoint across restart.
+on the same Topic. Keep the configured listener address stable across restarts so existing MCP
+processes can reconnect.
 The private capabilities directory is never returned by Observer. Core batches
 each Session's input, delivers context through Inject and uses StartOrSteer
 when a batch contains an action. Input delivery leaves Topic business state
 unchanged. See [Issue scheduling, reports and acceptance](API.md#issue-execution-report-and-acceptance)
 for the Topic and Worker role tools.
 See [Topic Timers](API.md#topic-timers) for one-shot scheduling, lifecycle fences
-and followup delivery.
+and followup delivery through normal Message intake.
 See [PR registration](API.md#pull-request-registration-and-subscriptions) for
 role scope, the source Message contract and URL rules.
 Local operators can inspect a role with `superagent inspect-binding BINDING_ID`
@@ -84,10 +85,9 @@ and use `recover-input` to reconcile input, settle a retired binding or replace
 a Session after verifying release.
 See [the input recovery contract](API.md#local-operator-reconciliation).
 
-A source/account binding is permanent in its data directory. Multiple collectors
-for one account share the source and use distinct instance-bound tokens.
-Rebinding an existing source to another account on
-restart fails. Channel credentials/profile resolution belong to external
+Multiple collectors for one account share the source and use distinct
+instance-bound tokens. Startup checks configured sources and accounts
+against admitted Messages. Channel credentials/profile resolution belong to external
 adapters. This module never invokes DWS.
 
 Optional `storageMaxPages` bounds main database growth in 4096-byte SQLite pages
@@ -98,27 +98,29 @@ also has to fit. It is an operational storage budget, not a message limit.
 ## Ingress and queries
 
 See [API.md](API.md) for exact payloads, errors, retry and cursor semantics.
-Message IDs and operation receipts are durable before success is returned.
-Success means local acceptance, not model execution, consumption or completion.
-A lost response is recovered by retrying the same operationId and parameters.
+Core commits the Message and its applicable internal delivery before returning
+an acceptance receipt. Retry a lost response with the same native message
+identity and business content. Session acceptance, business completion and
+channel delivery have separate states.
 When execution is configured, accepted input is automatically dispatched through
 massd after fixed-identity Session preparation. No DWS call is made by Core.
 
 Open the printed `/observer/` URL for the Topic workspace. Its activity
-combines routing decisions, Topic reception and return, and channel reply
+combines routing deliveries, Topic reception and return, and channel reply
 states. The Issue view shows requirements, Worker execution, Reports and
 explicit business acceptance. Trigger messages display the channel original,
 Thread and routing or echo history. Diagnostics opens the collection
-lists and detail drawers. The overview shows channel connection and admission, Router
+lists and detail drawers. The overview shows Router
 preparation, business state, and input and reply evidence. Message drawers
 show the full body and provide links to Thread, routing history and replies.
-Topic and Issue drawers link to PR associations, their subscription and Thread
-history. A newly registered Thread shows when it has received no source input.
-Topics, route decisions, subscriptions, reception/return history, Session
-bindings and actual input receipts are visible in separate collections. Issue
+Topic and Issue workspaces show the PR URLs they follow and their subscriptions.
+The PR details link to Thread history. A newly registered Thread shows when it
+has received no source input.
+The diagnostics list Topics, subscriptions, routing history, Session bindings
+and internal delivery acceptance. Issue
 drawers link to their Execution history, startup evidence and Report timeline.
 Message and Thread drawers link to reply history. Outbox details show the
-target, author, attempts, channel task and observed native send results.
+target, blocker reference, status, channel task and native send results.
 Topic and Issue details display the recorded acceptance. Session preparation
 links to stored massd history and a live preview. A disconnect is visible and
 the next connection rereads stored history. Browser requests use GET for
@@ -151,8 +153,8 @@ child Core processes receive empty HOME/PATH and never invoke models or DWS.
 A `coretest` build-only gate pauses immediately before COMMIT or after COMMIT
 before response, allowing SIGKILL and public restart readback to verify ingress,
 routing and Report-notification atomicity.
-Outbox process tests cover lease expiry with a test-only clock, independent
-consumer restart, task recovery and result receipts lost at commit boundaries.
+Outbox process tests cover account isolation, durable task and result writes,
+retry timing, quoted blocker resolution and continuation across Core restart.
 Normal builds contain no crash-gate environment behavior. Routing tests use
 real Core subprocesses, the public MASS client/WebSocket/Service and a controlled
 Driver. A WebSocket proxy discards actual Session-create responses after Service

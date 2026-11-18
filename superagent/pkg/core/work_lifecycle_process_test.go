@@ -107,44 +107,43 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 		}
 	}()
 	require.Equal(t, workerBinding.SessionID, inFlight.session)
-	decodeBatch(t, inFlight, x.StartEventID)
+	decodeInternalBatch(t, inFlight, x.StartEventID)
 	cancel := issueLifecycle("cancel-in-flight", work.Issue)
 	canceled := mcpWork[core.WorkReceipt](t, topic, "issue_cancel", cancel)
-	require.Equal(t, canceled, mcpWork[core.WorkReceipt](t, topic, "issue_cancel", cancel))
+	mcpWorkError(t, topic, "issue_cancel", "conflict", cancel)
 	require.Equal(t, "canceled", canceled.Issue.Status)
 	require.Empty(t, canceled.Issue.CurrentExecutionID)
 	require.Equal(t, "requested", canceled.Execution.Stop.Status)
 	reopen := issueLifecycle("open-issue", canceled.Issue)
 	reopened := mcpWork[core.WorkReceipt](t, topic, "issue_reopen", reopen)
-	require.Equal(t, reopened, mcpWork[core.WorkReceipt](t, topic, "issue_reopen", reopen))
+	mcpWorkError(t, topic, "issue_reopen", "conflict", reopen)
 	require.Equal(t, "pending", reopened.Issue.Status)
 	require.Nil(t, reopened.Execution)
-	require.Equal(t, work, mcpWork[core.WorkReceipt](t, topic, "issue_start", start))
+	mcpWorkError(t, topic, "issue_start", "conflict", start)
 	nextStart := startRequest("second-start", reopened.Issue)
 	mcpWorkError(t, topic, "issue_start", "failed_precondition", nextStart)
 	mcpWorkError(t, worker, "issue_get_current", "stale_binding", struct{}{})
 	require.Len(t, page(t, p, "executions").Items, 1)
 	require.Equal(t, dependent, readRecord[core.Issue](t, p, "issues/"+dependent.ID))
-	dependencyEvents := issueEvents(t, p, "issue.dependency_changed")
+	dependencyEvents := dependencyDeliveries(t, f)
 	require.Len(t, dependencyEvents, 2)
 	for _, e := range dependencyEvents {
-		require.JSONEq(t, string(e.Payload), string(readRecord[core.Event](t, p, "events/"+e.ID).Payload))
-		require.Equal(t, "context", e.Intent)
-		require.Contains(t, string(e.Payload), dependent.ID)
+		require.Equal(t, "context_supplement", e.Kind)
+		require.Contains(t, string(e.Body), dependent.ID)
 	}
-	require.Contains(t, string(dependencyEvents[0].Payload), `"status":"canceled"`)
-	require.Contains(t, string(dependencyEvents[1].Payload), `"status":"pending"`)
+	require.Contains(t, string(dependencyEvents[0].Body), `"status":"canceled"`)
+	require.Contains(t, string(dependencyEvents[1].Body), `"status":"pending"`)
 	var notified []string
 	for len(notified) < len(dependencyEvents) {
 		dependencyNotice := peer.next(t, "thread/inject_items")
 		dependencyNotice.accept()
-		for _, e := range decodeBatch(t, dependencyNotice).Events {
-			notified = append(notified, e.EventID)
+		for _, e := range decodeInternalBatch(t, dependencyNotice) {
+			notified = append(notified, e.ID)
 		}
 	}
 	require.Equal(t, []string{dependencyEvents[0].ID, dependencyEvents[1].ID}, notified)
 	inFlight.accept()
-	waitDelivery(t, p, x.StartEventID, "delivered")
+	require.Empty(t, waitWorkDelivery(t, p, x.StartEventID, "superseded").SentAt)
 	stop := waitObservedStop(t, p, "executions", x.ID)
 	require.Equal(t, "controlAcknowledged", stop.Receipt.Result)
 	require.Equal(t, "idle", stop.Observation.State)
@@ -161,7 +160,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	plain := recoveryFor("unsafe-detach", "settle", workerBinding.ID)
 	status, data := request(t, http.MethodPost, p.endpoint, "/v1/operator/input-recovery", string(opToken), plain)
 	errorCode(t, status, data, http.StatusConflict, "failed_precondition")
-	require.Equal(t, "blocked", readRecord[core.Recovery](t, p, "recoveries/"+plain.OperationID).Status)
+	require.Equal(t, "blocked", inspectRoleBinding(t, p, operatorFile, workerBinding.ID).Binding.Recovery.Status)
 	old := recoveryFor("close-first-runtime", "replace", workerBinding.ID)
 	old.StopRuntime = true
 	release := recoverRoleBinding(t, p, operatorFile, old)
@@ -177,38 +176,46 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: workerBinding.SessionID}, &previous))
 	require.Equal(t, "offline", string(previous.Status.State))
 
+	amended := mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
+		OperationID: "amend-while-reopened", IssueID: issue.ID, ExpectedRevision: reopened.Issue.Revision,
+		Goal: "Verify the replacement build as well.",
+	})
+	nextStart.ExpectedRevision = amended.Issue.Revision
 	next := mcpWork[core.WorkReceipt](t, topic, "issue_start", nextStart)
 	nextBinding := waitBinding(t, p, "worker", next.Execution.ID, "ready")
 	require.Equal(t, x.Generation+1, next.Execution.Generation)
 	require.NotEqual(t, workerBinding.SessionID, nextBinding.SessionID)
 	nextInput := peer.next(t, "turn/start")
 	require.Equal(t, nextBinding.SessionID, nextInput.session)
-	decodeBatch(t, nextInput, next.Execution.StartEventID)
+	decodeInternalBatch(t, nextInput, next.Execution.StartEventID)
 	require.Contains(t, nextInput.text, x.ID)
 	nextInput.accept()
-	waitDelivery(t, p, next.Execution.StartEventID, "delivered")
+	waitWorkDelivery(t, p, next.Execution.StartEventID, "sent")
 	mcpWorkError(t, worker, "issue_get_current", "stale_binding", struct{}{})
 	for _, tool := range []string{"register_pr", "event_ack", "event_get", "issue_material_get"} {
 		status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/"+tool, workerToken, map[string]any{"messageId": source.MessageID})
 		errorCode(t, status, data, http.StatusConflict, "stale_binding")
 	}
-	reportReq := core.ReportRequest{OperationID: "late-ready", Kind: "ready", Summary: "Late evidence on the first execution"}
+	reportReq := core.ReportRequest{OperationID: "late-ready", Kind: "ready", Summary: "Late evidence on the first execution", GoalRevision: x.Revision}
+	impossible := reportReq
+	impossible.GoalRevision = next.Execution.Revision
+	mcpWorkError(t, worker, "report_submit", "invalid_argument", impossible)
 	report := mcpWork[core.Report](t, worker, "report_submit", reportReq)
 	require.Equal(t, report, mcpWork[core.Report](t, worker, "report_submit", reportReq))
 	require.True(t, report.Historical)
 	require.Equal(t, x.ID, report.ExecutionID)
 	notice := peer.next(t, "thread/inject_items")
 	require.Equal(t, topicBinding.SessionID, notice.session)
-	require.Equal(t, "context", decodeBatch(t, notice, report.EventID).Events[0].Intent)
+	require.Equal(t, "context_supplement", decodeInternalBatch(t, notice, report.EventID)[0].Kind)
 	notice.accept()
-	waitDelivery(t, p, report.EventID, "delivered")
+	waitWorkDelivery(t, p, report.EventID, "sent")
 	require.Equal(t, next.Execution.ID, readRecord[core.Issue](t, p, "issues/"+issue.ID).CurrentExecutionID)
 	waitWorkerObservation(t, p, next.Execution, "observing")
 	nextInput.end("turn-" + nextInput.session)
 	ended := waitWorkerObservation(t, p, next.Execution, "ended")
 	reminder := checkReminderCall(t, peer, nextBinding, ended)
 	reminder.answer <- nativeDeliveryAnswer{workID: "replacement-execution-reminder"}
-	waitDelivery(t, p, ended.ReminderEventID, "delivered")
+	waitWorkDelivery(t, p, ended.ReminderEventID, "sent")
 	require.Empty(t, readRecord[reminderExecution](t, p, "executions/"+x.ID).ReminderEventID)
 	t.Log("Historical Report did not satisfy the replacement Execution's missing Report check.")
 
@@ -217,13 +224,13 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	incoming.Message.ThreadRef.ID, incoming.Message.Channel = "lifecycle-topic", nil
 	activity := submit(t, p, f, incoming)
 	activityInput := peer.next(t, "turn/start")
-	decodeBatch(t, activityInput, activity.EventID)
+	decodeInternalBatch(t, activityInput, activity.EventID)
 	activityInput.accept()
-	waitDelivery(t, p, activity.EventID, "delivered")
+	waitRouteStatus(t, p, activity.EventID, "sent")
 	sleepingTimer := mcpWork[core.Timer](t, topic, "timer_set", timerInput("before-topic-cancel", timerFuture))
 	topicCancel := lifecycle("cancel-topic", 1)
 	oldTopic := mcpWork[core.Topic](t, topic, "topic_cancel", topicCancel)
-	require.Equal(t, oldTopic, mcpWork[core.Topic](t, topic, "topic_cancel", topicCancel))
+	mcpWorkError(t, topic, "topic_cancel", "stale_binding", topicCancel)
 	require.Equal(t, "canceled", oldTopic.Status)
 	require.Equal(t, "canceled", readRecord[core.Issue](t, p, "issues/"+issue.ID).Status)
 	require.Equal(t, "canceled", readRecord[core.Issue](t, p, "issues/"+dependent.ID).Status)
@@ -234,11 +241,8 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	follow := input("after-topic-cancel")
 	follow.Message.ThreadRef.ID, follow.Message.Channel = "lifecycle-topic", nil
 	queued := submit(t, p, f, follow)
-	require.Equal(t, "pending", readRecord[core.Event](t, p, "events/"+queued.EventID).Status)
-	require.Empty(t, deliveriesFor(t, p, queued.EventID))
-	oldGeneration := oldTopic.LifecycleGeneration - 1
-	fenced := core.Event{ID: "old-topic-generation", Type: "lifecycle.command", Intent: "act", TargetRole: "topic", TargetID: oldTopic.ID, TopicGeneration: &oldGeneration}
-	queueEvents(t, p, fenced)
+	require.Equal(t, "pending", readRecord[observedRouteDelivery](t, p, "routing-deliveries/"+queued.EventID).Status)
+	require.Equal(t, "pending", readRecord[observedRouteDelivery](t, p, "routing-deliveries/"+queued.EventID).Status)
 	peer.quiet(t, 250*time.Millisecond)
 	topicRecovery := recoveryFor("restore-topic", "settle", topicBinding.ID)
 	topicRecovery.StopRuntime = true
@@ -251,19 +255,17 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	require.Equal(t, restored.ReplacementBinding, newTopic.ID)
 	require.Equal(t, topicBinding.Generation+1, newTopic.Generation)
 	require.NotEqual(t, topicBinding.SessionID, newTopic.SessionID)
-	recoveries := issueEvents(t, p, "binding.recovered")
-	require.Len(t, recoveries, 1)
 	var foundFollowup, foundRecovery bool
 	for range 4 {
 		call := peer.next(t, "")
 		require.Equal(t, newTopic.SessionID, call.session)
-		for _, e := range decodeBatch(t, call).Events {
-			if e.EventID == queued.EventID {
-				require.Equal(t, "turn/start", call.method)
+		for _, delivery := range decodeInternalBatch(t, call) {
+			if delivery.ID == queued.EventID {
+				require.Equal(t, "routed_message", delivery.Kind)
+				foundFollowup = true
 			}
-			foundFollowup = foundFollowup || e.EventID == queued.EventID
-			foundRecovery = foundRecovery || e.EventID == recoveries[0].ID
 		}
+		foundRecovery = foundRecovery || strings.Contains(call.text, "binding_recovered")
 		call.answer <- nativeDeliveryAnswer{complete: true}
 		if foundFollowup && foundRecovery {
 			break
@@ -271,9 +273,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	}
 	require.True(t, foundFollowup)
 	require.True(t, foundRecovery)
-	waitDelivery(t, p, recoveries[0].ID, "delivered")
-	waitDelivery(t, p, queued.EventID, "delivered")
-	require.Zero(t, waitDelivery(t, p, fenced.ID, "superseded").Attempts)
+	waitRouteStatus(t, p, queued.EventID, "sent")
 	require.Equal(t, "canceled", readRecord[core.Topic](t, p, "topics/"+oldTopic.ID).Status)
 	newOwner := startRoleMCP(t, f, newTopic)
 	reopenedTopic := mcpWork[core.Topic](t, newOwner, "topic_reopen", lifecycle("reopen-topic", oldTopic.Revision))
@@ -281,7 +281,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	require.Equal(t, oldTopic.LifecycleGeneration+1, reopenedTopic.LifecycleGeneration)
 	timerAfterReopen := mcpWork[timerRecord](t, newOwner, "work_query", core.QueryRequest{Collection: "timers", ID: sleepingTimer.ID})
 	require.Equal(t, "invalidated", timerAfterReopen.Status)
-	require.Empty(t, timerAfterReopen.FollowupEventID)
+	require.Empty(t, timerAfterReopen.TriggerMessageID)
 	require.Equal(t, "canceled", readRecord[core.Issue](t, p, "issues/"+issue.ID).Status)
 	require.Len(t, page(t, p, "executions").Items, 2)
 	mcpWorkError(t, topic, "issue_create", "stale_binding", issueInput(f.dir, "old-delayed-command"))
@@ -296,13 +296,13 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	thirdInput := peer.next(t, "turn/start")
 	thirdInput.accept()
 	require.Equal(t, thirdBinding.SessionID, thirdInput.session)
-	decodeBatch(t, thirdInput, third.Execution.StartEventID)
-	waitDelivery(t, p, third.Execution.StartEventID, "delivered")
+	decodeInternalBatch(t, thirdInput, third.Execution.StartEventID)
+	waitWorkDelivery(t, p, third.Execution.StartEventID, "sent")
 	for _, path := range []string{"/v1/observer/topics/" + oldTopic.ID, "/v1/observer/bindings/" + newTopic.ID} {
 		status, _ = request(t, http.MethodPost, p.endpoint, path, string(opToken), nil)
 		require.Equal(t, http.StatusMethodNotAllowed, status)
 	}
-	t.Log("An in-flight send retained its actual receipt with zero second authorities before verified release. Topic recovery accounted for its retired Worker and allowed a later explicitly started generation.")
+	t.Log("An in-flight send stayed superseded; no second authority before verified release. Topic recovery accounted for its retired Worker and allowed a later explicitly started generation.")
 }
 
 func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
@@ -337,7 +337,7 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	p := f.start()
 	router := startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))
 	source := submit(t, p, f, input("claude-reuse"))
-	waitDelivery(t, p, source.EventID, "delivered")
+	waitRouteStatus(t, p, source.EventID, "sent")
 	decision := mcpWork[core.RouteDecision](t, router, "route_decide", newRoute("claude-reuse", []string{source.MessageID}, workspace))
 	topic := startRoleMCP(t, f, waitBinding(t, p, "topic", decision.Targets[0].TopicID, "ready"))
 	waitDelivered(t, p, source.MessageID, "topic", decision.Targets[0].TopicID)
@@ -347,7 +347,7 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	old := waitBinding(t, p, "worker", work.Execution.ID, "ready")
 	oldProcess := startRoleMCP(t, f, old)
 	oldCredential := roleToken(t, f, old)
-	waitDelivery(t, p, work.Execution.StartEventID, "delivered")
+	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
 	gap := waitWorkerObservation(t, p, work.Execution, "unknown")
 	require.Equal(t, "claude", gap.WorkObservation.Provider)
 	require.Equal(t, "native_work_identity_unavailable", gap.WorkObservation.ObservationGap)
@@ -418,14 +418,14 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.Equal(t, next.Execution.ID, mcpWork[core.WorkReceipt](t, current, "issue_get_current", struct{}{}).Execution.ID)
 	mcpWorkError(t, oldProcess, "issue_get_current", "stale_binding", struct{}{})
 	require.Equal(t, work.Execution.ID, mcpWork[core.Report](t, oldProcess, "report_submit", core.ReportRequest{
-		OperationID: "claude-old-report", Kind: "progress", Summary: "Old execution facts",
+		OperationID: "claude-old-report", Kind: "progress", Summary: "Old execution facts", GoalRevision: work.Execution.Revision,
 	}).ExecutionID)
-	waitDelivery(t, p, next.Execution.StartEventID, "delivered")
+	waitWorkDelivery(t, p, next.Execution.StartEventID, "sent")
 	t.Logf("Claude native PID %d and its initialized MCP PID %d released before reporting offline; the same Session resumed with a fresh role token", nativePID, nativeMCP)
 }
 
 func TestLifecycleDependencyCrashConsistency(t *testing.T) {
-	for _, stage := range []string{"lifecycle_before_transition", "lifecycle_after_commit"} {
+	for _, stage := range []string{"dependency_before_commit", "lifecycle_after_commit"} {
 		t.Run(stage, func(t *testing.T) {
 			boundary := newRouteBoundary(t)
 			f := fixtureAt(t)
@@ -459,22 +459,25 @@ func TestLifecycleDependencyCrashConsistency(t *testing.T) {
 			require.Error(t, <-done)
 			p = f.start()
 			state := readRecord[core.Issue](t, p, "issues/"+target.ID)
-			events := issueEvents(t, p, "issue.dependency_changed")
-			if stage == "lifecycle_before_transition" {
+			events := dependencyDeliveries(t, f)
+			if stage == "dependency_before_commit" {
 				require.Empty(t, events)
 				require.Equal(t, target, state)
 			} else {
 				require.Len(t, events, 1)
 				require.Equal(t, "canceled", state.Status)
 			}
-			result := mcpWork[core.WorkReceipt](t, topic, "issue_cancel", cancel)
-			require.Equal(t, result, mcpWork[core.WorkReceipt](t, topic, "issue_cancel", cancel))
-			require.Equal(t, "canceled", result.Issue.Status)
-			open := issueLifecycle("crash-cancel-reopen", result.Issue)
+			result := state
+			if stage == "dependency_before_commit" {
+				result = mcpWork[core.WorkReceipt](t, topic, "issue_cancel", cancel).Issue
+			}
+			mcpWorkError(t, topic, "issue_cancel", "conflict", cancel)
+			require.Equal(t, "canceled", result.Status)
+			open := issueLifecycle("crash-cancel-reopen", result)
 			reopened := mcpWork[core.WorkReceipt](t, topic, "issue_reopen", open)
-			require.Equal(t, reopened, mcpWork[core.WorkReceipt](t, topic, "issue_reopen", open))
+			mcpWorkError(t, topic, "issue_reopen", "conflict", open)
 			require.Equal(t, "pending", reopened.Issue.Status)
-			require.Len(t, issueEvents(t, p, "issue.dependency_changed"), 2)
+			require.Len(t, dependencyDeliveries(t, f), 2)
 			require.Equal(t, dependent, readRecord[core.Issue](t, p, "issues/"+dependent.ID))
 			require.Empty(t, page(t, p, "executions").Items)
 			t.Logf("%s: restart saw %d committed dependency facts; cancel/reopen replay left two facts and no downstream changes", stage, len(events))

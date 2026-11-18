@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,19 +16,21 @@ import (
 )
 
 type Server struct {
-	bindingOperations sync.Map
-	runtimeOperations sync.RWMutex
-	workerWatches     sync.Map
-	workerWatchGroup  sync.WaitGroup
-	executionCancel   context.CancelFunc
-	executionDone     chan struct{}
-	outboxCancel      context.CancelFunc
-	outboxDone        chan struct{}
-	observerLife      context.Context
-	store             *Store
-	config            Config
-	http              *http.Server
-	listener          net.Listener
+	bindingOperations       sync.Map
+	sessionInputs           sync.Map
+	internalDeliveryRetries sync.Map
+	runtimeOperations       sync.RWMutex
+	workerWatches           sync.Map
+	workerWatchGroup        sync.WaitGroup
+	executionCancel         context.CancelFunc
+	executionDone           chan struct{}
+	outboxCancel            context.CancelFunc
+	outboxDone              chan struct{}
+	observerLife            context.Context
+	store                   *Store
+	config                  Config
+	http                    *http.Server
+	listener                net.Listener
 }
 
 func Start(c Config) (*Server, error) {
@@ -37,37 +38,15 @@ func Start(c Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	listen := c.Listen
-	if c.Execution != nil {
-		var persisted string
-		readErr := store.db.QueryRowContext(context.Background(), "SELECT value FROM core_settings WHERE key='executionListen'").Scan(&persisted)
-		if readErr == nil {
-			host, port, splitErr := net.SplitHostPort(c.Listen)
-			savedHost, _, savedErr := net.SplitHostPort(persisted)
-			if splitErr != nil || savedErr != nil || host != savedHost || (port != "0" && c.Listen != persisted) {
-				_ = store.Close()
-				return nil, problem("failed_precondition", "execution listener differs from persisted endpoint; existing MCP processes require the original endpoint")
-			}
-			listen = persisted
-		} else if !errors.Is(readErr, sql.ErrNoRows) {
-			_ = store.Close()
-			return nil, storageError()
-		}
-	}
-	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", listen)
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", c.Listen)
 	if err != nil {
 		_ = store.Close()
 		return nil, problem("unavailable", "cannot bind listen address")
 	}
 	s := &Server{store: store, config: c, listener: l}
 	if c.Execution != nil {
-		if _, err = store.db.ExecContext(context.Background(), "INSERT INTO core_settings(key,value) VALUES('executionListen',?) ON CONFLICT(key) DO NOTHING", l.Addr().String()); err != nil {
-			_ = l.Close()
-			_ = store.Close()
-			return nil, storageError()
-		}
-		if _, err = store.db.ExecContext(context.Background(), `UPDATE bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
- WHERE state='ready' AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.binding_id=bindings.id AND d.status='blocked_unknown')`); err != nil {
+		if _, err = store.db.ExecContext(context.Background(), `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
+ WHERE state='ready'`); err != nil {
 			_ = l.Close()
 			_ = store.Close()
 			return nil, storageError()
@@ -177,8 +156,6 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.write(w, http.StatusOK, receipt)
-	case r.URL.Path == "/v1/channel/heartbeat":
-		s.heartbeat(w, r)
 	case r.URL.Path == "/v1/channel/outbox" || strings.HasPrefix(r.URL.Path, "/v1/channel/outbox/"):
 		s.channelOutbox(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/role/"):
@@ -334,7 +311,7 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 		}
 		body = strings.ReplaceAll(body, string(encoded[1:len(encoded)-1]), "[redacted]")
 	}
-	rows, queryErr := s.store.db.QueryContext(ctx, "SELECT token FROM bindings")
+	rows, queryErr := s.store.db.QueryContext(ctx, "SELECT token FROM session_bindings")
 	if queryErr != nil {
 		return "", queryErr
 	}

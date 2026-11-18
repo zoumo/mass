@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +18,7 @@ import (
 
 type issueDetail struct {
 	core.Issue
-	LatestRequirementsNotification *core.Event `json:"latestRequirementsNotification"`
+	LatestRequirementsNotification *workDeliveryRecord `json:"latestRequirementsNotification"`
 	WorkerSession                  struct {
 		ExecutionID string `json:"executionId"`
 		State       string `json:"state"`
@@ -40,12 +42,13 @@ func dependency(issue core.Issue) core.BlockerInput {
 }
 
 func TestIssueBlockersAndRequirementsThroughNativeDelivery(t *testing.T) {
+	t.Parallel()
 	peer := newNativeDeliveryPeer(t)
 	endpoint, _ := startDeliveryMassd(t, peer)
 	f, _ := deliveryFixture(t, endpoint)
 	p := f.start()
 	router := startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))
-	topicBinding, _ := nativeWorkTopic(t, f, p, peer, router, "changes-main")
+	topicBinding, source := nativeWorkTopic(t, f, p, peer, router, "changes-main")
 	foreignBinding, _ := nativeWorkTopic(t, f, p, peer, router, "changes-foreign")
 	topic, foreign := startRoleMCP(t, f, topicBinding), startRoleMCP(t, f, foreignBinding)
 	token := roleToken(t, f, topicBinding)
@@ -54,6 +57,18 @@ func TestIssueBlockersAndRequirementsThroughNativeDelivery(t *testing.T) {
 	}
 	a, b, c := create(topic, "a"), create(topic, "b"), create(topic, "c")
 	other := create(foreign, "foreign")
+	start := mcpWork[core.WorkReceipt](t, topic, "issue_start", startRequest("start-a", a))
+	require.Equal(t, a.RequirementsRevision, start.Execution.Revision)
+	workerBinding := waitBinding(t, p, "worker", start.Execution.ID, "ready")
+	worker := startRoleMCP(t, f, workerBinding)
+	native := peer.next(t, "turn/start")
+	require.Equal(t, workerBinding.SessionID, native.session)
+	startEvent := decodeInternalBatch(t, native, start.Execution.StartEventID)[0]
+	require.Equal(t, "worker_started", startEvent.Kind)
+	require.JSONEq(t, `{"kind":"issue","id":"`+a.ID+`","goal_revision":1}`, string(startEvent.Content.Refs[0]))
+	native.accept()
+	waitWorkDelivery(t, p, start.Execution.StartEventID, "sent")
+	a = start.Issue
 	a = blockers(t, topic, a, "block-a", human("Verify logs"), dependency(b), human("Get approval"))
 	c = blockers(t, topic, c, "block-c", human("Confirm handoff"), dependency(a))
 	require.Equal(t, 1, a.RequirementsRevision)
@@ -83,22 +98,8 @@ func TestIssueBlockersAndRequirementsThroughNativeDelivery(t *testing.T) {
 	}
 	mcpWorkError(t, topic, "issue_update_requirements", "failed_precondition", premature)
 	require.Equal(t, b, readRecord[core.Issue](t, p, "issues/"+b.ID))
-	require.Empty(t, issueEvents(t, p, "issue.requirements_updated"))
+	require.Empty(t, workDeliveries(t, p, "worker_update"))
 
-	start := mcpWork[core.WorkReceipt](t, topic, "issue_start", core.StartIssueRequest{
-		OperationID: "start-a", IssueID: a.ID, ExpectedRevision: a.Revision,
-	})
-	require.Equal(t, "blocked", start.Issue.Status)
-	require.Equal(t, a.Blockers, start.Issue.Blockers)
-	require.Equal(t, a.RequirementsRevision, start.Execution.Revision)
-	a = start.Issue
-	workerBinding := waitBinding(t, p, "worker", start.Execution.ID, "ready")
-	worker := startRoleMCP(t, f, workerBinding)
-	native := peer.next(t, "turn/start")
-	require.Equal(t, workerBinding.SessionID, native.session)
-	require.Equal(t, a.RequirementsRevision, decodeBatch(t, native, start.Execution.StartEventID).Events[0].Revision)
-	native.accept()
-	waitDelivery(t, p, start.Execution.StartEventID, "delivered")
 	require.Eventually(t, func() bool {
 		detail := readRecord[issueDetail](t, p, "issues/"+a.ID)
 		return detail.Status == "blocked" && detail.WorkerSession.ExecutionID == start.Execution.ID &&
@@ -106,19 +107,49 @@ func TestIssueBlockersAndRequirementsThroughNativeDelivery(t *testing.T) {
 	}, 7*time.Second, 20*time.Millisecond)
 
 	release := core.UpdateBlockersRequest{
-		OperationID: "one-blocker", IssueID: a.ID, ExpectedRevision: a.Revision, ResolveBlockerIDs: []string{a.Blockers[0].ID},
+		OperationID: "one-blocker", IssueID: a.ID, ExpectedRevision: a.Revision, Resolve: []core.BlockerResolution{{BlockerID: a.Blockers[0].ID, Reason: "The logs were reviewed", MessageID: source.MessageID}},
 	}
 	prior := a
 	a = mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", release).Issue
 	require.Equal(t, prior.Blockers[1:], a.Blockers)
+	require.Len(t, a.ResolvedBlockers, 1)
+	require.Equal(t, release.Resolve[0], a.ResolvedBlockers[0].Resolution.BlockerResolution)
+	require.NotEmpty(t, a.ResolvedBlockers[0].Resolution.At)
+	stale := release
+	stale.ExpectedRevision = a.Revision
+	stale.OperationID = "already-resolved"
+	mcpWorkError(t, topic, "issue_update_blockers", "not_found", stale)
 	require.Equal(t, "blocked", a.Status)
 	require.Equal(t, start.Execution.ID, a.CurrentExecutionID)
 	require.Equal(t, prior.RequirementsRevision, a.RequirementsRevision)
 	mcpWorkError(t, topic, "issue_start", "conflict", core.StartIssueRequest{
 		OperationID: "duplicate-start-with-resolution", IssueID: a.ID, ExpectedRevision: a.Revision,
-		ResolveBlockerIDs: []string{a.Blockers[0].ID},
+		Resolve: []core.BlockerResolution{{BlockerID: a.Blockers[0].ID, Reason: "The logs were reviewed", MessageID: source.MessageID}},
 	})
 	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
+	context := core.WorkerUpdateRequest{
+		OperationID: "background", IssueID: a.ID, ExpectedRevision: a.Revision, Mode: "context_supplement",
+		Note: strings.Repeat("日志", 5300), Materials: []core.Material{{MessageID: source.MessageID}},
+	}
+	supplement := mcpWork[core.WorkReceipt](t, topic, "issue_worker_update", context)
+	require.Equal(t, supplement, mcpWork[core.WorkReceipt](t, topic, "issue_worker_update", context))
+	require.Equal(t, a, supplement.Issue)
+	call := peer.next(t, "thread/inject_items")
+	require.Equal(t, workerBinding.SessionID, call.session)
+	trimmed := decodeInternalBatch(t, call, supplement.NotificationEventID)[0]
+	require.True(t, trimmed.Truncated)
+	require.Equal(t, "context_supplement", trimmed.Kind)
+	lookup := map[string]string{"delivery_id": supplement.NotificationEventID}
+	full := mcpWork[internalEvent](t, worker, "delivery_get", lookup)
+	var body struct{ Note string }
+	require.NoError(t, json.Unmarshal(full.Content.Body, &body))
+	require.Equal(t, context.Note, body.Note)
+	require.JSONEq(t, `{"kind":"trigger_message","id":"`+source.MessageID+`"}`, string(full.Content.Refs[1]))
+	mcpWorkError(t, foreign, "delivery_get", "not_found", lookup)
+	call.accept()
+	waitWorkDelivery(t, p, supplement.NotificationEventID, "sent")
+	context.Mode, context.OperationID = "continue", "too-early"
+	mcpWorkError(t, topic, "issue_worker_update", "failed_precondition", context)
 	peer.quiet(t, 300*time.Millisecond)
 
 	silent := core.UpdateRequirementsRequest{OperationID: "silent", IssueID: a.ID, ExpectedRevision: a.Revision, Requirements: "Read this on the next query."}
@@ -129,9 +160,82 @@ func TestIssueBlockersAndRequirementsThroughNativeDelivery(t *testing.T) {
 	mcpWorkError(t, worker, "issue_update_requirements", "forbidden", silent)
 	a = mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", silent).Issue
 	require.Equal(t, 2, a.RequirementsRevision)
+	unchanged := silent
+	unchanged.OperationID, unchanged.ExpectedRevision = "same-goal", a.Revision
+	require.Equal(t, a, mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", unchanged).Issue)
 	require.Equal(t, a, mcpWork[core.WorkReceipt](t, worker, "issue_get_current", struct{}{}).Issue)
-	require.Empty(t, issueEvents(t, p, "issue.requirements_updated"))
+	require.Empty(t, workDeliveries(t, p, "worker_update"))
 	peer.quiet(t, 300*time.Millisecond)
+
+	complete := core.CompleteIssueRequest{IssueID: b.ID, CompleteRequest: acceptance("complete-b", b.Revision, "verified.txt")}
+	mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
+	mcpWorkError(t, topic, "issue_complete", "conflict", complete)
+	facts := dependencyDeliveries(t, f)
+	require.Len(t, facts, 1)
+	factInput := peer.next(t, "thread/inject_items")
+	require.Equal(t, topicBinding.SessionID, factInput.session)
+	fact := decodeInternalBatch(t, factInput, facts[0].ID)[0]
+	require.Equal(t, "context_supplement", fact.Kind)
+	require.Equal(t, deliveryParty{Kind: "core"}, fact.Sender)
+	require.Equal(t, deliveryParty{Kind: "topic", TopicID: topicBinding.OwnerID}, fact.Recipient)
+	require.JSONEq(t, string(facts[0].Body), string(fact.Content.Body))
+	require.Len(t, fact.Content.Refs, 1)
+	require.JSONEq(t, `{"kind":"issue","id":"`+b.ID+`"}`, string(fact.Content.Refs[0]))
+	query := map[string]string{"delivery_id": fact.ID}
+	fullFact := mcpWork[internalEvent](t, topic, "delivery_get", query)
+	require.Equal(t, fact, fullFact)
+	mcpWorkError(t, foreign, "delivery_get", "not_found", query)
+	var change struct {
+		DependencyIssueID, PreviousStatus, Status string
+		DependentIssueIDs                         []string
+	}
+	require.NoError(t, json.Unmarshal(fact.Content.Body, &change))
+	require.Equal(t, b.ID, change.DependencyIssueID)
+	require.Equal(t, "pending", change.PreviousStatus)
+	require.Equal(t, "completed", change.Status)
+	require.Equal(t, []string{a.ID}, change.DependentIssueIDs)
+	factInput.accept()
+	require.NotEmpty(t, waitInternalDelivery(t, f, fact.ID, "sent").SentAt)
+	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
+	require.Equal(t, c, readRecord[core.Issue](t, p, "issues/"+c.ID))
+	require.Len(t, page(t, p, "executions").Items, 1)
+	peer.quiet(t, 300*time.Millisecond)
+	t.Log("dependency completion injected a context fact into Topic; no dependent state change, native stop or follow-on start")
+
+	partial := core.UpdateBlockersRequest{
+		OperationID: "remaining-human", IssueID: a.ID, ExpectedRevision: a.Revision,
+		Resolve:      []core.BlockerResolution{{BlockerID: a.Blockers[1].ID, Reason: "Approval confirmed"}},
+		NotifyWorker: true,
+	}
+	mcpWorkError(t, topic, "issue_update_blockers", "failed_precondition", partial)
+	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
+	partial.NotifyWorker = false
+	a = mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", partial).Issue
+	require.Equal(t, "blocked", a.Status)
+	require.Len(t, a.Blockers, 1)
+	require.Equal(t, "dependency", a.Blockers[0].Kind)
+	blockedStart := startRequest("blocked-start-c", c)
+	blockedStart.Resolve = []core.BlockerResolution{{BlockerID: c.Blockers[0].ID, Reason: "Handoff verified"}}
+	mcpWorkError(t, topic, "issue_start", "failed_precondition", blockedStart)
+	require.Equal(t, c, readRecord[core.Issue](t, p, "issues/"+c.ID))
+	resolve := core.UpdateBlockersRequest{
+		OperationID: "resolve-dependency", IssueID: a.ID, ExpectedRevision: a.Revision,
+		Resolve: []core.BlockerResolution{{BlockerID: a.Blockers[0].ID, Reason: "Verified dependency completion"}},
+	}
+	mcpWorkError(t, topic, "issue_update_blockers", "invalid_argument", resolve)
+	resolve.UnblockedStatus, resolve.NotifyWorker = "active", true
+	resolved := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", resolve)
+	mcpWorkError(t, topic, "issue_update_blockers", "conflict", resolve)
+	require.Equal(t, "active", resolved.Issue.Status)
+	require.Empty(t, resolved.Issue.Blockers)
+	require.Len(t, resolved.Issue.ResolvedBlockers, 3)
+	require.Equal(t, a.RequirementsRevision, resolved.Issue.RequirementsRevision)
+	resumed := peer.next(t, "turn/start")
+	require.Equal(t, workerBinding.SessionID, resumed.session)
+	require.Equal(t, "worker_update", decodeInternalBatch(t, resumed, resolved.NotificationEventID)[0].Kind)
+	resumed.accept()
+	waitWorkDelivery(t, p, resolved.NotificationEventID, "sent")
+	a = resolved.Issue
 
 	type updateResult struct {
 		req    core.UpdateRequirementsRequest
@@ -173,35 +277,30 @@ func TestIssueBlockersAndRequirementsThroughNativeDelivery(t *testing.T) {
 	}
 	require.Equal(t, 1, accepted)
 	require.Equal(t, 1, conflicts)
-	updated := mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", winner.req)
+	var updateResponse struct{ Result core.WorkReceipt }
+	require.NoError(t, json.Unmarshal(winner.body, &updateResponse))
+	updated := updateResponse.Result
+	mcpWorkError(t, topic, "issue_update_requirements", "conflict", winner.req)
 	require.Equal(t, winner.req.Requirements, updated.Issue.Requirements)
 	require.Equal(t, a.RequirementsRevision+1, updated.Issue.RequirementsRevision)
 	require.NotEmpty(t, updated.NotificationEventID)
 	notice := peer.next(t, "turn/start")
 	require.Equal(t, workerBinding.SessionID, notice.session)
-	wire := decodeBatch(t, notice, updated.NotificationEventID).Events[0]
-	require.Equal(t, "act", wire.Intent)
-	require.Equal(t, "issue.requirements_updated", wire.Type)
-	require.Equal(t, updated.Issue.RequirementsRevision, wire.Revision)
-	require.Equal(t, start.Execution.Generation, wire.TargetGeneration)
-	require.True(t, wire.Truncated)
-	require.Equal(t, core.ContentRef{Collection: "events", ID: updated.NotificationEventID}, wire.ContentRef)
-	lookup := map[string]string{"eventId": updated.NotificationEventID}
-	full := mcpWork[core.Event](t, worker, "event_get", lookup)
-	var payload struct{ Requirements string }
-	require.NoError(t, json.Unmarshal(full.Payload, &payload))
-	require.Equal(t, updated.Issue.Requirements, payload.Requirements)
-	mcpWorkError(t, foreign, "event_get", "not_found", lookup)
+	wire := decodeInternalBatch(t, notice, updated.NotificationEventID)[0]
+	require.Equal(t, "worker_update", wire.Kind)
+	require.Equal(t, start.Execution.ID, wire.Recipient.ExecutionID)
+	require.Empty(t, wire.Content.Body)
+	require.JSONEq(t, `{"kind":"issue","id":"`+a.ID+`","goal_revision":3}`, string(wire.Content.Refs[0]))
 	notice.accept()
-	waitDelivery(t, p, updated.NotificationEventID, "delivered")
-	require.Len(t, issueEvents(t, p, "issue.requirements_updated"), 1)
+	waitWorkDelivery(t, p, updated.NotificationEventID, "sent")
+	require.Len(t, workDeliveries(t, p, "worker_update"), 2)
 	view := mcpWork[issueDetail](t, topic, "work_query", core.QueryRequest{Collection: "issues", ID: a.ID})
 	require.Equal(t, updated.Issue, view.Issue)
 	require.NotNil(t, view.LatestRequirementsNotification)
-	require.Equal(t, "delivered", view.LatestRequirementsNotification.Status)
+	require.Equal(t, "sent", view.LatestRequirementsNotification.Status)
 	require.Equal(t, updated.Issue.RequirementsRevision, view.LatestRequirementsNotification.Revision)
 	require.Equal(t, updated.Issue, mcpWork[core.WorkReceipt](t, worker, "issue_get_current", struct{}{}).Issue)
-	t.Log("two public HTTP writers at the same Issue revision committed once; stdio replay and full requirements match the native truncated act event")
+	t.Log("Concurrent updates at the same Issue revision committed once, and the Worker read the full goal through issue_get_current.")
 
 	a = updated.Issue
 	reportReq := core.ReportRequest{OperationID: "report", Kind: "progress", Summary: "Applied updated requirements", Revision: a.Revision}
@@ -210,78 +309,42 @@ func TestIssueBlockersAndRequirementsThroughNativeDelivery(t *testing.T) {
 	report := mcpWork[core.Report](t, worker, "report_submit", reportReq)
 	require.Equal(t, a.RequirementsRevision, report.Revision)
 	reportInput := peer.next(t, "turn/start")
-	decodeBatch(t, reportInput, report.EventID)
+	decodeInternalBatch(t, reportInput, report.EventID)
 	reportInput.answer <- nativeDeliveryAnswer{complete: true}
-	waitDelivery(t, p, report.EventID, "delivered")
-
-	complete := core.CompleteIssueRequest{IssueID: b.ID, CompleteRequest: acceptance("complete-b", b.Revision, "verified.txt")}
-	done := mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
-	require.Equal(t, done, mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete))
-	facts := issueEvents(t, p, "issue.dependency_changed")
-	require.Len(t, facts, 1)
-	factInput := peer.next(t, "thread/inject_items")
-	require.Equal(t, topicBinding.SessionID, factInput.session)
-	fact := decodeBatch(t, factInput, facts[0].ID).Events[0]
-	require.Equal(t, "context", fact.Intent)
-	var change struct {
-		DependencyIssueID, PreviousStatus, Status string
-		DependentIssueIDs                         []string
-	}
-	require.NoError(t, json.Unmarshal(fact.Payload, &change))
-	require.Equal(t, b.ID, change.DependencyIssueID)
-	require.Equal(t, "pending", change.PreviousStatus)
-	require.Equal(t, "completed", change.Status)
-	require.Equal(t, []string{a.ID}, change.DependentIssueIDs)
-	factInput.accept()
-	waitDelivery(t, p, fact.EventID, "delivered")
-	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
-	require.Equal(t, c, readRecord[core.Issue](t, p, "issues/"+c.ID))
-	require.Len(t, page(t, p, "executions").Items, 1)
-	peer.quiet(t, 300*time.Millisecond)
-	t.Log("dependency completion injected a context fact into Topic; no dependent state change, native stop or follow-on start")
-
-	startC := mcpWork[core.WorkReceipt](t, topic, "issue_start", core.StartIssueRequest{
-		OperationID: "start-c", IssueID: c.ID, ExpectedRevision: c.Revision, ResolveBlockerIDs: []string{c.Blockers[0].ID},
-	})
-	require.Equal(t, "blocked", startC.Issue.Status)
-	require.Equal(t, c.Blockers[1:], startC.Issue.Blockers)
-	require.Equal(t, c.RequirementsRevision, startC.Issue.RequirementsRevision)
-	cInput := peer.next(t, "turn/start")
-	decodeBatch(t, cInput, startC.Execution.StartEventID)
-	cInput.accept()
-	waitDelivery(t, p, startC.Execution.StartEventID, "delivered")
-	resolve := core.UpdateBlockersRequest{
-		OperationID: "all-blockers", IssueID: a.ID, ExpectedRevision: a.Revision,
-		ResolveBlockerIDs: []string{a.Blockers[0].ID, a.Blockers[1].ID},
-	}
-	mcpWorkError(t, topic, "issue_update_blockers", "invalid_argument", resolve)
-	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
-	resolve.UnblockedStatus = "active"
-	resolved := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", resolve).Issue
-	require.Equal(t, "active", resolved.Status)
-	require.Empty(t, resolved.Blockers)
-	require.Equal(t, a.CurrentExecutionID, resolved.CurrentExecutionID)
-	require.Equal(t, a.RequirementsRevision, resolved.RequirementsRevision)
-	peer.quiet(t, 300*time.Millisecond)
+	waitWorkDelivery(t, p, report.EventID, "sent")
 
 	rejected := mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
-		OperationID: "native-rejection", IssueID: a.ID, ExpectedRevision: resolved.Revision,
+		OperationID: "native-rejection", IssueID: a.ID, ExpectedRevision: a.Revision,
 		Requirements: "Keep this requirement when delivery fails.", NotifyWorker: true,
 	})
 	rejectedInput := peer.next(t, "turn/start")
 	require.Equal(t, workerBinding.SessionID, rejectedInput.session)
-	decodeBatch(t, rejectedInput, rejected.NotificationEventID)
+	decodeInternalBatch(t, rejectedInput, rejected.NotificationEventID)
 	rejectedInput.answer <- nativeDeliveryAnswer{code: -32602, message: "failed to submit turn input: PlanMode"}
-	failed := waitDelivery(t, p, rejected.NotificationEventID, "blocked")
-	require.NotEmpty(t, failed.LastError)
+	require.Empty(t, waitWorkDelivery(t, p, rejected.NotificationEventID, "pending").SentAt)
 	observation := readRecord[issueDetail](t, p, "issues/"+a.ID)
+	require.Equal(t, []core.Report{report}, observation.Reports)
 	require.Equal(t, rejected.Issue, observation.Issue)
 	require.NotNil(t, observation.LatestRequirementsNotification)
 	require.Equal(t, rejected.NotificationEventID, observation.LatestRequirementsNotification.ID)
-	require.Equal(t, failed.LastError, observation.LatestRequirementsNotification.LastError)
-	require.Equal(t, "blocked", observation.LatestRequirementsNotification.Status)
+	require.Equal(t, "pending", observation.LatestRequirementsNotification.Status)
+	retry := peer.next(t, "turn/start")
+	require.Equal(t, rejectedInput.text, retry.text)
+	retry.accept()
+	waitWorkDelivery(t, p, rejected.NotificationEventID, "sent")
 	peer.quiet(t, 300*time.Millisecond)
-	t.Log("an explicit native rejection left the committed requirements readable and surfaced the delivery error")
+	waiting := blockers(t, topic, rejected.Issue, "wait-for-confirmation", human("Wait for final confirmation"))
+	pending := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", core.UpdateBlockersRequest{
+		OperationID: "resolve-and-leave-pending", IssueID: waiting.ID, ExpectedRevision: waiting.Revision, UnblockedStatus: "pending",
+		Resolve: []core.BlockerResolution{{BlockerID: waiting.Blockers[0].ID, Reason: "Confirmation received"}},
+	})
+	require.Equal(t, "pending", pending.Issue.Status)
+	require.Empty(t, pending.Issue.CurrentExecutionID)
+	require.Equal(t, "historical", pending.Execution.Authority)
+	require.Empty(t, pending.NotificationEventID)
+	_ = waitObservedStop(t, p, "executions", workerBinding.OwnerID)
+	require.Len(t, page(t, p, "executions").Items, 1)
+	t.Log("an explicit native rejection left the committed requirements readable and kept the update pending")
 }
 
 func TestIssueRequirementsCommitCrash(t *testing.T) {
@@ -297,7 +360,7 @@ func TestIssueRequirementsCommitCrash(t *testing.T) {
 			create.Start = true
 			work := roleWork[core.WorkReceipt](t, p, token, "issue_create", create)
 			binding := waitBinding(t, p, "worker", work.Execution.ID, "ready")
-			waitDelivery(t, p, work.Execution.StartEventID, "delivered")
+			waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
 			r := core.UpdateRequirementsRequest{
 				OperationID: "crash-update", IssueID: work.Issue.ID,
 				ExpectedRevision: work.Issue.Revision, Requirements: "Verify the crash-safe requirements", NotifyWorker: true,
@@ -321,7 +384,7 @@ func TestIssueRequirementsCommitCrash(t *testing.T) {
 			require.Error(t, <-done)
 			p = f.start()
 			beforeReplay := readRecord[issueDetail](t, p, "issues/"+r.IssueID)
-			events := issueEvents(t, p, "issue.requirements_updated")
+			events := workDeliveries(t, p, "worker_update")
 			if stage == "requirements_before_notification" {
 				require.Equal(t, work.Issue, beforeReplay.Issue)
 				require.Nil(t, beforeReplay.LatestRequirementsNotification)
@@ -333,13 +396,65 @@ func TestIssueRequirementsCommitCrash(t *testing.T) {
 				require.Equal(t, beforeReplay.LatestRequirementsEventID, events[0].ID)
 			}
 			mcp := startRoleMCP(t, f, topic)
-			saved := mcpWork[core.WorkReceipt](t, mcp, "issue_update_requirements", r)
-			require.Equal(t, saved, mcpWork[core.WorkReceipt](t, mcp, "issue_update_requirements", r))
+			var saved core.WorkReceipt
+			if stage == "requirements_after_commit" {
+				mcpWorkError(t, mcp, "issue_update_requirements", "conflict", r)
+				saved = core.WorkReceipt{Issue: beforeReplay.Issue, NotificationEventID: beforeReplay.LatestRequirementsEventID}
+			} else {
+				saved = mcpWork[core.WorkReceipt](t, mcp, "issue_update_requirements", r)
+			}
+			mcpWorkError(t, mcp, "issue_update_requirements", "conflict", r)
 			require.Equal(t, r.Requirements, saved.Issue.Requirements)
 			require.Equal(t, work.Issue.RequirementsRevision+1, saved.Issue.RequirementsRevision)
-			require.Len(t, issueEvents(t, p, "issue.requirements_updated"), 1)
-			require.Equal(t, binding.ID, waitDelivery(t, p, saved.NotificationEventID, "delivered").BindingID)
+			require.Len(t, workDeliveries(t, p, "worker_update"), 1)
+			require.Equal(t, binding.OwnerID, waitWorkDelivery(t, p, saved.NotificationEventID, "sent").Recipient.ExecutionID)
 			t.Logf("%s restart saw %d committed notifications and matching requirements; replay delivered one event", stage, len(events))
 		})
 	}
+}
+
+func TestWorkerUpdateFencesGoalAndBlockersBeforeRPC(t *testing.T) {
+	t.Parallel()
+	peer := newNativeDeliveryPeer(t)
+	endpoint, _ := startDeliveryMassd(t, peer)
+	f, operatorFile := deliveryFixture(t, endpoint)
+	gate := t.TempDir()
+	stage := "worker_before_rpc"
+	release := filepath.Join(gate, "release")
+	write(t, release, "")
+	p := f.start("SUPERAGENT_TEST_GATE_STAGE="+stage, "SUPERAGENT_TEST_GATE_DIR="+gate)
+	t.Cleanup(func() { write(t, release, "") })
+	topic, _ := startReminderTopic(t, f, p, peer)
+	work, b, start := startReminderWorker(t, f, p, peer, topic)
+	start.accept()
+	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
+	issue := work.Issue
+	for _, change := range []string{"goal", "blocker"} {
+		require.NoError(t, os.Remove(release))
+		require.NoError(t, os.Remove(filepath.Join(gate, stage)))
+		req := core.WorkerUpdateRequest{OperationID: "continue-before-" + change, IssueID: issue.ID, ExpectedRevision: issue.Revision, Mode: "continue"}
+		queued := mcpWork[core.WorkReceipt](t, topic, "issue_worker_update", req)
+		waitWorkGate(t, gate, stage)
+		require.Empty(t, waitWorkDelivery(t, p, queued.NotificationEventID, "pending").SentAt)
+		if change == "goal" {
+			issue = mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
+				OperationID: "new-goal", IssueID: issue.ID, ExpectedRevision: issue.Revision, Goal: "An amended goal.",
+			}).Issue
+		} else {
+			issue = blockers(t, topic, issue, "need-more-input", human("Wait for confirmation"))
+		}
+		write(t, release, "")
+		require.Empty(t, waitWorkDelivery(t, p, queued.NotificationEventID, "superseded").SentAt)
+		peer.quiet(t, 250*time.Millisecond)
+		require.Equal(t, b.OwnerID, readRecord[core.Issue](t, p, "issues/"+issue.ID).CurrentExecutionID)
+	}
+	recovery := recoveryFor("replace-blocked-worker", "replace", b.ID)
+	recovery.StopRuntime = true
+	released := recoverRoleBinding(t, p, operatorFile, recovery)
+	require.Equal(t, "runtime_stopped", released.Close.Method)
+	require.Empty(t, released.ReplacementBinding)
+	require.Empty(t, readRecord[core.Issue](t, p, "issues/"+issue.ID).CurrentExecutionID)
+	require.Equal(t, "blocked", readRecord[core.Issue](t, p, "issues/"+issue.ID).Status)
+	require.Equal(t, "historical", readRecord[core.Execution](t, p, "executions/"+b.OwnerID).Authority)
+	require.Len(t, page(t, p, "executions").Items, 1)
 }

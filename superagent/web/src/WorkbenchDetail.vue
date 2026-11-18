@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatTime, messageTitle, sourceLabel, stateLabel, threadLabel } from './workbench'
+import { formatTime, messageTitle, routingDeliveryLabel, sourceLabel, stateLabel, threadLabel } from './workbench'
 import type { RecordLinks, RelatedKind, RelatedPages, Workbench, WorkbenchRow } from './workbench'
 
 const props = defineProps<{
@@ -33,53 +33,32 @@ const recordStatus = computed(() => {
  const record = props.record
  return props.view === 'messages' ? record.routing?.state || record.echo?.status || record.acceptance : record.status
 })
-const topicIDs = computed(() => [...new Set([
- ...props.record.relations?.map(relation => relation.topicId) || [],
- ...items('decisions').flatMap(decision => decision.targets?.filter(target => target.messageIds.includes(id.value)).map(target => target.topicId) || []),
-])])
+const topicIDs = computed(() => [...new Set(props.record.relations?.map(relation => relation.topicId) || [])])
 type ActivityLink = { view: string; id: string; label: string }
 type Activity = { key: string; at?: string; actor: string; title: string; reason?: string; links?: ActivityLink[] }
 const activity = computed(() => {
  const { record, view } = props
  const entries: Activity[] = []
- const decisions = items('decisions')
  const relations = view === 'topics' ? items('relations') : record.relations || []
  for (const relation of relations) {
-  if (view === 'topics' && relation.decisionId && decisions.some(decision => decision.id === relation.decisionId)) continue
   entries.push({
    key: relation.id || '', at: relation.createdAt,
-   actor: `Topic · 第 ${relation.round} 轮`,
-   title: relation.action === 'returned' ? 'Topic 将消息退回路由器' : relation.action === 'received' ? 'Topic 收到消息' : stateLabel(relation.action),
+   actor: relation.status ? `Topic · ${routingDeliveryLabel(relation.status)}` : `Topic · 第 ${relation.round} 轮`,
+   title: relation.action === 'returned' ? 'Topic 将消息退回路由器' : relation.action === 'received' ? '消息路由至 Topic' : stateLabel(relation.action),
    reason: relation.reason,
    links: view === 'topics' && relation.messageId ? [{ view: 'messages', id: relation.messageId, label: '查看消息' }]
     : relation.topicId ? [{ view: 'topics', id: relation.topicId, label: topicName(relation.topicId) }] : [],
   })
  }
- for (const decision of decisions) {
-  const decisionLinks: ActivityLink[] = [{ view: 'decisions', id: decision.id!, label: '查看决定' }]
-  const relatedMessageIDs = view === 'topics' ? (decision.messageIds || []).filter(messageID =>
-   relations.some(relation => relation.messageId === messageID)
-   || decision.targets?.some(target => target.topicId === id.value && target.messageIds.includes(messageID))) : [id.value]
-  if (view === 'topics') {
-   for (const messageID of relatedMessageIDs.slice(0, 4)) decisionLinks.push({ view: 'messages', id: messageID, label: '查看消息' })
-  }
-  const rounds = [...new Set(relatedMessageIDs.flatMap(messageID => decision.rounds?.[messageID] ?? []))]
-  const created = decision.targets?.some(target => target.create && (view === 'topics' ? target.topicId === id.value : target.messageIds.includes(id.value)))
-  entries.push({
-   key: decision.id!, at: decision.createdAt, actor: rounds.length ? `路由器 · 第 ${rounds.join('、')} 轮` : '路由器',
-   title: decision.kind === 'ignore' ? '路由器忽略了消息' : created ? '路由器创建了 Topic' : '路由器转发了消息',
-   reason: decision.reason, links: decisionLinks,
-  })
- }
  for (const reply of items('outbox')) {
-  // An Outbox item can be created well before the channel confirms its delivery.
   entries.push({
-   key: reply.id!, at: reply.createdAt, actor: `${sourceLabel(reply.source)} · 回执入队`,
+   key: reply.id!, actor: '渠道回复',
    title: `渠道回执 · ${stateLabel(reply.status)}`, reason: reply.text,
    links: [{ view: 'outbox', id: reply.id!, label: '查看发送记录' }],
   })
  }
  if (view === 'messages') {
+  if (record.routing?.state === 'ignored') entries.push({ key: 'ignored', actor: '路由器', title: '路由器忽略了消息' })
   entries.push({ key: 'intake', at: record.receivedAt, actor: '核心服务', title: record.acceptance === 'accepted' ? '核心服务接收了消息' : stateLabel(record.acceptance) })
   if (record.echo) {
    const echo = record.echo
@@ -99,7 +78,7 @@ const activity = computed(() => {
  entries.sort((a, b) => (b.at || '').localeCompare(a.at || ''))
  return view === 'topics' ? entries.slice(0, 12) : entries.reverse()
 })
-const activityError = computed(() => (props.view === 'topics' ? ['relations', 'decisions', 'outbox'] as const : ['decisions', 'outbox'] as const)
+const activityError = computed(() => (props.view === 'topics' ? ['relations', 'outbox'] as const : ['outbox'] as const)
  .some(kind => props.related[kind] instanceof Error))
 </script>
 
@@ -144,16 +123,15 @@ const activityError = computed(() => (props.view === 'topics' ? ['relations', 'd
    </ol>
    <div v-if="view === 'topics'" class="entry-links history-links">
     <a class="text-link" :href="links.href('relations', '', id)" @click="links.follow($event, 'relations', '', id)">路由历史 →</a>
-    <a class="text-link" :href="links.href('decisions', '', id)" @click="links.follow($event, 'decisions', '', id)">路由决定 →</a>
+    <a class="text-link" :href="links.href('routing-deliveries', '', id)" @click="links.follow($event, 'routing-deliveries', '', id)">路由投递 →</a>
     <a class="text-link" :href="links.href('outbox', '', id)" @click="links.follow($event, 'outbox', '', id)">关联回执 →</a>
    </div>
-   <a v-else-if="hasMore('decisions')" class="text-link" :href="links.href('decisions', '', id, 'messageId')" @click="links.follow($event, 'decisions', '', id, 'messageId')">全部路由决定 →</a>
   </section>
 
   <template v-if="view === 'issues'">
    <section class="detail-section">
-    <h3>要求 <span v-if="record.requirementsRevision" class="section-note">版本 {{ record.requirementsRevision }}</span></h3>
-    <pre v-if="record.requirements" class="document-body">{{ record.requirements }}</pre>
+    <h3>目标 <span v-if="record.goalRevision" class="section-note">版本 {{ record.goalRevision }}</span></h3>
+    <pre v-if="record.goal" class="document-body">{{ record.goal }}</pre>
     <p v-else class="muted">暂无要求。</p>
     <ul v-if="record.materials?.length" class="plain-list">
      <li v-for="(material, index) in record.materials" :key="index">
@@ -237,6 +215,15 @@ const activityError = computed(() => (props.view === 'topics' ? ['relations', 'd
    <a v-if="record.topicId" class="text-link" :href="links.href('topics', record.topicId)" @click="links.follow($event, 'topics', record.topicId)">{{ topicName(record.topicId) }} →</a>
    <p v-else class="muted">未记录所属 Topic。</p>
   </section>
+  <section v-if="view !== 'messages' && record.pullRequests?.length" class="context-group">
+   <h3>关注的拉取请求</h3>
+   <ul class="context-list">
+    <li v-for="pr in record.pullRequests" :key="pr.id">
+     <a class="text-link" :href="links.href('pull-requests', pr.id)" @click="links.follow($event, 'pull-requests', pr.id)">{{ pr.canonicalUrl }}</a>
+     <a class="sub-link" :href="links.href('subscriptions', pr.subscriptionId)" @click="links.follow($event, 'subscriptions', pr.subscriptionId)">查看订阅</a>
+    </li>
+   </ul>
+  </section>
   <template v-if="view === 'messages'">
    <section class="context-group">
     <h3>来源线程</h3>
@@ -251,13 +238,13 @@ const activityError = computed(() => (props.view === 'topics' ? ['relations', 'd
       <a class="text-link" :href="links.href('topics', topicID)" @click="links.follow($event, 'topics', topicID)">{{ topicName(topicID) }} →</a>
      </li>
     </ul>
-    <p v-else class="muted">{{ missing('decisions', '此消息暂无关联 Topic。') }}</p>
+    <p v-else class="muted">此消息暂无关联 Topic。</p>
    </section>
   </template>
   <section class="context-group evidence-links">
    <h3>记录与凭据</h3>
    <a v-if="record.bindingId" class="text-link" :href="links.href('bindings', record.bindingId)" @click="links.follow($event, 'bindings', record.bindingId)">查看 Session →</a>
-   <a v-if="view === 'messages'" class="text-link" :href="links.href('events', '', id, 'messageId')" @click="links.follow($event, 'events', '', id, 'messageId')">消息事件 →</a>
+   <a v-if="view === 'messages'" class="text-link" :href="links.href('routing-deliveries', '', id, 'messageId')" @click="links.follow($event, 'routing-deliveries', '', id, 'messageId')">路由投递 →</a>
    <a v-if="view === 'messages'" class="text-link" :href="links.href('outbox', '', id, 'messageId')" @click="links.follow($event, 'outbox', '', id, 'messageId')">消息回执 →</a>
    <button type="button" class="outline-button" @click="$emit('inspect')">查看记录详情</button>
   </section>

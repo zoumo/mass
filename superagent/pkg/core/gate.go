@@ -12,3 +12,5 @@ func commitGate(_ string) {}
 func (*Server) testDispatch(http.ResponseWriter, *http.Request) bool { return false }
 
 func outboxNow() time.Time { return time.Now().UTC() }
+
+func timerNow() time.Time { return time.Now().UTC() }

@@ -111,7 +111,7 @@ func operatorRequest(ctx context.Context, out io.Writer, endpoint, tokenFile, me
 		if json.NewDecoder(response.Body).Decode(&p) == nil && p.Error != nil {
 			return p.Error
 		}
-		return &core.Error{Code: "unavailable", Message: "operator response unavailable; inspect the binding and recoveries"}
+		return &core.Error{Code: "unavailable", Message: "operator response unavailable; inspect the binding before retrying"}
 	}
 	_, err = io.Copy(out, response.Body)
 	return err

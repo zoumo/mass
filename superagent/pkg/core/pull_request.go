@@ -4,29 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 )
 
 // This Thread namespace cannot be used as a configured collector source.
 const pullRequestSource = "pr:url"
-
-const pullRequestSchema = `
-CREATE TABLE pull_requests (
- seq INTEGER PRIMARY KEY AUTOINCREMENT,
- id TEXT NOT NULL UNIQUE,
- topic_id TEXT NOT NULL REFERENCES topics(id),
- issue_id TEXT REFERENCES issues(id),
- execution_id TEXT REFERENCES executions(id),
- thread_key TEXT NOT NULL REFERENCES threads(key),
- created_at TEXT NOT NULL,
- body BLOB NOT NULL
-);
-CREATE UNIQUE INDEX pull_request_scope ON pull_requests(topic_id,COALESCE(issue_id,''),COALESCE(execution_id,''),thread_key);
-CREATE INDEX pull_request_issue ON pull_requests(issue_id,created_at,id);
-`
 
 var (
 	githubPullPath = regexp.MustCompile(`^/([a-zA-Z0-9-]+)/([a-zA-Z0-9_.-]+)/pull/(\d+)/?$`)
@@ -86,6 +71,11 @@ type PullRequest struct {
 	CreatedAt      string `json:"createdAt"`
 }
 
+type pullRequestLink struct {
+	PullRequest
+	Sequence int64 `json:"sequence"`
+}
+
 func (s *Store) registerPR(ctx context.Context, b Binding, raw []byte) (json.RawMessage, error) {
 	if b.Role != "topic" && b.Role != "worker" {
 		return nil, problem("forbidden", "only Topic and current Worker can register a PR")
@@ -108,38 +98,70 @@ func (s *Store) registerPR(ctx context.Context, b Binding, raw []byte) (json.Raw
 		return nil, err
 	}
 	r.URL = canonical
-	ref := ThreadRef{Source: pullRequestSource, ID: canonical}
-	return s.commitWork(ctx, b, "pr_register", r.OperationID, r, func(ctx context.Context, tx *sql.Tx, binding Binding) (any, error) {
-		pr := PullRequest{CanonicalURL: canonical, ThreadKey: ThreadKey(ref), TopicID: binding.OwnerID, IssueID: r.IssueID}
+	return s.commitWork(ctx, b, "pr_register", r.OperationID, func(ctx context.Context, tx *sql.Tx, binding Binding) (any, error) {
+		topicID := binding.OwnerID
+		var issue Issue
+		var executionID string
+		var err error
 		if binding.Role == "worker" {
-			// commitWork checks current ownership before replaying or recording a receipt.
-			pr.TopicID, pr.IssueID, pr.ExecutionID = binding.TopicID, binding.IssueID, binding.OwnerID
+			var execution Execution
+			issue, execution, err = currentWorkerIssue(ctx, tx, binding)
+			topicID, executionID = issue.TopicID, execution.ID
 		} else if r.IssueID != "" {
-			if _, err := topicIssue(ctx, tx, binding, r.IssueID); err != nil {
-				return nil, err
-			}
+			issue, err = topicIssue(ctx, tx, binding, r.IssueID)
 		}
-		var saved []byte
-		err := tx.QueryRowContext(ctx, `SELECT body FROM pull_requests WHERE topic_id=?
- AND COALESCE(issue_id,'')=? AND COALESCE(execution_id,'')=? AND thread_key=?`,
-			pr.TopicID, pr.IssueID, pr.ExecutionID, pr.ThreadKey).Scan(&saved)
-		switch {
-		case err == nil:
-			return json.RawMessage(saved), nil
-		case !errors.Is(err, sql.ErrNoRows):
-			return nil, storageError()
-		}
-		pr.ID, pr.CreatedAt = newID("pr"), now()
-		if err := upsertThread(ctx, tx, pr.ThreadKey, ref, pr.CreatedAt, ""); err != nil {
-			return nil, err
-		}
-		sub := Subscription{TopicID: pr.TopicID, ThreadKey: pr.ThreadKey, CreatedAt: pr.CreatedAt, PullRequestID: pr.ID}
-		pr.SubscriptionID, err = ensureSubscription(ctx, tx, sub)
 		if err != nil {
 			return nil, err
 		}
-		err = putJSON(ctx, tx, `INSERT INTO pull_requests(id,topic_id,issue_id,execution_id,thread_key,created_at,body)
- VALUES(?,?,NULLIF(?,''),NULLIF(?,''),?,?,?)`, pr, pr.ID, pr.TopicID, pr.IssueID, pr.ExecutionID, pr.ThreadKey, pr.CreatedAt)
-		return pr, err
+		var topic Topic
+		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, topicID); err != nil {
+			return nil, err
+		}
+		return registerWorkPullRequest(ctx, tx, topic, issue, canonical, executionID)
 	})
+}
+
+func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonical, executionID string) (PullRequest, error) {
+	matches := func(link pullRequestLink) bool { return link.CanonicalURL == canonical }
+	topicIndex := slices.IndexFunc(topic.PullRequests, matches)
+	if issue.ID == "" && topicIndex >= 0 {
+		return topic.PullRequests[topicIndex].PullRequest, nil
+	}
+	if i := slices.IndexFunc(issue.PullRequests, matches); i >= 0 {
+		return issue.PullRequests[i].PullRequest, nil
+	}
+
+	ref := ThreadRef{Source: pullRequestSource, ID: canonical}
+	link := pullRequestLink{PullRequest: PullRequest{
+		CanonicalURL: canonical, TopicID: topic.ID, ThreadKey: ThreadKey(ref), CreatedAt: now(),
+	}}
+	if err := upsertThread(ctx, tx, link.ThreadKey, ref, link.CreatedAt, ""); err != nil {
+		return PullRequest{}, err
+	}
+	subID, err := ensureSubscription(ctx, tx, Subscription{
+		TopicID: topic.ID, ThreadKey: link.ThreadKey, CreatedAt: link.CreatedAt,
+	})
+	if err != nil {
+		return PullRequest{}, err
+	}
+	link.SubscriptionID = subID
+	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0)+1 FROM work_pull_requests").Scan(&link.Sequence); err != nil {
+		return PullRequest{}, storageError()
+	}
+	if topicIndex < 0 {
+		link.ID = newID("pr")
+		topic.PullRequests = append(topic.PullRequests, link)
+		if err := putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", topic, topic.ID); err != nil {
+			return PullRequest{}, err
+		}
+		link.Sequence++
+	}
+	if issue.ID != "" {
+		link.ID, link.IssueID, link.ExecutionID = newID("pr"), issue.ID, executionID
+		issue.PullRequests = append(issue.PullRequests, link)
+		if err := saveIssue(ctx, tx, issue); err != nil {
+			return PullRequest{}, err
+		}
+	}
+	return link.PullRequest, nil
 }

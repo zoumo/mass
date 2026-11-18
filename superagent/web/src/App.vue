@@ -8,7 +8,7 @@ import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import SessionPreview from './SessionPreview.vue'
 import WorkbenchDetail from './WorkbenchDetail.vue'
-import { formatTime, isWorkbench, messageTitle, relatedQueries, sourceLabel, stateLabel, workbenches } from './workbench'
+import { formatTime, isWorkbench, messageTitle, relatedQueries, routingDeliveryLabel, sourceLabel, stateLabel, workbenches } from './workbench'
 import type { Page, RelatedPages, WorkbenchRow } from './workbench'
 
 type Row = WorkbenchRow & {
@@ -16,34 +16,31 @@ type Row = WorkbenchRow & {
  canonicalUrl?: string; lastMessageAt?: string; subscriptionId?: string; pullRequestId?: string
  ref?: { source: string; id: string }
  close?: { at: string; resourceVersion?: string; method: string; reusable: boolean }
+ resolvedBlockers?: { id: string; reason: string; resolution?: { reason: string; at: string; messageId?: string } }[]
  latestRequirementsNotification?: Row
  followup?: Row
+ triggerMessageId?: string
  workObservation?: { state: string; observedAt: string; sessionId: string; sessionUid: string; generation: number; workId?: string; provider?: string; continuous: boolean; observationGap?: string; end?: { eventId: string; at: string; reason: string } }
  reminder?: Row
  evidence?: string[]; questions?: string[]
  preparation?: Row; startup?: Row
- messageId?: string; authorRole?: string; authorId?: string; instanceId?: string
+ messageId?: string; instanceId?: string
  connection?: string; admission?: string; role?: string
- possibleDuplicate?: boolean; failureEventId?: string; errorCode?: string; retryAt?: string
+ possibleDuplicate?: boolean; errorCode?: string; retryAt?: string
  channel?: { type: string; conversationId: string; messageId: string; actorId?: string; address?: Record<string, unknown> }
- attempts?: {
-  id: string; state: string; startedAt?: string; taskId?: string; taskAt?: string; errorCode?: string
-  claims: { generation: number; mode: string; leaseExpiresAt: string; releasedAt?: string }[]
-  results?: { outcome: string; at: string; generation: number; conversationId?: string; messageId?: string; errorCode?: string }[]
- }[]
+ receipt?: { taskId?: string; conversationId?: string; messageId?: string; errorCode?: string; retryAt?: string; uncertain?: boolean }
+ blockerRef?: { issueId: string; blockerId: string }
+ quotedReply?: { outboxId: string; blockerRef: { issueId: string; blockerId: string } }
  stop?: { status: string; workState: string; requestedAt: string; observedAt?: string; errorCode?: string; observationGap?: string; receipt?: { result: string; target?: string }; observation?: { eventId: string; state: string; at: string; stopReason?: string } }
  [key: string]: unknown
 }
-const deliveryKinds = ['deliveries', 'batches', 'attempts', 'recoveries'] as const
 const workKinds = ['issues', 'executions', 'reports', 'timers', 'pull-requests'] as const
-const kinds = ['messages', 'threads', 'outbox', 'topics', ...workKinds, 'decisions', 'subscriptions', 'relations', 'bindings', 'events', ...deliveryKinds, 'channel-health'] as const
+const kinds = ['messages', 'threads', 'outbox', 'topics', ...workKinds, 'routing-deliveries', 'subscriptions', 'relations', 'bindings', 'internal-deliveries'] as const
 type Kind = typeof kinds[number]
 const collectionLabels: Record<Kind, string> = {
  messages: '消息', threads: '线程', outbox: '回执', topics: 'Topic', issues: 'Issue',
  executions: '执行记录', reports: '报告', timers: '定时器', 'pull-requests': '拉取请求',
- decisions: '路由决定', subscriptions: '订阅', relations: '路由关系', bindings: '绑定',
- events: '事件', deliveries: '投递记录', batches: '投递批次', attempts: '投递尝试',
- recoveries: '恢复记录', 'channel-health': '渠道健康状态',
+ 'routing-deliveries': '路由投递', subscriptions: '订阅', relations: '路由关系', bindings: '绑定', 'internal-deliveries': '内部投递',
 }
 const viewLabel = (view: Kind) => collectionLabels[view]
 const reminderBasis: Record<string, string> = {
@@ -62,8 +59,7 @@ const draftThread = ref(threadKey.value)
 type FilterScope = 'topicId' | 'issueId' | 'messageId' | 'threadKey'
 const parentScope = ref<FilterScope>(initial.has('issueId') ? 'issueId' : initial.has('messageId') ? 'messageId' : 'topicId')
 const parentFilter = computed(() => {
- if (kind.value === 'outbox' || kind.value === 'decisions') return parentScope.value
- if (kind.value === 'events') return 'messageId'
+ if (kind.value === 'outbox' || kind.value === 'routing-deliveries') return parentScope.value
  if (kind.value === 'pull-requests' || kind.value === 'relations') return parentScope.value
  if (['issues', 'timers', 'subscriptions'].includes(kind.value)) return 'topicId'
  if (kind.value === 'executions' || kind.value === 'reports') return 'issueId'
@@ -84,18 +80,15 @@ const loading = ref(false)
 const paused = ref(false)
 type Counts = Record<string, number>
 type Health = {
- ingress: string; router: string; channelStates: Counts; channelConnections: Counts; channelAdmissions: Counts; topicStates: Counts; issueStates: Counts
- deliveryStates: Counts; outboxStates: Counts; unboundEvents: number; unknownStops: number; unknownEchoes: number
+ ingress: string; router: string; topicStates: Counts; issueStates: Counts
+ deliveryStates: Counts; outboxStates: Counts; unknownStops: number; unknownEchoes: number
 }
 const health = ref<Health>()
 const count = (counts: Counts, keys: string[]) => keys.reduce((total, key) => total + (counts[key] || 0), 0)
 const statusCounts = (counts: Counts) => Object.entries(counts).map(([state, amount]) => `${amount} ${stateLabel(state)}`).join(' · ')
-const isDeliveryView = computed(() => deliveryKinds.some(view => view === kind.value))
-const replyLabel = (status: string) => status === 'sent' ? '已发送' : stateLabel(status)
+const replyLabel = (status: string) => status === 'sent' ? '已发送' : status === 'pending' ? '待发送' : stateLabel(status)
 function followupLabel(followup?: Row) {
- if (!followup) return '—'
- if (!followup.deliveryId) return followup.invalidated ? '已替代' : '等待 Session'
- return stateLabel(followup.status)
+ return followup ? routingDeliveryLabel(followup.status) : '—'
 }
 let generation = 0
 let pageCount = 1
@@ -332,9 +325,6 @@ onUnmounted(() => {
   <section v-if="health" class="overview" aria-label="运行概况">
    <dl aria-label="接收与路由">
     <dt>路由器准备状态</dt><dd>{{ stateLabel(health.router) }}</dd>
-    <dt>渠道连接状态</dt><dd>{{ statusCounts(health.channelConnections) || '暂无有效状态上报' }}</dd>
-    <dt>渠道接收状态</dt><dd>{{ statusCounts(health.channelAdmissions) || '暂无有效状态上报' }}</dd>
-    <dt>已过期的心跳</dt><dd>{{ health.channelStates.stale ?? 0 }}</dd>
    </dl>
    <dl aria-label="业务状态">
     <dt>Topic</dt><dd>{{ statusCounts(health.topicStates) || '无' }}</dd>
@@ -342,10 +332,8 @@ onUnmounted(() => {
     <dt>原生任务停止状态未知</dt><dd>{{ health.unknownStops }}</dd>
    </dl>
    <dl aria-label="输入与回执">
-    <dt>待处理输入</dt><dd>{{ health.unboundEvents + count(health.deliveryStates, ['pending', 'dispatching', 'reconciling']) }}</dd>
-    <dt>受阻输入</dt><dd>{{ health.deliveryStates.blocked ?? 0 }}</dd>
-    <dt>状态未知的输入</dt><dd>{{ count(health.deliveryStates, ['blocked_unknown', 'transport_unknown']) }}</dd>
-    <dt>需关注的输入</dt><dd>{{ health.deliveryStates.needsAttention ?? 0 }}</dd>
+    <dt>待处理输入</dt><dd>{{ count(health.deliveryStates, ['pending', 'dispatching']) }}</dd>
+    <dt>Session 已受理</dt><dd>{{ health.deliveryStates.sent ?? 0 }}</dd>
     <dt>回执</dt><dd>{{ statusCounts(health.outboxStates) || '无' }}</dd>
     <dt>状态未知的回声</dt><dd>{{ health.unknownEchoes }}</dd>
    </dl>
@@ -392,16 +380,9 @@ onUnmounted(() => {
    <Column v-if="kind === 'messages' && rows.some(row => row.echo)" header="回声"><template #body="{ data }">{{ data.echo ? stateLabel(data.echo.status) : '—' }}</template></Column>
    <Column v-if="kind === 'messages'" field="actor" header="发送方" />
    <Column v-if="kind === 'threads'" field="key" header="线程"><template #body="{ data }"><button class="row-link" @click="select(data)">{{ data.key }}</button></template></Column>
-   <Column v-if="!['messages', 'threads', 'events', 'channel-health', 'outbox'].includes(kind)" field="id" header="记录"><template #body="{ data }"><button class="row-link" :class="{ preview: kind === 'timers' || kind === 'pull-requests' }" @click="select(data)">{{ data.canonicalUrl || data.title || data.summary || data.content || ((data.role || data.action || data.kind) ? stateLabel(data.role || data.action || data.kind) : data.id) }}</button></template></Column>
+   <Column v-if="!['messages', 'threads', 'outbox'].includes(kind)" field="id" header="记录"><template #body="{ data }"><button class="row-link" :class="{ preview: kind === 'timers' || kind === 'pull-requests' }" @click="select(data)">{{ data.canonicalUrl || data.title || data.summary || (kind === 'timers' ? data.content : undefined) || ((data.role || data.action || data.kind) ? stateLabel(data.role || data.action || data.kind) : data.id) }}</button></template></Column>
    <Column v-if="kind === 'outbox'" field="text" header="回执"><template #body="{ data }"><button class="row-link preview" @click="select(data)">{{ data.text }}</button></template></Column>
    <Column v-if="kind === 'outbox'" field="status" header="发送状态"><template #body="{ data }">{{ replyLabel(data.status) }}</template></Column>
-   <Column v-if="kind === 'outbox'" field="authorRole" header="发送角色"><template #body="{ data }">{{ stateLabel(data.authorRole) }}</template></Column>
-   <Column v-if="kind === 'channel-health'" field="instanceId" header="实例"><template #body="{ data }"><button class="row-link" @click="select(data)">{{ data.instanceId }}</button></template></Column>
-   <Column v-if="kind === 'channel-health'" field="source" header="来源" />
-   <Column v-if="kind === 'channel-health'" field="status" header="状态"><template #body="{ data }">{{ stateLabel(data.status) }}</template></Column>
-   <Column v-if="kind === 'channel-health'" field="connection" header="上报的连接状态"><template #body="{ data }">{{ stateLabel(data.connection) }}</template></Column>
-   <Column v-if="kind === 'channel-health'" field="admission" header="接收状态"><template #body="{ data }">{{ stateLabel(data.admission) }}</template></Column>
-   <Column v-if="kind === 'channel-health'" field="backlog" header="缓冲区"><template #body="{ data }">{{ data.backlog }} / {{ data.capacity }}</template></Column>
    <Column v-if="kind === 'bindings'" field="state" header="准备状态"><template #body="{ data }">{{ stateLabel(data.state) }}</template></Column>
    <Column v-if="kind === 'bindings'" field="lastError" header="原因" />
    <Column v-if="kind === 'topics' || kind === 'issues'" field="status" header="业务状态"><template #body="{ data }">{{ stateLabel(data.status) }}</template></Column>
@@ -414,17 +395,11 @@ onUnmounted(() => {
    <Column v-if="kind === 'executions'" field="startup.status" header="启动输入"><template #body="{ data }">{{ stateLabel(data.startup?.status) }}</template></Column>
    <Column v-if="kind === 'reports'" field="kind" header="报告类型"><template #body="{ data }">{{ stateLabel(data.kind) }}</template></Column>
    <Column v-if="kind === 'reports'" field="historical" header="执行来源"><template #body="{ data }">{{ data.historical ? '历史执行' : '提交时为当前执行' }}</template></Column>
-   <Column v-if="kind === 'relations' || kind === 'subscriptions'" field="topicId" header="Topic" />
+   <Column v-if="kind === 'relations' || kind === 'subscriptions' || kind === 'routing-deliveries'" field="topicId" header="Topic" />
    <Column v-if="kind === 'bindings'" field="ownerId" header="所属记录" />
-   <Column v-if="['relations', 'events'].includes(kind)" :field="kind === 'events' ? 'routeRound' : 'round'" header="轮次" />
-   <Column v-if="kind === 'events'" field="type" header="事件"><template #body="{ data }"><button class="row-link" @click="select(data)">{{ data.type }}</button></template></Column>
+   <Column v-if="kind === 'routing-deliveries' || kind === 'internal-deliveries' || kind === 'relations'" field="status" header="Session 投递"><template #body="{ data }">{{ data.status ? routingDeliveryLabel(data.status) : '—' }}</template></Column>
    <Column v-if="kind === 'messages'" field="source" header="来源" />
-   <Column v-if="kind === 'events' || isDeliveryView" field="status" header="状态"><template #body="{ data }">{{ stateLabel(data.status) }}</template></Column>
-   <Column v-if="kind === 'deliveries'" field="attempts" header="尝试次数" />
-   <Column v-if="kind === 'deliveries'" header="确认回执"><template #body="{ data }">{{ data.ackAt ? '已收到' : '—' }}</template></Column>
-   <Column v-if="kind === 'batches'" field="method" header="输入" />
-   <Column v-if="kind === 'attempts'" field="errorCode" header="错误" />
-   <Column :field="kind === 'channel-health' ? 'acceptedAt' : kind === 'messages' ? 'receivedAt' : kind === 'events' ? 'at' : 'createdAt'" header="记录时间" />
+   <Column :field="kind === 'messages' ? 'receivedAt' : 'createdAt'" header="记录时间" />
    <template #empty>暂无{{ viewLabel(kind) }}记录。</template>
   </DataTable>
   <footer><span class="muted">显示 {{ rows.length }} 条{{ viewLabel(kind) }}</span><Button v-if="next" label="加载更多" outlined :disabled="loading" @click="load(true)" /></footer>
@@ -432,9 +407,8 @@ onUnmounted(() => {
   <Drawer v-model:visible="open" position="right" :header="kind === 'messages' ? '消息详情' : kind === 'threads' ? '线程详情' : viewLabel(kind) + '详情'" style="width: min(52rem, 95vw)">
    <p v-if="detailError" role="alert" class="error">{{ detail ? '记录已过时 · ' : '' }}{{ detailError }}</p><p v-else-if="!detail">正在读取记录…</p>
    <template v-if="detail">
-    <Tag v-if="detail.acceptance || detail.status || detail.state" :value="kind === 'outbox' ? replyLabel(String(detail.status)) : stateLabel(String(detail.acceptance || detail.status || detail.state))" severity="info" />
-    <h2 v-if="kind === 'events'">{{ detail.type }}</h2>
-    <h2 v-if="detail.title">{{ detail.title }}</h2><p v-if="detail.reason">{{ detail.reason }}</p><p v-if="detail.lastError" role="status">{{ kind === 'channel-health' ? stateLabel(String(detail.lastError)) : detail.lastError }}</p>
+    <Tag v-if="detail.acceptance || detail.status || detail.state" :value="kind === 'outbox' ? replyLabel(String(detail.status)) : kind === 'routing-deliveries' || kind === 'internal-deliveries' || kind === 'relations' ? routingDeliveryLabel(detail.status) : stateLabel(String(detail.acceptance || detail.status || detail.state))" severity="info" />
+    <h2 v-if="detail.title">{{ detail.title }}</h2><p v-if="detail.reason">{{ detail.reason }}</p><p v-if="detail.lastError" role="status">{{ detail.lastError }}</p>
     <h2 v-if="detail.actor">{{ detail.actor }}</h2><pre v-if="detail.text" class="body-text" data-testid="message-body">{{ detail.text }}</pre>
     <dl><dt>记录标识</dt><dd>{{ identity(detail) }}</dd><dt v-if="detail.source">来源</dt><dd v-if="detail.source">{{ detail.source }}</dd><dt v-if="detail.receivedAt">接收时间</dt><dd v-if="detail.receivedAt">{{ detail.receivedAt }}</dd></dl>
     <dl v-if="kind === 'messages'">
@@ -443,44 +417,17 @@ onUnmounted(() => {
      <dt>线程键</dt><dd>{{ detail.threadKey }}</dd>
      <dt>路由状态</dt><dd>{{ detail.routing ? `第 ${detail.routing.round} 轮 · ${stateLabel(detail.routing.state)}` : '无路由记录' }}</dd>
     </dl>
-    <dl v-if="kind === 'channel-health'">
-     <dt>实例</dt><dd>{{ detail.instanceId }}</dd>
-     <dt>连接状态</dt><dd>{{ stateLabel(detail.connection) }} · {{ detail.readyConsumers }} / {{ detail.consumers }} 已就绪</dd>
-     <dt>接收状态</dt><dd>{{ stateLabel(detail.admission) }} · {{ detail.backlog }} / {{ detail.capacity }} 已缓冲</dd>
-     <dt>最近接收</dt><dd>{{ detail.lastReceivedAt || '—' }}</dd>
-     <dt>最近错误</dt><dd>{{ detail.lastErrorAt || '—' }}</dd>
-     <dt v-if="detail.stopReason">停机原因</dt><dd v-if="detail.stopReason">{{ stateLabel(String(detail.stopReason)) }}</dd>
-     <dt>接收时间</dt><dd>{{ detail.acceptedAt }}</dd>
-     <dt>到期时间</dt><dd>{{ detail.expiresAt }}</dd>
-    </dl>
-    <dl v-if="kind === 'deliveries'">
-     <dt>Session</dt><dd>{{ detail.sessionId || '等待投递' }}</dd>
-     <dt>尝试次数</dt><dd>{{ detail.attempts || 0 }}</dd>
-     <dt>下次尝试</dt><dd>{{ detail.nextAttemptAt || '—' }}</dd>
-     <dt>确认回执</dt><dd>{{ detail.ackAt || '等待确认回执' }}</dd>
-     <dt v-if="detail.needsAttention">关注状态</dt><dd v-if="detail.needsAttention">需关注</dd>
-    </dl>
     <p v-if="detail.observationGap">观测中断 · {{ detail.observationGap }}</p>
-    <p v-if="detail.possibleDuplicate">{{ kind === 'outbox' ? '发送结果未确认，恢复时可能重复发送。' : '之前的输入可能已经生效。' }}</p>
-    <template v-if="detail.receipt && isDeliveryView">
-     <h2>提交回执</h2><pre data-testid="submission-receipt">{{ JSON.stringify(detail.receipt, null, 2) }}</pre>
-    </template>
-    <Button v-if="detail.deliveryId" label="查看投递记录" text @click="showRecord('deliveries', String(detail.deliveryId))" />
-    <Button v-if="detail.batchId" label="批次" text @click="showRecord('batches', String(detail.batchId))" />
-    <Button v-if="detail.lastAttemptId" label="最近一次尝试" text @click="showRecord('attempts', String(detail.lastAttemptId))" />
-    <Button v-if="detail.eventId && kind === 'deliveries'" label="事件" text @click="showRecord('events', String(detail.eventId))" />
-    <Button v-if="kind === 'events' && detail.messageId" label="查看来源消息" text @click="showRecord('messages', detail.messageId!)" />
     <Button v-if="detail.threadKey" :label="`查看线程 ${detail.threadKey}`" text @click="showThread(String(detail.threadKey))" />
     <Button v-if="kind === 'messages'" label="查看消息回执" text @click="navigate('outbox', identity(detail), 'messageId')" />
-    <Button v-if="kind === 'messages'" label="查看消息事件" text @click="navigate('events', identity(detail), 'messageId')" />
+    <Button v-if="kind === 'messages'" label="查看路由投递" text @click="navigate('routing-deliveries', identity(detail), 'messageId')" />
     <section v-if="kind === 'messages' && detail.relations?.length" aria-label="路由历史">
      <h2>路由历史</h2>
      <ul class="routing-history">
       <li v-for="relation in detail.relations" :key="relation.id">
-       <span>第 {{ relation.round }} 轮 · {{ stateLabel(relation.action) }}</span>
+       <span>{{ stateLabel(relation.action) }}<template v-if="relation.status"> · {{ routingDeliveryLabel(relation.status) }}</template></span>
        <p>{{ relation.reason }}</p>
        <Button :label="`查看 Topic ${relation.topicId}`" text @click="showRecord('topics', relation.topicId)" />
-       <Button v-if="relation.decisionId" label="查看路由决定" text @click="showRecord('decisions', relation.decisionId!)" />
       </li>
      </ul>
     </section>
@@ -490,10 +437,10 @@ onUnmounted(() => {
       <template v-if="detail.echo.deadline"><dt>等待截止时间</dt><dd>{{ detail.echo.deadline }}</dd></template>
       <template v-if="detail.echo.resolvedAt"><dt>确认时间</dt><dd>{{ detail.echo.resolvedAt }}</dd></template>
       <template v-if="detail.echo.releaseReason"><dt>人工放行原因</dt><dd>{{ detail.echo.releaseReason }}</dd></template>
-      <template v-if="detail.echo.match"><dt>匹配的发送记录</dt><dd><Button :label="detail.echo.match.attemptId" text @click="showRecord('outbox', detail!.echo!.match!.outboxId)" /></dd></template>
-      <template v-if="detail.echo.candidates?.length"><dt>接收时的关联发送记录</dt><dd v-for="candidate in detail.echo.candidates" :key="candidate.attemptId"><Button :label="candidate.attemptId" text @click="showRecord('outbox', candidate.outboxId)" /></dd></template>
+      <template v-if="detail.echo.match"><dt>匹配的发送记录</dt><dd><Button :label="detail.echo.match.outboxId" text @click="showRecord('outbox', detail!.echo!.match!.outboxId)" /></dd></template>
+      <template v-if="detail.echo.candidates?.length"><dt>接收时的关联发送记录</dt><dd v-for="candidate in detail.echo.candidates" :key="candidate.outboxId"><Button :label="candidate.outboxId" text @click="showRecord('outbox', candidate.outboxId)" /></dd></template>
      </dl>
-     <Button v-if="detail.echo.routingEventId" label="路由事件" text @click="showRecord('events', detail!.echo!.routingEventId!)" />
+     <Button v-if="detail.echo.routingEventId" label="回声放行后的投递" text @click="showRecord('routing-deliveries', detail!.echo!.routingEventId!)" />
     </template>
     <template v-if="kind === 'threads'">
      <dl>
@@ -505,36 +452,21 @@ onUnmounted(() => {
      <Button label="查看线程订阅" text @click="navigate('subscriptions', identity(detail), 'threadKey')" />
      <Button label="查看线程回执" text @click="navigate('outbox', identity(detail), 'threadKey')" />
     </template>
+    <template v-if="kind === 'messages' && detail.quotedReply">
+     <Button label="查看被引用的追问" text @click="showRecord('outbox', detail!.quotedReply!.outboxId)" />
+    </template>
     <template v-if="kind === 'outbox'">
-     <dl>
-      <dt>发送角色</dt><dd>{{ stateLabel(detail.authorRole) }} {{ detail.authorId }}</dd>
-      <dt>消费实例</dt><dd>{{ detail.instanceId }}</dd>
-      <dt>目标会话</dt><dd>{{ detail.channel?.conversationId }}</dd>
-      <dt>渠道目标消息</dt><dd>{{ detail.channel?.messageId }}</dd>
-      <template v-if="detail.errorCode"><dt>原因</dt><dd>{{ detail.errorCode }}</dd></template>
-      <template v-if="detail.retryAt"><dt>允许重试时间</dt><dd>{{ detail.retryAt }}</dd></template>
+     <dl v-if="detail.receipt || detail.blockerRef">
+      <template v-if="detail.receipt?.taskId"><dt>渠道任务</dt><dd>{{ detail.receipt.taskId }}</dd></template>
+      <template v-if="detail.receipt?.conversationId"><dt>发送到的会话</dt><dd>{{ detail.receipt.conversationId }}</dd></template>
+      <template v-if="detail.receipt?.messageId"><dt>渠道消息</dt><dd>{{ detail.receipt.messageId }}</dd></template>
+      <template v-if="detail.receipt?.errorCode"><dt>原因</dt><dd>{{ detail.receipt.errorCode }}</dd></template>
+      <template v-if="detail.receipt?.retryAt"><dt>允许重试时间</dt><dd>{{ detail.receipt.retryAt }}</dd></template>
+      <template v-if="detail.blockerRef"><dt>关联 blocker</dt><dd>{{ detail.blockerRef.blockerId }}</dd></template>
      </dl>
+     <p v-if="detail.receipt?.uncertain">之前的发送结果未确认，恢复时可能重复发送。</p>
      <Button v-if="detail.messageId" label="查看目标消息" text @click="showRecord('messages', detail.messageId!)" />
-     <Button v-if="detail.authorRole === 'topic' && detail.authorId" label="查看发送方 Topic" text @click="showRecord('topics', detail.authorId!)" />
-     <Button v-if="detail.failureEventId" label="查看失败事件" text @click="showRecord('events', detail.failureEventId!)" />
-     <h2>发送尝试</h2>
-     <p v-if="!detail.attempts?.length">暂无发送尝试。</p>
-     <section v-for="attempt in detail.attempts" :key="attempt.id" class="summary" aria-label="发送尝试">
-      <dl>
-       <dt>尝试</dt><dd>{{ attempt.id }} · {{ stateLabel(attempt.state) }}</dd>
-       <template v-if="attempt.startedAt"><dt>确认时间</dt><dd>{{ attempt.startedAt }}</dd></template>
-       <template v-if="attempt.taskId"><dt>渠道任务</dt><dd>{{ attempt.taskId }} · {{ attempt.taskAt }}</dd></template>
-       <template v-if="attempt.errorCode"><dt>尝试结果说明</dt><dd>{{ attempt.errorCode }}</dd></template>
-       <template v-for="claim in attempt.claims" :key="claim.generation">
-        <dt>第 {{ claim.generation }} 次领取</dt><dd>{{ stateLabel(claim.mode) }} · 租约到期 {{ claim.leaseExpiresAt }}<span v-if="claim.releasedAt"> · 已释放 {{ claim.releasedAt }}</span></dd>
-       </template>
-       <template v-for="(result, index) in attempt.results" :key="index">
-        <dt>结果 · 第 {{ result.generation }} 次领取</dt><dd>{{ stateLabel(result.outcome) }} · {{ result.at }}<span v-if="result.errorCode"> · {{ result.errorCode }}</span></dd>
-        <template v-if="result.conversationId"><dt>发送到的会话</dt><dd>{{ result.conversationId }}</dd></template>
-        <template v-if="result.messageId"><dt>渠道发送结果中的消息</dt><dd>{{ result.messageId }}</dd></template>
-       </template>
-      </dl>
-     </section>
+     <Button v-if="detail.blockerRef" label="查看关联 Issue" text @click="showRecord('issues', detail.blockerRef!.issueId)" />
     </template>
     <template v-if="kind === 'pull-requests'">
      <dl><dt>规范拉取请求 URL</dt><dd>{{ detail.canonicalUrl }}</dd><dt>登记时间</dt><dd>{{ detail.createdAt }}</dd></dl>
@@ -550,8 +482,7 @@ onUnmounted(() => {
      <Button label="查看 Topic 来源" text @click="navigate('subscriptions', identity(detail))" />
      <Button label="查看 Topic 路由历史" text @click="navigate('relations', identity(detail))" />
     </template>
-    <Button v-if="['subscriptions', 'relations'].includes(kind) && detail.messageId" label="查看来源消息" text @click="showRecord('messages', detail.messageId!)" />
-    <Button v-if="kind === 'relations' && detail.decisionId" label="查看路由决定" text @click="showRecord('decisions', String(detail.decisionId))" />
+    <Button v-if="['subscriptions', 'relations', 'routing-deliveries'].includes(kind) && detail.messageId" label="查看来源消息" text @click="showRecord('messages', detail.messageId!)" />
     <Button v-if="kind === 'topics'" label="查看 Topic 下的 Issue" text @click="navigate('issues', identity(detail), 'topicId', '', !workbench)" />
     <Button v-if="kind === 'topics'" label="查看 Topic 定时器" text @click="navigate('timers', identity(detail))" />
     <Button v-if="kind === 'topics'" label="查看 Topic 拉取请求" text @click="navigate('pull-requests', identity(detail))" />
@@ -563,18 +494,26 @@ onUnmounted(() => {
     </dl>
     <Button v-if="kind === 'topics' && detail.cancellation && detail.cancellation.bindingId !== detail.bindingId"
      label="已停用的 Topic Session" text @click="showRecord('bindings', detail.cancellation!.bindingId)" />
+    <p v-if="kind === 'topics' && detail.goal">{{ detail.goal }}</p>
     <template v-if="kind === 'issues'">
-     <h2>要求</h2><pre class="body-text">{{ detail.requirements }}</pre>
+     <h2>目标</h2><pre class="body-text">{{ detail.goal }}</pre>
      <dl>
       <dt>工作目录</dt><dd>{{ detail.workspace }}</dd>
       <dt>Issue 版本</dt><dd>{{ detail.revision }}</dd>
-      <dt>要求版本</dt><dd>{{ detail.requirementsRevision }}</dd>
+      <dt>目标版本</dt><dd>{{ detail.goalRevision }}</dd>
       <dt>执行器 Session</dt><dd>{{ detail.currentExecutionId ? stateLabel(detail.workerSession?.state) : '当前没有执行' }}<span v-if="detail.workerSession?.observedAt"> · {{ detail.workerSession.observedAt }}</span><span v-if="detail.workerSession?.observationGap"> · {{ detail.workerSession.observationGap }}</span></dd>
-      <dt>最近一次要求变更通知</dt><dd v-if="detail.latestRequirementsNotification">
-       {{ stateLabel(detail.latestRequirementsNotification.status) }} · 要求版本 {{ detail.latestRequirementsNotification.revision }}
-       <Button label="通知事件" text @click="showRecord('events', identity(detail.latestRequirementsNotification!))" />
+      <dt>最近一次目标变更通知</dt><dd v-if="detail.latestRequirementsNotification">
+       {{ routingDeliveryLabel(detail.latestRequirementsNotification.status) }} · 目标版本 {{ detail.latestRequirementsNotification.revision }}
+       <Button label="通知事件" text @click="showRecord('internal-deliveries', identity(detail.latestRequirementsNotification!))" />
       </dd><dd v-else>None</dd>
      </dl>
+     <template v-if="detail.resolvedBlockers?.length">
+      <h2>已解除的阻塞</h2>
+      <ul><li v-for="blocker in detail.resolvedBlockers" :key="blocker.id">
+       {{ blocker.reason }} · {{ blocker.resolution?.reason }} · {{ blocker.resolution?.at }}
+       <Button v-if="blocker.resolution?.messageId" label="查看解除依据" text @click="showRecord('messages', blocker.resolution!.messageId!)" />
+      </li></ul>
+     </template>
      <template v-if="detail.blockers?.length">
       <h2>受阻原因</h2>
       <ul><li v-for="blocker in detail.blockers" :key="blocker.id">
@@ -588,13 +527,15 @@ onUnmounted(() => {
      <dl>
       <dt>定时器状态</dt><dd>{{ stateLabel(detail.status) }}</dd>
       <dt>版本</dt><dd>{{ detail.revision }}</dd>
+      <dt>触发类型</dt><dd>{{ detail.type }}</dd>
       <dt>计划触发时间 (UTC)</dt><dd>{{ detail.dueAt }}</dd>
       <template v-if="detail.firedAt"><dt>实际触发时间 (UTC)</dt><dd>{{ detail.firedAt }}</dd></template>
       <template v-if="detail.followup">
        <dt>跟进通知投递</dt><dd>{{ followupLabel(detail.followup) }}</dd>
       </template>
      </dl>
-     <Button v-if="detail.followupEventId" label="跟进事件" text @click="showRecord('events', String(detail.followupEventId))" />
+     <Button v-if="detail.triggerMessageId" label="查看触发消息" text @click="showRecord('messages', detail.triggerMessageId!)" />
+     <Button v-if="detail.followup?.kind === 'routed_message' && detail.followup.id" label="查看跟进投递" text @click="showRecord('routing-deliveries', detail.followup!.id!)" />
     </template>
     <template v-if="(kind === 'issues' || kind === 'timers') && detail.materials?.length">
      <h2>材料</h2>
@@ -610,12 +551,12 @@ onUnmounted(() => {
     </template>
     <dl v-if="kind === 'executions'">
      <dt>执行权</dt><dd>{{ stateLabel(detail.authority) }} · 第 {{ detail.generation }} 代</dd>
-     <dt>启动时的要求版本</dt><dd>版本 {{ detail.requirementsRevision }}</dd>
+     <dt>启动时的目标版本</dt><dd>版本 {{ detail.goalRevision }}</dd>
      <dt>准备状态</dt><dd>{{ stateLabel(String(detail.preparationAtRetirement || detail.preparation?.state || '')) }}{{ detail.preparation?.sessionId ? ' · ' + detail.preparation.sessionId : '' }}</dd>
-     <dt>启动输入</dt><dd>{{ stateLabel(detail.startup?.status) }}</dd>
+     <dt>启动输入</dt><dd>{{ detail.startup?.delivery_id ? routingDeliveryLabel(detail.startup.status) : stateLabel(detail.startup?.status) }}</dd>
      <dt v-if="detail.startup?.receipt">输入回执</dt><dd v-if="detail.startup?.receipt"><pre>{{ JSON.stringify(detail.startup.receipt, null, 2) }}</pre></dd>
      <dt v-if="detail.startup?.lastError">输入错误</dt><dd v-if="detail.startup?.lastError">{{ detail.startup.lastError }}</dd>
-     <dt>报告提醒</dt><dd>{{ reminderBasis[String(detail.reminderEligibility)] || '未知' }}<span v-if="detail.reminder"> · {{ stateLabel(detail.reminder.status) }}</span></dd>
+     <dt>报告提醒</dt><dd>{{ reminderBasis[String(detail.reminderEligibility)] || '未知' }}<span v-if="detail.reminder"> · {{ detail.reminder.delivery_id ? routingDeliveryLabel(detail.reminder.status) : stateLabel(detail.reminder.status) }}</span></dd>
      <dt v-if="detail.workObservation">观测到的任务</dt>
      <dd v-if="detail.workObservation">{{ detail.workObservation.provider || '提供方未知' }} · {{ detail.workObservation.workId || '任务标识未确认' }} · {{ stateLabel(detail.workObservation.state) }}</dd>
      <dt v-if="detail.workObservation">观测到的 Session</dt>
@@ -639,8 +580,8 @@ onUnmounted(() => {
      <dt>Session 已确认释放</dt>
      <dd>{{ (detail.close || detail.preparation?.close)?.method }} · {{ (detail.close || detail.preparation?.close)?.at }}</dd>
     </dl>
-    <Button v-if="kind === 'executions' && detail.startEventId" label="启动事件" text @click="showRecord('events', String(detail.startEventId))" />
-    <Button v-if="kind === 'executions' && detail.reminderEventId" label="提醒事件" text @click="showRecord('events', String(detail.reminderEventId))" />
+    <Button v-if="kind === 'executions' && detail.startEventId" label="启动事件" text @click="showRecord('internal-deliveries', String(detail.startEventId))" />
+    <Button v-if="kind === 'executions' && detail.reminderEventId" label="提醒事件" text @click="showRecord('internal-deliveries', String(detail.reminderEventId))" />
     <Button v-if="kind === 'executions' && detail.issueId" label="此 Issue 的报告历史" text @click="navigate('reports', String(detail.issueId), 'issueId')" />
     <template v-if="kind === 'bindings'">
      <dl>
@@ -653,19 +594,19 @@ onUnmounted(() => {
      <p v-else>核心服务记录 Session 标识后，即可查看历史。</p>
     </template>
     <template v-if="kind === 'reports'">
-     <h2>{{ detail.summary }}</h2><p>{{ stateLabel(detail.kind) }} · {{ detail.createdAt }}<span v-if="detail.requirementsRevision"> · 要求版本 {{ detail.requirementsRevision }}</span><span v-if="detail.historical"> · 历史执行</span></p>
+     <h2>{{ detail.summary }}</h2><p>{{ stateLabel(detail.kind) }} · {{ detail.createdAt }}<span v-if="detail.goalRevision"> · 目标版本 {{ detail.goalRevision }}</span><span v-if="detail.historical"> · 历史执行</span></p>
      <pre v-if="detail.details" class="body-text">{{ detail.details }}</pre>
      <h3 v-if="detail.evidence?.length">证据</h3><ul v-if="detail.evidence?.length"><li v-for="(ref, index) in detail.evidence" :key="index">{{ ref }}</li></ul>
      <h3 v-if="detail.questions?.length">待确认问题</h3><ul v-if="detail.questions?.length"><li v-for="(question, index) in detail.questions" :key="index">{{ question }}</li></ul>
      <Button label="查看执行记录" text @click="showRecord('executions', String(detail.executionId))" />
-     <Button label="Topic 通知" text @click="showRecord('events', String(detail.eventId))" />
+     <Button label="Topic 通知" text @click="showRecord('internal-deliveries', String(detail.eventId))" />
     </template>
     <template v-if="detail.completion">
      <h2>业务验收</h2>
      <p>{{ detail.completion.reason }}</p><p>{{ detail.completion.completedAt }}</p>
      <ul><li v-for="(ref, index) in detail.completion.evidence" :key="index">{{ ref }}</li></ul>
     </template>
-    <pre v-if="['decisions', 'subscriptions', 'relations', 'events'].includes(kind)" data-testid="routing-record">{{ JSON.stringify(detail, null, 2) }}</pre>
+    <pre v-if="['routing-deliveries', 'subscriptions', 'relations', 'internal-deliveries'].includes(kind)" data-testid="routing-record">{{ JSON.stringify(detail, null, 2) }}</pre>
     <details v-else><summary>原始字段和引用</summary><pre>{{ JSON.stringify(detail, null, 2) }}</pre></details>
    </template>
   </Drawer>
