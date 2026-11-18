@@ -292,6 +292,22 @@ type cursor struct {
 	ID     string `json:"i"`
 }
 
+// A continuation must match the collection, filters, role and ordering of the first page.
+func (c *cursor) resume(token string) error {
+	var next cursor
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || json.Unmarshal(raw, &next) != nil || next.Upper < 1 || next.At == "" || next.ID == "" {
+		return problem("invalid_argument", "invalid or mismatched cursor")
+	}
+	scope := next
+	scope.Upper, scope.At, scope.ID = 0, "", ""
+	if scope != *c {
+		return problem("invalid_argument", "invalid or mismatched cursor")
+	}
+	*c = next
+	return nil
+}
+
 func (s *Store) List(ctx context.Context, kind, thread, token string, limit int) (Page, error) {
 	return s.listScoped(ctx, QueryRequest{Collection: kind, ThreadKey: thread, Cursor: token, Limit: limit}, nil, nil)
 }
@@ -320,6 +336,10 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	case q.TopicID != "" && q.IssueID == "" && binding == nil && kind == "outbox":
 		parentColumn, parent = "related_topic", q.TopicID
 		relatedFilter = "message_id IN (SELECT message_id FROM topic_message_history WHERE topic_id=?)"
+	case q.IssueID != "" && q.TopicID == "" && binding == nil && source == nil && kind == "internal-deliveries":
+		parentColumn, parent = "referenced_issue", q.IssueID
+		relatedFilter = `EXISTS (SELECT 1 FROM json_each(content,'$.refs') ref
+ WHERE CASE json_extract(ref.value,'$.kind') WHEN 'issue' THEN json_extract(ref.value,'$.id') ELSE json_extract(ref.value,'$.issue_id') END=?)`
 	case q.IssueID != "" && q.TopicID == "" && (kind == "reports" || kind == "executions" || kind == "pull-requests"):
 		parentColumn, parent = "issue_id", q.IssueID
 	case q.TopicID != "" || q.IssueID != "":
@@ -361,10 +381,14 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		return p, problem("invalid_argument", "threadKey filters Messages, subscriptions and Outbox")
 	}
 	if q.MessageID != "" {
-		if parent != "" || (kind != "outbox" && kind != "relations" && kind != "routing-deliveries") {
-			return p, problem("invalid_argument", "messageId filters Outbox and routing facts; use only one parent")
+		materialFilter := kind == "issues" && binding == nil && source == nil
+		if parent != "" || (!materialFilter && kind != "outbox" && kind != "relations" && kind != "routing-deliveries") {
+			return p, problem("invalid_argument", "unsupported messageId filter; use only one parent")
 		}
 		parentColumn, parent, c.Parent = "message_id", q.MessageID, q.MessageID
+		if materialFilter {
+			relatedFilter = `EXISTS (SELECT 1 FROM json_each(issues.body,'$.materials') AS m WHERE json_extract(m.value,'$.messageId')=?)`
+		}
 	}
 	c.Filter = parentColumn
 	// One read transaction binds the high-water mark and first-page data to one snapshot.
@@ -379,11 +403,8 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		}
 	}
 	if token != "" {
-		c = cursor{}
-		b, err := base64.RawURLEncoding.DecodeString(token)
-		if err != nil || json.Unmarshal(b, &c) != nil || c.Kind != kind || c.Scope != scopeID || c.Thread != thread || c.Parent != parent || c.Newest != q.newest ||
-			c.Filter != parentColumn || c.Upper < 1 || c.At == "" || c.ID == "" {
-			return p, problem("invalid_argument", "invalid or mismatched cursor")
+		if err := c.resume(token); err != nil {
+			return p, err
 		}
 	} else if err = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0) FROM "+table).Scan(&c.Upper); err != nil {
 		return p, storageError()
@@ -394,6 +415,9 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	}
 	if q.preview {
 		projection = observerListProjection(kind, projection)
+		if q.MessageID != "" && (kind == "issues" || kind == "routing-deliveries") {
+			projection = "json_set(" + projection + ",'$.topicTitle',(SELECT json_extract(t.body,'$.title') FROM topics t WHERE t.id=" + table + ".topic_id))"
+		}
 	}
 	query := "SELECT " + projection + "," + timeCol + "," + idCol + " FROM " + table + " WHERE seq<=?"
 	args := append(projectionArgs(kind, binding), c.Upper)
@@ -429,6 +453,11 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	}
 	query += " ORDER BY " + timeCol + order + "," + idCol + order + " LIMIT ?"
 	args = append(args, limit+1)
+	return readListPage(ctx, tx, query, args, limit, c)
+}
+
+func readListPage(ctx context.Context, tx *sql.Tx, query string, args []any, limit int, c cursor) (Page, error) {
+	p := Page{Items: []json.RawMessage{}}
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return p, storageError()

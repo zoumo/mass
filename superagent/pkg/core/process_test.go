@@ -688,6 +688,7 @@ func TestObserverBrowserFixture(t *testing.T) {
 		r.Message.Text = "Browser row " + strconv.Itoa(i)
 		submit(t, p, f, r)
 	}
+	tieBrowserRouterRegistrations(t, f)
 	t.Logf("browser fixture: %s message=%s platform=%s/%s", p.endpoint, receipt.MessageID, runtime.GOOS, runtime.GOARCH)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)

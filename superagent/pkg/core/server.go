@@ -217,6 +217,15 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		s.write(w, 200, state)
 		return
 	}
+	if path == "topic-activity" {
+		page, err := s.store.topicActivity(r.Context(), r.URL.Query())
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		s.write(w, http.StatusOK, page)
+		return
+	}
 	if id, ok := strings.CutPrefix(path, "session-preview/"); ok {
 		s.sessionPreview(w, r, id)
 		return
@@ -233,6 +242,9 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		limit := 50
+		if kind == "router-messages" {
+			limit = 20
+		}
 		if value := r.URL.Query().Get("limit"); value != "" {
 			limit, err = strconv.Atoi(value)
 			if err != nil {
@@ -241,12 +253,21 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		q := r.URL.Query()
-		result, err = s.store.listScoped(r.Context(), QueryRequest{
+		query := QueryRequest{
 			Collection: kind, ThreadKey: q.Get("threadKey"),
 			TopicID: q.Get("topicId"), IssueID: q.Get("issueId"), MessageID: q.Get("messageId"), Cursor: q.Get("cursor"), Limit: limit,
 			preview: q.Get("preview") == "true",
 			newest:  q.Get("order") == "newest",
-		}, nil, nil)
+		}
+		if kind == "router-messages" {
+			if q.Get("order") != "" && !query.newest {
+				s.fail(w, problem("invalid_argument", "router-messages uses newest order"))
+				return
+			}
+			result, err = s.store.observerRouterMessages(r.Context(), query)
+		} else {
+			result, err = s.store.listScoped(r.Context(), query, nil, nil)
+		}
 	}
 	if err != nil {
 		s.fail(w, err)

@@ -775,6 +775,11 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	create.Title = "Review blocked build"
 	blocked := roleWork[core.WorkReceipt](t, p, topicToken, "issue_create", create)
 	waitWorkDelivery(t, p, blocked.Execution.StartEventID, "sent")
+	blockedWorker := waitBinding(t, p, "worker", blocked.Execution.ID, "ready")
+	roleWork[core.Report](t, p, roleToken(t, f, blockedWorker), "report_submit", core.ReportRequest{
+		OperationID: "observer-blocked-report", Kind: "progress", Summary: "Archive review in progress",
+		GoalRevision: blocked.Execution.Revision,
+	})
 	updated := roleWork[core.WorkReceipt](t, p, topicToken, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "observer-update-requirements", IssueID: blocked.Issue.ID, ExpectedRevision: blocked.Issue.Revision,
 		Requirements: "Inspect the archived build output.", NotifyWorker: true,

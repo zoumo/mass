@@ -80,7 +80,7 @@ func observerListProjection(kind, full string) string {
 	case "executions":
 		return `json_remove(` + full + `,'$.startup.payload','$.startup.receipt','$.startup.content','$.reminder.payload','$.reminder.receipt','$.reminder.content')`
 	case "internal-deliveries":
-		return `json_remove(` + full + `,'$.content.body')`
+		return `json_set(json_remove(` + full + `,'$.content.body'),'$.goalUpdate',json(CASE WHEN kind='worker_update' AND id GLOB 'goal-update_*' THEN 'true' ELSE 'false' END))`
 	case "reports":
 		return `json_remove(body,'$.details','$.evidence','$.questions')`
 	case "timers":

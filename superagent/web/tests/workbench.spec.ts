@@ -2,86 +2,105 @@ import { expect, test } from '@playwright/test'
 
 const routingURL = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}`
 
-test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit acceptance', async ({ page, request }, testInfo) => {
- const errors: string[] = []
- page.on('pageerror', error => errors.push(error.message))
- page.on('request', r => {
-  if (r.url().includes('/v1/')) {
-   expect(r.method()).toBe('GET')
-   expect(r.headers()['authorization']).toBeUndefined()
-  }
- })
- await page.goto(`${routingURL}/observer/`)
- await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
- const nav = page.getByRole('navigation', { name: '工作台导航' })
- await expect(nav.getByRole('link', { name: 'Topic', exact: true })).toHaveAttribute('aria-current', 'page')
- await expect(page.getByRole('heading', { name: 'Topic 工作台' })).toBeVisible()
- await page.getByRole('button', { name: /^Observer routing Topic/ }).click()
- const topic = page.getByRole('article', { name: '当前 Topic' })
- await expect(topic.getByText('Topic 将消息退回路由器')).toBeVisible()
- await expect(topic.getByText('Topic · Session 已受理').first()).toBeVisible()
- await expect(topic.getByText('Observer return reason')).toBeVisible()
- const topicURL = page.url()
- await page.screenshot({ path: testInfo.outputPath('topic-workspace.png'), fullPage: true })
-
- const topicContext = page.getByRole('complementary', { name: '工作背景' })
- await topicContext.getByRole('link', { name: /^Verify sample build/ }).click()
- await expect(nav.getByRole('link', { name: 'Issue', exact: true })).toHaveAttribute('aria-current', 'page')
- const issue = page.getByRole('article', { name: '当前 Issue' })
- await expect(issue.getByText('Run the sample build and inspect its exit code.')).toBeVisible()
- await expect(issue.getByRole('link', { name: /第 1 代/ })).toBeVisible()
- await expect(issue.getByRole('link', { name: /Sample build verified/ })).toBeVisible()
- await expect(issue.getByRole('heading', { name: '业务验收' })).toBeVisible()
- await expect(issue.getByText('Reviewed the sample build log')).toBeVisible()
- await expect(issue.getByText('artifacts/build.log')).toBeVisible()
- const issueURL = page.url()
- await page.reload()
- await expect(issue.getByText('Reviewed the sample build log')).toBeVisible()
- expect(page.url()).toBe(issueURL)
- await page.screenshot({ path: testInfo.outputPath('issue-workspace.png'), fullPage: true })
- await page.goBack()
- await expect(page).toHaveURL(topicURL)
- await topicContext.getByRole('link', { name: '查看来源消息' }).click()
- await expect(nav.getByRole('link', { name: 'Trigger 消息' })).toHaveAttribute('aria-current', 'page')
- const message = page.getByRole('article', { name: '当前消息' })
- await expect(message.getByTestId('message-body')).toHaveText('Original input observer-routing')
- expect(await message.getByTestId('message-body').textContent()).toBe('Original input observer-routing')
- await expect(message.getByText('第 2 轮 · 已忽略')).toBeVisible()
- await expect(message.getByText('路由器忽略了消息')).toBeVisible()
- await expect(page.getByRole('textbox', { name: '按线程键筛选' })).toHaveValue(/^dws:/)
- await page.getByRole('complementary', { name: '关联工作' }).getByRole('link', { name: /^Observer routing Topic/ }).click()
- await expect(page).toHaveURL(topicURL)
- await page.getByRole('link', { name: '查看 Session' }).click()
- await expect(page.getByRole('dialog')).toContainText('MASS Session')
- expect(errors).toEqual([])
-
- const topicID = new URL(topicURL).searchParams.get('id')!
- const topicDeliveries = `${routingURL}/v1/observer/routing-deliveries?topicId=${topicID}`
- const first = await (await request.get(`${topicDeliveries}&limit=1&order=newest`)).json()
- expect(first.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
- const cursor = encodeURIComponent(first.nextCursor)
- const next = await (await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${cursor}`)).json()
- expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
- const timerMessage = await (await request.get(`${routingURL}/v1/observer/messages/${next.items[0].messageId}`)).json()
- expect(timerMessage.meta.type).toBe('timer.followup')
- expect(next.nextCursor).toBeTruthy()
- const third = await (await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)).json()
- expect(third.items.map((row: { kind: string }) => row.kind)).toEqual(['route_request'])
- expect((await request.get(`${topicDeliveries}&limit=1&cursor=${cursor}`)).status()).toBe(400)
- expect((await request.get(`${routingURL}/v1/observer/routing-deliveries?topicId=unrelated&order=newest&cursor=${cursor}`)).status()).toBe(400)
+test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit acceptance', async ({
+  page,
+  request,
+}, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  page.on('request', (r) => {
+    if (r.url().includes('/v1/')) {
+      expect(r.method()).toBe('GET')
+      expect(r.headers()['authorization']).toBeUndefined()
+    }
+  })
+  const { items: topics } = await (await request.get(routingURL + '/v1/observer/topics')).json()
+  const { id: topicID } = topics.find((record: { title: string }) => record.title === 'Observer routing Topic')
+  const topicURL = routingURL + '/observer/?view=topics&id=' + topicID
+  await page.goto(topicURL)
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+  const topic = page.getByRole('article', { name: '当前 Topic' })
+  const nav = page.getByRole('navigation', { name: '观察视角' })
+  await expect(nav.getByRole('link', { name: 'Topic' })).toHaveAttribute('aria-current', 'page')
+  await topic.getByRole('link', { name: '消息', exact: true }).click()
+  const returned = topic.locator('li[data-kind="route_request"]')
+  await returned.locator('summary').click()
+  await expect(returned).toContainText('Observer return reason')
+  await expect(returned).toContainText('Session 已受理')
+  await returned.getByRole('link', { name: '查看此消息' }).click()
+  const message = page.getByRole('article', { name: '当前消息' })
+  await message.getByText('查看全文', { exact: true }).click()
+  await expect(message.getByTestId('message-body')).toHaveText('Original input observer-routing')
+  await message.getByRole('button', { name: 'Router', exact: true }).first().click()
+  await expect(message.getByRole('region', { name: '路径详情' })).toContainText('已忽略 · 原因未记录')
+  await expect(message.getByText('当前轮次').locator('xpath=following-sibling::dd[1]')).toHaveText('2')
+  await expect(page.getByRole('textbox', { name: '按线程键筛选' })).toHaveValue(/^dws:/)
+  await page.goBack()
+  await topic.getByRole('link', { name: '所属 Issue' }).click()
+  await page
+    .getByRole('complementary')
+    .getByRole('link', { name: /Verify sample build/ })
+    .click()
+  const issue = page.getByRole('article', { name: '当前 Issue' })
+  await expect(issue).toContainText('Run the sample build and inspect its exit code.')
+  await issue.getByRole('button', { name: '启动第 1 轮执行' }).click()
+  await expect(issue.getByRole('link', { name: 'Sample build verified', exact:true })).toBeVisible()
+  const issueID = new URL(page.url()).searchParams.get('id')
+  await page.goto(routingURL + '/observer/?view=issues&id=' + issueID)
+  await page.reload()
+  await expect(nav.getByRole('link', { name: 'Issue' })).toHaveAttribute('aria-current', 'page')
+  await issue.getByRole('button', { name: 'Topic 已验收' }).click()
+  await expect(issue).toContainText('Reviewed the sample build log')
+  await expect(issue).toContainText('artifacts/build.log')
+  await issue.getByRole('link', { name: 'Observer routing Topic', exact:true }).click()
+  await topic.getByRole('link', { name: '查看 Session' }).click()
+  await expect(page.getByRole('dialog')).toContainText('MASS Session')
+  expect(errors).toEqual([])
+  const topicDeliveries = `${routingURL}/v1/observer/routing-deliveries?topicId=${topicID}`
+  const first = await (await request.get(`${topicDeliveries}&limit=1&order=newest`)).json()
+  expect(first.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
+  const cursor = encodeURIComponent(first.nextCursor)
+  const next = await (await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${cursor}`)).json()
+  expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
+  const timerMessage = await (
+    await request.get(`${routingURL}/v1/observer/messages/${next.items[0].messageId}`)
+  ).json()
+  expect(timerMessage.meta.type).toBe('timer.followup')
+  expect(next.nextCursor).toBeTruthy()
+  const third = await (
+    await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)
+  ).json()
+  expect(third.items.map((row: { kind: string }) => row.kind)).toEqual(['route_request'])
+  expect((await request.get(`${topicDeliveries}&limit=1&cursor=${cursor}`)).status()).toBe(400)
+  expect(
+    (
+      await request.get(
+        `${routingURL}/v1/observer/routing-deliveries?topicId=unrelated&order=newest&cursor=${cursor}`,
+      )
+    ).status(),
+  ).toBe(400)
 })
 
-test('Narrow Trigger view shows the original and supports pagination without page overflow', async ({ page, request }, testInfo) => {
- await page.setViewportSize({ width: 390, height: 844 })
- const { items: [original] } = await (await request.get('/v1/observer/messages?limit=1')).json()
- await page.goto(`/observer/?view=messages&id=${original.id}`)
- const message = page.getByRole('article', { name: '当前消息' })
- await expect(message.getByTestId('message-body')).toContainText('Long original text '.repeat(1500))
- await expect(page.getByText('显示 50 条消息')).toBeVisible()
- await page.getByRole('button', { name: '加载更多' }).click()
- await expect(page.getByRole('button', { name: '加载更多' })).toHaveCount(0)
- expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
- await page.screenshot({ path: testInfo.outputPath('trigger-narrow.png'), fullPage: true })
- await page.getByRole('link', { name: 'Issue', exact: true }).click()
- await expect(page.getByRole('heading', { name: '暂无 Issue 记录' })).toBeVisible()
+test('Narrow Trigger view shows the original and supports pagination without page overflow', async ({
+  page,
+  request,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const {
+    items: [original],
+  } = await (await request.get('/v1/observer/messages?limit=1')).json()
+  await page.goto(`/observer/?view=messages&id=${original.id}`)
+  const message = page.getByRole('article', { name: '当前消息' })
+  await expect(message.getByTestId('message-body')).toContainText('Long original text '.repeat(1500))
+  await message.getByText('查看全文', { exact: true }).click()
+  await expect(message.getByTestId('message-body')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  await page.screenshot({ path: testInfo.outputPath('trigger-narrow.png'), animations: 'disabled' })
+  await page.getByRole('link', { name: '返回消息列表' }).click()
+  await expect(page.getByText('已显示 50 条消息')).toBeVisible()
+  await page.getByRole('button', { name: '加载更多' }).click()
+  await expect(page.getByRole('button', { name: '加载更多' })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  await page.getByRole('link', { name: 'Issue', exact: true }).click()
+  await expect(page.getByText('暂无 Issue 记录', { exact: true })).toBeVisible()
 })

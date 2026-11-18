@@ -1,0 +1,36 @@
+.topic-detail .source-tag { color: #a5eab9; background: #102d24; border-color: #28533c }
+.topic-goal { margin-block: 8px 16px; white-space: pre-wrap; color: #c8d8e8 }
+.topic-goal-label { margin-right: 8px; font-size: 12px; color: var(--muted) }
+.topic-acceptance { margin-block: 12px; color: #a5eab9 }
+.topic-links { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px }
+.topic-links a, .topic-fact a { color: #80e5d8 }
+.topic-links a:hover, .topic-fact a:hover { text-decoration: underline }
+.topic-filters { display: flex; gap: 2px; padding: 2px; background: var(--canvas); border: 1px solid var(--line); border-radius: 7px; }
+.topic-filters a { color: var(--muted); padding: 3px 10px; border: 1px solid transparent; border-radius: 5px; font-size: 12px }
+.topic-filters a[aria-current] { color: var(--text); background: #173144; border-color: #345468; font-weight: 650 }
+.topic-feed li + li { border-top: 1px solid var(--line) }
+.topic-feed summary { display: grid; grid-template-columns: 18px minmax(0,1fr) 16px; align-items: start; gap: 12px; padding: 14px 19px; list-style: none }
+.topic-feed summary:hover { background: #0c1a2a }
+.topic-feed summary:focus-visible { outline-offset: -3px }
+.topic-feed summary > svg { margin-top: 3px }
+.topic-msg-icon { color: var(--teal) }
+.topic-issue-icon { color: #a7bfdf }
+.topic-chevron { color: var(--muted) }
+.topic-feed details[open] > summary .topic-chevron { transform: rotate(180deg) }
+.topic-row-meta { display: flex; gap: 12px; margin-bottom: 3px; color: var(--muted); font-size: 11px }
+.topic-row-object { margin-left: 9px; color: #d0dfef }
+.topic-row-text strong { font-weight: 640 }
+.topic-row-text small { display: inline-block; margin-left: 9px; font-size: 11px; color: #c7d8e8 }
+.topic-row-text p { color: var(--muted); font-size: 13px }
+.topic-row-facts { margin: 0 clamp(12px,3vw,48px) 14px; padding: 14px; border-left: 2px solid var(--line); background: #0a1726; border-radius: 0 6px 6px 0; font-size: 13px }
+.topic-row-facts dl { display: grid; gap: 6px; margin-bottom: 12px }
+.topic-fact { display: grid; grid-template-columns: minmax(75px,auto) minmax(0,1fr); gap: 12px }
+.topic-fact dt { color: var(--muted) }
+.topic-fact dd, .topic-fact pre { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; font: inherit }
+.topic-fact pre { max-height: 280px; overflow: auto }
+@media (max-width: 760px) {
+  .topic-feed summary { padding: 12px; gap: 8px }
+  .topic-row-object { display: block; margin-left: 0 }
+  .topic-row-text small { margin-left: 0 }
+  .topic-fact { grid-template-columns: minmax(0,1fr); gap: 1px }
+}

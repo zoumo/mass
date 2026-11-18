@@ -1,0 +1,129 @@
+@import "tailwindcss" source(none);
+@source "./";
+@source "../components";
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-background: #030711;
+  --color-foreground: #f5fbff;
+  --color-primary: #2dd4bf;
+  --color-primary-foreground: #031a18;
+  --color-secondary: #122439;
+  --color-secondary-foreground: #f5fbff;
+  --color-accent: #14283d;
+  --color-accent-foreground: #f5fbff;
+  --color-ring: #72e9da;
+  --color-input: #29415e;
+  --color-destructive: #fda4af;
+}
+:root {
+  color-scheme: dark;
+  --canvas: #030711; --panel: #07101e; --line: #1d3350; --text: #f5fbff;
+  --muted: #9eb0c7; --teal: #2dd4bf; --link: #7890ad; --amber: #fcd34d;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  background: var(--canvas); color: var(--text);
+}
+body { margin: 0; min-width: 0 }
+button, summary, a { cursor: pointer }
+button:disabled { cursor: default }
+:focus-visible { outline: 2px solid #83f5e6; outline-offset: 3px }
+.observer { min-height: 100dvh; font-size: 14px; line-height: 1.55 }
+.shell { width: min(1512px, 100%); padding-inline: clamp(16px, 3.5vw, 60px); margin-inline: auto }
+.topbar { border-bottom: 1px solid var(--line); background: #08111d }
+.top-inner, .brand, .secondary, .secondary a, .readonly, .workspace-heading, .workspace-title, .refresh-controls, .panel-heading, .panel-title, .tab-inner, .tab-inner a { display: flex; align-items: center }
+.top-inner { min-height: 62px; justify-content: space-between; gap: 8px }
+.brand { gap: 11px; color: var(--muted); font-size: 15px; white-space: nowrap }
+.brand strong { font-size: 19px; font-weight: 680; letter-spacing: -.04em; color: var(--text) }
+.brand-icon { background: var(--teal); color: #05201c; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px }
+.brand-icon svg { width: 21px }
+.brand-divider { width: 1px; height: 19px; background: #3a4c61; margin-inline: 3px }
+.secondary { gap: 18px; color: var(--muted); font-size: 12px }
+.secondary a, .readonly { gap: 6px }
+.secondary a:hover { color: var(--text) }
+.readonly { border-right: 1px solid var(--line); padding-right: 17px }
+.tabs { background: #07101b; border-bottom: 1px solid var(--line) }
+.tab-inner { gap: 28px; height: 47px }
+.tab-inner a { position: relative; gap: 8px; height: 100%; font-size: 14px; font-weight: 550; color: var(--muted) }
+[data-view=message] { --object: #2dd4bf }
+[data-view=router] { --object: #c4a8ff }
+[data-view=topic] { --object: #88dfa7 }
+[data-view=issue] { --object: #a7bfdf }
+.tab-inner a svg { color: var(--object) }
+.tab-inner a[aria-current] { color: var(--text) }
+.tab-inner a[aria-current]::after { content: ""; position: absolute; inset: auto 0 -1px; height: 3px; background: var(--object); border-radius: 4px 4px 0 0 }
+.workspace { padding-bottom: 40px }
+.workspace-heading { min-height: 105px; justify-content: space-between; gap: 12px }
+.workspace-title { gap: 12px }
+.workspace-title h1 { font-size: clamp(24px, 2.5vw, 34px); font-weight: 640; letter-spacing: -.045em; line-height: 1.15 }
+.view-glyph { display: grid; place-items: center; border-radius: 10px; width: 40px; height: 40px; color: var(--object); border: 1px solid color-mix(in srgb, var(--object) 35%, transparent); background: color-mix(in srgb, var(--object) 8%, transparent) }
+.section-name { color: var(--muted); font-size: 14px; align-self: flex-end; padding-bottom: 2px }
+.refresh-controls { gap: 6px; color: var(--muted) }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; min-width: 0; overflow-wrap: anywhere }
+.split-view { display: grid; grid-template-columns: minmax(255px, 31%) minmax(0, 1fr); gap: 20px; align-items: start }
+.panel-heading { min-height: 53px; justify-content: space-between; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--line) }
+.panel-title { gap: 9px; color: var(--muted) }
+.panel-title h2, .panel-title > span { font-size: 14px; font-weight: 600; color: var(--text) }
+.panel-title svg { flex-shrink: 0 }
+.object-list { overflow: hidden }
+.object-scroll { overflow: auto; max-height: max(320px, calc(100dvh - 325px)); scrollbar-color: #324a60 transparent; scrollbar-width: thin; overscroll-behavior: contain }
+.message-row { display: block; padding: 13px 18px 12px; border-bottom: 1px solid #16283c; position: relative }
+.message-row:hover { background: #0b1b2a }
+.message-row:focus-visible { outline-offset: -3px }
+.message-row[aria-current] { background: #0a232c; box-shadow: inset 3px 0 var(--teal) }
+.row-meta, .row-meta > span, .row-bottom, .source-line, .message-meta, .message-meta span, .acceptance { display: flex; align-items: center }
+.row-meta, .row-bottom { justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px }
+.row-meta > span { gap: 6px; font-weight: 650; letter-spacing: .035em }
+.row-meta i { background: #7890ad; width: 5px; height: 5px; border-radius: 50% }
+.message-row[aria-current] .row-meta i { background: var(--teal) }
+.row-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 5px 0; font-size: 14px; font-weight: 530; line-height: 1.5; overflow-wrap: anywhere }
+.row-bottom { color: #a0b2c6 }
+.row-bottom svg { opacity: .7 }
+.list-footer { padding: 10px 18px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line) }
+.load-more { width: 100%; margin-block: 4px }
+.thread-form { display: grid; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px }
+.thread-form div { display: flex; gap: 6px }
+.thread-form input { width: 0; flex: 1; min-width: 0; border: 1px solid #37516a; border-radius: 6px; padding: 3px 8px; color: var(--text); background: var(--canvas) }
+.thread-form a, .legacy-link { color: var(--teal) }
+.legacy-link { display: block; padding: 16px }
+.detail-column, .message-detail { min-width: 0 }
+.message-detail { display: grid; gap: 18px }
+.detail-body { padding: clamp(16px, 2vw, 28px) }
+.source-line { gap: 10px; margin-bottom: 14px; font-size: 12px }
+.source-tag { padding: 2px 8px; color: #81e4d7; background: #10332f; border: 1px solid #20574d; border-radius: 5px; font-weight: 650 }
+.acceptance { color: var(--muted); gap: 4px }
+.detail-body h2 { font-size: clamp(19px, 2vw, 27px); line-height: 1.45; letter-spacing: -.025em; font-weight: 630 }
+.message-meta { gap: 16px; flex-wrap: wrap; margin-block: 11px 22px; color: var(--muted); font-size: 12px }
+.message-meta span { gap: 6px }
+.message-meta svg { width: 14px; height: 14px }
+.original-text { border-top: 1px solid var(--line); padding-top: 14px }
+.original-text summary { display: flex; align-items: center; gap: 8px; width: fit-content; font-weight: 550; color: #c7d8e8; list-style: none }
+summary::-webkit-details-marker { display: none }
+.original-text[open] summary svg:last-child { transform: rotate(180deg) }
+.original-text pre { margin-top: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--canvas); max-height: 320px; overflow: auto; padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.75 }
+.empty { color: var(--muted) }
+.empty { padding: 24px 16px; font-size: 14px }
+.read-error { border: 1px solid #67354b; border-radius: 7px; padding: 10px 14px; color: #fda4af; display: flex; align-items: center; gap: 8px; margin-bottom: 12px }
+.mobile-back { display: none }
+@media (max-width: 760px) {
+  .top-inner { min-height: 53px }
+  .brand { gap: 7px; font-size: 13px }
+  .brand strong { font-size: 16px }
+  .brand-icon { width: 26px; height: 26px }
+  .brand-divider { margin: 0 }
+  .secondary { gap: 12px; font-size: 12px }
+  .secondary a { gap: 3px }
+  .secondary .readonly { display: none }
+  .tab-inner { gap: 0; justify-content: space-between; height: 44px }
+  .tab-inner a { font-size: 13px; gap: 5px }
+  .workspace-heading { min-height: 79px }
+  .view-glyph { width: 32px; height: 32px; border-radius: 8px }
+  .workspace-title { gap: 8px }
+  .section-name { display: none }
+  .refresh-controls { gap: 1px }
+  .refresh-controls button { font-size: 12px; padding-inline: 6px }
+  .split-view { grid-template-columns: minmax(0,1fr) }
+  .message-layout .detail-column, .message-layout.has-selection .object-list { display: none }
+  .message-layout.has-selection .detail-column { display: block }
+  .message-layout .object-scroll { max-height: calc(100dvh - 270px); min-height: 160px }
+  .mobile-back { display: flex; align-items: center; gap: 7px; width: fit-content; margin-bottom: 12px; font-size: 13px; color: var(--muted) }
+}

@@ -123,7 +123,12 @@ func serveObserverBrowserAudit(t *testing.T, audit *observerBrowserAudit, bounda
 	}
 	require.NoError(t, emit(t.Context(), "Stored before browsing <b>plain text</b> "+f.token+" "+roleToken, true))
 
+	pathCore := seedMessagePathObserver(t)
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /message-path-fixture", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"endpoint": pathCore})
+	})
 	mux.HandleFunc("GET /state", func(w http.ResponseWriter, _ *http.Request) {
 		audit.mu.Lock()
 		methods := maps.Clone(audit.methods)

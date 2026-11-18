@@ -126,12 +126,14 @@ No write credential is needed or sent by these trusted-reader endpoints:
 - GET/HEAD `/v1/observer/messages[/{id}]`
 - GET/HEAD `/v1/observer/threads[/{escaped-key}]`
 - GET/HEAD `/v1/observer/topics[/{id}]`
+- GET/HEAD `/v1/observer/topic-activity?topicId={id}&filter=all|message|issue`
 - GET/HEAD `/v1/observer/issues[/{id}]`
 - GET/HEAD `/v1/observer/executions[/{id}]`
 - GET/HEAD `/v1/observer/reports[/{id}]`
 - GET/HEAD `/v1/observer/timers[/{id}]`
 - GET/HEAD `/v1/observer/pull-requests[/{id}]`
 - GET/HEAD `/v1/observer/outbox[/{id}]`
+- GET/HEAD `/v1/observer/router-messages`
 - GET/HEAD `/v1/observer/routing-deliveries[/{id}]`
 - GET/HEAD `/v1/observer/subscriptions[/{id}]`
 - GET/HEAD `/v1/observer/relations[/{id}]`
@@ -140,6 +142,8 @@ No write credential is needed or sent by these trusted-reader endpoints:
 - GET/HEAD `/v1/observer/session-preview/{bindingId}/history`
 - GET/HEAD `/v1/observer/session-preview/{bindingId}/live`
 - GET/HEAD `/observer/` and its static assets
+
+Topic activity merges routing deliveries and saved Issue facts in descending `(at, id)` order. The filter applies before pagination. `limit` defaults to 20 and accepts 1–200. `nextCursor` binds the Topic, filter and first-page watermark. Each row identifies its source record. An `issue_snapshot` describes the saved state at `updatedAt`. Lifecycle entries use the timestamp on the saved transition.
 
 Health reports `ingress: ready` for Core HTTP intake. It shows Router
 preparation, Topic and Issue business states, unknown native stops and echoes,
@@ -159,9 +163,11 @@ and the Session acceptance timestamp.
 Lists return `{"items":[...],"nextCursor":"opaque"}`. Default limit 50,
 valid range 1–200. Messages and subscriptions accept an exact `threadKey`.
 Issues, Timers, PR associations, routing deliveries, routing relations and subscriptions accept `topicId`. Routing deliveries also accept `messageId`. A delivery includes its sender, recipient, content references, status and return link.
-Executions, Reports and PR associations accept `issueId`. Supply one parent
+Executions, Reports and PR associations accept `issueId`. Internal deliveries accept the same filter for explicit Issue references. Their preview marks recorded goal-update notifications with `goalUpdate` and includes the target revision. Supply one parent
 filter at a time. The Observer also supports `topicId` on Outbox to find replies to messages in the
-Topic's routing history. Outbox and routing relations accept `messageId`.
+Topic's routing history. Outbox and routing relations accept `messageId`. Observer Issues accept
+`messageId` to select Issues with an explicit matching material across all Topics. Message-filtered
+Issue and routing-delivery previews include the owning or participating Topic's title when available.
 Observer lists accept `preview=true` for compact rows. Message, reply and Timer
 previews contain up to 240 characters. Open a record by ID for its full body
 and evidence. Continuation
@@ -170,6 +176,15 @@ Rows accepted later never enter that traversal. Ordering uses fixed nanosecond
 UTC Core timestamps plus stable ID (Thread key for Threads). Thread ordering
 uses immutable `createdAt`. `lastMessageAt` reflects the last accepted Message
 and is omitted until the Thread receives its first source input.
+Router Messages default to 20 rows and accept an exact `messageId`. Rows represent
+distinct Messages with a request to or delivery from the Router. They sort by the
+most recent qualifying delivery registration time and Message ID, newest first.
+The delivery sequence watermark limits activity before grouping and pagination.
+Rows expose the source delivery ID, current routing state, target delivery IDs,
+and reason previews. Read the Message's routing deliveries for full reasons and
+return references. An ignored Message has no persisted ignore reason or decision
+timestamp.
+
 A fresh first-page request refreshes the snapshot. Cursors are opaque reader
 state, not capabilities; malformed or scope-mismatched cursors fail. Set
 `order=newest` on Observer lists for descending time and ID order. Reuse the
@@ -179,6 +194,7 @@ same order when following a continuation cursor.
 prints the same JSON. List-filter flags are `--thread-key`, `--topic-id`,
 `--issue-id` and `--message-id`. Use `--newest` for descending order. `observe health` prints
 health. COLLECTION is any collection listed above. The read-only CLI never loads channel config or source token files.
+Use `observe topic-activity --topic-id ID --filter message` for Topic receipts and returns. The filter also accepts `issue` or `all`.
 Only a numeric HTTP origin is accepted; redirects are not followed.
 
 All Observer writes return 405 with Allow: GET, HEAD. Host must match the

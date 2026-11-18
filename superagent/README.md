@@ -55,6 +55,12 @@ All ingress requires a bound source token. Observer is a read-only trusted
 network surface with Host/Origin checks, not multi-user authentication; expose
 it only to trusted readers when explicitly binding a wider interface.
 
+Open `/observer/` to follow a Message through its Router decisions, target Topics
+and the Issues that cite it. The four views share read-only links that preserve
+record IDs and filters. Diagnostics provides Thread, Timer, PR, Outbox and
+Session records. Existing `?view=messages|topics|issues` links open the
+corresponding view. Add `mode=records` to open its diagnostic collection.
+
 For Outbox, set `sources[].instanceId` to the Trigger's stable instance ID.
 See [DWS outbound echoes](API.md#dws-outbound-echoes) for the read-only message
 projection and the local `release-echo` command.
@@ -105,15 +111,13 @@ channel delivery have separate states.
 When execution is configured, accepted input is automatically dispatched through
 massd after fixed-identity Session preparation. No DWS call is made by Core.
 
-Open the printed `/observer/` URL for the Topic workspace. Its activity
-combines routing deliveries, Topic reception and return, and channel reply
-states. The Issue view shows requirements, Worker execution, Reports and
-explicit business acceptance. Trigger messages display the channel original,
-Thread and routing or echo history. Diagnostics opens the collection
-lists and detail drawers. The overview shows Router
-preparation, business state, and input and reply evidence. Message drawers
-show the full body and provide links to Thread, routing history and replies.
-Topic and Issue workspaces show the PR URLs they follow and their subscriptions.
+Open the printed `/observer/` URL and select Topic for its recent deliveries,
+returns and Issue activity. The Issue view shows goals, Worker executions,
+Reports and explicit business acceptance. Message shows the channel original,
+Thread and routing or echo history. Diagnostics opens collection lists and
+record details, including full message bodies, Session preparation, live
+Session previews and channel receipts. Topic and Issue link to the PR URLs
+they follow and their subscriptions.
 The PR details link to Thread history. A newly registered Thread shows when it
 has received no source input.
 The diagnostics list Topics, subscriptions, routing history, Session bindings
@@ -140,7 +144,7 @@ record. Navigation retains the selected record and filter in the URL.
 
 Root `make check` covers mass-go plus this independent module and Observer:
 Go lint, race tests (including race-built real subprocesses), vet, build, format,
-Vue typecheck/build and Chrome browser tests. `make test`, `make build`,
+React/TypeScript typecheck and Vite build and Chrome browser tests. `make test`, `make build`,
 `make lint` and `make fmt` also include superagent explicitly.
 
 ```sh

@@ -1,0 +1,140 @@
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { WorkbenchRow, Page } from '../workbench'
+
+export type Perspective = 'message' | 'router' | 'topic' | 'issue'
+export type ViewProps = { query: URLSearchParams }
+export type MessageRecord = WorkbenchRow & {
+  id: string
+  sourceMessageId?: string
+  accountId?: string
+  eventId?: string
+}
+
+export function viewHref(view: Perspective, id = '', filters: Record<string, string> = {}) {
+  const query = new URLSearchParams({ perspective: view })
+  if (id) query.set('id', id)
+  for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value)
+  return '/observer/?' + query
+}
+
+export function navigate(href: string) {
+  const current = location.pathname + location.search
+  if (href === current) return
+  const target = new URL(href, location.origin)
+  const previous = new URL(current, location.origin)
+  const workspace = (url: URL) => url.searchParams.get('perspective') || url.searchParams.get('view') || 'message'
+  history.pushState({ ...history.state, observerPrevious: current }, '', href)
+  if (workspace(target) !== workspace(previous)) window.scrollTo(0, 0)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+const listenLocation = (onChange: () => void) => {
+  window.addEventListener('popstate', onChange)
+  return () => window.removeEventListener('popstate', onChange)
+}
+export function useQuery() {
+  return new URLSearchParams(useSyncExternalStore(listenLocation, () => location.search))
+}
+
+export const RefreshContext = createContext({ revision: 0, online: true })
+export const useRefresh = () => useContext(RefreshContext)
+
+export async function readObserver<T>(path: string, signal: AbortSignal): Promise<T> {
+  const response = await fetch('/v1/observer/' + path, { method: 'GET', credentials: 'omit', signal })
+  if (!response.ok) throw new Error(response.status === 404 ? '记录缺失（404）' : `读取失败（HTTP ${response.status}）`)
+  return response.json() as Promise<T>
+}
+
+function errorText(reason: unknown) {
+  return reason instanceof TypeError ? '无法连接 Core' : reason instanceof Error ? reason.message : '读取失败'
+}
+
+// Each scope owns its in-flight read. A background refresh cannot interrupt a
+// slow page or an explicit "load more", while navigation/offline cancels both.
+function useReadScope(path: string, online: boolean) {
+  const scope = useRef<{ signal: AbortSignal, busy: boolean } | null>(null)
+  useEffect(() => {
+    if (!path || !online) { scope.current = null; return }
+    const controller = new AbortController()
+    scope.current = { signal: controller.signal, busy: false }
+    return () => controller.abort()
+  }, [path, online])
+  return scope
+}
+
+type ReadState<T> = { path: string, data?: T, loading: boolean, error?: string }
+export function useRecord<T>(path: string) {
+  const { revision, online } = useRefresh()
+  const [state, set] = useState<ReadState<T>>({ path, loading: true })
+  const scope = useReadScope(path, online)
+  useEffect(() => {
+    const request = scope.current
+    if (!request || request.busy) return
+    request.busy = true
+    set(old => old.path === path ? { ...old, loading: true } : { path, loading: true })
+    readObserver<T>(path, request.signal).then(data => {
+      if (!request.signal.aborted) set({ path, data, loading: false })
+    }).catch(reason => {
+      if (!request.signal.aborted) set(old => ({ ...old, loading: false, error: errorText(reason) }))
+    }).finally(() => { request.busy = false })
+  }, [path, revision, online, scope])
+  return state.path === path ? state : { path, loading: true, data: undefined, error: undefined }
+}
+
+type Pages<T> = ReadState<T[]> & { next?: string, count: number }
+function savedCount(path: string): number {
+  return history.state?.observerPages?.[path] || 1
+}
+
+export function usePages<T>(path: string) {
+  const { revision, online } = useRefresh()
+  const [state, set] = useState<Pages<T>>({ path, loading: true, count: 0 })
+  const scope = useReadScope(path, online)
+  function readPage(cursor: string, signal: AbortSignal) {
+    const url = new URL(path, location.origin + '/')
+    if (cursor) url.searchParams.set('cursor', cursor)
+    return readObserver<Page<T>>(url.pathname.slice(1) + url.search, signal)
+  }
+  useEffect(() => {
+    const request = scope.current
+    if (!request || request.busy) return
+    request.busy = true
+    const { signal } = request
+    set(old => old.path === path ? { ...old, loading: true } : { path, loading: true, count: 0 })
+    async function reload() {
+      const items: T[] = []
+      let next = '', count = 0
+      const desired = savedCount(path)
+      do {
+        const page = await readPage(next, signal)
+        items.push(...page.items)
+        next = page.nextCursor || ''
+        count++
+      } while (next && count < desired)
+      if (!signal.aborted) set({ path, data: items, next, count, loading: false })
+    }
+    reload().catch(reason => {
+      if (!signal.aborted) set(old => ({ ...old, loading: false, error: errorText(reason) }))
+    }).finally(() => { request.busy = false })
+  }, [path, revision, online, scope])
+  async function more() {
+    const request = scope.current
+    if (!online || !state.next || !request || request.signal.aborted || state.loading || request.busy) return
+    request.busy = true
+    const { signal } = request
+    set(old => ({ ...old, loading: true }))
+    try {
+      const page = await readPage(state.next, signal)
+      if (signal.aborted) return
+      const count = state.count + 1
+      history.replaceState({ ...history.state, observerPages: { ...history.state?.observerPages, [path]: count } }, '')
+      set({ path, data: [...state.data || [], ...page.items], next: page.nextCursor, count, loading: false })
+    } catch (reason) {
+      if (!signal.aborted) set(old => ({ ...old, loading: false, error: errorText(reason) }))
+    } finally {
+      request.busy = false
+    }
+  }
+  const current = state.path === path ? state : { path, loading: true, count: 0, data: undefined, next: undefined, error: undefined }
+  return { ...current, more }
+}

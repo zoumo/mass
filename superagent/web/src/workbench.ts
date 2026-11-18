@@ -1,12 +1,3 @@
-export const workbenches = {
- topics: { label: 'Topic', title: 'Topic 工作台', description: '查看工作进展、路由投递和关联事项。', icon: 'pi pi-compass', list: '最近的 Topic' },
- issues: { label: 'Issue', title: 'Issue 工作台', description: '查看要求、执行记录、报告和业务验收。', icon: 'pi pi-check-square', list: '最近的 Issue' },
- messages: { label: 'Trigger 消息', title: 'Trigger 消息工作台', description: '追踪渠道消息的接收和路由过程。', icon: 'pi pi-inbox', list: '最近的消息' },
-} as const
-
-export type Workbench = keyof typeof workbenches
-export const isWorkbench = (view: string): view is Workbench => Object.hasOwn(workbenches, view)
-
 export type RoutingRelation = {
  id: string
  topicId: string
@@ -48,24 +39,6 @@ export type WorkbenchRow = {
  [key: string]: unknown
 }
 export type Page<T = WorkbenchRow> = { items: T[]; nextCursor?: string }
-export type RelatedKind = 'issues' | 'subscriptions' | 'relations' | 'outbox' | 'reports' | 'executions'
-export type RelatedPages = Partial<Record<RelatedKind, Page | Error>>
-export type RecordLinks = {
- href: (view: string, id?: string, filter?: string, scope?: 'topicId' | 'issueId' | 'messageId' | 'threadKey') => string
- follow: (event: MouseEvent, view: string, id?: string, filter?: string, scope?: 'topicId' | 'issueId' | 'messageId' | 'threadKey') => void
-}
-
-export function relatedQueries(view: Workbench, id: string): [RelatedKind, string][] {
- const topic = new URLSearchParams({ topicId: id, order: 'newest', limit: '6', preview: 'true' })
- const issue = new URLSearchParams({ issueId: id, order: 'newest', limit: '4', preview: 'true' })
- const message = new URLSearchParams({ messageId: id, order: 'newest', limit: '6', preview: 'true' })
- switch (view) {
-  case 'topics': return ['subscriptions', 'issues', 'relations', 'outbox'].map(kind => [kind as RelatedKind, String(topic)])
-  case 'issues': return [['executions', String(issue)], ['reports', String(issue)]]
-  case 'messages': return [['outbox', String(message)]]
- }
-}
-
 const dateTime = new Intl.DateTimeFormat('zh-CN', {
  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 })
@@ -98,7 +71,12 @@ export function stateLabel(state?: string) {
 }
 
 export function routingDeliveryLabel(state?: string) {
- return state === 'sent' ? 'Session 已受理' : stateLabel(state)
+ switch (state) {
+  case 'pending': return '已登记投递'
+  case 'sent': return 'Session 已受理'
+  case 'superseded': return '已被替代'
+  default: return stateLabel(state)
+ }
 }
 
 export function messageTitle(row: WorkbenchRow) {
@@ -114,13 +92,4 @@ export function sourceLabel(source?: string) {
  if (source === 'core:timer' || source === 'core%3Atimer') return 'Core 定时任务'
  if (source === 'pr:url') return '拉取请求'
  return source || '未记录来源'
-}
-
-export function threadLabel(key?: string) {
- if (!key) return '线程'
- if (/^https?:\/\//i.test(key)) {
-  const url = new URL(key)
-  return url.host + url.pathname + url.search + url.hash
- }
- return `${sourceLabel(key.split(':')[0])} 线程`
 }

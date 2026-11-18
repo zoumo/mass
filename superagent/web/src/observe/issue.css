@@ -1,0 +1,29 @@
+.issue-detail { display: grid; gap: 16px; }
+.issue-detail h2, .issue-detail h3, .object-workspace .panel-heading h2 { font-weight: 620; }
+.issue-overview { padding: clamp(18px, 2vw, 28px); }
+.issue-overview h2 { font-size: clamp(20px, 2vw, 28px); line-height: 1.35; }
+.issue-status, .issue-overview .source-line a, .issue-latest, .issue-blockers h3, .issue-events button { display: flex; align-items: center; gap: 7px; }
+.issue-status { color: #bfcee2; border: 1px solid #334b64; border-radius: 5px; padding: 2px 8px; }
+.issue-detail a { color: #7cddd0; }
+.issue-detail a:hover { text-decoration: underline; }
+.issue-goal { color: #ccd9e8; margin-block: 10px 20px; white-space: pre-wrap; }
+.issue-latest { flex-wrap: wrap; font-size: 13px; border-top: 1px solid var(--line); padding-top: 14px; }
+.issue-latest > span, .issue-latest time, .issue-detail .panel-heading span { color: var(--muted); font-size: 12px; }
+.issue-blockers { margin-top: 16px; padding: 12px 14px; background: #211e17; border-left: 3px solid #fcd34d; border-radius: 4px; }
+.issue-blockers h3 { color: #fcd34d; }
+.issue-blockers li { margin-top: 6px; overflow-wrap: anywhere; }
+.issue-blockers li a { display: inline-block; margin-inline-start: .6em; }
+.issue-events { padding: 8px 20px 16px 34px; }
+.issue-events > li { position: relative; border-left: 1px solid #29415e; padding: 9px 0 10px 15px; }
+.issue-events > li::before { content: ''; width: 8px; height: 8px; position: absolute; left: -4.5px; top: 17px; background: #91abc8; border-radius: 50%; }
+.issue-events time { display: block; font-size: 12px; color: var(--muted); }
+.issue-events button { font-weight: 550; text-align: left; }
+.issue-events button[aria-expanded=true] svg { transform: rotate(90deg); }
+.issue-events button svg { flex-shrink: 0; }
+.issue-event-detail { border-left: 2px solid var(--teal); padding: 8px 12px; margin-top: 8px; white-space: pre-wrap; color: #d3dfed; }
+.issue-event-detail a, .issue-sources a { margin-inline-end: 1em; }
+.issue-sources { padding: 15px 20px; }
+.issue-sources summary { font-weight: 550; }
+.issue-sources details[open] ul, .issue-sources details[open] p { margin-top: 10px; }
+.issue-links { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; }
+.object-workspace .row-title { color: var(--text); }

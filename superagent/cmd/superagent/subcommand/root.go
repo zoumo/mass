@@ -74,19 +74,19 @@ func New() *cobra.Command {
 	serve.Flags().StringVar(&config, "config", "", "YAML configuration file")
 	_ = serve.MarkFlagRequired("config")
 	root.AddCommand(serve)
-	var endpoint, cursor, thread, topic, issue, message string
+	var endpoint, cursor, thread, topic, issue, message, activityFilter string
 	var limit int
 	var newest bool
 	observe := &cobra.Command{Use: "observe", Short: "Read Core snapshots without write credentials"}
 	observe.PersistentFlags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Core HTTP endpoint")
 	observe.PersistentFlags().StringVar(&cursor, "cursor", "", "Opaque continuation cursor")
 	observe.PersistentFlags().StringVar(&thread, "thread-key", "", "Filter Messages, subscriptions or Outbox by exact Thread key")
-	observe.PersistentFlags().StringVar(&message, "message-id", "", "Filter Outbox, relations or routing deliveries by exact Message ID")
+	observe.PersistentFlags().StringVar(&message, "message-id", "", "Filter Issue materials, Outbox, Router Messages, relations or routing deliveries by exact Message ID")
 	observe.PersistentFlags().StringVar(&topic, "topic-id", "", "Filter Issues, Timers, PR associations, subscriptions, relations, routing deliveries or Outbox by Topic ID")
-	observe.PersistentFlags().StringVar(&issue, "issue-id", "", "Filter Executions, Reports or PR associations by exact Issue ID")
+	observe.PersistentFlags().StringVar(&issue, "issue-id", "", "Filter Executions, Reports, internal deliveries or PR associations by exact Issue ID")
 	observe.PersistentFlags().IntVar(&limit, "limit", 50, "Page size (1–200)")
 	observe.PersistentFlags().BoolVar(&newest, "newest", false, "List newest records first")
-	for _, kind := range []string{"messages", "threads", "internal-deliveries", "topics", "issues", "executions", "reports", "timers", "pull-requests", "routing-deliveries", "subscriptions", "relations", "bindings", "health", "outbox"} {
+	for _, kind := range []string{"messages", "threads", "internal-deliveries", "topics", "issues", "executions", "reports", "timers", "pull-requests", "router-messages", "topic-activity", "routing-deliveries", "subscriptions", "relations", "bindings", "health", "outbox"} {
 		cmd := &cobra.Command{Use: kind + " [id]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			u, err := url.Parse(endpoint)
 			if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Scheme != "http" {
@@ -101,7 +101,12 @@ func New() *cobra.Command {
 				path += "/" + url.PathEscape(args[0])
 			}
 			q := url.Values{}
-			q.Set("limit", strconv.Itoa(limit))
+			if kind == "topic-activity" && activityFilter != "" {
+				q.Set("filter", activityFilter)
+			}
+			if cmd.Flags().Changed("limit") {
+				q.Set("limit", strconv.Itoa(limit))
+			}
 			if newest {
 				q.Set("order", "newest")
 			}
@@ -143,6 +148,13 @@ func New() *cobra.Command {
 			_, err = io.Copy(cmd.OutOrStdout(), response.Body)
 			return err
 		}}
+		switch kind {
+		case "topic-activity":
+			cmd.Use, cmd.Args = kind, cobra.NoArgs
+			cmd.Flags().StringVar(&activityFilter, "filter", "", "Show all, message or issue activity")
+		case "router-messages":
+			cmd.Use, cmd.Args = kind, cobra.NoArgs
+		}
 		observe.AddCommand(cmd)
 	}
 	root.AddCommand(observe)
