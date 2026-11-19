@@ -94,6 +94,7 @@ Service 仍拥有资源、当前运行、操作接纳与结算、历史及事件
 | `session.list` | `{query?: SessionQuery}` | Page&lt;Session&gt; |
 | `session.resume` | `{session: SessionRef, input?: SessionResume}` | SessionResumed |
 | `session.close` | `{session: SessionRef}` | Session |
+| `session.inject` | `{session: SessionRef, input: SessionInput}` | InjectReceipt |
 | `session.prompt` | `{session: SessionRef, input: SessionInput}` | InputReceipt |
 | `session.answer` | `{session: SessionRef, interaction: InteractionRef, answer: InteractionAnswer}` | InteractionReceipt |
 | `session.setConfig` | `{session: SessionRef, change: ConfigChange}` | ConfigReceipt |
@@ -264,3 +265,18 @@ Service 的业务输入输出和 SessionEvent 不依赖 JSON-RPC 或 WebSocket�
 
 [^direction]: 本次要求先更新设计；不表示运行实现或验收已完成。
 [^jsonrpc]: JSON-RPC 规定信封、请求关联、通知和错误；本页另行明确 MASS 业务 profile，不将库的限制表述为标准要求。
+
+### Context injection
+
+`session.inject` uses the same explicit SessionRef and SessionInput as prompt.
+It appends context without requesting a model response or allocating work identity.
+It never starts, steers, interrupts, queues, retries, creates or resumes a Session,
+and unsupported capability never falls back to prompt. Only a current valid binding
+can admit it. It shares input admission with prompt; overlapping input and unresolved
+native unknown outcomes reject. Closing and offline Sessions reject before dispatch.
+
+Success returns `{"acceptance":{...}}`. Missing, false and true evidence remain distinct;
+RPC success alone does not establish native acceptance, consumption or persistence.
+A service error uses code `-32000` and data `{code,reason,message,receipt:InjectReceipt}`.
+The receipt preserves SDK evidence even for rejection or unknown. Protocol errors have
+no receipt. Transport loss has no verifiable receipt and must remain unknown.

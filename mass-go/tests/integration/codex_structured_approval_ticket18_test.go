@@ -34,42 +34,50 @@ func TestTicket18StructuredApproval(t *testing.T) {
 	t.Logf("owned peer artifact sha256=%x", sha256.Sum256(binary))
 	decision := `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf","ticket18-safe"]}}`
 	t.Run("execpolicy", func(t *testing.T) {
-		ticket18Roundtrip(t, bin, `["accept",`+decision+`,"cancel"]`, decision, "execution policy", "allow_always")
+		ticket18Roundtrip(t, bin, `["accept",`+decision+`,"cancel"]`, decision, "Allow command prefix", events.PermissionAllow, events.PermissionScopeAlways)
 	})
-	for _, scenario := range []struct{ name, decision, label, kind string }{
-		{"network-allow", `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"}}}`, "network policy", "allow_always"},
-		{"network-deny", `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"deny"}}}`, "network policy", "reject_always"},
-		{"accept-string", `"accept"`, "Allow once", "allow_once"},
-		{"session-string", `"acceptForSession"`, "Allow for this session", "allow_always"},
-		{"decline-string", `"decline"`, "Reject once", "reject_once"},
-		{"cancel-string", `"cancel"`, "Cancel", "reject_once"},
+	for _, scenario := range []struct {
+		name, decision, label string
+		kind                  events.PermissionOptionKind
+		scope                 events.PermissionScope
+	}{
+		{"network-allow", `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"}}}`, "Allow network access to", events.PermissionAllow, events.PermissionScopeAlways},
+		{"network-deny", `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"deny"}}}`, "Deny network access to", events.PermissionReject, events.PermissionScopeAlways},
+		{"accept-string", `"accept"`, "Allow once", events.PermissionAllow, events.PermissionScopeOnce},
+		{"session-string", `"acceptForSession"`, "Allow for this session", events.PermissionAllow, events.PermissionScopeSession},
+		{"decline-string", `"decline"`, "Reject once", events.PermissionReject, events.PermissionScopeOnce},
+		{"cancel-string", `"cancel"`, "Cancel", events.PermissionCancel, ""},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			first := `"accept"`
 			if scenario.decision == `"accept"` {
 				first = `"decline"`
 			}
-			ticket18Roundtrip(t, bin, `[`+first+`,`+scenario.decision+`]`, scenario.decision, scenario.label, scenario.kind)
+			ticket18Roundtrip(t, bin, `[`+first+`,`+scenario.decision+`]`, scenario.decision, scenario.label, scenario.kind, scenario.scope)
 		})
 	}
 	// Distinct amendments of the same variant must not overwrite each other or
 	// collide with the backward-compatible string option IDs.
 	t.Run("structured-only", func(t *testing.T) {
-		ticket18Roundtrip(t, bin, `[{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"action":"deny","host":"safe.example.test"}}},`+decision+`]`, decision, "execution policy", "allow_always")
+		ticket18Roundtrip(t, bin, `[{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"action":"deny","host":"safe.example.test"}}},`+decision+`]`, decision, "Allow command prefix", events.PermissionAllow, events.PermissionScopeAlways)
 	})
 	t.Run("distinct-amendments", func(t *testing.T) {
 		other := `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf","other-scope"]}}`
-		ticket18Roundtrip(t, bin, `[`+other+`,`+decision+`,"accept","acceptForSession","decline","cancel"]`, decision, "execution policy", "allow_always")
+		ticket18Roundtrip(t, bin, `[`+other+`,`+decision+`,"accept","acceptForSession","decline","cancel"]`, decision, "Allow command prefix", events.PermissionAllow, events.PermissionScopeAlways)
 	})
-	for _, scenario := range []struct{ name, choices, decision, label, kind string }{
-		{"unknown-member", `["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"],"futureScope":true}}]`, `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"],"futureScope":true}}`, "execution policy", "allow_always"},
-		{"unknown-outer-member", `["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"]},"futureScope":true}]`, `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"]},"futureScope":true}`, "execution policy", "allow_always"},
-		{"unknown-policy-member", `["accept",{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow","futureScope":true}}}]`, `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow","futureScope":true}}}`, "network policy", "allow_always"},
-		{"unknown-network-body-member", `["accept",{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"},"futureScope":true}}]`, `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"},"futureScope":true}}`, "network policy", "allow_always"},
-		{"unknown-network-outer-member", `["accept",{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"}},"futureScope":true}]`, `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"}},"futureScope":true}`, "network policy", "allow_always"},
+	for _, scenario := range []struct {
+		name, choices, decision, label string
+		kind                           events.PermissionOptionKind
+		scope                          events.PermissionScope
+	}{
+		{"unknown-member", `["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"],"futureScope":true}}]`, `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"],"futureScope":true}}`, "Allow command prefix", events.PermissionAllow, events.PermissionScopeAlways},
+		{"unknown-outer-member", `["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"]},"futureScope":true}]`, `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"]},"futureScope":true}`, "Allow command prefix", events.PermissionAllow, events.PermissionScopeAlways},
+		{"unknown-policy-member", `["accept",{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow","futureScope":true}}}]`, `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow","futureScope":true}}}`, "Allow network access to", events.PermissionAllow, events.PermissionScopeAlways},
+		{"unknown-network-body-member", `["accept",{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"},"futureScope":true}}]`, `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"},"futureScope":true}}`, "Allow network access to", events.PermissionAllow, events.PermissionScopeAlways},
+		{"unknown-network-outer-member", `["accept",{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"}},"futureScope":true}]`, `{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"safe.example.test","action":"allow"}},"futureScope":true}`, "Allow network access to", events.PermissionAllow, events.PermissionScopeAlways},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			ticket18Roundtrip(t, bin, scenario.choices, scenario.decision, scenario.label, scenario.kind)
+			ticket18Roundtrip(t, bin, scenario.choices, scenario.decision, scenario.label, scenario.kind, scenario.scope)
 		})
 	}
 	for _, scenario := range []struct{ name, choices, reason string }{
@@ -97,17 +105,17 @@ func TestTicket18StructuredApproval(t *testing.T) {
 	}
 }
 
-func ticket18Roundtrip(t *testing.T, bin, choices, decision, name, kind string) {
+func ticket18Roundtrip(t *testing.T, bin, choices, decision, name string, kind events.PermissionOptionKind, scope events.PermissionScope) {
 	t.Helper()
-	ticket18RoundtripCase(t, bin, choices, decision, name, kind, "")
+	ticket18RoundtripCase(t, bin, choices, decision, name, kind, scope, "")
 }
 
 func ticket18Rejected(t *testing.T, bin, choices, reason string) {
 	t.Helper()
-	ticket18RoundtripCase(t, bin, choices, "", "", "", reason)
+	ticket18RoundtripCase(t, bin, choices, "", "", "", "", reason)
 }
 
-func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name, kind, rejectReason string) {
+func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name string, kind events.PermissionOptionKind, scope events.PermissionScope, rejectReason string) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := file.Open(filepath.Join(dir, "store"), false)
@@ -260,7 +268,8 @@ approvalLoop:
 				ids[option.OptionID] = true
 			}
 			require.Contains(t, p.Request.Options[1].Name, name)
-			require.Equal(t, events.PermissionOptionKind(kind), p.Request.Options[1].Kind)
+			require.Equal(t, kind, p.Request.Options[1].Kind)
+			require.Equal(t, scope, p.Request.Options[1].Scope)
 			if !ids["allow-once"] {
 				require.Error(t, client.Answer(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil), "no default accept may be invented when only structured decisions were offered")
 			}

@@ -25,6 +25,11 @@ model InputReceipt {
   acceptance: AcceptanceEvidence;
 }
 
+/** Context acceptance only; no submission/work identity, consumption timing or persistence guarantee. */
+model InjectReceipt {
+  acceptance: AcceptanceEvidence;
+}
+
 model InteractionReceipt {
   interaction: InteractionRef;
   evidence: InteractionEvidence;

@@ -254,8 +254,18 @@ namespace MASS.Design.Examples;
           toolCallId: "tool_1",
           title: "允许读取 README？",
           options: #[
-            #{ optionId: "allow-once", name: "允许一次", kind: "allow_once" },
-            #{ optionId: "reject-once", name: "拒绝", kind: "reject_once" }
+            #{
+              optionId: "allow-once",
+              name: "允许一次",
+              kind: "allow",
+              scope: "once",
+            },
+            #{
+              optionId: "reject-once",
+              name: "拒绝",
+              kind: "reject",
+              scope: "once",
+            }
           ],
         },
       },

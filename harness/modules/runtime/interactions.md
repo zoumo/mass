@@ -24,11 +24,13 @@ request 有三种形态：
 
 | kind | 内容 | 回答示例 |
 |---|---|---|
-| permission | toolCallId、可选 title/content 与原生 options；每项含 optionId、name、kind | {"outcome":"selected","optionId":"allow-once"} 或 {"outcome":"cancelled"} |
+| permission | 原生 options，以及可选的 toolCallId、title 和 content | {"outcome":"selected","optionId":"allow-once"} 或 {"outcome":"cancelled"} |
 | form | message 与开放的 requestedSchema | {"action":"accept","content":{"strategy":"balanced"}}、{"action":"decline"} 或 {"action":"cancel"} |
 | url | message 与 url，表示外部流程 | {"action":"accept"}、{"action":"decline"} 或 {"action":"cancel"} |
 
-权限 kind 沿用 ACP 的 allow_once、allow_always、reject_once、reject_always 展示提示；真正选择按原请求的 optionId 验证，不能凭 kind 推断授权或自行生成“永远允许”选项。拒绝选择原生 reject 选项，取消表示未选择，不能混同。
+每个权限选项包含 optionId、name 和 kind。allow 和 reject 带 scope，取值为 once、turn、session 或 always。cancel 省略 scope。调用者使用原请求给出的 optionId 提交选择。独立的 MCP 工具审批和沙箱授权请求可能没有 toolCallId。历史录制保留原有的 allow_once、allow_always、reject_once 和 reject_always 值。
+
+拒绝选择原生 reject 选项。原生提供 cancel 选项时，调用者可选择该选项。适配器按原生请求支持的方式处理 cancelled 回答。agentQuestions 控制模型发起的问答，MCP 的 form 和 URL 请求由原生 MCP 能力决定。
 
 InteractionAnswer 继续保持动态值，以上为对应 kind 的标准约定；adapter 验证请求类型、答案结构与选项范围。form 的 schema 由具体交互校验，不宣称实现了任意 JSON Schema。真实 ACP adapter 还须满足 ACP 自身的 schema 和能力协商要求。
 

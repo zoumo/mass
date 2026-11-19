@@ -2,10 +2,10 @@
 
 This is the current Go implementation acceptance map, not a change to the
 [harness contracts](../../harness/index.md). The runtime SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.0.0-20261113030733-09d4ddf1ff20`, source
-`09d4ddf1`, with no local `replace`. The
+`github.com/zoumo/agent-sdk-go v0.0.0-20261119055031-27b9a36509ba`, source
+`27b9a36509ba`, with no local `replace`. The
 external `agent-sdk-testify` tool is pinned to
-`v0.2.1`; it is a test-only recording and replay
+`v0.2.2-0.20261119051234-1c7981ff332a`; it is a test-only recording and replay
 dependency. Exact consumer case hashes and the current gate result are in
 [consumer recording acceptance](recording-acceptance.md).
 

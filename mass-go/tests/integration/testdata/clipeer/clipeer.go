@@ -59,3 +59,22 @@ func ClaimReply(frame map[string]any, sessionID string) (map[string]any, bool) {
 		},
 	}, true
 }
+
+// StatusReply reports the peer's own bound identity for the SDK's read-only
+// resume probe. Callers must pass the same identity their native frames use.
+func StatusReply(frame map[string]any, sessionID, cwd string) (map[string]any, bool) {
+	request, ok := frame["request"].(map[string]any)
+	if frame["type"] != "control_request" || !ok || request["subtype"] != "get_status" {
+		return nil, false
+	}
+	return map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype": "success", "request_id": frame["request_id"],
+			"response": map[string]any{"sections": []any{map[string]any{"rows": []any{
+				map[string]any{"label": "Session ID", "value": sessionID},
+				map[string]any{"label": "cwd", "value": cwd},
+			}}}},
+		},
+	}, true
+}

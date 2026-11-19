@@ -220,6 +220,11 @@ func group(name, short string) *cobra.Command {
 func (o *options) result(cmd *cobra.Command, op, name string, call func(context.Context, any) error) error {
 	var raw json.RawMessage
 	if err := o.request(cmd, op, call, &raw); err != nil {
+		if op == "session.inject" && len(raw) > 0 {
+			if printErr := o.print(cmd.OutOrStdout(), raw, false); printErr != nil {
+				return printErr
+			}
+		}
 		return err
 	}
 	if op == "runtime.delete" {

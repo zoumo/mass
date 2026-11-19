@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
@@ -19,12 +21,12 @@ func main() {
 	if clipeer.Version() {
 		return
 	}
-	if err := replay(); err != nil {
+	if err := runReplay(); err != nil {
 		panic(err)
 	}
 }
 
-func replay() error {
+func runReplay() error {
 	claimedSessionID := uuid.NewString()
 	assignedSessionID := ""
 	claiming := clipeer.AwaitingClaim()
@@ -74,6 +76,16 @@ func replay() error {
 				}
 				continue
 			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, err
+			}
+			if reply, ok := clipeer.StatusReply(actual, assignedSessionID, cwd); ok {
+				if err := output.Encode(reply); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			return actual, nil
 		}
 	}
@@ -104,8 +116,12 @@ func replay() error {
 			}
 			if data["type"] == "user" {
 				link, _ = actual["uuid"].(string)
-
-				delete(actual, "uuid")
+				if data["uuid"] == replay.GeneratedClaudeUserUUID {
+					if !replay.ValidClaudeUserUUID(link) {
+						return errors.New("expected a generated Claude user UUID")
+					}
+					data["uuid"] = link
+				}
 			}
 			if !reflect.DeepEqual(data, actual) {
 				return fmt.Errorf("unexpected client frame: %v", actual)
@@ -157,9 +173,10 @@ func replay() error {
 		}
 	}
 	// Retain the native connection until its owner closes it.
-	var extra any
-	if err := input.Decode(&extra); err == nil {
+	if _, err := readActual(); err == nil {
 		return errors.New("unexpected extra input")
+	} else if !errors.Is(err, io.EOF) {
+		return err
 	}
 	return nil
 }

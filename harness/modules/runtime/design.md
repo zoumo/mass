@@ -101,3 +101,12 @@ Service 在 start 前取得 events() 并启动接收，Driver 不为各 Session 
 显式 loadSession 按 [异步 load](../service/load.md)先恢复同一个原生会话，再沿唯一 Driver 流异步回放全部保留主历史。Service 在接纳时把当前 Runtime Session 默认值与本次显式覆盖合并为 DriverSessionSpec，Driver 用它建立恢复连接。成功保留恢复的执行连接，本地结算后可直接继续输入；普通 resume 仍不回放。历史带 replay 来源，不能由旧状态恢复工作或审批。接纳、恢复、上游穷尽和本地提交/分发完成分开表达；失败/取消还须释放本次恢复资源，未知保留责任。
 
 主 Session 的初始 `config.model/effort`、瞬态 setter、原运行在途责任及错误以[配置合同](session-config.md)为准。初始值保存在 Session spec，create/resume/load 传给 SDK；setter 不持久，close/resume 重新请求初始值。可变配置不参与恢复身份验证。
+
+## Context injection capability
+
+Optional `InjectDriver` adapts native context-only injection. Interface availability
+and capability maps do not prove native version support; the actual operation can
+return unsupported. Codex uses `thread/inject_items`; Claude uses `shouldQuery:false`
+only after a confirmed supported CLI version. Neither path falls back to prompt.
+The receipt reports actual acceptance only, with no work identity or response promise.
+Input admission is shared with StartOrSteer; unresolved unknown must not be resent.

@@ -187,7 +187,7 @@ func RunClaudeBasicReplay(t *testing.T) {
 	require.NotEmpty(t, kinds)
 	require.Equal(t, "agent.message", kinds[len(kinds)-1])
 	requireSubsequence(t, index.Facts.StreamKinds, eventKinds(index.Facts.Events))
-	h.replay(material, index.Facts, flowCase{name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project, initialInput: true, ignoreStreamKinds: true})
+	h.replay(material, index.Facts, flowCase{name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project, initialInput: true, legacyClaudeInput: true, ignoreStreamKinds: true})
 }
 
 func RunClaudePermissionReplay(t *testing.T) {
@@ -206,7 +206,7 @@ func RunClaudePermissionReplay(t *testing.T) {
 	require.Equal(t, events.RequiresAction, permission.StateBeforeAnswer)
 	option, ok := offeredOption(permission.Request.Options, permission.Answer.OptionID)
 	require.True(t, ok)
-	require.Equal(t, events.PermissionAllowOnce, option.Kind)
+	require.True(t, isAllowOnce(option))
 	require.True(t, permission.Answer.Sent)
 	require.Nil(t, permission.Answer.NativeAccepted)
 	require.NotEmpty(t, permission.StateAfterAnswer)
@@ -221,7 +221,16 @@ func RunClaudePermissionReplay(t *testing.T) {
 	require.Contains(t, toolCallText(index.Facts.Events), "printf mass-claude-approved")
 	require.Contains(t, toolResultText(index.Facts.Events), "mass-claude-approved")
 	requireSubsequence(t, index.Facts.StreamKinds, eventKinds(index.Facts.Events))
-	session := h.replay(material, index.Facts, flowCase{name: "permission", provider: "claude", prompt: index.Prompt, project: index.Project, initialInput: true, ignoreStreamKinds: true, expectPermission: true, expectedPermission: "Bash", expectedToolOutput: "mass-claude-approved"})
+	session := h.replay(material, index.Facts, flowCase{
+		name: "permission", provider: "claude", prompt: index.Prompt, project: index.Project,
+		initialInput: true, legacyClaudeInput: true, ignoreStreamKinds: true, expectPermission: true,
+		expectedPermission: "Bash", expectedToolOutput: "mass-claude-approved",
+		permissionOptions: []events.PermissionOption{
+			{OptionID: "allow-once", Name: "Allow once", Kind: events.PermissionAllow, Scope: events.PermissionScopeOnce},
+			{OptionID: "reject-once", Name: "Reject once", Kind: events.PermissionReject, Scope: events.PermissionScopeOnce},
+			{OptionID: "cancel", Name: "Cancel", Kind: events.PermissionCancel},
+		},
+	})
 	receipt := executionReceiptPath(t, session)
 	var value map[string]any
 	readJSON(t, receipt, &value)

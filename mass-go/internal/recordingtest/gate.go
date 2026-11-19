@@ -292,8 +292,8 @@ func auditRecordingCase(root string, spec artifactCase) (string, caseIndex, erro
 	if err := validateCaptureManifest(manifest, index, plan, materialFiles, rawFiles); err != nil {
 		return "", caseIndex{}, err
 	}
-	if spec.suite == claudeRecordingSuite && manifest.ProxyVersion != TestifyVersion {
-		return "", caseIndex{}, fmt.Errorf("claude capture proxy version = %q, want %q", manifest.ProxyVersion, TestifyVersion)
+	if spec.suite == claudeRecordingSuite && manifest.ProxyVersion != spec.testify {
+		return "", caseIndex{}, fmt.Errorf("claude capture proxy version = %q, want %q", manifest.ProxyVersion, spec.testify)
 	}
 	for _, binding := range plan.HistoryBindings {
 		if materialFiles[binding.Source] != binding.SHA256 {
@@ -696,7 +696,7 @@ func validateIndexFacts(facts facts, spec artifactCase, manifest captureManifest
 	}
 	offered := false
 	for _, option := range permission.Request.Options {
-		if option.OptionID == permission.Answer.OptionID && string(option.Kind) == "allow_once" {
+		if option.OptionID == permission.Answer.OptionID && isAllowOnce(option) {
 			offered = true
 		}
 	}

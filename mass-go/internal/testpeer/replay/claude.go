@@ -5,8 +5,13 @@ import (
 	"errors"
 	"strconv"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/internal/testpeer/rawjson"
 )
+
+// GeneratedClaudeUserUUID marks a client user-frame field to bind to a v4 UUID.
+const GeneratedClaudeUserUUID = "generated-user-uuid"
 
 const assignedSessionPlaceholder = "claude-session"
 
@@ -65,6 +70,27 @@ type claudeAdapter struct {
 	sessionID string
 }
 
+func statusExchange(value rawjson.Value, sessionID, cwd string) (rawjson.Value, bool, error) {
+	if stringMember(value, "type") != "control_request" || stringMember(member(value, "request"), "subtype") != "get_status" {
+		return rawjson.Value{}, false, nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type": "control_response",
+		"response": map[string]any{
+			"subtype": "success", "request_id": json.RawMessage(member(value, "request_id").Raw()),
+			"response": map[string]any{"sections": []any{map[string]any{"rows": []any{
+				map[string]any{"label": "Session ID", "value": sessionID},
+				map[string]any{"label": "cwd", "value": cwd},
+			}}}},
+		},
+	})
+	if err != nil {
+		return rawjson.Value{}, true, err
+	}
+	reply, err := rawjson.Parse(payload)
+	return reply, true, err
+}
+
 func control(value rawjson.Value) (string, rawjson.Value, error) {
 	kind := stringMember(value, "type")
 	target := value
@@ -82,6 +108,17 @@ func (a *claudeAdapter) client(expected, actual rawjson.Value) (bool, error) {
 	kind, recordedID, err := control(expected)
 	if err != nil {
 		return false, err
+	}
+	if kind == "user" && stringMember(expected, "uuid") == GeneratedClaudeUserUUID {
+		live := member(actual, "uuid")
+		id, err := live.String()
+		if err != nil || !ValidClaudeUserUUID(id) {
+			return false, errors.New("expected a generated Claude user UUID")
+		}
+		expected, err = expected.Replace([]string{"uuid"}, live)
+		if err != nil {
+			return false, err
+		}
 	}
 	if kind == "control_request" || kind == "control_response" {
 		key, err := identity(recordedID, true)
@@ -115,6 +152,12 @@ func (a *claudeAdapter) client(expected, actual rawjson.Value) (bool, error) {
 		}
 	}
 	return false, match(expected, actual)
+}
+
+// ValidClaudeUserUUID checks the canonical v4 identifier used by SDK submissions.
+func ValidClaudeUserUUID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.Version() == 4 && id.Variant() == uuid.RFC4122 && id.String() == value
 }
 
 func (a *claudeAdapter) server(expected rawjson.Value) (rawjson.Value, error) {

@@ -186,6 +186,19 @@ func (c *Client) callWith(ctx context.Context, method string, params, out any, w
 	}
 	var raw json.RawMessage
 	if err = waiter.Wait(ctx, &raw); err != nil {
+		if method == "session.inject" && out != nil {
+			var rpcErr *rpc2.Error
+			if errors.As(err, &rpcErr) && rpcErr.Code == rpcwire.CodeServiceError && rpcErr.Data != nil {
+				var data struct {
+					Receipt json.RawMessage `json:"receipt"`
+				}
+				if json.Unmarshal(*rpcErr.Data, &data) == nil && len(data.Receipt) > 0 {
+					if decodeErr := decodeResult(data.Receipt, out); decodeErr != nil {
+						return decodeErr
+					}
+				}
+			}
+		}
 		mapped := c.callError(ctx, stream, err)
 		if work {
 			var rpcErr *rpc2.Error
@@ -201,12 +214,21 @@ func (c *Client) callWith(ctx context.Context, method string, params, out any, w
 	return decodeResult(raw, out)
 }
 
-func unconfirmedWork() *runtime.OperationError {
-	return &runtime.OperationError{
+// ErrWorkResponseUnconfirmed identifies a client-side loss of a work response.
+// The same public operation code may also come from massd itself.
+var ErrWorkResponseUnconfirmed = errors.New("work response unconfirmed by client")
+
+type unconfirmedWorkError struct{ *runtime.OperationError }
+
+func (e unconfirmedWorkError) Is(target error) bool { return target == ErrWorkResponseUnconfirmed }
+func (e unconfirmedWorkError) Unwrap() error        { return e.OperationError }
+
+func unconfirmedWork() error {
+	return unconfirmedWorkError{&runtime.OperationError{
 		Code:    "outcome_unknown",
 		Reason:  "operation_unconfirmed",
 		Message: "Operation result unconfirmed; inspect state before further action",
-	}
+	}}
 }
 
 // Close releases the connection and all pending calls.
@@ -290,7 +312,7 @@ func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *r
 	}
 	if err != nil {
 		if response != nil {
-			return nil, nil, nil, fmt.Errorf("WebSocket handshake failed: %s", response.Status)
+			return nil, nil, nil, &WebSocketHandshakeError{StatusCode: response.StatusCode, status: response.Status}
 		}
 		return nil, nil, nil, err
 	}
@@ -304,6 +326,14 @@ func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *r
 	conn := rpc2.NewConn(life, stream, handler, rpc2.SetLogger(rpcLogger{}))
 	return conn, stream, cancel, nil
 }
+
+// WebSocketHandshakeError retains the response status when the server refuses upgrade.
+type WebSocketHandshakeError struct {
+	status     string
+	StatusCode int
+}
+
+func (e *WebSocketHandshakeError) Error() string { return "WebSocket handshake failed: " + e.status }
 
 func (c *Client) callError(ctx context.Context, stream *rpcwire.Stream, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {

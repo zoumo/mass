@@ -111,9 +111,11 @@ type flowCase struct {
 	prompt             string
 	project            string
 	initialInput       bool
+	legacyClaudeInput  bool
 	ignoreStreamKinds  bool
 	expectPermission   bool
 	expectedPermission string
+	permissionOptions  []events.PermissionOption
 	expectedToolOutput string
 	runtimeEnvironment map[string]string
 	sessionConfig      *runtime.InitialSessionConfig
@@ -645,14 +647,17 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 }
 
 func allowedOption(options []events.PermissionOption) (events.PermissionOption, bool) {
-	for _, kind := range []string{"allow_once", "allow_always"} {
-		for _, option := range options {
-			if string(option.Kind) == kind {
-				return option, true
-			}
+	for _, option := range options {
+		if isAllowOnce(option) {
+			return option, true
 		}
 	}
 	return events.PermissionOption{}, false
+}
+
+func isAllowOnce(option events.PermissionOption) bool {
+	return option.Kind == events.PermissionAllowOnce ||
+		(option.Kind == events.PermissionAllow && option.Scope == events.PermissionScopeOnce)
 }
 
 func (h *harness) answerPendingInteraction(api *client.Client, ref resource.SessionRef, result *facts, answered *bool, state events.SessionState, c flowCase) error {
@@ -759,7 +764,13 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 	if c.provider == "claude" {
 		require.NotEmpty(h.t, plan.CLIVersion)
 		executable = filepath.Join(session, "claude-mock-launcher")
-		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + quote(plan.CLIVersion) + "; exit 0; fi\nexec " + quote(prepared.Connections[0].Launcher) + " \"$@\"\n"
+		launcher := quote(prepared.Connections[0].Launcher)
+		if c.legacyClaudeInput {
+			adapter := filepath.Join(session, "claude-legacy-input")
+			h.command("go", "build", "-o", adapter, "./internal/recordingtest/cmd/claudelegacy")
+			launcher = quote(adapter) + " " + launcher
+		}
+		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + quote(plan.CLIVersion) + "; exit 0; fi\nexec " + launcher + " \"$@\"\n"
 		require.NoError(h.t, os.WriteFile(executable, []byte(script), 0o700))
 	}
 	actual := h.flow(prepared, executable, c)
@@ -776,6 +787,9 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 		require.NotEmpty(h.t, actual.Permission)
 		require.NotEmpty(h.t, actual.Permission.Interaction)
 		permission.Interaction = actual.Permission.Interaction
+		// Preserve the captured index and compare the same native exchange
+		// against the current SDK's public representation.
+		permission.Request.Options = c.permissionOptions
 	}
 	require.Equal(h.t, expectedForCompare, actual)
 	require.NoError(h.t, verifyExecution(session, material))
@@ -1241,7 +1255,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 	require.Equal(t, events.RequiresAction, permission.StateBeforeAnswer)
 	option, ok := offeredOption(permission.Request.Options, permission.Answer.OptionID)
 	require.True(t, ok, "answer must use an offered option")
-	require.Contains(t, []events.PermissionOptionKind{events.PermissionAllowOnce, events.PermissionAllowAlways}, option.Kind)
+	require.True(t, isAllowOnce(option))
 	require.True(t, permission.Answer.Sent)
 	require.Nil(t, permission.Answer.NativeAccepted)
 	require.NotEmpty(t, permission.StateAfterAnswer)
@@ -1253,7 +1267,15 @@ func RunCodexPermissionReplay(t *testing.T) {
 	require.Contains(t, kinds, "agent.tool_call")
 	require.Contains(t, kinds, "agent.tool_result")
 	require.Equal(t, "agent.message", kinds[len(kinds)-1])
-	session := h.replay(material, index.Facts, flowCase{name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project, expectPermission: true, expectedPermission: "Approve command execution"})
+	session := h.replay(material, index.Facts, flowCase{
+		name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project,
+		expectPermission: true, expectedPermission: "Approve command execution",
+		permissionOptions: []events.PermissionOption{
+			{OptionID: "allow-once", Name: "Allow once", Kind: events.PermissionAllow, Scope: events.PermissionScopeOnce},
+			{OptionID: "native-decision-1", Name: `Allow command prefix ["/bin/zsh" "-lc" "printf mass-approved > permission-proof.txt"]`, Kind: events.PermissionAllow, Scope: events.PermissionScopeAlways},
+			{OptionID: "cancel", Name: "Cancel", Kind: events.PermissionCancel},
+		},
+	})
 	require.NoError(t, verifyExecution(session, material))
 	receipt := executionReceiptPath(t, session)
 	var value map[string]any
