@@ -40,17 +40,25 @@ func TestPromptFailurePreservesDispatchEvidence(t *testing.T) {
 		sent     *bool
 		wantSent *bool
 	}{
-		{name: "outbound frame rejected before write", code: agent.ErrorUnavailable,
-			dispatch: sdk.NotSent, cause: sdk.ErrFrameTooLarge, wantSent: runtime.Bool(false)},
-		{name: "uncertain dispatch", code: agent.ErrorOutcomeUnknown,
-			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded},
-		{name: "observed write with uncertain outcome", code: agent.ErrorOutcomeUnknown,
-			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded, sent: runtime.Yes(), wantSent: runtime.Yes()},
+		{
+			name: "outbound frame rejected before write", code: agent.ErrorUnavailable,
+			dispatch: sdk.NotSent, cause: sdk.ErrFrameTooLarge, wantSent: runtime.Bool(false),
+		},
+		{
+			name: "uncertain dispatch", code: agent.ErrorOutcomeUnknown,
+			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded,
+		},
+		{
+			name: "observed write with uncertain outcome", code: agent.ErrorOutcomeUnknown,
+			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded, sent: runtime.Yes(), wantSent: runtime.Yes(),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sdkErr := &agent.Error{Code: tc.code, Reason: "start_or_steer_failed", Message: "Prompt failed",
-				Cause: &sdk.CallError{Method: "turn/start", Dispatch: tc.dispatch, Cause: tc.cause}}
+			sdkErr := &agent.Error{
+				Code: tc.code, Reason: "start_or_steer_failed", Message: "Prompt failed",
+				Cause: &sdk.CallError{Method: "turn/start", Dispatch: tc.dispatch, Cause: tc.cause},
+			}
 			native := &promptSDKSession{
 				promptReceipt: agent.InputReceipt{Acceptance: agent.Acceptance{Sent: tc.sent}},
 				promptErr:     sdkErr,

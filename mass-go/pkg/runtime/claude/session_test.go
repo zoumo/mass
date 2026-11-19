@@ -71,8 +71,10 @@ func TestPromptFailurePreservesDispatchEvidence(t *testing.T) {
 	}{
 		{
 			name: "outbound frame rejected before write", code: agent.ErrorResourceExhausted,
-			dispatch: &nativeclaude.DispatchError{Op: "submit", State: nativeclaude.NotSent,
-				Err: &nativeclaude.ResourceLimitError{Resource: "outbound frame bytes", Limit: 4 << 20}},
+			dispatch: &nativeclaude.DispatchError{
+				Op: "submit", State: nativeclaude.NotSent,
+				Err: &nativeclaude.ResourceLimitError{Resource: "outbound frame bytes", Limit: 4 << 20},
+			},
 			wantSent: runtime.Bool(false),
 		},
 		{
