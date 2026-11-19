@@ -8,11 +8,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 // WorkObservation ties the latest observed Worker input to a particular
@@ -103,22 +101,25 @@ func (s *Server) prepareWorkerWatch(ctx context.Context, b Binding, a Attempt) *
 	return w
 }
 
-func (w *workerWatch) recordReceipt(a Attempt, receipt runtime.InputReceipt) {
+func (w *workerWatch) recordReceipt(a Attempt, submission string) {
 	o := &w.evidence
-	switch {
-	case a.Status != "delivered":
+	if a.Status != "delivered" {
 		o.loseContinuity("input_work_unconfirmed")
-	case o.Provider != "codex" || receipt.Submission == "" || receipt.Acceptance.NativeAccepted == nil ||
-		!*receipt.Acceptance.NativeAccepted ||
-		(receipt.Result != agent.InputAppliedNewWork && receipt.Result != agent.InputAppliedCurrentWork):
-		o.loseContinuity("native_work_identity_unavailable")
+		return
+	}
+	o.State, o.ObservedAt = a.Status, now()
+	// Only Codex exposes a submission ID that can match a live root turn.
+	if o.Provider != "codex" {
+		return
+	}
+	o.WorkID = submission
+	switch {
+	case submission == "":
+		o.ObservationGap = "native_work_identity_unavailable"
+	case w.sub == nil:
+		o.ObservationGap = "live_subscription_unavailable"
 	default:
-		o.WorkID = receipt.Submission
-		if w.sub == nil {
-			o.loseContinuity("live_subscription_unavailable")
-			return
-		}
-		o.State, o.ObservedAt, o.Continuous = "observing", now(), true
+		o.State, o.Continuous = "observing", true
 	}
 }
 

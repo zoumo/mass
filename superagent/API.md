@@ -494,7 +494,7 @@ still read by Report ID. Topic owns acceptance, regardless of Report kind.
 
 ### Worker work observation and report reminder
 
-Core opens a live observation before dispatching an eligible Worker
+Core opens a live observation before dispatching an eligible Codex Worker
 StartOrSteer and binds that observation to its input attempt. For Codex, the
 public prompt receipt supplies a native turn ID in `submission` when
 `nativeAccepted` is true and the result is `applied_new_work` or
@@ -508,13 +508,14 @@ attempt. Child-thread notifications and standalone idle updates cannot
 qualify. This proves the end of the referenced root turn. Codex provides no
 aggregate completion guarantee for work delegated outside that root turn.
 
-The Claude receipt confirms a best-effort local submission. Claude's result
-events do not carry a matching native work reference, so Core reports
-`native_work_identity_unavailable` for these submissions. Subscription
-failure or interruption leaves work unknown and the original attempt is not
-resubscribed for inference. Core restart marks unfinished observation as
-`core_observation_interrupted`. A newly accepted input can establish fresh
-observation. Core does not reconstruct terminal facts from history, idle,
+Core records a successful Claude write (`applied_best_effort`, `sent=true`)
+as `workObservation.state=delivered`. Its end stays unconfirmed, so this
+receipt alone cannot schedule a reminder. A delivered Codex input without a
+turn ID or live subscription also stays `delivered` with an observation gap.
+An interruption during live observation changes the state to `unknown`.
+Core does not resubscribe the original attempt. Core restart marks unfinished
+observation as `core_observation_interrupted`. A newly accepted input can
+establish fresh observation. Core does not reconstruct terminal facts from history, idle,
 final text, control acknowledgment or EOF.
 
 When the current Execution has no Report, a correlated end and one

@@ -148,7 +148,7 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resou
 	err = c.SendPrompt(ctx, ref, input, &receipt)
 	a = classifyAttempt(a, receipt.Acceptance, string(receipt.Result), true, err)
 	if watch != nil {
-		watch.recordReceipt(a, receipt)
+		watch.recordReceipt(a, receipt.Submission)
 	}
 	return a, watch
 }
