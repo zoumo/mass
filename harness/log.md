@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-19
+
+- **v0.3.3** 增加可选 Runtime Inject、Service 和 JSON-RPC 的 context-only 输入以及 Go 失败回执。Inject 和 prompt 共用输入准入。Prompt 的空闲回收依据当前工作结算证据。原生派发结果未知的绑定由显式生命周期操作结算。统一权限选项增加 kind/scope，独立审批可省略 toolCallId，历史录制保留原选项值。URL 接受后保持待决，Runtime 按关联原生证据生成独立的完成或过期事件。
+
 ## 2026-11-12
 
 - **统一 JSON-RPC/WebSocket 设计**：公共业务接口改为 JSON-RPC 2.0 over WebSocket；废止 REST/SSE 绑定，保留历史入口说明。客户端连接明确服务实例，普通调用与每个订阅分连接，服务端每连接最多一个活动订阅；慢连接驱逐不取消 Agent 工作。新增消息/方法 TypeSpec 及错误、初始化、背压、认证、数据目录所有权和 HTTP 可迁回边界，在 SDK 接口之后修订为 v0.3.2，详细绑定为 draft。

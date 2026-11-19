@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -32,9 +35,16 @@ func sessionResumeRequired(state events.SessionState) error {
 	return &sessionResumeRequiredError{state: state}
 }
 
+type sessionWorkOptions struct {
+	input     bool
+	prompt    bool
+	canceling bool
+	rearmIdle bool
+}
+
 // Admission pins the resolved identity and original run until dispatch settles.
-// Caller cancellation ends only the wait; the owner retains the admission gate.
-func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef, canceling, rearmIdle bool, dispatch func(context.Context, *runBinding, string) (T, error)) (T, error) {
+// Caller cancellation ends only the wait after dispatch begins.
+func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef, opts sessionWorkOptions, dispatch func(context.Context, *runBinding, string) (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, err
@@ -43,13 +53,15 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	if err != nil {
 		return zero, err
 	}
-	run, l, err := s.controlWork(r, canceling)
+	run, l, err := s.controlWork(r, opts)
 	if err != nil {
 		return zero, err
 	}
 	if err := ctx.Err(); err != nil {
-		l.admission.RUnlock()
-		run.admission.RUnlock()
+		// Admission paused the timer, but there is no native operation to
+		// produce the next idle observation.
+		opts.rearmIdle = true
+		s.settleWork(run, l, opts, err)
 		return zero, err
 	}
 	type result struct {
@@ -58,14 +70,8 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	}
 	done := make(chan result, 1)
 	go func() {
-		value, err := func() (T, error) {
-			defer run.admission.RUnlock()
-			defer l.admission.RUnlock()
-			return dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
-		}()
-		if rearmIdle {
-			s.rearmIdleAfterActivity(run, l)
-		}
+		value, err := dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
+		s.settleWork(run, l, opts, err)
 		done <- result{value, err}
 	}()
 	select {
@@ -79,4 +85,70 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 		}
 		return zero, &runtime.OperationError{Code: "outcome_unknown", Reason: "work_wait_abandoned", Message: "Operation remains owned by its original run; do not resend"}
 	}
+}
+
+func (s *Service) settleWork(run *runBinding, l *lane, opts sessionWorkOptions, err error) {
+	var problem *runtime.OperationError
+	uncertain := opts.input && errors.As(err, &problem) && problem.Code == "outcome_unknown"
+	s.mu.Lock()
+	if opts.input {
+		if uncertain {
+			l.unknownInputSource = l.source
+			l.idlePrompt.unresolved = opts.prompt
+		}
+		l.inputInFlight = false
+	}
+	s.releaseLaneAdmissionLocked(run, l, opts.rearmIdle)
+	s.mu.Unlock()
+	run.admission.RUnlock()
+}
+
+// Supersede the idle observation only for an input that could have made native progress.
+func promptNotApplied(receipt runtime.InputReceipt, err error) bool {
+	var problem *runtime.OperationError
+	if errors.As(err, &problem) && problem.Code == string(agent.ErrorOutcomeUnknown) {
+		return false
+	}
+	if receipt.Result != "" {
+		return receipt.Result == agent.InputNotApplied
+	}
+	if problem != nil {
+		switch agent.ErrorCode(problem.Code) {
+		case agent.ErrorNativeRejected, agent.ErrorInvalidArgument, agent.ErrorUnsupported:
+			return true
+		}
+	}
+	return receipt.Acceptance.Sent != nil && !*receipt.Acceptance.Sent ||
+		receipt.Acceptance.NativeAccepted != nil && !*receipt.Acceptance.NativeAccepted ||
+		errors.Is(err, runtime.ErrInvalidArgument) || errors.Is(err, runtime.ErrFailedPrecondition)
+}
+
+// Inject appends context only to the currently bound native Session.
+func (s *Service) Inject(ctx context.Context, ref resource.SessionRef, input runtime.Input) (runtime.InjectReceipt, error) {
+	notSent := runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(false)}}
+	copied, err := runtime.CopyInput(input)
+	if err != nil {
+		return notSent, err
+	}
+	type dispatchResult struct {
+		receipt    runtime.InjectReceipt
+		dispatched bool
+	}
+	result, err := sessionWork(ctx, s, ref, sessionWorkOptions{input: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (dispatchResult, error) {
+		driver, ok := run.driver.(runtime.InjectDriver)
+		if !ok {
+			return dispatchResult{notSent, true}, runtime.UnsupportedOption("inject_unsupported", "Driver does not support context injection")
+		}
+		receipt, err := driver.Inject(owner, id, copied)
+		return dispatchResult{receipt, true}, err
+	})
+	// Caller wait loss has no dispatch receipt and must retain unknown evidence.
+	var problem *runtime.OperationError
+	if !result.dispatched && errors.As(err, &problem) && problem.Code == "outcome_unknown" {
+		return runtime.InjectReceipt{}, err
+	}
+	if !result.dispatched {
+		return notSent, err
+	}
+	return result.receipt, err
 }

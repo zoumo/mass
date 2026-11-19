@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -186,6 +188,52 @@ func (c *Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input 
 		}
 	}
 	return c.callWork(ctx, "session.prompt", sessionPromptParams{Session: ref, Input: input}, out)
+}
+
+// Inject appends context without requesting a response. After the RPC attempt,
+// out holds the observed receipt even on a service error, or its zero value
+// when no receipt arrived.
+func (c *Client) Inject(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
+	if err := validateSessionRef(ref); err != nil {
+		return err
+	}
+	copied, err := runtime.CopyInput(input)
+	if err != nil {
+		return invalid()
+	}
+	var raw json.RawMessage
+	err = c.callWork(ctx, "session.inject", sessionPromptParams{Session: ref, Input: copied}, &raw)
+	if decodeErr := decodeInjectReceipt(raw, out); decodeErr != nil {
+		return errors.Join(err, decodeErr)
+	}
+	return err
+}
+
+func decodeInjectReceipt(raw json.RawMessage, out any) error {
+	if out == nil {
+		return nil
+	}
+	dst := reflect.ValueOf(out)
+	if dst.Kind() != reflect.Pointer || dst.IsNil() {
+		if len(raw) == 0 {
+			return nil
+		}
+		return decodeResult(raw, out)
+	}
+	dst = dst.Elem()
+	if len(raw) == 0 {
+		dst.SetZero()
+		return nil
+	}
+	// Decode into a zero value so neither stale fields nor a partial decode
+	// can be mistaken for evidence from this operation.
+	replacement := reflect.New(dst.Type())
+	if err := decodeResult(raw, replacement.Interface()); err != nil {
+		dst.SetZero()
+		return err
+	}
+	dst.Set(replacement.Elem())
+	return nil
 }
 
 // Answer sends one open JSON value; nil is encoded as an explicit JSON null.

@@ -131,7 +131,7 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
 		if record["event"] == "input" {
 			inputs++
-			require.Empty(t, record["uuid"])
+			require.Equal(t, resumed.InitialInputReceipt.Submission, record["uuid"])
 			require.Equal(t, "next", record["priority"])
 			require.Equal(t, true, record["shouldQuery"])
 		}

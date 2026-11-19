@@ -577,6 +577,13 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.releasing = false
 	l.observedState = ""
 	l.stateObserved = false
+	l.idleObservationVersion = 0
+	l.idleSettledWork = ""
+	l.idleSettledVersion = 0
+	l.idlePrompt = promptIdleFence{}
+	l.idleChangeReceived = 0
+	l.idleChangeApplied = 0
+	l.idleAfterAdmission = false
 	l.activeTools = nil
 	l.interactions = nil
 	l.err = errors.Join(l.err, op.err)
@@ -591,6 +598,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	}
 	s.mu.Lock()
 	delete(run.pending, k)
+	s.scheduleIdleLocked(run, l)
 	resumeErr := l.err
 	s.mu.Unlock()
 	result := resource.SessionResumed{Session: r}
@@ -601,7 +609,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
-func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, *lane, error) {
+func (s *Service) controlWork(r resource.Session, opts sessionWorkOptions) (*runBinding, *lane, error) {
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	var original *lane
@@ -621,7 +629,7 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 		run.admission.RUnlock()
 		return nil, nil, sessionResumeRequired(r.Status.State)
 	}
-	if !canceling && l != nil && l.overloaded {
+	if !opts.canceling && l != nil && l.overloaded {
 		s.mu.Unlock()
 		run.admission.RUnlock()
 		return nil, nil, runtime.Exhausted(sessionDeliveryOverloaded)
@@ -631,7 +639,7 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	if live && l.stateObserved {
 		state = l.observedState
 	}
-	if !canceling {
+	if !opts.canceling {
 		switch state {
 		case events.Idle, events.Running, events.RequiresAction:
 		case events.Unknown:
@@ -654,19 +662,39 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	if l != nil && l.load != nil && !l.load.complete.Load() {
 		available = false
 	}
-	if !canceling {
+	if !opts.canceling {
 		available = available && !s.closing && !run.stopping && run.err == nil && l.err == nil && !l.closing
 	}
-	if available {
-		l.admission.RLock()
-		s.invalidateIdleLocked(l)
-	}
-	s.mu.Unlock()
 	if !available {
+		s.mu.Unlock()
 		run.admission.RUnlock()
 		return nil, nil, sessionResumeRequired(r.Status.State)
 	}
+	if opts.input {
+		// Reject a contender before taking lane admission or pausing idle
+		// close. Admission and settlement both use s.mu.
+		if err := claimInputLocked(l); err != nil {
+			s.mu.Unlock()
+			run.admission.RUnlock()
+			return nil, nil, err
+		}
+	}
+	l.admission.RLock()
+	s.invalidateIdleLocked(l)
+	s.mu.Unlock()
 	return run, l, nil
+}
+
+func claimInputLocked(l *lane) error {
+	if l.inputInFlight {
+		return &runtime.OperationError{Code: "conflict", Reason: "input_in_flight", Message: "Another input is in flight; input was not sent"}
+	}
+	// Resume may reuse the lane with a new source after verified close.
+	if l.source.SameRun(l.unknownInputSource) {
+		return &runtime.OperationError{Code: "conflict", Reason: "input_outcome_unknown", Message: "Previous input outcome is unknown; reconcile before sending input"}
+	}
+	l.inputInFlight = true
+	return nil
 }
 
 type sessionOperation struct {

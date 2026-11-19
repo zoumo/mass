@@ -105,10 +105,21 @@ func Bool(value bool) *bool {
 	return &v
 }
 
+// InjectDriver is optional and never falls back to SendPrompt.
+type InjectDriver interface {
+	Inject(context.Context, string, Input) (InjectReceipt, error)
+}
+
+// InjectReceipt has no work identity; evidence does not prove consumption.
+type InjectReceipt struct {
+	Acceptance Acceptance `json:"acceptance"`
+}
+
 type InputReceipt struct {
 	Submission string            `json:"submission"`
 	Result     agent.InputResult `json:"result"`
 	Acceptance Acceptance        `json:"acceptance"`
+	Work       string            `json:"-"` // Adapter-proven association with events.Source.Work.
 }
 type InteractionReceipt struct {
 	Interaction string     `json:"interaction"`

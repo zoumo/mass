@@ -8,6 +8,14 @@ namespace MASS.Design;
  * 公共调用者无需先取得 Runtime 实例或内部运行凭证。
  */
 interface SessionService {
+  /** Append context only to the current valid native binding; never create/resume.
+   * Shares input admission with sendPrompt: overlap and unresolved unknown reject,
+   * closing/offline reject. Does not allocate work identity or request a response.
+   * Acceptance is preserved on error; unknown is never automatically retried. */
+  inject(session: SessionRef, input: SessionInput):
+    | InjectReceipt
+    | InjectFailure;
+
   /** 当前运行瞬态单项更新；原运行接纳/在途责任及错误见配置合同。 */
   setSessionConfig(session: SessionRef, change: ConfigChange):
     | ConfigReceipt
@@ -49,7 +57,7 @@ interface SessionService {
     | OperationError;
 
   /**
-   * 从任意状态接纳并立即建立关闭栅栏：新的 prompt、answer、cancel、resume 被拒绝，
+   * 从任意状态接纳并立即建立关闭栅栏：新的 prompt、inject、answer、cancel、resume 被拒绝，
    * get/list/history/watch 保持可用。需要 SDK close 的路径以 SDK Session close 成功
    * 为唯一 native 成功条件；随后仍须结算已接纳交付，结算失败保持 closing，完成后才写入
    * offline。未知且当前无 SDK 句柄时完成 MASS 内部清理并进入 offline；opening 等尚无句柄时接管原

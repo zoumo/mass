@@ -11,6 +11,7 @@ import (
 
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 var errInvalidRPCParams = errors.New("invalid JSON-RPC params")
@@ -149,7 +150,11 @@ func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *
 	}
 	result, err := call(context.WithoutCancel(ctx))
 	if err != nil {
-		replyServiceError(ctx, conn, req.ID, err)
+		if receipt, ok := result.(runtime.InjectReceipt); req.Method == "session.inject" && ok {
+			replyServiceError(ctx, conn, req.ID, err, receipt)
+		} else {
+			replyServiceError(ctx, conn, req.ID, err)
+		}
 		return
 	}
 	if err := rpcwire.ValidateLossless(result); err != nil {
@@ -168,7 +173,7 @@ func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *
 	}
 }
 
-func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err error) {
+func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err error, receipt ...runtime.InjectReceipt) {
 	// Only explicit Service outcomes are business errors. Unclassified Go
 	// failures are implementation errors and must stay redacted.
 	public, ok := publicError(err)
@@ -176,11 +181,18 @@ func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err err
 		replyInternalError(ctx, conn, id)
 		return
 	}
-	if err := rpcwire.ValidateLossless(public); err != nil {
+	var value any = public
+	if len(receipt) > 0 {
+		value = struct {
+			*Error
+			Receipt runtime.InjectReceipt `json:"receipt"`
+		}{public, receipt[0]}
+	}
+	if err := rpcwire.ValidateLossless(value); err != nil {
 		replyInternalError(ctx, conn, id)
 		return
 	}
-	data, encodeErr := json.Marshal(public)
+	data, encodeErr := json.Marshal(value)
 	if encodeErr != nil {
 		replyInternalError(ctx, conn, id)
 		return

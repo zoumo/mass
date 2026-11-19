@@ -59,7 +59,9 @@ func main() {
 		send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link})
 		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 	}
-	frames := make(chan map[string]any)
+	// Keep the one read-only resume probe pending while init is gated, so the
+	// reader can still observe EOF and release the owned process on cancellation.
+	frames := make(chan map[string]any, 1)
 	eof := make(chan struct{})
 	go func() {
 		defer close(eof)
@@ -98,6 +100,10 @@ func main() {
 		if v["type"] == "control_request" {
 			r := v["request"].(map[string]any)
 			if reply, ok := clipeer.ClaimReply(v, id); ok {
+				send(reply)
+				continue
+			}
+			if reply, ok := clipeer.StatusReply(v, id, cwd); ok {
 				send(reply)
 				continue
 			}

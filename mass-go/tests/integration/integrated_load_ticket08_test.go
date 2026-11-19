@@ -22,7 +22,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-func ticket08Daemon(t *testing.T) *entrypointSuite {
+func ticket08Daemon(t *testing.T, expectedShutdown ...string) *entrypointSuite {
 	t.Helper()
 	s := new(entrypointSuite)
 	s.SetT(t)
@@ -44,7 +44,12 @@ func ticket08Daemon(t *testing.T) *entrypointSuite {
 			go func() { done <- s.daemon.Wait() }()
 			select {
 			case err := <-done:
-				s.NoError(err, s.stderr.String())
+				if len(expectedShutdown) == 0 {
+					s.NoError(err, s.stderr.String())
+				} else {
+					s.Error(err, "fault-injected native observation failure remains visible on shutdown")
+					s.Contains(s.stderr.String(), expectedShutdown[0])
+				}
 			case <-time.After(15 * time.Second):
 				_ = s.daemon.Process.Kill()
 				<-done
@@ -176,7 +181,7 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 			if kind == "claude" {
 				if _, ok := e.Payload().(events.AgentMessage); ok {
 					meta, _ := e.Meta["claude"].(map[string]any)
-					s.NotContains(meta, "userMessageUuid", "the SDK does not attach its receipt UUID to native input")
+					s.Equal(receipt.Submission, meta["userMessageUuid"], "retain the linkage carried by the native frame")
 					s.NotContains(meta, "submission")
 					s.NotContains(meta, "attribution")
 				}
@@ -321,7 +326,7 @@ func ticket08Released(t *testing.T, s *entrypointSuite, ref resource.SessionRef,
 		input, answer := records[2+i*2], records[3+i*2]
 		if kind == "claude" {
 			require.NoError(t, uuid.Validate(r.Submission))
-			require.Empty(t, input.UUID, "SDK receipt identity must not be invented on the native wire")
+			require.Equal(t, r.Submission, input.UUID, "native input carries the receipt UUID")
 			require.Equal(t, input.UUID, answer.UUID)
 			require.Equal(t, i+1, input.Input)
 			require.Equal(t, input.Input, answer.Input)

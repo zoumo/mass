@@ -47,6 +47,7 @@ type RuntimeService interface {
 	StartRuntime(context.Context, string) (resource.Runtime, error)
 }
 type SessionService interface {
+	Inject(context.Context, resource.SessionRef, runtime.Input) (runtime.InjectReceipt, error)
 	SetSessionConfig(context.Context, resource.SessionRef, runtime.ConfigChange) (runtime.ConfigReceipt, error)
 	ResolveSession(namespace, nameOrID string) (resource.SessionRef, error)
 	CreateSession(context.Context, resource.Session) (resource.Session, error)
@@ -104,30 +105,41 @@ func (o *opening) finish() {
 }
 
 type delivery struct {
-	event   events.SessionEvent
-	barrier chan struct{}
+	event             events.SessionEvent
+	barrier           chan struct{}
+	idleChangeVersion uint64
 }
 type lane struct {
-	load           *historyLoad
-	admission      sync.RWMutex
-	releasing      bool
-	nativeClosed   bool
-	observedState  events.SessionState
-	stateObserved  bool
-	session        resource.Session
-	source         events.Source
-	queue          chan delivery
-	done           chan struct{}
-	err            error
-	closing        bool
-	overloaded     bool
-	retry          chan chan error
-	commitErr      error
-	publicationErr error
-	idleTimer      Timer
-	idleVersion    uint64
-	activeTools    map[string]struct{}
-	interactions   map[string]struct{}
+	inputInFlight      bool          // protected by Service.mu
+	unknownInputSource events.Source // protected by Service.mu; fences this native run
+	load               *historyLoad
+	admission          sync.RWMutex
+	releasing          bool
+	nativeClosed       bool
+	observedState      events.SessionState
+	stateObserved      bool
+	session            resource.Session
+	source             events.Source
+	queue              chan delivery
+	done               chan struct{}
+	err                error
+	closing            bool
+	overloaded         bool
+	retry              chan chan error
+	commitErr          error
+	publicationErr     error
+	idleTimer          Timer
+	idleVersion        uint64
+	idleAfterAdmission bool // a pending rearm waits for the final admission reader
+	activeTools        map[string]struct{}
+	interactions       map[string]struct{}
+
+	idleObservationVersion uint64 // when the current native state was admitted for delivery
+	idleSettledWork        string // last work with explicit terminal evidence
+	idleSettledVersion     uint64
+	idlePrompt             promptIdleFence
+	idleChangeReceived     uint64 // newest queued state or pending-work change
+	idleChangeApplied      uint64 // newest such change reflected in this lane
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -205,7 +217,7 @@ func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef
 	if err = decoder.Decode(&answer); err != nil {
 		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid JSON answer")
 	}
-	return sessionWork(ctx, s, ref, false, false, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
+	return sessionWork(ctx, s, ref, sessionWorkOptions{}, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
 		evidence, err := run.driver.AnswerInteraction(owner, id, interaction, answer)
 		return runtime.InteractionReceipt{Interaction: interaction, Evidence: evidence}, err
 	})
@@ -571,7 +583,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 					l.err = errors.New("creation event source mismatch")
 					break
 				}
-				l.queue <- delivery{event: e}
+				l.queue <- s.admitDeliveryLocked(l, e)
 			}
 			abandoned = op.abandoned || run.stopping
 			if !abandoned {
@@ -640,8 +652,29 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, false, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
-		return run.driver.SendPrompt(owner, id, input)
+	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, sessionWorkOptions{input: true, prompt: true}, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+		// Admission holds the original lane through dispatch. A state event
+		// already queued at this point cannot settle the new prompt.
+		s.mu.Lock()
+		l := run.lanes[id]
+		previousIdlePrompt := l.idlePrompt
+		previousSettledWork, previousSettledVersion := l.idleSettledWork, l.idleSettledVersion
+		l.idlePrompt = promptIdleFence{dispatchFloor: l.idleVersion + 1}
+		s.mu.Unlock()
+
+		receipt, err := run.driver.SendPrompt(owner, id, input)
+		s.mu.Lock()
+		if promptNotApplied(receipt, err) {
+			l.idlePrompt = previousIdlePrompt
+			if l.idleSettledWork != previousIdlePrompt.work {
+				l.idleSettledWork, l.idleSettledVersion = previousSettledWork, previousSettledVersion
+			}
+			l.idleAfterAdmission = true
+		} else if receipt.Work != "" {
+			l.idlePrompt.work = receipt.Work
+		}
+		s.mu.Unlock()
+		return receipt, err
 	})
 }
 
@@ -756,7 +789,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			s.mu.Unlock()
 			continue
 		}
-		s.invalidateIdleLocked(l)
+		entry := s.admitDeliveryLocked(l, e)
 		// Normal delivery has 128 queued slots. The same channel reserves a
 		// further 128 for the original closing source, never a forwarding queue.
 		// Retired/already-closing owners retain the pre-existing fallback policy.
@@ -789,7 +822,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			return
 		}
 		select {
-		case l.queue <- delivery{event: e}:
+		case l.queue <- entry:
 		default:
 			l.err = errors.New("session event queue exhausted; stream responsibility retained")
 			run.err = l.err
@@ -882,17 +915,21 @@ func (s *Service) process(run *runBinding, l *lane) {
 			}
 		}
 		s.mu.Lock()
-		if state, ok := e.Payload().(events.StateUpdate); ok && e.Replay == nil {
-			if !l.closing && l.source.SameRun(e.Source()) {
+		if entry.idleChangeVersion != 0 && !l.closing && l.source.SameRun(e.Source()) {
+			l.idleChangeApplied = max(l.idleChangeApplied, entry.idleChangeVersion)
+			switch payload := e.Payload().(type) {
+			case events.StateUpdate:
 				l.stateObserved = true
 				l.observedState = events.Unknown
-				if state.State != nil {
-					l.observedState = *state.State
+				l.idleObservationVersion = entry.idleChangeVersion
+				if payload.State != nil {
+					l.observedState = *payload.State
 				}
-			}
-		}
-		if e.Replay == nil {
-			switch payload := e.Payload().(type) {
+				source := e.Source()
+				if work := source.Work(); source.WorkTerminal() && (l.idlePrompt.work == "" || l.idlePrompt.work == work) {
+					l.idleSettledWork = work
+					l.idleSettledVersion = entry.idleChangeVersion
+				}
 			case events.ToolChunk:
 				if l.activeTools == nil {
 					l.activeTools = map[string]struct{}{}
@@ -911,12 +948,11 @@ func (s *Service) process(run *runBinding, l *lane) {
 			case events.ToolResult:
 				delete(l.activeTools, payload.ID)
 			case events.InteractionRequested:
-				if payload.Blocking {
-					if l.interactions == nil {
-						l.interactions = map[string]struct{}{}
-					}
-					l.interactions[string(payload.Interaction)] = struct{}{}
+				// Admission stamps only blocking interaction requests.
+				if l.interactions == nil {
+					l.interactions = map[string]struct{}{}
 				}
+				l.interactions[string(payload.Interaction)] = struct{}{}
 			case events.InteractionClosed:
 				delete(l.interactions, string(payload.Interaction))
 			}
@@ -968,7 +1004,9 @@ func (s *Service) process(run *runBinding, l *lane) {
 						s.fail(l, err)
 					}
 				}
-				l.admission.RUnlock()
+				s.mu.Lock()
+				s.releaseLaneAdmissionLocked(run, l, false)
+				s.mu.Unlock()
 			}
 			run.admission.RUnlock()
 		}
@@ -1015,7 +1053,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // Cancel targets the original lane and remains available during drain. A receipt
 // records only dispatch/acknowledgment; native termination must still be observed.
 func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
-	return sessionWork(ctx, s, ref, true, true, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
+	return sessionWork(ctx, s, ref, sessionWorkOptions{canceling: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
 		return run.driver.Cancel(owner, id)
 	})
 }

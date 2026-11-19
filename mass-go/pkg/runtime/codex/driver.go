@@ -83,16 +83,17 @@ func newDriver(vault recovery.Vault, options options, provider agent.Core, nativ
 }
 
 type session struct {
-	native    agent.Session
-	relay     *agentrelay.Relay
-	address   runtime.Address
-	source    events.Source
-	closing   atomic.Bool
-	closeMu   sync.Mutex
-	closeOnce sync.Once
-	closeErr  error
-	cancelOp  sync.Mutex
-	controlMu sync.Mutex
+	interactions agentrelay.Interactions
+	native       agent.Session
+	relay        *agentrelay.Relay
+	address      runtime.Address
+	source       events.Source
+	closing      atomic.Bool
+	closeMu      sync.Mutex
+	closeOnce    sync.Once
+	closeErr     error
+	cancelOp     sync.Mutex
+	controlMu    sync.Mutex
 
 	activeWork    string
 	lastFinished  string
@@ -366,9 +367,10 @@ func (d *Driver) bindSession(native agent.Session, address runtime.Address, sour
 	}
 	s := &session{native: native, address: address, source: source}
 	relay, err := agentrelay.Start(life, agentrelay.Config{
-		Session: native,
-		Address: address,
-		Source:  source,
+		Session:      native,
+		Address:      address,
+		Source:       source,
+		Interactions: &s.interactions,
 		ExpectedEOF: func() bool {
 			return s.closing.Load()
 		},
@@ -384,9 +386,10 @@ func (d *Driver) bindSession(native agent.Session, address runtime.Address, sour
 			}
 		},
 		Sink: func(ctx context.Context, event events.SessionEvent) error {
-			if work := codexTurnID(event); work != "" {
+			source := codexEventSource(event)
+			if work := source.Work(); work != "" {
 				s.observeWork(event, work)
-				remapped, err := events.NewEvent(event.EventBase, event.Payload(), event.Source().WithWork(work))
+				remapped, err := events.NewEvent(event.EventBase, event.Payload(), source)
 				if err != nil {
 					return err
 				}
@@ -424,10 +427,20 @@ func (d *Driver) sendPrompt(ctx context.Context, id string, input runtime.Input)
 		return runtime.InputReceipt{}, err
 	}
 	receipt, err := s.native.StartOrSteer(ctx, input)
-	if err != nil {
-		return runtime.InputReceipt{}, agentrelay.MapError(err)
-	}
 	mapped := agentrelay.MapInputReceipt(receipt)
+	if err != nil {
+		var dispatch *sdk.CallError
+		if mapped.Acceptance.Sent == nil && agent.CodeOf(err) != agent.ErrorOutcomeUnknown &&
+			errors.As(err, &dispatch) && dispatch.Dispatch == sdk.NotSent {
+			mapped.Acceptance.Sent = runtime.Bool(false)
+		}
+		return mapped, agentrelay.MapError(err)
+	}
+	switch mapped.Result {
+	case agent.InputAppliedNewWork, agent.InputAppliedCurrentWork:
+		// Codex returns the same native turn ID in the receipt and its event source.
+		mapped.Work = mapped.Submission
+	}
 	if mapped.Result != agent.InputNotApplied && mapped.Submission != "" {
 		s.controlMu.Lock()
 		if mapped.Submission != s.lastFinished {
@@ -439,77 +452,11 @@ func (d *Driver) sendPrompt(ctx context.Context, id string, input runtime.Input)
 }
 
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
-	parsed, kind, err := parseAnswer(answer)
-	if err != nil {
-		return runtime.Acceptance{}, err
-	}
-	if err := agent.ValidateAnswer(kind, parsed); err != nil {
-		return runtime.Acceptance{}, agentrelay.MapError(err)
-	}
 	s, err := d.ordinarySession(id)
 	if err != nil {
 		return runtime.Acceptance{}, err
 	}
-	receipt, err := s.native.Answer(ctx, agent.InteractionRef(ref), parsed)
-	if err != nil {
-		return runtime.Acceptance{}, agentrelay.MapError(err)
-	}
-	return agentrelay.MapInteractionReceipt(receipt).Evidence, nil
-}
-
-func parseAnswer(answer any) (agent.Answer, agent.InteractionKind, error) {
-	value, ok := answer.(map[string]any)
-	if !ok || value == nil {
-		return nil, "", runtime.InvalidArgument("interaction requires an object answer")
-	}
-	if outcome, permission := value["outcome"]; permission {
-		for field := range value {
-			if field != "outcome" && field != "optionId" {
-				return nil, "", runtime.InvalidArgument("permission answer contains unsupported fields")
-			}
-		}
-		text, valid := outcome.(string)
-		if !valid {
-			return nil, "", runtime.InvalidArgument("permission outcome must be a string")
-		}
-		parsed := agent.PermissionAnswer{Outcome: agent.PermissionOutcome(text)}
-		if option, present := value["optionId"]; present {
-			optionID, valid := option.(string)
-			if !valid {
-				return nil, "", runtime.InvalidArgument("permission optionId must be a string")
-			}
-			parsed.OptionID = optionID
-		}
-		return parsed, agent.InteractionPermission, nil
-	}
-	action, form := value["action"]
-	if !form {
-		return nil, "", runtime.InvalidArgument("interaction answer kind is required")
-	}
-	for field := range value {
-		if field != "action" && field != "content" {
-			return nil, "", runtime.InvalidArgument("form answer contains unsupported fields")
-		}
-	}
-	text, ok := action.(string)
-	if !ok {
-		return nil, "", runtime.InvalidArgument("form action must be a string")
-	}
-	parsed := agent.FormAnswer{Outcome: agent.FormOutcome(text)}
-	if content, present := value["content"]; present {
-		object, ok := content.(map[string]any)
-		if !ok || object == nil {
-			return nil, "", runtime.InvalidArgument("form content must be an object")
-		}
-		if _, err := json.Marshal(object); err != nil {
-			return nil, "", runtime.InvalidArgument("form content must be JSON-compatible")
-		}
-		if text != string(agent.FormAccept) {
-			return nil, "", runtime.InvalidArgument("declined or canceled form answer must not contain content")
-		}
-		parsed.Content = object
-	}
-	return parsed, agent.InteractionForm, nil
+	return s.interactions.Answer(ctx, s.native, agent.InteractionRef(ref), answer, agentrelay.MapError)
 }
 
 func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
@@ -669,6 +616,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 			return ctx.Err()
 		}
 	}
+	if err := s.interactions.Expire(ctx, id, s.address, s.source, d.pipe.Send); err != nil {
+		return err
+	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err
 	}
@@ -802,13 +752,18 @@ func outcomeUnknown(reason, message string, cause error) error {
 	return err
 }
 
-func codexTurnID(event events.SessionEvent) string {
-	codexMeta, ok := event.Meta["codex"].(map[string]any)
-	if !ok {
-		return ""
-	}
+func codexEventSource(event events.SessionEvent) events.Source {
+	codexMeta, _ := event.Meta["codex"].(map[string]any)
 	turnID, _ := codexMeta["turnId"].(string)
-	return turnID
+	if turnID == "" {
+		return event.Source()
+	}
+	// Only a root turn completion can settle the Prompt, even when a child shares its ID.
+	_, child := codexMeta["sourceThreadId"]
+	if _, state := event.Payload().(events.StateUpdate); state && !child && codexMeta["method"] == "turn/completed" {
+		return event.Source().WithTerminalWork(turnID)
+	}
+	return event.Source().WithWork(turnID)
 }
 
 func sameNativeCreatedAt(a, b int64) bool {

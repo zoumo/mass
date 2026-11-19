@@ -13,9 +13,144 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
+	sdk "github.com/zoumo/agent-sdk-go/codex"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/agentrelay"
 )
+
+type promptSDKSession struct {
+	configSDKSession
+	promptReceipt agent.InputReceipt
+	promptErr     error
+}
+
+func (s *promptSDKSession) StartOrSteer(context.Context, agent.Input) (agent.InputReceipt, error) {
+	return s.promptReceipt, s.promptErr
+}
+
+func TestPromptFailurePreservesDispatchEvidence(t *testing.T) {
+	cases := []struct {
+		name     string
+		code     agent.ErrorCode
+		dispatch sdk.DispatchState
+		cause    error
+		sent     *bool
+		wantSent *bool
+	}{
+		{
+			name: "outbound frame rejected before write", code: agent.ErrorUnavailable,
+			dispatch: sdk.NotSent, cause: sdk.ErrFrameTooLarge, wantSent: runtime.Bool(false),
+		},
+		{
+			name: "uncertain dispatch", code: agent.ErrorOutcomeUnknown,
+			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded,
+		},
+		{
+			name: "observed write with uncertain outcome", code: agent.ErrorOutcomeUnknown,
+			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded, sent: runtime.Yes(), wantSent: runtime.Yes(),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sdkErr := &agent.Error{
+				Code: tc.code, Reason: "start_or_steer_failed", Message: "Prompt failed",
+				Cause: &sdk.CallError{Method: "turn/start", Dispatch: tc.dispatch, Cause: tc.cause},
+			}
+			native := &promptSDKSession{
+				promptReceipt: agent.InputReceipt{Acceptance: agent.Acceptance{Sent: tc.sent}},
+				promptErr:     sdkErr,
+			}
+			relay, err := agentrelay.Start(t.Context(), agentrelay.Config{
+				Session: native,
+				Address: runtime.Address{Namespace: "one", SessionName: "prompt"},
+				Sink:    func(context.Context, events.SessionEvent) error { return nil },
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { relay.Close(); <-relay.Done() })
+			driver := &Driver{sessions: map[string]*session{"native": {native: native, relay: relay}}}
+			receipt, err := driver.SendPrompt(t.Context(), "native", runtime.Input{Content: []events.ContentBlock{events.Text("prompt")}})
+			var public *runtime.OperationError
+			require.ErrorAs(t, err, &public)
+			require.Equal(t, string(tc.code), public.Code)
+			require.ErrorIs(t, err, tc.cause)
+			require.Equal(t, runtime.InputReceipt{Acceptance: runtime.Acceptance{Sent: tc.wantSent}}, receipt)
+		})
+	}
+}
+
+func TestPromptReturnsAssociationForIdentifiedTurn(t *testing.T) {
+	for _, tc := range []struct {
+		result agent.InputResult
+		work   string
+	}{
+		{result: agent.InputAppliedNewWork, work: "turn-id"},
+		{result: agent.InputAppliedCurrentWork, work: "turn-id"},
+		{result: agent.InputAppliedBestEffort},
+	} {
+		t.Run(string(tc.result), func(t *testing.T) {
+			native := &promptSDKSession{promptReceipt: agent.InputReceipt{
+				Submission: "turn-id",
+				Result:     tc.result,
+				Acceptance: agent.Acceptance{Sent: runtime.Yes()},
+			}}
+			relay, err := agentrelay.Start(t.Context(), agentrelay.Config{
+				Session: native,
+				Address: runtime.Address{Namespace: "one", SessionName: "prompt"},
+				Sink:    func(context.Context, events.SessionEvent) error { return nil },
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { relay.Close(); <-relay.Done() })
+			driver := &Driver{sessions: map[string]*session{"native": {native: native, relay: relay}}}
+			receipt, err := driver.SendPrompt(t.Context(), "native", runtime.Input{Content: []events.ContentBlock{events.Text("prompt")}})
+			require.NoError(t, err)
+			require.Equal(t, tc.work, receipt.Work)
+			wire, err := json.Marshal(receipt)
+			require.NoError(t, err)
+			expected, err := json.Marshal(agentrelay.MapInputReceipt(native.promptReceipt))
+			require.NoError(t, err)
+			require.JSONEq(t, string(expected), string(wire))
+		})
+	}
+}
+
+func TestCodexTerminalWorkSource(t *testing.T) {
+	requiresAction := events.RequiresAction
+	running := events.Running
+	for _, tc := range []struct {
+		name     string
+		method   string
+		work     string
+		thread   string
+		payload  events.Payload
+		terminal bool
+	}{
+		{"completed turn with pending action", "turn/completed", "turn-1", "", events.StateUpdate{State: &requiresAction}, true},
+		{"completed child turn with shared ID", "turn/completed", "turn-1", "child-thread", events.StateUpdate{State: &requiresAction}, false},
+		{"stale completion diagnostic", "turn/completed", "turn-1", "", events.SessionError{Reason: "stale_native_turn", Message: "stale"}, false},
+		{"started turn", "turn/started", "turn-1", "", events.StateUpdate{State: &running}, false},
+		{"untagged state", "thread/status/changed", "", "", events.StateUpdate{State: &running}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := events.NewSource()
+			meta := map[string]any{"method": tc.method, "turnId": tc.work}
+			if tc.thread != "" {
+				meta["sourceThreadId"] = tc.thread
+			}
+			event, err := events.NewEvent(events.EventBase{
+				EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "prompt", SessionID: "native",
+				Time: time.Now(), Meta: map[string]any{"codex": meta},
+			}, tc.payload, original)
+			require.NoError(t, err)
+			source := codexEventSource(event)
+			require.True(t, source.SameRun(original))
+			require.Equal(t, tc.work, source.Work())
+			require.Equal(t, tc.terminal, source.WorkTerminal())
+		})
+	}
+}
 
 func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	executable, err := os.Executable()

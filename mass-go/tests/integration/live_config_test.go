@@ -29,6 +29,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 var (
@@ -42,6 +43,7 @@ type configNativeCall struct {
 	params     map[string]any
 	respond    func(any)
 	reject     func()
+	rejectCode func(int)
 	disconnect func()
 }
 
@@ -61,6 +63,7 @@ func (f configNativeFactory) New(name string, config runtime.Config) (runtime.Dr
 type configNativePeer struct {
 	driver        runtime.Driver
 	kind, cwd, id string
+	version       string
 	listener      net.Listener
 	calls         chan configNativeCall
 	opened        chan []string
@@ -72,12 +75,16 @@ type configNativePeer struct {
 	trace         []string
 }
 
-func newConfigNativePeer(t *testing.T, kind, cwd string) *configNativePeer {
+func newConfigNativePeer(t *testing.T, kind, cwd string, version ...string) *configNativePeer {
 	t.Helper()
 	var listenConfig net.ListenConfig
 	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	p := &configNativePeer{kind: kind, cwd: cwd, id: "native-thread", listener: listener, calls: make(chan configNativeCall, 64), opened: make(chan []string, 8), done: make(chan struct{}), conns: map[net.Conn]bool{}}
+	p.version = nativeclaude.MinimumCLIVersion
+	if len(version) > 0 {
+		p.version = version[0]
+	}
 	if kind == "claude" {
 		p.id = "33333333-3333-4333-8333-333333333333"
 	}
@@ -161,6 +168,18 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			send(map[string]any{"id": v["id"], "error": map[string]any{"code": -32602, "message": "SECRET native rejection"}})
 		}
 		if p.kind == "claude" {
+			if reply, ok := clipeer.StatusReply(v, p.id, p.cwd); ok {
+				send(reply)
+				continue
+			}
+			if v["type"] == "user" {
+				select {
+				case p.calls <- configNativeCall{method: "user", params: v}:
+				case <-p.done:
+					return
+				}
+				continue
+			}
 			if v["type"] != "control_request" {
 				continue
 			}
@@ -180,7 +199,7 @@ func (p *configNativePeer) serve(conn net.Conn) {
 				respond(map[string]any{"userAgent": "synthetic", "codexHome": "/synthetic", "platformFamily": "unix", "platformOs": "linux"})
 			} else {
 				respond(map[string]any{})
-				send(map[string]any{"type": "system", "subtype": "init", "session_id": p.id, "cwd": p.cwd, "claude_code_version": nativeclaude.MinimumCLIVersion})
+				send(map[string]any{"type": "system", "subtype": "init", "session_id": p.id, "cwd": p.cwd, "claude_code_version": p.version})
 				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": p.id, "state": "idle"})
 			}
 		case "claim_session":
@@ -197,9 +216,11 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			respond(map[string]any{"thread": thread()})
 		case "thread/unsubscribe":
 			respond(map[string]any{"status": "unsubscribed"})
-		case "thread/settings/update", "set_model", "get_settings", "apply_flag_settings":
+		case "thread/inject_items", "turn/start", "turn/steer", "thread/settings/update", "set_model", "get_settings", "apply_flag_settings":
 			select {
-			case p.calls <- configNativeCall{method: method, params: params, respond: respond, reject: reject, disconnect: func() { _ = conn.Close() }}:
+			case p.calls <- configNativeCall{method: method, params: params, respond: respond, reject: reject, rejectCode: func(code int) {
+				send(map[string]any{"id": v["id"], "error": map[string]any{"code": code, "message": "SECRET native rejection"}})
+			}, disconnect: func() { _ = conn.Close() }}:
 			case <-p.done:
 				return
 			}

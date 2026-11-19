@@ -29,7 +29,7 @@ model ProtocolErrorData {
 model Error {
   code: int32;
   message: string;
-  data?: MASS.Design.OperationError | ProtocolErrorData;
+  data?: MASS.Design.OperationError | InjectFailure | ProtocolErrorData;
 }
 
 /** Params/Result 由方法声明决定，T 不是任意语言对象。 */
@@ -85,6 +85,7 @@ interface Methods {
   `session.list`(query?: SessionQuery): Page<Session>;
   `session.resume`(session: SessionRef, input?: SessionResume): SessionResumed;
   `session.close`(session: SessionRef): Session;
+  `session.inject`(session: SessionRef, input: SessionInput): InjectReceipt;
   `session.prompt`(session: SessionRef, input: SessionInput): InputReceipt;
   `session.answer`(
     session: SessionRef,

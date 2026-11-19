@@ -25,6 +25,11 @@ model InputReceipt {
   acceptance: AcceptanceEvidence;
 }
 
+/** Context acceptance only; no submission/work identity, consumption timing or persistence guarantee. */
+model InjectReceipt {
+  acceptance: AcceptanceEvidence;
+}
+
 model InteractionReceipt {
   interaction: InteractionRef;
   evidence: InteractionEvidence;
@@ -48,4 +53,10 @@ model OperationError {
 
   /** 面向人的脱敏说明；调用者不通过解析此字段判断错误类型或是否重试。 */
   message: string;
+}
+
+/** An injection error retains all observed acceptance evidence. */
+@error
+model InjectFailure extends OperationError {
+  receipt: InjectReceipt;
 }

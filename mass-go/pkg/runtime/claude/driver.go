@@ -66,13 +66,14 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 }
 
 type session struct {
-	command   sync.Mutex
-	closeOnce sync.Once
-	closeErr  error
-	native    agent.Session
-	relay     *agentrelay.Relay
-	address   runtime.Address
-	source    events.Source
+	interactions agentrelay.Interactions
+	command      sync.Mutex
+	closeOnce    sync.Once
+	closeErr     error
+	native       agent.Session
+	relay        *agentrelay.Relay
+	address      runtime.Address
+	source       events.Source
 
 	mu           sync.Mutex
 	closing      bool
@@ -371,9 +372,10 @@ func (s *session) arcClose() error {
 
 func (d *Driver) startRelay(s *session) error {
 	relay, err := agentrelay.Start(d.life, agentrelay.Config{
-		Session: s.native,
-		Address: s.address,
-		Source:  s.source,
+		Session:      s.native,
+		Address:      s.address,
+		Source:       s.source,
+		Interactions: &s.interactions,
 		ExpectedEOF: func() bool {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -434,22 +436,24 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.mu.Unlock()
 
 	result, err := s.native.StartOrSteer(ctx, input)
+	receipt := agentrelay.MapInputReceipt(result)
 	if err != nil {
-		return runtime.InputReceipt{}, mapClaudeError(err)
+		var dispatch *nativeclaude.DispatchError
+		if receipt.Acceptance.Sent == nil && agent.CodeOf(err) != agent.ErrorOutcomeUnknown &&
+			errors.As(err, &dispatch) && dispatch.State == nativeclaude.NotSent {
+			receipt.Acceptance.Sent = runtime.Bool(false)
+		}
+		return receipt, mapClaudeError(err)
 	}
 	if result.Result == agent.InputAppliedNewWork {
 		s.mu.Lock()
 		s.clearCancelLocked()
 		s.mu.Unlock()
 	}
-	return agentrelay.MapInputReceipt(result), nil
+	return receipt, nil
 }
 
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
-	typed, err := claudeInteractionAnswer(answer)
-	if err != nil {
-		return runtime.Acceptance{}, err
-	}
 	s, err := d.get(id)
 	if err != nil {
 		return runtime.Acceptance{}, err
@@ -460,101 +464,7 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer a
 		return runtime.Acceptance{}, runtime.FailedPrecondition("session unavailable")
 	}
 	s.mu.Unlock()
-	receipt, err := s.native.Answer(ctx, agent.InteractionRef(ref), typed)
-	if err != nil {
-		return runtime.Acceptance{}, mapClaudeError(err)
-	}
-	return agentrelay.MapAcceptance(receipt.Acceptance), nil
-}
-
-func claudeInteractionAnswer(value any) (agent.Answer, error) {
-	answer, ok := value.(map[string]any)
-	if !ok || answer == nil {
-		return nil, runtime.InvalidArgument("interaction requires an object answer")
-	}
-	if action, form := answer["action"]; form {
-		switch action {
-		case "accept":
-			if len(answer) != 2 {
-				return nil, runtime.InvalidArgument("expected explicit form accept/content")
-			}
-			content, valid := answer["content"].(map[string]any)
-			if !valid || content["answers"] == nil {
-				return nil, runtime.InvalidArgument("expected native question answers")
-			}
-			if err := validateClaudeQuestionAnswers(content["answers"]); err != nil {
-				return nil, err
-			}
-			return agent.FormAnswer{Outcome: agent.FormAccept, Content: content}, nil
-		case "decline":
-			if len(answer) != 1 {
-				return nil, runtime.InvalidArgument("declined form must not contain content")
-			}
-			return agent.FormAnswer{Outcome: agent.FormDecline}, nil
-		case "cancel":
-			if len(answer) != 1 {
-				return nil, runtime.InvalidArgument("canceled form must not contain content")
-			}
-			return agent.FormAnswer{Outcome: agent.FormCancel}, nil
-		default:
-			return nil, runtime.InvalidArgument("invalid form answer action")
-		}
-	}
-
-	outcome, ok := answer["outcome"].(string)
-	if !ok {
-		return nil, runtime.InvalidArgument("invalid permission answer outcome")
-	}
-	switch outcome {
-	case "selected":
-		if len(answer) != 2 {
-			return nil, runtime.InvalidArgument("selected permission answer requires only an optionId")
-		}
-		option, ok := answer["optionId"].(string)
-		if !ok || option == "" {
-			return nil, runtime.InvalidArgument("selected permission answer requires an optionId")
-		}
-		switch option {
-		case "allow-once", "reject-once":
-		default:
-			return nil, runtime.InvalidArgument("invalid permission option")
-		}
-		return agent.PermissionAnswer{Outcome: agent.PermissionSelected, OptionID: option}, nil
-	case string(agent.PermissionCancelled):
-		if len(answer) != 1 {
-			return nil, runtime.InvalidArgument("canceled permission answer must not select an option")
-		}
-		return agent.PermissionAnswer{Outcome: agent.PermissionCancelled}, nil
-	default:
-		return nil, runtime.InvalidArgument("invalid permission answer outcome")
-	}
-}
-
-func validateClaudeQuestionAnswers(value any) error {
-	switch answers := value.(type) {
-	case map[string]any:
-		for question, answer := range answers {
-			if question == "" {
-				return runtime.InvalidArgument("question answers require native question text")
-			}
-			switch value := answer.(type) {
-			case string:
-			case []any:
-				for _, item := range value {
-					if _, ok := item.(string); !ok {
-						return runtime.InvalidArgument("question answers must be strings or string arrays")
-					}
-				}
-			default:
-				return runtime.InvalidArgument("question answers must be strings or string arrays")
-			}
-		}
-		return nil
-	case map[string]string:
-		return nil
-	default:
-		return runtime.InvalidArgument("expected answers keyed by full native question text")
-	}
+	return s.interactions.Answer(ctx, s.native, agent.InteractionRef(ref), answer, mapClaudeError)
 }
 
 func (d *Driver) CloseSession(ctx context.Context, id string) error {
@@ -577,6 +487,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	if err := s.interactions.Expire(ctx, id, s.address, s.source, d.pipe.Send); err != nil {
+		return err
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err

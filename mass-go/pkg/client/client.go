@@ -186,6 +186,19 @@ func (c *Client) callWith(ctx context.Context, method string, params, out any, w
 	}
 	var raw json.RawMessage
 	if err = waiter.Wait(ctx, &raw); err != nil {
+		if method == "session.inject" && out != nil {
+			var rpcErr *rpc2.Error
+			if errors.As(err, &rpcErr) && rpcErr.Code == rpcwire.CodeServiceError && rpcErr.Data != nil {
+				var data struct {
+					Receipt json.RawMessage `json:"receipt"`
+				}
+				if json.Unmarshal(*rpcErr.Data, &data) == nil && len(data.Receipt) > 0 {
+					if decodeErr := decodeResult(data.Receipt, out); decodeErr != nil {
+						return decodeErr
+					}
+				}
+			}
+		}
 		mapped := c.callError(ctx, stream, err)
 		if work {
 			var rpcErr *rpc2.Error

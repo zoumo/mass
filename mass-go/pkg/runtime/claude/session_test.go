@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -17,11 +18,12 @@ import (
 type receiptSession struct {
 	agent.Session
 	receipt    agent.InputReceipt
+	err        error
 	interrupts int
 }
 
 func (s *receiptSession) StartOrSteer(context.Context, agent.Input) (agent.InputReceipt, error) {
-	return s.receipt, nil
+	return s.receipt, s.err
 }
 
 func (s *receiptSession) Interrupt(context.Context, agent.InterruptOptions) (agent.InterruptReceipt, error) {
@@ -55,6 +57,48 @@ func TestDriverPreservesEverySDKInputResult(t *testing.T) {
 			require.Equal(t, result, receipt.Result)
 			require.Equal(t, &sent, receipt.Acceptance.Sent)
 			require.Nil(t, receipt.Acceptance.NativeAccepted)
+		})
+	}
+}
+
+func TestPromptFailurePreservesDispatchEvidence(t *testing.T) {
+	cases := []struct {
+		name     string
+		code     agent.ErrorCode
+		dispatch *nativeclaude.DispatchError
+		sent     *bool
+		wantSent *bool
+	}{
+		{
+			name: "outbound frame rejected before write", code: agent.ErrorResourceExhausted,
+			dispatch: &nativeclaude.DispatchError{
+				Op: "submit", State: nativeclaude.NotSent,
+				Err: &nativeclaude.ResourceLimitError{Resource: "outbound frame bytes", Limit: 4 << 20},
+			},
+			wantSent: runtime.Bool(false),
+		},
+		{
+			name: "uncertain dispatch", code: agent.ErrorOutcomeUnknown,
+			dispatch: &nativeclaude.DispatchError{Op: "submit", State: nativeclaude.OutcomeUnknown, Err: io.ErrShortWrite},
+		},
+		{
+			name: "observed write with uncertain outcome", code: agent.ErrorOutcomeUnknown,
+			sent: runtime.Yes(), wantSent: runtime.Yes(),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sdkErr := &agent.Error{Code: tc.code, Reason: "start_or_steer_failed", Message: "Prompt failed"}
+			if tc.dispatch != nil {
+				sdkErr.Cause = tc.dispatch
+			}
+			native := &receiptSession{receipt: agent.InputReceipt{Acceptance: agent.Acceptance{Sent: tc.sent}}, err: sdkErr}
+			driver := &Driver{sessions: map[string]*session{"native": {native: native}}}
+			receipt, err := driver.SendPrompt(t.Context(), "native", runtime.Input{Content: []events.ContentBlock{events.Text("prompt")}})
+			var public *runtime.OperationError
+			require.ErrorAs(t, err, &public)
+			require.Equal(t, string(tc.code), public.Code)
+			require.Equal(t, runtime.InputReceipt{Acceptance: runtime.Acceptance{Sent: tc.wantSent}}, receipt)
 		})
 	}
 }

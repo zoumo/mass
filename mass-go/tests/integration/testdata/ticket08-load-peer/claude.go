@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
 )
 
 func claude() {
@@ -69,6 +71,11 @@ func claude() {
 		switch v["type"] {
 		case "control_request":
 			r := v["request"].(map[string]any)
+			cwd, _ := os.Getwd()
+			if reply, ok := clipeer.StatusReply(v, id, cwd); ok {
+				send(reply)
+				continue
+			}
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 			switch r["subtype"] {
 			case "initialize":

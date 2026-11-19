@@ -78,7 +78,8 @@ func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	s.Require().NoError(json.Unmarshal([]byte(lines[0]), &first))
 	s.Require().NoError(json.Unmarshal([]byte(lines[1]), &second))
 	s.Equal(first["pid"], second["pid"], "both wire inputs reached the same owned process")
-	s.Empty(second["uuid"], "SDK receipt identity is not a native message binding")
+	s.Equal(receipts[0].Submission, first["uuid"], "the first native user UUID matches its receipt")
+	s.Equal(receipts[1].Submission, second["uuid"], "the second native user UUID matches its receipt")
 	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 

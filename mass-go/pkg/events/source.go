@@ -5,9 +5,20 @@ import "github.com/google/uuid"
 // Source is execution-only association. It never enters event JSON/history.
 // A run token is fixed at open; work is the adapter's proven work association
 // (a native turn identity or a MASS submission), never a fabricated native ID.
-type Source struct{ run, work string }
+type Source struct {
+	run, work    string
+	workTerminal bool
+}
 
 func NewSource() Source                      { return Source{run: uuid.NewString()} }
 func (s Source) WithWork(work string) Source { return Source{run: s.run, work: work} }
 func (s Source) SameRun(other Source) bool   { return s.run != "" && s.run == other.run }
 func (s Source) Work() string                { return s.work }
+
+// WithTerminalWork marks a native work completion, even when its Session still
+// has pending work outside that work identity.
+func (s Source) WithTerminalWork(work string) Source {
+	return Source{run: s.run, work: work, workTerminal: work != ""}
+}
+
+func (s Source) WorkTerminal() bool { return s.workTerminal }

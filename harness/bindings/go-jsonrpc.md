@@ -79,3 +79,11 @@ Service OperationError 映射为 jsonrpc2.Error，固定数值 -32000，Data 保
 
 [^direction]: 本次人类明确指定该 JSON-RPC 实现库，仍只更新设计。
 [^library]: 以官方 README 和 Conn/Handler/ObjectStream/ID 的公开接口核对职责；上游限制与固定版本的差异需在实现验收中显式检查。
+
+### Inject receipt and error
+
+Go exposes optional `runtime.InjectDriver.Inject` and `Service.Inject`, returning
+`(runtime.InjectReceipt, error)`. Drivers adapt SDK `agent.Injector`; acceptance is
+copied without synthesizing work identity. `Client.Inject(ctx, ref, input, out)`
+decodes error.data.receipt into out before returning the OperationError. A caller
+must inspect both. Transport/protocol failures supply no receipt. There is no retry.

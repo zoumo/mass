@@ -5,14 +5,15 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
-// AutoApprovePermissions handles permission options only. Questions require
-// an explicit user answer through Service.AnswerInteraction.
+// AutoApprovePermissions selects one-time approval for requests correlated to
+// a tool call. Standalone permissions and questions require an explicit answer.
 func AutoApprovePermissions(p events.InteractionRequested) (map[string]any, bool) {
-	if p.Request.Kind != "permission" {
+	if p.Request.Kind != events.InteractionPermission || p.Request.ToolCallID == "" {
 		return nil, false
 	}
 	for _, option := range p.Request.Options {
-		if option.Kind == "allow_once" {
+		if option.Kind == events.PermissionAllowOnce ||
+			(option.Kind == events.PermissionAllow && option.Scope == events.PermissionScopeOnce) {
 			return map[string]any{"outcome": "selected", "optionId": option.OptionID}, true
 		}
 	}

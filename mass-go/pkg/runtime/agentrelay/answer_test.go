@@ -1,4 +1,4 @@
-package codex
+package agentrelay
 
 import (
 	"math"
@@ -27,7 +27,11 @@ func TestParseAnswerRejectsUnsupportedFields(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := parseAnswer(answer)
+			kind := agent.InteractionForm
+			if answer["outcome"] != nil && answer["optionId"] != nil {
+				kind = agent.InteractionPermission
+			}
+			_, err := parseAnswer(kind, answer)
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 		})
 	}
@@ -44,7 +48,7 @@ func TestParseAnswerValidatesFormContentBeforeProviderCall(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := parseAnswer(map[string]any{"action": "accept", "content": content})
+			_, err := parseAnswer(agent.InteractionForm, map[string]any{"action": "accept", "content": content})
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 		})
 	}
@@ -54,16 +58,22 @@ func TestParseAnswerValidatesFormContentBeforeProviderCall(t *testing.T) {
 			"format": map[string]any{"answers": []any{"json"}},
 		},
 	}
-	parsed, kind, err := parseAnswer(map[string]any{"action": "accept", "content": content})
+	parsed, err := parseAnswer(agent.InteractionForm, map[string]any{"action": "accept", "content": content})
 	require.NoError(t, err)
-	require.Equal(t, agent.InteractionForm, kind)
 	require.Equal(t, agent.FormAnswer{Outcome: agent.FormAccept, Content: content}, parsed)
+}
+
+func TestParseAnswerRetainsNativeQuestionAnswerMap(t *testing.T) {
+	content := map[string]any{"answers": map[string]string{"Which format?": "json"}}
+	answer, err := parseAnswer(agent.InteractionForm, map[string]any{"action": "accept", "content": content})
+	require.NoError(t, err)
+	require.Equal(t, agent.FormAnswer{Outcome: agent.FormAccept, Content: content}, answer)
 }
 
 func TestParseAnswerRejectsContentForDeclineAndCancel(t *testing.T) {
 	for _, action := range []string{"decline", "cancel"} {
 		t.Run(action, func(t *testing.T) {
-			_, _, err := parseAnswer(map[string]any{
+			_, err := parseAnswer(agent.InteractionForm, map[string]any{
 				"action":  action,
 				"content": map[string]any{},
 			})
@@ -73,14 +83,25 @@ func TestParseAnswerRejectsContentForDeclineAndCancel(t *testing.T) {
 }
 
 func TestParseAnswerMapsPermissionShape(t *testing.T) {
-	parsed, kind, err := parseAnswer(map[string]any{
+	parsed, err := parseAnswer(agent.InteractionPermission, map[string]any{
 		"outcome":  "selected",
 		"optionId": "allow-once",
 	})
 	require.NoError(t, err)
-	require.Equal(t, agent.InteractionPermission, kind)
 	require.Equal(t, agent.PermissionAnswer{
 		Outcome:  agent.PermissionSelected,
 		OptionID: "allow-once",
 	}, parsed)
+}
+
+func TestParseAnswerUsesLiveKind(t *testing.T) {
+	url, err := parseAnswer(agent.InteractionURL, map[string]any{"action": "accept"})
+	require.NoError(t, err)
+	require.Equal(t, agent.URLAnswer{Outcome: agent.URLAccept}, url)
+	form, err := parseAnswer(agent.InteractionForm, map[string]any{"action": "accept", "content": map[string]any{"tenant": "demo"}})
+	require.NoError(t, err)
+	require.Equal(t, agent.FormAnswer{Outcome: agent.FormAccept, Content: map[string]any{"tenant": "demo"}}, form)
+	permission, err := parseAnswer(agent.InteractionPermission, map[string]any{"outcome": "selected", "optionId": "cancel"})
+	require.NoError(t, err)
+	require.Equal(t, agent.PermissionAnswer{Outcome: agent.PermissionSelected, OptionID: "cancel"}, permission)
 }

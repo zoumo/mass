@@ -169,6 +169,10 @@ func runClaude(send func(any), cwd string) {
 				send(reply)
 				continue
 			}
+			if reply, ok := clipeer.StatusReply(v, id, cwd); ok {
+				send(reply)
+				continue
+			}
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 			if r["subtype"] == "initialize" {
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd, "tools": []any{}})

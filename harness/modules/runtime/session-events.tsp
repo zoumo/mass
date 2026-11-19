@@ -34,9 +34,9 @@ model SessionEventBase<Type extends SessionEventType = SessionEventType> {
     nativeParentId?: string;
   };
 
-  /** 实时分支原样使用 SDK agent.Event 的 UUID；同一事件发布、持久保存与重试保持不变。
+  /** SDK 实时事件保留原 UUID；同一事件发布、持久保存与重试保持不变。
    * 仅用于唯一标识，不表示顺序，不替代分页游标；暂不做原生事件去重。
-   * session.history_replay 控制事件由 MASS 在显式 load 生命周期中生成一次。 */
+   * 显式 load 的历史控制事件和 Runtime 生成的 URL 交互结算事件使用独立 UUID。 */
   @minLength(1)
   @format("uuid")
   eventId: string;
@@ -50,7 +50,7 @@ model SessionEventBase<Type extends SessionEventType = SessionEventType> {
   sessionId: string;
   type: Type;
 
-  /** 实时分支原样使用 SDK agent.Event 的时间；Service/Store 不改写。 */
+  /** SDK 实时事件保留原时间。MASS 控制事件使用对应的观察或生命周期时间。Service/Store 保留该时间。 */
   time: utcDateTime;
 
   /** 条目事件提供；预览与完整事实相同，工具调用与结果共享条目身份。 */
