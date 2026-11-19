@@ -106,7 +106,7 @@ messages, routes them to Topics, and coordinates Worker Sessions through massd.
 Its read-only React Observer follows Messages through the Router, Topics and
 Issues, with diagnostics for internal delivery, Sessions and Outbox state. Build it with `make build-superagent`. Root `make check`
 covers its Go module and browser suite. Schema 20 starts in a new data
-directory and preserves earlier SQLite and mass-sa JSON directories.
+directory and preserves earlier SQLite and JSON v4 state directories.
 
 ## Build
 

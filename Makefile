@@ -64,8 +64,7 @@ prototype-go:
 acceptance-sdk-go:
 	cd mass-go && GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./tests/integration -run '^TestTicket08'
 
-# superagent replaces the old mass-sa business entrypoint. Its independent Go
-# module and read-only Observer are explicit parts of the root offline gates.
+# The Superagent Go module and read-only Observer are part of the root offline gates.
 .PHONY: fmt-superagent lint-superagent test-superagent vet-superagent build-superagent check-superagent observer-build observer-check
 fmt-superagent:
 	cd superagent && golangci-lint fmt

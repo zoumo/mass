@@ -54,7 +54,7 @@ func Open(c Config) (_ *Store, retErr error) {
 			continue
 		}
 		if !allowed[e.Name()] {
-			return nil, problem("failed_precondition", "data directory is not a superagent directory; use a new empty directory; old mass-sa JSON data is never imported or removed")
+			return nil, problem("failed_precondition", "use a new empty Superagent data directory. Existing files are preserved")
 		}
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {

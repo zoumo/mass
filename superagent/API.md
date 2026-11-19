@@ -17,9 +17,9 @@ record ingress and Thread subscriptions. `topics`, `issues`, `executions`,
 external replies. Reports and PR associations are embedded and exposed
 through read views. `capabilities/` contains private role startup files.
 
-Choose a new empty `dataDir` when upgrading from earlier schemas or
-mass-sa JSON. Startup rejects those directories and leaves their contents
-intact. Keep the old directory to retain access through its original version.
+Choose a new empty `dataDir` when upgrading from earlier SQLite schemas or
+JSON v4 state. Startup rejects those directories and preserves their contents.
+Keep the old directory for access through its original version.
 
 SIGTERM/SIGINT stop admission and wait up to ten seconds for active HTTP
 requests. Accepted records survive normal or forced exit. After a lost
@@ -856,8 +856,6 @@ without another delivery.
 
 ## Harness relationship
 
-The existing MASS harness remains authoritative for massd Runtime/Session and
-input receipts. The approved superagent spec and this API describe the new
-business Core, SQLite schema and role surface, which the old mass-sa harness
-does not yet model. This ticket does not rewrite harness files or add an old
-mass-sa/JSON compatibility layer.
+The MASS harness defines the massd Runtime and Session contracts, including
+input receipts. This API describes the Superagent Core, SQLite schema and role
+interfaces.
