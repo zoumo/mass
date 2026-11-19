@@ -764,12 +764,12 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 	if c.provider == "claude" {
 		require.NotEmpty(h.t, plan.CLIVersion)
 		executable = filepath.Join(session, "claude-mock-launcher")
-		launcher := quote(prepared.Connections[0].Launcher)
-		if c.legacyClaudeInput {
-			adapter := filepath.Join(session, "claude-legacy-input")
-			h.command("go", "build", "-o", adapter, "./internal/recordingtest/cmd/claudelegacy")
-			launcher = quote(adapter) + " " + launcher
-		}
+		capturedUUID, err := capturedClaudeUserUUID(material, c.legacyClaudeInput)
+		require.NoError(h.t, err)
+		adapter := filepath.Join(session, "claude-replay")
+		h.command("go", "build", "-o", adapter, "./internal/recordingtest/cmd/claudereplay")
+		launcher := quote(adapter) + " " + quote(capturedUUID) + " " +
+			quote(filepath.Join(session, claudeReplayReceipt)) + " " + quote(prepared.Connections[0].Launcher)
 		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + quote(plan.CLIVersion) + "; exit 0; fi\nexec " + launcher + " \"$@\"\n"
 		require.NoError(h.t, os.WriteFile(executable, []byte(script), 0o700))
 	}
@@ -789,7 +789,9 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 		permission.Interaction = actual.Permission.Interaction
 		// Preserve the captured index and compare the same native exchange
 		// against the current SDK's public representation.
-		permission.Request.Options = c.permissionOptions
+		if c.permissionOptions != nil {
+			permission.Request.Options = c.permissionOptions
+		}
 	}
 	require.Equal(h.t, expectedForCompare, actual)
 	require.NoError(h.t, verifyExecution(session, material))
@@ -936,6 +938,15 @@ func verifyExecution(session, material string) error {
 	}
 	if plan.AgentType != fixture.AgentType || plan.DriverProfile != "consumer" {
 		return fmt.Errorf("plan agent/driver profile is %q/%q", plan.AgentType, plan.DriverProfile)
+	}
+	if plan.AgentType == "claude" {
+		receipt, err := os.ReadFile(filepath.Join(canonicalSession, claudeReplayReceipt))
+		if err != nil {
+			return fmt.Errorf("claude replay adapter receipt: %w", err)
+		}
+		if string(receipt) != "complete\n" {
+			return errors.New("claude replay adapter did not complete")
+		}
 	}
 	return nil
 }
@@ -1267,7 +1278,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 	require.Contains(t, kinds, "agent.tool_call")
 	require.Contains(t, kinds, "agent.tool_result")
 	require.Equal(t, "agent.message", kinds[len(kinds)-1])
-	session := h.replay(material, index.Facts, flowCase{
+	test := flowCase{
 		name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project,
 		expectPermission: true, expectedPermission: "Approve command execution",
 		permissionOptions: []events.PermissionOption{
@@ -1275,7 +1286,8 @@ func RunCodexPermissionReplay(t *testing.T) {
 			{OptionID: "native-decision-1", Name: `Allow command prefix ["/bin/zsh" "-lc" "printf mass-approved > permission-proof.txt"]`, Kind: events.PermissionAllow, Scope: events.PermissionScopeAlways},
 			{OptionID: "cancel", Name: "Cancel", Kind: events.PermissionCancel},
 		},
-	})
+	}
+	session := h.replay(material, index.Facts, test)
 	require.NoError(t, verifyExecution(session, material))
 	receipt := executionReceiptPath(t, session)
 	var value map[string]any
@@ -1283,6 +1295,13 @@ func RunCodexPermissionReplay(t *testing.T) {
 	delete(value, "fullConsumption")
 	writeJSON(t, receipt, value)
 	require.ErrorContains(t, verifyExecution(session, material), "fullConsumption")
+	// Fresh capture callers provide the current public facts and no historical override.
+	captured := index.Facts
+	currentPermission := *captured.Permission
+	currentPermission.Request.Options = test.permissionOptions
+	captured.Permission = &currentPermission
+	test.permissionOptions = nil
+	h.replay(material, captured, test)
 }
 
 func offeredOption(options []events.PermissionOption, id string) (events.PermissionOption, bool) {

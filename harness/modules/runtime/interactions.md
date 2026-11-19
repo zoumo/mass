@@ -32,11 +32,11 @@ request 有三种形态：
 
 拒绝选择原生 reject 选项。原生提供 cancel 选项时，调用者可选择该选项。适配器按原生请求支持的方式处理 cancelled 回答。agentQuestions 控制模型发起的问答，MCP 的 form 和 URL 请求由原生 MCP 能力决定。
 
-InteractionAnswer 继续保持动态值，以上为对应 kind 的标准约定；adapter 验证请求类型、答案结构与选项范围。form 的 schema 由具体交互校验，不宣称实现了任意 JSON Schema。真实 ACP adapter 还须满足 ACP 自身的 schema 和能力协商要求。
+InteractionAnswer 继续保持动态值，以上为对应 kind 的标准约定；adapter 按同一运行中的原请求确定答案类型，并验证答案结构与选项范围。form 的 schema 由具体交互校验，不宣称实现了任意 JSON Schema。真实 ACP adapter 还须满足 ACP 自身的 schema 和能力协商要求。
 
 URL 事件只提供外部流程入口，不自动打开地址。accept 只表示同意进入外部流程，不证明授权完成；后续必须由原生端的完成事实结算，凭据不通过事件或回答回传。仅支持 permission 的 Driver 不得宣称支持 form/url。
 
-adapter 在回答已被原生端接受、请求被取消/失效或外部流程明确完成后发出 session.interaction_closed，携带 interaction、outcome 和可选 reason。answered 结束普通 permission/form 请求；URL accept 之后仍等待原生完成，最终使用 completed。decline/cancel 也需要原生结算证据；不能因为 UI 点击或请求发出便提前关闭。没有结算证据时保留未确定责任，不重新发送或绑定新交互。
+adapter 在回答已被原生端接受、请求被取消/失效或外部流程明确完成后发出 session.interaction_closed，携带 interaction、outcome 和可选 reason。answered 结束普通 permission/form 请求；URL accept 之后仍等待原生完成，最终使用 completed。decline/cancel 也需要原生结算证据；不能因为 UI 点击或请求发出便提前关闭。没有结算证据时保留未确定责任，不重新发送或绑定新交互。 URL 完成按原运行、MCP 服务和原生流程标识关联。原生 Session 已确认释放时，仍待完成的 URL 流程以 `expired` 退出。
 
 ## 回答与竞态
 

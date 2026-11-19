@@ -1,6 +1,8 @@
 package recordingtest
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,6 +192,77 @@ func RunClaudeBasicReplay(t *testing.T) {
 	h.replay(material, index.Facts, flowCase{name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project, initialInput: true, legacyClaudeInput: true, ignoreStreamKinds: true})
 }
 
+// RunClaudeCapturedUUIDReplay uses a temporary UUID-bearing copy of the
+// historical exchange to exercise the fresh-capture route through MASS and Testify.
+func RunClaudeCapturedUUIDReplay(t *testing.T) {
+	h := newHarness(t)
+	source, index := loadCase(t, h.root, "claude", "basic", claudeProject, claudePrompt)
+	material := filepath.Join(t.TempDir(), "material")
+	require.NoError(t, os.CopyFS(material, os.DirFS(source)))
+	addCapturedUUID(t, material)
+
+	h.replay(material, index.Facts, flowCase{
+		name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project,
+		initialInput: true, ignoreStreamKinds: true,
+	})
+}
+
+// The committed material remains immutable. This synthetic variation changes
+// one user input and one explicit native reference to that input.
+func addCapturedUUID(t *testing.T, material string) {
+	t.Helper()
+	captured := json.RawMessage(`"315f8b4d-081c-4dd6-ae01-db405e0f0d66"`)
+	rawPath := filepath.Join(material, "raw", "raw.jsonl")
+	data, err := os.ReadFile(rawPath)
+	require.NoError(t, err)
+	lines := bytes.Split(data, []byte{'\n'})
+	input, assistant := false, false
+	for i, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		var frame struct {
+			Direction string                     `json:"direction"`
+			Wire      map[string]json.RawMessage `json:"wire"`
+		}
+		require.NoError(t, json.Unmarshal(line, &frame))
+		switch {
+		case frame.Direction == "c2s" && string(frame.Wire["type"]) == `"user"`:
+			require.False(t, input)
+			frame.Wire["uuid"] = captured
+			input = true
+		case input && !assistant && frame.Direction == "s2c" && string(frame.Wire["type"]) == `"assistant"`:
+			frame.Wire["user_message_uuid"] = captured
+			assistant = true
+		default:
+			continue
+		}
+		var envelope map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(line, &envelope))
+		envelope["wire"], err = json.Marshal(frame.Wire)
+		require.NoError(t, err)
+		lines[i], err = json.Marshal(envelope)
+		require.NoError(t, err)
+	}
+	require.True(t, input && assistant)
+	require.NoError(t, os.WriteFile(rawPath, bytes.Join(lines, []byte{'\n'}), 0o600))
+	rawHash := hashFile(t, rawPath)
+	rawManifest := filepath.Join(material, "raw", "manifest.json")
+	rewriteJSONFile(t, rawManifest, func(value map[string]any) {
+		value["files"].(map[string]any)["raw.jsonl"] = rawHash
+	})
+	manifest := filepath.Join(material, "manifest.json")
+	rewriteJSONFile(t, manifest, func(value map[string]any) {
+		files := value["files"].(map[string]any)
+		files["raw/raw.jsonl"] = rawHash
+		files["raw/manifest.json"] = hashFile(t, rawManifest)
+	})
+	rewriteJSONFile(t, filepath.Join(material, "material.json"), func(value map[string]any) {
+		value["recordingSHA256"] = rawHash
+		value["manifestSHA256"] = hashFile(t, manifest)
+	})
+}
+
 func RunClaudePermissionReplay(t *testing.T) {
 	h := newHarness(t)
 	material, index := loadCase(t, h.root, "claude", "permission", claudePermissionProject, claudePermissionPrompt)
@@ -231,6 +304,12 @@ func RunClaudePermissionReplay(t *testing.T) {
 			{OptionID: "cancel", Name: "Cancel", Kind: events.PermissionCancel},
 		},
 	})
+	adapterReceipt := filepath.Join(session, claudeReplayReceipt)
+	require.NoError(t, os.Remove(adapterReceipt))
+	require.ErrorContains(t, verifyExecution(session, material), "claude replay adapter receipt")
+	require.NoError(t, os.WriteFile(adapterReceipt, []byte("incomplete\n"), 0o600))
+	require.ErrorContains(t, verifyExecution(session, material), "claude replay adapter did not complete")
+	require.NoError(t, os.WriteFile(adapterReceipt, []byte("complete\n"), 0o600))
 	receipt := executionReceiptPath(t, session)
 	var value map[string]any
 	readJSON(t, receipt, &value)

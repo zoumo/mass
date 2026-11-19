@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -173,13 +174,9 @@ func TestInjectServiceRearmsIdleWithoutNativeStateEvent(t *testing.T) {
 	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
 	clock := newManualClock()
 	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: 10 * time.Second})
-	state := events.Idle
-	idle, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: "one", SessionName: "context", SessionID: ref.SessionID, Time: time.Now()}, events.StateUpdate{State: &state}, d.source)
-	require.NoError(t, err)
-	require.NoError(t, d.pipe.Send(t.Context(), idle))
-	require.Eventually(t, func() bool { return clock.Active() == 1 }, time.Second, time.Millisecond)
+	waitForInjectIdleTimer(t, svc, d, ref, clock)
 	clock.Advance(5 * time.Second)
-	_, err = svc.Inject(t.Context(), ref, runtime.Input{Content: []events.ContentBlock{events.Text("context")}})
+	_, err := svc.Inject(t.Context(), ref, runtime.Input{Content: []events.ContentBlock{events.Text("context")}})
 	require.NoError(t, err)
 	require.Equal(t, 1, clock.Active(), "Inject has no native idle event to rearm the timer")
 	clock.Advance(5 * time.Second)
@@ -191,4 +188,162 @@ func TestInjectServiceRearmsIdleWithoutNativeStateEvent(t *testing.T) {
 		r, err := svc.GetSession(ref)
 		return err == nil && r.Status.State == events.SessionState("offline")
 	}, time.Second, time.Millisecond)
+}
+
+func waitForInjectIdleTimer(t *testing.T, svc *service.Service, d *injectWorkDriver, ref resource.SessionRef, clock *manualClock) {
+	t.Helper()
+	state := events.Idle
+	idle, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: "one", SessionName: "context", SessionID: ref.SessionID, Time: time.Now()}, events.StateUpdate{State: &state}, d.source)
+	require.NoError(t, err)
+	require.NoError(t, d.pipe.Send(t.Context(), idle))
+	require.Eventually(t, func() bool {
+		current, err := svc.GetSession(ref)
+		return err == nil && current.Status.State == events.Idle && clock.Active() == 1
+	}, time.Second, time.Millisecond)
+}
+
+// Hold a SendPrompt at its cancellation check following Service admission.
+// The first two checks precede reference resolution and work admission.
+type promptDispatchContext struct {
+	context.Context
+	checks int
+	paused chan struct{}
+	resume chan struct{}
+}
+
+func (c *promptDispatchContext) Err() error {
+	c.checks++
+	if c.checks == 3 {
+		close(c.paused)
+		<-c.resume
+	}
+	return c.Context.Err()
+}
+
+func TestInjectServiceIdleAfterOverlappingPrompt(t *testing.T) {
+	d := newInjectWorkDriver()
+	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
+	clock := newManualClock()
+	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: time.Second})
+	settleInject := sync.OnceFunc(func() { close(d.release) })
+	t.Cleanup(settleInject)
+	waitForInjectIdleTimer(t, svc, d, ref, clock)
+	input := runtime.Input{Content: []events.ContentBlock{events.Text("context")}}
+	injected := make(chan error, 1)
+	go func() { _, err := svc.Inject(t.Context(), ref, input); injected <- err }()
+	select {
+	case <-d.entered:
+	case <-time.After(time.Second):
+		t.Fatal("Inject did not reach the driver")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	prompt := &promptDispatchContext{Context: ctx, paused: make(chan struct{}), resume: make(chan struct{})}
+	resumePrompt := sync.OnceFunc(func() { close(prompt.resume) })
+	t.Cleanup(resumePrompt)
+	prompted := make(chan error, 1)
+	go func() { _, err := svc.SendPrompt(prompt, ref, input); prompted <- err }()
+	select {
+	case err := <-prompted:
+		var problem *runtime.OperationError
+		require.ErrorAs(t, err, &problem)
+		require.Equal(t, "input_in_flight", problem.Reason)
+		settleInject()
+		require.NoError(t, <-injected)
+	case <-prompt.paused:
+		// Expose the former interleaving. Inject settled while a contender
+		// still held lane admission, then cancellation dropped that reader.
+		settleInject()
+		require.NoError(t, <-injected)
+		cancel()
+		resumePrompt()
+		require.ErrorIs(t, <-prompted, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("overlapping Prompt made no progress")
+	}
+
+	require.EqualValues(t, 1, d.calls.Load())
+	require.Equal(t, 1, clock.Active(), "settled Inject must leave an idle timer without a new native event")
+	clock.Advance(time.Second)
+	require.Eventually(t, func() bool {
+		r, err := svc.GetSession(ref)
+		return err == nil && r.Status.State == events.SessionState("offline")
+	}, time.Second, time.Millisecond)
+}
+
+func TestPromptCancellationBeforeDispatchRestoresIdleTimer(t *testing.T) {
+	d := newInjectWorkDriver()
+	close(d.release)
+	clock := newManualClock()
+	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: time.Second})
+	waitForInjectIdleTimer(t, svc, d, ref, clock)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	prompt := &promptDispatchContext{Context: ctx, paused: make(chan struct{}), resume: make(chan struct{})}
+	resumePrompt := sync.OnceFunc(func() { close(prompt.resume) })
+	t.Cleanup(resumePrompt)
+	prompted := make(chan error, 1)
+	go func() {
+		_, err := svc.SendPrompt(prompt, ref, runtime.Input{Content: []events.ContentBlock{events.Text("context")}})
+		prompted <- err
+	}()
+	select {
+	case <-prompt.paused:
+	case <-time.After(time.Second):
+		t.Fatal("Prompt did not reach the post-admission checkpoint")
+	}
+	require.Zero(t, clock.Active(), "admitted Prompt pauses idle close while dispatch is possible")
+	cancel()
+	resumePrompt()
+	require.ErrorIs(t, <-prompted, context.Canceled)
+
+	require.Zero(t, d.calls.Load())
+	require.Equal(t, 1, clock.Active())
+}
+
+func TestInjectServiceDefersIdleTimerUntilOverlappingAnswerSettles(t *testing.T) {
+	d := newInjectWorkDriver()
+	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
+	answerRelease := make(chan struct{})
+	d.onFinish = func() error {
+		<-answerRelease
+		return nil
+	}
+	clock := newManualClock()
+	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: time.Second})
+	settleInject := sync.OnceFunc(func() { close(d.release) })
+	t.Cleanup(settleInject)
+	settleAnswer := sync.OnceFunc(func() { close(answerRelease) })
+	t.Cleanup(settleAnswer)
+	waitForInjectIdleTimer(t, svc, d, ref, clock)
+
+	injected := make(chan error, 1)
+	go func() {
+		_, err := svc.Inject(t.Context(), ref, runtime.Input{Content: []events.ContentBlock{events.Text("context")}})
+		injected <- err
+	}()
+	select {
+	case <-d.entered:
+	case <-time.After(time.Second):
+		t.Fatal("Inject did not reach the driver")
+	}
+	answered := make(chan error, 1)
+	go func() {
+		_, err := svc.AnswerInteraction(t.Context(), ref, "question", nil)
+		answered <- err
+	}()
+	select {
+	case <-d.entered:
+	case <-time.After(time.Second):
+		t.Fatal("Answer did not reach the driver")
+	}
+
+	settleInject()
+	require.NoError(t, <-injected)
+	require.Zero(t, clock.Active(), "idle close must wait for the in-flight answer")
+	settleAnswer()
+	require.NoError(t, <-answered)
+	require.Equal(t, 1, clock.Active(), "the final work owner must honor the pending idle rearm")
 }

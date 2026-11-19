@@ -83,16 +83,17 @@ func newDriver(vault recovery.Vault, options options, provider agent.Core, nativ
 }
 
 type session struct {
-	native    agent.Session
-	relay     *agentrelay.Relay
-	address   runtime.Address
-	source    events.Source
-	closing   atomic.Bool
-	closeMu   sync.Mutex
-	closeOnce sync.Once
-	closeErr  error
-	cancelOp  sync.Mutex
-	controlMu sync.Mutex
+	interactions agentrelay.Interactions
+	native       agent.Session
+	relay        *agentrelay.Relay
+	address      runtime.Address
+	source       events.Source
+	closing      atomic.Bool
+	closeMu      sync.Mutex
+	closeOnce    sync.Once
+	closeErr     error
+	cancelOp     sync.Mutex
+	controlMu    sync.Mutex
 
 	activeWork    string
 	lastFinished  string
@@ -366,9 +367,10 @@ func (d *Driver) bindSession(native agent.Session, address runtime.Address, sour
 	}
 	s := &session{native: native, address: address, source: source}
 	relay, err := agentrelay.Start(life, agentrelay.Config{
-		Session: native,
-		Address: address,
-		Source:  source,
+		Session:      native,
+		Address:      address,
+		Source:       source,
+		Interactions: &s.interactions,
 		ExpectedEOF: func() bool {
 			return s.closing.Load()
 		},
@@ -439,77 +441,17 @@ func (d *Driver) sendPrompt(ctx context.Context, id string, input runtime.Input)
 }
 
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
-	parsed, kind, err := parseAnswer(answer)
-	if err != nil {
-		return runtime.Acceptance{}, err
-	}
-	if err := agent.ValidateAnswer(kind, parsed); err != nil {
-		return runtime.Acceptance{}, agentrelay.MapError(err)
-	}
 	s, err := d.ordinarySession(id)
 	if err != nil {
 		return runtime.Acceptance{}, err
 	}
-	receipt, err := s.native.Answer(ctx, agent.InteractionRef(ref), parsed)
-	if err != nil {
-		return runtime.Acceptance{}, agentrelay.MapError(err)
+	receipt, err := s.interactions.Answer(ctx, s.native, agent.InteractionRef(ref), answer)
+	evidence := agentrelay.MapAcceptance(receipt.Acceptance)
+	var public *runtime.OperationError
+	if errors.As(err, &public) || errors.Is(err, runtime.ErrInvalidArgument) || errors.Is(err, runtime.ErrFailedPrecondition) {
+		return evidence, err
 	}
-	return agentrelay.MapInteractionReceipt(receipt).Evidence, nil
-}
-
-func parseAnswer(answer any) (agent.Answer, agent.InteractionKind, error) {
-	value, ok := answer.(map[string]any)
-	if !ok || value == nil {
-		return nil, "", runtime.InvalidArgument("interaction requires an object answer")
-	}
-	if outcome, permission := value["outcome"]; permission {
-		for field := range value {
-			if field != "outcome" && field != "optionId" {
-				return nil, "", runtime.InvalidArgument("permission answer contains unsupported fields")
-			}
-		}
-		text, valid := outcome.(string)
-		if !valid {
-			return nil, "", runtime.InvalidArgument("permission outcome must be a string")
-		}
-		parsed := agent.PermissionAnswer{Outcome: agent.PermissionOutcome(text)}
-		if option, present := value["optionId"]; present {
-			optionID, valid := option.(string)
-			if !valid {
-				return nil, "", runtime.InvalidArgument("permission optionId must be a string")
-			}
-			parsed.OptionID = optionID
-		}
-		return parsed, agent.InteractionPermission, nil
-	}
-	action, form := value["action"]
-	if !form {
-		return nil, "", runtime.InvalidArgument("interaction answer kind is required")
-	}
-	for field := range value {
-		if field != "action" && field != "content" {
-			return nil, "", runtime.InvalidArgument("form answer contains unsupported fields")
-		}
-	}
-	text, ok := action.(string)
-	if !ok {
-		return nil, "", runtime.InvalidArgument("form action must be a string")
-	}
-	parsed := agent.FormAnswer{Outcome: agent.FormOutcome(text)}
-	if content, present := value["content"]; present {
-		object, ok := content.(map[string]any)
-		if !ok || object == nil {
-			return nil, "", runtime.InvalidArgument("form content must be an object")
-		}
-		if _, err := json.Marshal(object); err != nil {
-			return nil, "", runtime.InvalidArgument("form content must be JSON-compatible")
-		}
-		if text != string(agent.FormAccept) {
-			return nil, "", runtime.InvalidArgument("declined or canceled form answer must not contain content")
-		}
-		parsed.Content = object
-	}
-	return parsed, agent.InteractionForm, nil
+	return evidence, agentrelay.MapError(err)
 }
 
 func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
@@ -668,6 +610,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	if err := s.interactions.Expire(ctx, id, s.address, s.source, d.pipe.Send); err != nil {
+		return err
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err

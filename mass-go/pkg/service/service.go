@@ -109,8 +109,8 @@ type delivery struct {
 	barrier chan struct{}
 }
 type lane struct {
-	input              sync.Mutex
-	unknownInputSource events.Source // protected by input; fences this native run
+	inputInFlight      bool          // protected by Service.mu
+	unknownInputSource events.Source // protected by Service.mu; fences this native run
 	load               *historyLoad
 	admission          sync.RWMutex
 	releasing          bool
@@ -129,6 +129,7 @@ type lane struct {
 	publicationErr     error
 	idleTimer          Timer
 	idleVersion        uint64
+	idleAfterAdmission bool // an explicit rearm waits for the final admission reader
 	activeTools        map[string]struct{}
 	interactions       map[string]struct{}
 }
@@ -208,7 +209,7 @@ func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef
 	if err = decoder.Decode(&answer); err != nil {
 		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid JSON answer")
 	}
-	return sessionWork(ctx, s, ref, false, false, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
+	return sessionWork(ctx, s, ref, sessionWorkOptions{}, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
 		evidence, err := run.driver.AnswerInteraction(owner, id, interaction, answer)
 		return runtime.InteractionReceipt{Interaction: interaction, Evidence: evidence}, err
 	})
@@ -643,7 +644,7 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return sessionInputWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, sessionWorkOptions{input: true}, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
 		return run.driver.SendPrompt(owner, id, input)
 	})
 }
@@ -971,7 +972,9 @@ func (s *Service) process(run *runBinding, l *lane) {
 						s.fail(l, err)
 					}
 				}
-				l.admission.RUnlock()
+				s.mu.Lock()
+				s.releaseLaneAdmissionLocked(run, l, false)
+				s.mu.Unlock()
 			}
 			run.admission.RUnlock()
 		}
@@ -1018,7 +1021,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // Cancel targets the original lane and remains available during drain. A receipt
 // records only dispatch/acknowledgment; native termination must still be observed.
 func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
-	return sessionWork(ctx, s, ref, true, true, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
+	return sessionWork(ctx, s, ref, sessionWorkOptions{canceling: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
 		return run.driver.Cancel(owner, id)
 	})
 }

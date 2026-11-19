@@ -13,3 +13,7 @@ func TestClaudeBasicReplay(t *testing.T) {
 func TestClaudePermissionReplay(t *testing.T) {
 	recordingtest.RunClaudePermissionReplay(t)
 }
+
+func TestClaudeCapturedUUIDReplay(t *testing.T) {
+	recordingtest.RunClaudeCapturedUUIDReplay(t)
+}

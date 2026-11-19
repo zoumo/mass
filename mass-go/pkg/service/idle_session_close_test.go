@@ -395,8 +395,12 @@ func TestIdleAcceptedPromptInvalidatesTimer(t *testing.T) {
 		t.Fatal("idle close overtook an in-flight prompt")
 	case <-time.After(50 * time.Millisecond):
 	}
+	receipt, err := f.svc.Cancel(t.Context(), f.ref)
+	require.NoError(t, err)
+	require.Equal(t, "noActiveWork", receipt.Result)
 	f.driver.releasePrompt()
 	require.NoError(t, <-promptDone)
+	require.Zero(t, f.clock.Active(), "a control operation cannot authorize idle close before the admitted Prompt's next native state")
 	require.Zero(t, f.driver.closes.Load())
 
 	f.emitState(t, events.Idle)

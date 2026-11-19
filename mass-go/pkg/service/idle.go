@@ -52,13 +52,15 @@ func (s *Service) scheduleIdleLocked(run *runBinding, l *lane) {
 		return
 	}
 	stopIdleTimerLocked(l)
-	if s.idleTimeout <= 0 || !s.idleCurrentLocked(run, l, l.idleVersion) {
+	if !s.idleCurrentLocked(run, l, l.idleVersion) {
+		l.idleAfterAdmission = false
 		return
 	}
 	if !l.admission.TryLock() {
 		return
 	}
 	l.admission.Unlock()
+	l.idleAfterAdmission = false
 
 	version := l.idleVersion
 	l.idleTimer = s.clock.AfterFunc(s.idleTimeout, func() {
@@ -66,10 +68,16 @@ func (s *Service) scheduleIdleLocked(run *runBinding, l *lane) {
 	})
 }
 
-func (s *Service) rearmIdleAfterActivity(run *runBinding, l *lane) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.scheduleIdleLocked(run, l)
+// An explicit rearm follows the lane until every admitted operation has
+// settled. Keep native state observations authoritative at each attempt.
+func (s *Service) releaseLaneAdmissionLocked(run *runBinding, l *lane, rearmIdle bool) {
+	l.admission.RUnlock()
+	// The admitted input owns the next idle decision. A Prompt waits for
+	// observation and an Inject requests a rearm when it settles.
+	if !l.inputInFlight && (rearmIdle || l.idleAfterAdmission) {
+		l.idleAfterAdmission = true
+		s.scheduleIdleLocked(run, l)
+	}
 }
 
 func (s *Service) expireIdle(run *runBinding, l *lane, version uint64) {

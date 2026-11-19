@@ -212,6 +212,12 @@ an explicit daemon prototype policy; pending form/question interactions require
 the typed client `client.Answer` method. This CLI version deliberately has no
 answer command.
 
+The Go client uses the same answer method for MCP forms and URL requests.
+Claude URL completion is correlated by native Session, MCP server, and
+elicitation ID. The pinned Codex path keeps an accepted URL pending when it
+has no correlated completion event. Verified Session release expires a pending
+URL interaction.
+
 ### Consumer recording and replay
 
 From the repository root, run `make test-simulation-go` (or its compatibility
@@ -227,11 +233,13 @@ The active cases come from the current Codex suite
 `recordings-09d4ddf1ff20`. The Claude cases were re-recorded on November 13,
 2026 with Claude CLI `2.1.293`, SDK `09d4ddf1ff20`, and testify `v0.2.1`, then
 passed two strict replays before publication. At the current SDK pin a replay-only
-launcher checks the generated v4 UUID on the Claude user frame. It forwards the
-remaining fields to Testify for exact matching against the historical capture.
-The launcher passes Testify server output through unchanged. All four active cases
-continue to check original material hashes, completed execution, and MASS public
-events. The older `recordings/` exports are available for provenance audits. See
+launcher validates the generated Claude user UUID and matches each user frame
+against the capture. The two historical captures predate the UUID field. New
+captures bind the live UUID to the captured UUID and translate only matching
+server-side user references back to the live UUID. Testify compares the full
+adapted input, and the gate verifies both the Testify execution and the
+launcher's completion receipt. All four active cases verify the original
+material hashes and MASS public events. The older `recordings/` exports are available for provenance audits. See
 [current-pin recording acceptance](docs/codex-current-pin-recording.md) and the
 [historical snapshot](docs/recording-acceptance.md).
 
@@ -598,7 +606,7 @@ No additional WebSocket message-size cap is introduced by the subscription layer
 
 The JSON-RPC input codec preserves all five ContentBlock shapes; existing native
 adapters execute text input only. Claude accepts exactly one text block.
-Complete text/thinking, tool calls/results, permission/form interactions, state
+Complete text/thinking, tool calls/results, permission/form/URL interactions, state
 and sanitized Session errors are mapped; deltas are previews and never fabricated
 into complete history. Unsupported complete content fails explicitly. Images,
 audio, files, arbitrary native extension/subagent attribution, full event-handler
