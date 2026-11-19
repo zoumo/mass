@@ -14,7 +14,7 @@ interface SessionService {
    * Acceptance is preserved on error; unknown is never automatically retried. */
   inject(session: SessionRef, input: SessionInput):
     | InjectReceipt
-    | OperationError;
+    | InjectFailure;
 
   /** 当前运行瞬态单项更新；原运行接纳/在途责任及错误见配置合同。 */
   setSessionConfig(session: SessionRef, change: ConfigChange):

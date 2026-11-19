@@ -436,15 +436,21 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.mu.Unlock()
 
 	result, err := s.native.StartOrSteer(ctx, input)
+	receipt := agentrelay.MapInputReceipt(result)
 	if err != nil {
-		return runtime.InputReceipt{}, mapClaudeError(err)
+		var dispatch *nativeclaude.DispatchError
+		if receipt.Acceptance.Sent == nil && agent.CodeOf(err) != agent.ErrorOutcomeUnknown &&
+			errors.As(err, &dispatch) && dispatch.State == nativeclaude.NotSent {
+			receipt.Acceptance.Sent = runtime.Bool(false)
+		}
+		return receipt, mapClaudeError(err)
 	}
 	if result.Result == agent.InputAppliedNewWork {
 		s.mu.Lock()
 		s.clearCancelLocked()
 		s.mu.Unlock()
 	}
-	return agentrelay.MapInputReceipt(result), nil
+	return receipt, nil
 }
 
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
@@ -458,13 +464,7 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer a
 		return runtime.Acceptance{}, runtime.FailedPrecondition("session unavailable")
 	}
 	s.mu.Unlock()
-	receipt, err := s.interactions.Answer(ctx, s.native, agent.InteractionRef(ref), answer)
-	evidence := agentrelay.MapAcceptance(receipt.Acceptance)
-	var public *runtime.OperationError
-	if errors.As(err, &public) || errors.Is(err, runtime.ErrInvalidArgument) || errors.Is(err, runtime.ErrFailedPrecondition) {
-		return evidence, err
-	}
-	return evidence, mapClaudeError(err)
+	return s.interactions.Answer(ctx, s.native, agent.InteractionRef(ref), answer, mapClaudeError)
 }
 
 func (d *Driver) CloseSession(ctx context.Context, id string) error {

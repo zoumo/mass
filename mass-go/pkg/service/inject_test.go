@@ -332,6 +332,12 @@ func TestInjectServiceDefersIdleTimerUntilOverlappingAnswerSettles(t *testing.T)
 			prompt:    true,
 			promptErr: &runtime.OperationError{Code: "native_rejected", Reason: "synthetic_rejection"},
 		},
+		{
+			name:          "prompt confirmed unsent",
+			prompt:        true,
+			promptReceipt: runtime.InputReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(false)}},
+			promptErr:     &runtime.OperationError{Code: "resource_exhausted", Reason: "synthetic_queue_full"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

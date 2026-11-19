@@ -45,9 +45,9 @@ func TestURLClosesOnCorrelatedCompletionInEitherOrder(t *testing.T) {
 		require.True(t, publish)
 
 		answerer := &interactionAnswerer{}
-		_, err = pending.Answer(t.Context(), answerer, "mcp-url", map[string]any{"action": "accept"})
+		_, err = pending.Answer(t.Context(), answerer, "mcp-url", map[string]any{"action": "accept"}, MapError)
 		require.NoError(t, err)
-		_, err = pending.Answer(t.Context(), answerer, "mcp-url", map[string]any{"action": "cancel"})
+		_, err = pending.Answer(t.Context(), answerer, "mcp-url", map[string]any{"action": "cancel"}, MapError)
 		require.Error(t, err)
 		require.Equal(t, []agent.Answer{agent.URLAnswer{Outcome: agent.URLAccept}}, answerer.answers)
 

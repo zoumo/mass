@@ -105,9 +105,9 @@ func (o *opening) finish() {
 }
 
 type delivery struct {
-	event                events.SessionEvent
-	barrier              chan struct{}
-	idleVersionAtReceive uint64
+	event             events.SessionEvent
+	barrier           chan struct{}
+	idleChangeVersion uint64
 }
 type lane struct {
 	inputInFlight      bool          // protected by Service.mu
@@ -136,6 +136,8 @@ type lane struct {
 
 	idleObservationVersion uint64 // when the current native state was admitted for delivery
 	idleObservationFloor   uint64 // the latest possibly applied Prompt requires a newer native state
+	idleChangeReceived     uint64 // newest queued state or pending-work change
+	idleChangeApplied      uint64 // newest such change reflected in this lane
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -579,7 +581,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 					l.err = errors.New("creation event source mismatch")
 					break
 				}
-				l.queue <- delivery{event: e}
+				l.queue <- s.admitDeliveryLocked(l, e)
 			}
 			abandoned = op.abandoned || run.stopping
 			if !abandoned {
@@ -779,7 +781,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			s.mu.Unlock()
 			continue
 		}
-		s.invalidateIdleLocked(l)
+		entry := s.admitDeliveryLocked(l, e)
 		// Normal delivery has 128 queued slots. The same channel reserves a
 		// further 128 for the original closing source, never a forwarding queue.
 		// Retired/already-closing owners retain the pre-existing fallback policy.
@@ -812,7 +814,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			return
 		}
 		select {
-		case l.queue <- delivery{event: e, idleVersionAtReceive: l.idleVersion}:
+		case l.queue <- entry:
 		default:
 			l.err = errors.New("session event queue exhausted; stream responsibility retained")
 			run.err = l.err
@@ -905,18 +907,16 @@ func (s *Service) process(run *runBinding, l *lane) {
 			}
 		}
 		s.mu.Lock()
-		if state, ok := e.Payload().(events.StateUpdate); ok && e.Replay == nil {
-			if !l.closing && l.source.SameRun(e.Source()) {
+		if e.Replay == nil && !l.closing && l.source.SameRun(e.Source()) {
+			l.idleChangeApplied = max(l.idleChangeApplied, entry.idleChangeVersion)
+			switch payload := e.Payload().(type) {
+			case events.StateUpdate:
 				l.stateObserved = true
 				l.observedState = events.Unknown
-				l.idleObservationVersion = entry.idleVersionAtReceive
-				if state.State != nil {
-					l.observedState = *state.State
+				l.idleObservationVersion = entry.idleChangeVersion
+				if payload.State != nil {
+					l.observedState = *payload.State
 				}
-			}
-		}
-		if e.Replay == nil {
-			switch payload := e.Payload().(type) {
 			case events.ToolChunk:
 				if l.activeTools == nil {
 					l.activeTools = map[string]struct{}{}

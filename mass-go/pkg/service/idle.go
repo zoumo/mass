@@ -47,6 +47,28 @@ func stopIdleTimerLocked(l *lane) {
 	}
 }
 
+// A queued state or pending-work change can supersede the lane's idle facts
+// before the delivery owner reaches it. All events still reset the deadline.
+func (s *Service) admitDeliveryLocked(l *lane, e events.SessionEvent) delivery {
+	s.invalidateIdleLocked(l)
+	entry := delivery{event: e}
+	if e.Replay != nil || !l.source.SameRun(e.Source()) {
+		return entry
+	}
+	switch payload := e.Payload().(type) {
+	case events.StateUpdate, events.ToolChunk, events.ToolCall, events.ToolResult, events.InteractionClosed:
+	case events.InteractionRequested:
+		if !payload.Blocking {
+			return entry
+		}
+	default:
+		return entry
+	}
+	entry.idleChangeVersion = l.idleVersion
+	l.idleChangeReceived = entry.idleChangeVersion
+	return entry
+}
+
 func (s *Service) scheduleIdleLocked(run *runBinding, l *lane) {
 	if l == nil {
 		return
@@ -114,6 +136,9 @@ func (s *Service) idleCurrentLocked(run *runBinding, l *lane, version uint64) bo
 		return false
 	}
 	if l.idleObservationVersion < l.idleObservationFloor {
+		return false
+	}
+	if l.idleChangeApplied < l.idleChangeReceived {
 		return false
 	}
 	if len(l.activeTools) != 0 || len(l.interactions) != 0 {

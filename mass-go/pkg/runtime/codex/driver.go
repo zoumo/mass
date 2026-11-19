@@ -426,10 +426,15 @@ func (d *Driver) sendPrompt(ctx context.Context, id string, input runtime.Input)
 		return runtime.InputReceipt{}, err
 	}
 	receipt, err := s.native.StartOrSteer(ctx, input)
-	if err != nil {
-		return runtime.InputReceipt{}, agentrelay.MapError(err)
-	}
 	mapped := agentrelay.MapInputReceipt(receipt)
+	if err != nil {
+		var dispatch *sdk.CallError
+		if mapped.Acceptance.Sent == nil && agent.CodeOf(err) != agent.ErrorOutcomeUnknown &&
+			errors.As(err, &dispatch) && dispatch.Dispatch == sdk.NotSent {
+			mapped.Acceptance.Sent = runtime.Bool(false)
+		}
+		return mapped, agentrelay.MapError(err)
+	}
 	if mapped.Result != agent.InputNotApplied && mapped.Submission != "" {
 		s.controlMu.Lock()
 		if mapped.Submission != s.lastFinished {
@@ -445,13 +450,7 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer a
 	if err != nil {
 		return runtime.Acceptance{}, err
 	}
-	receipt, err := s.interactions.Answer(ctx, s.native, agent.InteractionRef(ref), answer)
-	evidence := agentrelay.MapAcceptance(receipt.Acceptance)
-	var public *runtime.OperationError
-	if errors.As(err, &public) || errors.Is(err, runtime.ErrInvalidArgument) || errors.Is(err, runtime.ErrFailedPrecondition) {
-		return evidence, err
-	}
-	return evidence, agentrelay.MapError(err)
+	return s.interactions.Answer(ctx, s.native, agent.InteractionRef(ref), answer, agentrelay.MapError)
 }
 
 func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {

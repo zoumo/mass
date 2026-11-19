@@ -164,13 +164,17 @@ func (s *Service) flushOpening(ctx context.Context, run *runBinding, l *lane, op
 		for i, e := range batch {
 			s.mu.Lock()
 			valid := l.source.SameRun(e.Source()) || run.retired[e.Source().WithWork("")] == l
+			var entry delivery
+			if valid {
+				entry = s.admitDeliveryLocked(l, e)
+			}
 			s.mu.Unlock()
 			var err error
 			if !valid {
 				err = errors.New("opening event source mismatch")
 			} else {
 				select {
-				case l.queue <- delivery{event: e}:
+				case l.queue <- entry:
 				case <-ctx.Done():
 					err = ctx.Err()
 				}

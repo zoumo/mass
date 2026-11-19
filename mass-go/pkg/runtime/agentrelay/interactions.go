@@ -2,6 +2,7 @@ package agentrelay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -35,17 +36,25 @@ type claudeElicitation struct {
 	id     string
 }
 
-func (p *Interactions) Answer(ctx context.Context, session agent.Session, ref agent.InteractionRef, value any) (agent.InteractionReceipt, error) {
+func (p *Interactions) Answer(ctx context.Context, session agent.Session, ref agent.InteractionRef, value any, mapNativeError func(error) error) (runtime.Acceptance, error) {
 	p.mu.Lock()
 	entry := p.pending[ref]
 	if entry == nil || entry.answering {
 		p.mu.Unlock()
-		return agent.InteractionReceipt{}, runtime.FailedPrecondition("interaction is no longer answerable")
+		return runtime.Acceptance{}, runtime.FailedPrecondition("interaction is no longer answerable")
 	}
-	answer, err := parseAnswer(entry.kind, value)
+	kind := entry.kind
+	p.mu.Unlock()
+
+	answer, err := parseAnswer(kind, value)
 	if err != nil {
+		return runtime.Acceptance{}, err
+	}
+
+	p.mu.Lock()
+	if p.pending[ref] != entry || entry.answering {
 		p.mu.Unlock()
-		return agent.InteractionReceipt{}, err
+		return runtime.Acceptance{}, runtime.FailedPrecondition("interaction is no longer answerable")
 	}
 	entry.answering = true
 	if url, ok := answer.(agent.URLAnswer); ok {
@@ -63,7 +72,7 @@ func (p *Interactions) Answer(ctx context.Context, session agent.Session, ref ag
 		}
 		p.mu.Unlock()
 	}
-	return receipt, err
+	return MapAcceptance(receipt.Acceptance), mapNativeError(err)
 }
 
 func parseAnswer(kind agent.InteractionKind, value any) (agent.Answer, error) {
@@ -99,8 +108,11 @@ func parseAnswer(kind agent.InteractionKind, value any) (agent.Answer, error) {
 			}
 			var valid bool
 			content, valid = raw.(map[string]any)
-			if !valid || content == nil || events.CheckDynamicJSON(content) != nil {
+			if !valid || content == nil {
 				return nil, runtime.InvalidArgument("form content must be a JSON object")
+			}
+			if _, err := json.Marshal(content); err != nil {
+				return nil, runtime.InvalidArgument("form content must be JSON-compatible")
 			}
 		}
 		answer = agent.FormAnswer{Outcome: agent.FormOutcome(action), Content: content}

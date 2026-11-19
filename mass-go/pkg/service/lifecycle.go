@@ -579,6 +579,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.stateObserved = false
 	l.idleObservationVersion = 0
 	l.idleObservationFloor = 0
+	l.idleChangeReceived = 0
+	l.idleChangeApplied = 0
 	l.idleAfterAdmission = false
 	l.activeTools = nil
 	l.interactions = nil
@@ -594,6 +596,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	}
 	s.mu.Lock()
 	delete(run.pending, k)
+	s.scheduleIdleLocked(run, l)
 	resumeErr := l.err
 	s.mu.Unlock()
 	result := resource.SessionResumed{Session: r}

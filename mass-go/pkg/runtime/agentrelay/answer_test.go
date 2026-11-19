@@ -63,6 +63,13 @@ func TestParseAnswerValidatesFormContentBeforeProviderCall(t *testing.T) {
 	require.Equal(t, agent.FormAnswer{Outcome: agent.FormAccept, Content: content}, parsed)
 }
 
+func TestParseAnswerRetainsNativeQuestionAnswerMap(t *testing.T) {
+	content := map[string]any{"answers": map[string]string{"Which format?": "json"}}
+	answer, err := parseAnswer(agent.InteractionForm, map[string]any{"action": "accept", "content": content})
+	require.NoError(t, err)
+	require.Equal(t, agent.FormAnswer{Outcome: agent.FormAccept, Content: content}, answer)
+}
+
 func TestParseAnswerRejectsContentForDeclineAndCancel(t *testing.T) {
 	for _, action := range []string{"decline", "cancel"} {
 		t.Run(action, func(t *testing.T) {
