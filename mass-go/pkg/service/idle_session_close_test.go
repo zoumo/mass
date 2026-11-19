@@ -622,9 +622,18 @@ func TestIdlePromptSettlementWithQueuedNativeEvents(t *testing.T) {
 			require.IsType(t, scenario.queued, second.Payload())
 			if scenario.finished != nil {
 				require.Zero(t, f.clock.Active())
+				if state, ok := scenario.queued.(events.StateUpdate); ok {
+					require.Eventually(t, func() bool {
+						current, err := f.svc.GetSession(f.ref)
+						return err == nil && current.Status.State == *state.State
+					}, time.Second, time.Millisecond)
+				}
 				f.emit(t, scenario.finished)
 			}
-			require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+			require.Eventually(t, func() bool {
+				current, err := f.svc.GetSession(f.ref)
+				return err == nil && current.Status.State == events.Idle && f.clock.Active() == 1
+			}, time.Second, time.Millisecond)
 			f.clock.Advance(time.Second)
 			require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
 		})
