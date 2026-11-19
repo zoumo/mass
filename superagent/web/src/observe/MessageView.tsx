@@ -79,7 +79,7 @@ function Messages({ query }: ViewProps) {
     <section className="detail-column" aria-label="消息详情">
       {requested && <a className="mobile-back" href={listHref} onClick={event => {
         const prev = history.state?.observerPrevious
-        if (prev === '/observer/' || prev === listHref) { event.preventDefault(); history.back() }
+        if (prev === listHref) { event.preventDefault(); history.back() }
       }}><ArrowLeft size={17}/>返回消息列表</a>}
       {detail.error && <p role="alert" className="read-error">{detail.error}{detail.data && ' · 快照已过时'}</p>}
       {detail.data ? <MessageDetail key={detail.data.id} row={detail.data} threadKey={threadKey}/> :

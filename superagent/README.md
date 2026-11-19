@@ -55,9 +55,11 @@ All ingress requires a bound source token. Observer is a read-only trusted
 network surface with Host/Origin checks, not multi-user authentication; expose
 it only to trusted readers when explicitly binding a wider interface.
 
-Open `/observer/` to follow a Message through its Router decisions, target Topics
-and the Issues that cite it. The four views share read-only links that preserve
-record IDs and filters. Diagnostics provides Thread, Timer, PR, Outbox and
+Open `/observer/` for Topic conversations. The sidebar lists Topics by their
+latest conversation message. Select a Topic to follow Router routing, Core
+Thread delivery, Issue creation and dispatch, and Worker Reports. The Message,
+Router, Topic and Issue views provide read-only links to the related records.
+Diagnostics provides Thread, Timer, PR, Outbox and
 Session records. Existing `?view=messages|topics|issues` links open the
 corresponding view. Add `mode=records` to open its diagnostic collection.
 

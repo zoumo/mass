@@ -1,16 +1,18 @@
 import { useEffect, useState, type MouseEvent } from 'react'
-import { Activity, Boxes, CircleDot, GitBranch, Mail, Pause, Play, Radio, RefreshCw, ScanLine } from 'lucide-react'
+import { Activity, Boxes, CircleDot, GitBranch, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { RefreshContext, navigate, useQuery, viewHref, type Perspective } from './observer'
+import { RefreshContext, defaultPerspective, navigate, useQuery, viewHref, type Perspective } from './observer'
 import MessageView from './MessageView'
 import RouterView from './RouterView'
 import TopicView from './TopicView'
+import TopicConversation from './TopicConversation'
 import IssueView from './IssueView'
 import Diagnostics from './diagnostics/Diagnostics'
 
 const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
 
 const views = {
+  'topic-conversation': { title: 'Topic 会话', subtitle: '', icon: MessagesSquare, component: TopicConversation },
   message: { title: 'Message', subtitle: '消息', icon: Mail, component: MessageView },
   router: { title: 'Router', subtitle: '路由', icon: GitBranch, component: RouterView },
   topic: { title: 'Topic', subtitle: '主题', icon: Boxes, component: TopicView },
@@ -22,8 +24,8 @@ export default function App() {
   const collection = query.get('view') || ''
   const diagnostics =
     query.get('mode') === 'records' || (Boolean(collection) && !Object.hasOwn(previousViews, collection))
-  const key = query.get('perspective') || previousViews[collection] || 'message'
-  const view: Perspective = Object.hasOwn(views, key) ? (key as Perspective) : 'message'
+  const key = query.get('perspective') || previousViews[collection] || defaultPerspective
+  const view: Perspective = Object.hasOwn(views, key) ? (key as Perspective) : defaultPerspective
   const {
     component: View,
     icon: Icon,
@@ -116,7 +118,7 @@ export default function App() {
                 <Icon size={22} />
               </span>
               <h1>{title}</h1>
-              <span className="section-name">{subtitle}</span>
+              {subtitle && <span className="section-name">{subtitle}</span>}
             </div>
             <div className="refresh-controls">
               <Button

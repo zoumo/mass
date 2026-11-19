@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { WorkbenchRow, Page } from '../workbench'
 
-export type Perspective = 'message' | 'router' | 'topic' | 'issue'
+export type Perspective = 'message' | 'router' | 'topic' | 'issue' | 'topic-conversation'
+export const defaultPerspective = 'topic-conversation'
 export type ViewProps = { query: URLSearchParams }
 export type MessageRecord = WorkbenchRow & {
   id: string
@@ -22,7 +23,7 @@ export function navigate(href: string) {
   if (href === current) return
   const target = new URL(href, location.origin)
   const previous = new URL(current, location.origin)
-  const workspace = (url: URL) => url.searchParams.get('perspective') || url.searchParams.get('view') || 'message'
+  const workspace = (url: URL) => url.searchParams.get('perspective') || url.searchParams.get('view') || defaultPerspective
   history.pushState({ ...history.state, observerPrevious: current }, '', href)
   if (workspace(target) !== workspace(previous)) window.scrollTo(0, 0)
   window.dispatchEvent(new PopStateEvent('popstate'))

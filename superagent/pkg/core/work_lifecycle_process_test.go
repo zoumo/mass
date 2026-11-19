@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,6 +192,17 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	require.Contains(t, nextInput.text, x.ID)
 	nextInput.accept()
 	waitWorkDelivery(t, p, next.Execution.StartEventID, "sent")
+	dispatches, _ := conversationPage(t, p, url.Values{
+		"topicId": {topicBinding.OwnerID}, "filter": {"worker_dispatch"},
+	})
+	require.Len(t, dispatches, 2)
+	for i, execution := range []*core.Execution{next.Execution, x} {
+		require.Equal(t, "worker_dispatch/"+execution.StartEventID, dispatches[i].ID)
+		require.Equal(t, "worker_started", dispatches[i].DispatchKind)
+		require.Equal(t, issue.ID, dispatches[i].IssueID)
+		require.Equal(t, execution.ID, dispatches[i].ExecutionID)
+		require.Equal(t, execution.Generation, dispatches[i].Generation)
+	}
 	mcpWorkError(t, worker, "issue_get_current", "stale_binding", struct{}{})
 	for _, tool := range []string{"register_pr", "event_ack", "event_get", "issue_material_get"} {
 		status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/"+tool, workerToken, map[string]any{"messageId": source.MessageID})

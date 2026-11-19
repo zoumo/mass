@@ -127,6 +127,7 @@ No write credential is needed or sent by these trusted-reader endpoints:
 - GET/HEAD `/v1/observer/threads[/{escaped-key}]`
 - GET/HEAD `/v1/observer/topics[/{id}]`
 - GET/HEAD `/v1/observer/topic-activity?topicId={id}&filter=all|message|issue`
+- GET/HEAD `/v1/observer/topic-activity?mode=conversation`
 - GET/HEAD `/v1/observer/issues[/{id}]`
 - GET/HEAD `/v1/observer/executions[/{id}]`
 - GET/HEAD `/v1/observer/reports[/{id}]`
@@ -144,6 +145,26 @@ No write credential is needed or sent by these trusted-reader endpoints:
 - GET/HEAD `/observer/` and its static assets
 
 Topic activity merges routing deliveries and saved Issue facts in descending `(at, id)` order. The filter applies before pagination. `limit` defaults to 20 and accepts 1–200. `nextCursor` binds the Topic, filter and first-page watermark. Each row identifies its source record. An `issue_snapshot` describes the saved state at `updatedAt`. Lifecycle entries use the timestamp on the saved transition.
+
+In `mode=conversation`, omitting `topicId` lists Topics by their latest
+conversation message, newest first. Topics without messages follow in
+creation order, newest first. Equal timestamps sort by Topic ID descending.
+Use `search` to match a substring of the title or ID. Supply `topicId` to
+list that Topic's timeline in descending `(at, id)` order. Use `filter`
+with `all`, `router_routed`, `thread_direct`, `issue_created`, `worker_dispatch`
+or `report`.
+Ingress rows identify the saved Message and delivery and include the source
+`threadKey` when present. Issue creation appears on the timeline while activity
+ordering uses conversation messages. Worker dispatch rows identify the saved
+delivery, its Issue and the recipient Execution and generation. Their
+`dispatchKind` identifies startup, continuation, goal notification or context
+supplement. Read the internal delivery for its full content and references.
+Report rows identify the saved Report, Issue, Execution and notification
+delivery. Read the Report for its complete body and the Issue for recorded
+acceptance. A notification retry keeps the same Report row.
+An exact `eventId` within a Topic returns a single row in the standard page
+envelope. `limit` defaults to 20 and accepts 1–200. Continuation cursors bind the
+query scope and first-page watermarks.
 
 Health reports `ingress: ready` for Core HTTP intake. It shows Router
 preparation, Topic and Issue business states, unknown native stops and echoes,

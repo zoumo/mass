@@ -37,7 +37,7 @@ for (const [size, width, height] of [
       )
     })
     await page.setViewportSize({ width, height })
-    const documentResponse = await page.goto(endpoint + '/observer/')
+    const documentResponse = await page.goto(endpoint + '/observer/?perspective=message')
     expect(documentResponse?.headers()['content-security-policy']).toContain("script-src 'self'")
     const capture = async (name: string) => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
