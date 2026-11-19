@@ -798,6 +798,12 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 		Requirements: "Inspect the archived build output.", NotifyWorker: true,
 	})
 	waitWorkDelivery(t, p, updated.NotificationEventID, "sent")
+	markdown := core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"### Archive review checklist\n\nThe **current build** is ready for review.\n\n- Check the build log\n- Compare the manifest with the previous build\n\nRun ` + "`" + `make verify` + "`" + ` before approving."}`)}
+	checklist := roleWork[core.WorkReceipt](t, p, topicToken, "issue_worker_update", core.WorkerUpdateRequest{
+		OperationID: "observer-archive-checklist", IssueID: blocked.Issue.ID, ExpectedRevision: updated.Issue.Revision,
+		Mode: "context_supplement", Content: &markdown,
+	})
+	waitWorkDelivery(t, p, checklist.NotificationEventID, "sent")
 	card := core.StructuredContent{Type: "options", Data: json.RawMessage(`{"prompt":"**Which archive should we review?**","options":[{"id":"current","label":"Current build"},{"id":"previous","label":"Previous build"}]}`)}
 	supplement := roleWork[core.WorkReceipt](t, p, topicToken, "issue_worker_update", core.WorkerUpdateRequest{
 		OperationID: "observer-supplement", IssueID: blocked.Issue.ID, ExpectedRevision: updated.Issue.Revision,

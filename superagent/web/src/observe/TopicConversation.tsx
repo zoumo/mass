@@ -26,7 +26,7 @@ type IngressEvent = EventIdentity & {
 type IssueCreated = EventIdentity & { kind: 'issue_created'; issueId: string; title: string }
 type WorkerDispatch = EventIdentity & {
   kind: 'worker_dispatch'; issueId: string; title: string; executionId: string; generation: number
-  deliveryId: string; dispatchKind: keyof typeof dispatchLabels; summary?: string; status: string
+  deliveryId: string; dispatchKind: keyof typeof dispatchLabels; summary?: string; status: string; content?: StructuredBody
 }
 type WorkerReport = EventIdentity & {
   kind: 'report'; issueId: string; title: string; executionId: string; generation: number
@@ -242,6 +242,7 @@ function EventCard({ event, href, selected }: { event: ConversationEvent; href: 
   const dispatch = event.kind === 'worker_dispatch'
   const report = event.kind === 'report'
   const direct = event.kind === 'thread_direct'
+  const content = dispatch ? event.content : undefined
   const actor = dispatch ? 'topic' : report ? 'worker' : event.actor
   const ActorIcon = dispatch ? Send : report ? ClipboardList : direct ? Network : GitBranch
   const worker = (dispatch || report) && <span>Worker · {event.title} · 第 {event.generation} 次执行</span>
@@ -255,12 +256,16 @@ function EventCard({ event, href, selected }: { event: ConversationEvent; href: 
         {!dispatch && !report && event.threadKey && <ThreadLink threadKey={event.threadKey}/>}
         <time dateTime={event.at}>{clock.format(new Date(event.at))}</time>
       </div>
-      <a className="conversation-packet" href={href} aria-current={selected ? 'true' : undefined}>
-        <span className="conversation-kind">{dispatch ? dispatchLabels[event.dispatchKind] : report ? reportLabels[event.reportKind] : labels[event.kind]}</span>
-        <span className="conversation-preview">{event.summary || (dispatch || report ? event.title : event.messageId)}</span>
-        {!report && <span className="conversation-delivery">{routingDeliveryLabel(event.status)}</span>}
-        <ChevronRight size={14} aria-hidden="true"/>
-      </a>
+      <div className={content ? 'conversation-card' : undefined}>
+        <a className="conversation-packet" href={href} aria-current={selected ? 'true' : undefined}>
+          <span className="conversation-kind">{dispatch ? dispatchLabels[event.dispatchKind] : report ? reportLabels[event.reportKind] : labels[event.kind]}</span>
+          {content ? <span className="conversation-preview">{content.type === 'markdown' ? 'Markdown 正文' : '选项卡片'}</span>
+            : <span className="conversation-preview">{event.summary || (dispatch || report ? event.title : event.messageId)}</span>}
+          {!report && <span className="conversation-delivery">{routingDeliveryLabel(event.status)}</span>}
+          <ChevronRight size={14} aria-hidden="true"/>
+        </a>
+        {content && <div className="conversation-card-body"><StructuredContent content={content} previewOptions/></div>}
+      </div>
     </div>
   </article>
 }

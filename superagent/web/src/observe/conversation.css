@@ -73,6 +73,15 @@
   background: #142030; border-radius: 4px 9px 9px; font-size: 12px;
 }
 .conversation-packet:hover, .conversation-packet[aria-current] { border-color: var(--actor) }
+.conversation-card {
+  border: 1px solid #2a3a51; border-radius: 4px 9px 9px; background: #142030; overflow: hidden;
+}
+.conversation-card:has(.conversation-packet:is(:hover, :focus-visible, [aria-current])) { border-color: var(--actor) }
+.conversation-card .conversation-packet { border: 0; border-bottom: 1px solid #2a3a51; border-radius: 0 }
+.conversation-card-body { padding: 10px 12px; font-size: 13px; line-height: 1.5 }
+.conversation-card-body :is(h1, h2, h3, h4, h5, h6) { font-weight: 680 }
+.conversation-card-body :is(h1, h2, h3) { font-size: 1.16em }
+.conversation-card-body code { padding: 1px 4px; border-radius: 4px; background: var(--canvas) }
 .conversation-kind {
   flex: none; color: var(--actor); padding: 2px 5px; border-radius: 4px; white-space: nowrap; font-size: 10px;
   background: color-mix(in srgb, var(--actor) 12%, #142030);

@@ -9,3 +9,10 @@
   padding-inline-start: .75em;
 }
 .structured-content pre { overflow: auto; }
+
+.structured-option-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.structured-option-buttons button { max-width: 100%; height: auto; min-height: 28px; white-space: normal; }
+.structured-option-buttons button[aria-pressed="true"] {
+  color: var(--teal); border-color: var(--teal); background: #102930;
+}
+.structured-option-preview output { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }

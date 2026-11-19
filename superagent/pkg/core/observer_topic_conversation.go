@@ -33,6 +33,7 @@ const conversationEvents = `
   'executionId',x.id,'generation',x.generation,'title',json_extract(i.body,'$.title'),
   'summary',substr(coalesce(json_extract(d.content,'$.data.text'),json_extract(d.content,'$.data.prompt'),
     json_extract(d.body,'$.instruction')),1,240),
+  'content',json(d.content),
   'status',d.status,
   'dispatchKind',CASE WHEN d.kind='worker_update' AND d.id GLOB 'goal-update_*' THEN 'goal_notification' ELSE d.kind END)
  FROM internal_deliveries d

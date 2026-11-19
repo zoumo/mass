@@ -93,6 +93,27 @@ test('reads Issue creation and Worker dispatch separately, with real group recor
   await expect(details.getByText('目标修订', { exact: true })).toBeVisible()
 })
 
+test('renders Markdown and previews a structured choice directly in the conversation', async ({ page }) => {
+  await page.goto(observer)
+  const timeline = page.getByRole('region', { name: '群聊时间线' })
+  const checklist = timeline.getByTestId('structured-content').filter({ hasText: 'Archive review checklist' })
+  await expect(checklist.getByRole('heading', { name: 'Archive review checklist' })).toBeVisible()
+  await expect(checklist.locator('strong')).toHaveText('current build')
+  await expect(checklist.getByRole('listitem')).toHaveText(['Check the build log', 'Compare the manifest with the previous build'])
+  await expect(checklist.locator('code')).toHaveText('make verify')
+
+  const choices = timeline.getByTestId('structured-content').filter({ hasText: 'Which archive should we review?' })
+  await expect(choices.locator('strong')).toHaveText('Which archive should we review?')
+  const current = choices.getByRole('button', { name: 'Current build' })
+  const previous = choices.getByRole('button', { name: 'Previous build' })
+  await expect(current).toBeVisible()
+  await previous.click()
+  await expect(previous).toHaveAttribute('aria-pressed', 'true')
+  await expect(current).toHaveAttribute('aria-pressed', 'false')
+  await expect(choices.locator('output code')).toHaveText('{"optionId":"previous"}')
+  await expect(page.getByRole('complementary', { name: '群组信息' })).toBeVisible()
+})
+
 test('defaults to Topic conversations and refreshes Report order while preserving selection and reading position', async ({ page, context, request }, testInfo) => {
   const fixture = await request.get(audit + '/topic-conversation-fixture')
   expect(fixture.ok()).toBe(true)
