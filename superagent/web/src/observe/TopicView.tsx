@@ -6,6 +6,7 @@ import { formatTime, routingDeliveryLabel, sourceLabel, stateLabel, type Page, t
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
 import { usePages, useRecord, viewHref, type ViewProps } from './observer'
+import StructuredContent, { type StructuredBody } from './StructuredContent'
 import './topic.css'
 
 const actions = {
@@ -26,7 +27,8 @@ type Detail = WorkbenchRow & {
   details?: string; evidence?: string[]; resolvedBlockers?: {
     id: string; reason: string; resolution?: { at: string; reason: string; messageId?: string }
   }[]
-  content?: { body?: string | { note?: string } }
+  body?: string
+  content?: StructuredBody
   sentAt?: string
 }
 const actors: Record<string, string> = { core: 'Core', topic: 'Topic', router: 'Router', worker: 'Worker' }
@@ -45,7 +47,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 function MessageFacts({ row }: { row: Event }) {
   const delivery = useRecord<Detail>('routing-deliveries/' + encodeURIComponent(row.deliveryId!))
   const message = useRecord<Detail>(row.messageId ? 'messages/' + encodeURIComponent(row.messageId) : '')
-  const reason = delivery.data?.content?.body
+  const reason = delivery.data?.body
   return <>
     {delivery.error && <ReadError message={delivery.error} stale={!!delivery.data}/>}
     {message.error && <ReadError message={message.error} stale={!!message.data}/>}
@@ -88,7 +90,7 @@ function IssueFacts({ row }: { row: Event }) {
       {data?.evidence?.length ? <Fact label="报告证据">{data.evidence.join('\n')}</Fact> : null}
       {data?.startup?.status && <Fact label="启动投递">{routingDeliveryLabel(data.startup.status)}</Fact>}
       {notification && data && <><Fact label="通知投递">{routingDeliveryLabel(data.status)}</Fact>
-        {typeof data.content?.body === 'object' && data.content.body?.note && <Fact label="补充说明">{data.content.body.note}</Fact>}</>}
+        {data.content && <Fact label="补充说明"><StructuredContent content={data.content}/></Fact>}</>}
       {change && changeTime === row.at && <><Fact label="依据">{change.reason}</Fact>
         {'evidence' in change && <Fact label="验收证据">{change.evidence.join('\n')}</Fact>}</>}
       {blocker?.resolution && <><Fact label="原阻塞">{blocker.reason}</Fact><Fact label="解除依据">{blocker.resolution.reason}</Fact></>}

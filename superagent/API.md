@@ -8,7 +8,7 @@ This document describes the current Core implementation.
 `dataDir`, opens `core.sqlite` and starts HTTP. The default directory is
 `./superagent-core-data` relative to the YAML file. Startup prints one JSON
 object with `endpoint`, `observerEndpoint`, and `status: ready`.
-Schema 21 uses SQLite WAL, FULL synchronous durability and foreign keys.
+Schema 22 uses SQLite WAL, FULL synchronous durability and foreign keys.
 
 The database has nine business tables. `threads` and `trigger_messages`
 record ingress and Thread subscriptions. `topics`, `issues`, `executions`,
@@ -332,7 +332,7 @@ structuredContent on success; JSON-RPC errors include the Core error as data.
 | `topic_query` | Topic summaries only | Only own Topic | `collection: topics`, optional `id` or `cursor/limit` |
 | `route_decide` | Allowed | Forbidden | Route request below |
 | `message_return` | Forbidden | Own routed delivery | Return request below |
-| `message_reply` | Explicit Message or oldest in supplied range | Explicit associated Message or oldest associated Message | `operationId`, `text`, optional `messageId`, Router-only `messageIds` |
+| `outbox_message_reply_structured` | Explicit Message or oldest in supplied range | Explicit associated Message or oldest associated Message | `operationId`, `content`, optional `messageId`, Router-only `messageIds` |
 
 Detail queries cannot combine list parameters. Topic summaries include only
 ID, title, description, status, revision and timestamps. There is no Issue,
@@ -434,7 +434,7 @@ A new Topic can supply `create.goal` in `route_decide`. Router reads it in
 | `issue_start` | `operationId,issueId,expectedRevision`, optional `resolve` and `runtimeRef,model` as a pair | `{issue, execution}`. Schedules an Execution after all blockers are resolved. The call can resolve blockers and start in one transaction. |
 | `issue_update_requirements` | `operationId,issueId,expectedRevision,goal`, optional `notifyWorker` | `{issue, notificationEventId?}`. Saves the goal and can explicitly continue the active Execution. |
 | `issue_update_blockers` | `operationId,issueId,expectedRevision`, at least one of `add,resolve`, optional `notifyWorker`, and `unblockedStatus` when resolving the last blocker | `{issue, notificationEventId?}`. Updates the specified blockers and records the resolution basis. |
-| `issue_worker_update` | `operationId,issueId,expectedRevision,mode`, optional `note,materials` | `{issue, notificationEventId}`. Sends background or explicitly continues the current Execution. |
+| `issue_worker_update` | `operationId,issueId,expectedRevision,mode`, optional `content,materials` | `{issue, notificationEventId}`. Sends background or explicitly continues the current Execution. |
 | `work_query` | `collection: issues/executions/reports/timers/pull-requests`, with `id` for detail or `cursor,limit` for a list. Execution, Report and PR lists accept `issueId`. | Records in the bound Topic. |
 | `pr_register` | `operationId,url`, optional `issueId` | Saved PR association and subscription ID. |
 | `issue_complete` | `operationId,issueId,expectedRevision,reason,evidence` | `{issue, execution?}`. Saves acceptance and retires the current Execution. |
@@ -491,7 +491,7 @@ The Topic can arrange a fresh Execution once its blockers are resolved.
 For an active Execution, the Topic can use `notifyWorker: true` in the same
 operation, or use `issue_worker_update` later.
 
-Use `mode: "context_supplement"` with a note or material to send background
+Use `mode: "context_supplement"` with structured `content` or a material to send background
 to the current Worker via Inject. Use `mode: "continue"` on an active Issue
 with all blockers resolved to send `worker_update` via StartOrSteer.
 An explicit `notifyWorker` on a goal or blocker edit sends the same kind of
@@ -516,7 +516,7 @@ including observation time or an unknown-state reason.
 | `issue_material_get` | `{messageId}` | Original Message listed in the Issue materials. |
 | `report_submit` | `operationId,kind,summary,goalRevision`, optional `details,evidence,questions` | Appended Report with its Topic notification ID. |
 | `pr_register` | `operationId,url` | PR link on the current Issue and its parent Topic. |
-| `delivery_get` | `{delivery_id}` | Full content and references of an internal delivery addressed to the authenticated binding. |
+| `delivery_get` | `{delivery_id}` | Full delivery addressed to the authenticated binding, with `content`, `body` and `refs` at the top level when present. |
 
 Report kinds are `progress`, `ready`, `blocked` and `failed`. The Worker
 supplies the goal revision it used. `requirementsRevision` remains a legacy
@@ -608,15 +608,28 @@ credential can replay its exact cancellation receipt.
 
 ## Durable input delivery
 
-Internal deliveries use `schemaVersion: 3` with ordered `events`.
-Each event carries `delivery_id`, `kind`, `sender`, `recipient` and
-`content`. The sender and recipient carry a role kind and, when applicable,
-a `topic_id` or `execution_id`. Deduplicate by `delivery_id`. A truncated
-event carries `truncated: true` and a `content_ref` for `delivery_get`.
-All-`context_supplement` batches use `session.inject`; any other kind
-selects `session.prompt` (StartOrSteer). Acceptance settles the rows as
-`sent`. A restart can submit unconfirmed rows again using the same IDs.
-Worker startup and updates, Report notifications, Report reminders and Issue
+Internal deliveries use `schemaVersion: 4` with ordered `events`.
+Each event carries `delivery_id`, `kind`, `sender` and `recipient`. The sender
+and recipient carry a role kind and, when applicable, a `topic_id` or
+`execution_id`. Deduplicate by `delivery_id`.
+
+- `content` is an optional `{type,data}` object. It uses the same schemas as
+  Outbox content, including Markdown prompts for `options`.
+- `body` carries event-specific JSON, such as a routing reason or the current
+  goal revision.
+- `refs` carries references to Messages, Issues, Reports and other records.
+
+Core stores these fields in separate columns of `internal_deliveries`.
+`content` is nullable SQLite `TEXT` with a JSON object check. Core validates
+its card schema before insertion. Observer details and `delivery_get` expose
+these fields at the top level. A truncated envelope event carries
+`truncated: true` and a `content_ref` for `delivery_get`. It may include a
+`body_preview` or `content_preview`. The saved record retains the complete fields.
+
+All-`context_supplement` batches use `session.inject`. Any other kind selects
+`session.prompt` (StartOrSteer). Acceptance settles the rows as `sent`.
+A restart can submit unconfirmed rows again using the same IDs. Worker
+startup and updates, Report notifications, Report reminders and Issue
 dependency changes use this path. The Observer exposes the acceptance state
 and timestamp separately from work completion.
 
@@ -776,10 +789,18 @@ the source contract using synthetic Messages.
 
 ## Message replies
 
-`message_reply` atomically creates one pending Outbox item. Use the same
+`outbox_message_reply_structured` atomically creates one pending Outbox item. Use the same
 `operationId` and parameters to retrieve the same item with its current state.
 Use `source_query` with `collection: "outbox"` to read authorized replies.
 A successful queue receipt confirms local persistence.
+
+Use `message_content_schema_list` to discover supported content types and
+their intended uses. Pass `type` to `message_content_schema_get` to read the
+definition of `content.data` and a complete example. Each reply has one object
+with `type` and `data`. `markdown` carries `data.text`. `options` carries a
+Markdown `data.prompt` and at least two ordered `data.options` with distinct
+`id` values and a display `label`. Supply this object as `content` when
+queueing the reply.
 
 Router may give one explicit `messageId` or the distinct `messageIds` of its
 current routing input. Topic may give an explicit associated Message or omit
@@ -788,7 +809,7 @@ its own `receivedAt` then the stable SQLite acceptance sequence. It checks the
 chosen Message's channel after selection. No match, missing native address or
 an out-of-scope target returns an error. Worker has no reply capability.
 
-An Outbox item carries `id`, `messageId`, `text` and `status`, with optional
+An Outbox item carries `id`, `messageId`, `content` and `status`, with optional
 `receipt` and `blockerRef`. The status is `pending`, `sent` or `failed`.
 A Topic can set `blockerRef: {issueId, blockerId}` for one open human blocker
 in its own Issue. Router replies cannot set this field.

@@ -345,13 +345,7 @@ type observedRouteDelivery struct {
 		Kind    string `json:"kind"`
 		TopicID string `json:"topic_id"`
 	} `json:"recipient"`
-	Content struct {
-		Body string `json:"body"`
-		Refs []struct {
-			ID   string `json:"id"`
-			Kind string `json:"kind"`
-		} `json:"refs"`
-	} `json:"content"`
+	Body               string `json:"body"`
 	Returned           bool   `json:"returned"`
 	ReturnedDeliveryID string `json:"returnedDeliveryId"`
 }
@@ -440,7 +434,7 @@ func TestRoutingPublicProcess(t *testing.T) {
 	routeRequest := readRecord[observedRouteDelivery](t, p, "routing-deliveries/"+readReturnID(t, returned))
 	waitRouteStatus(t, p, routeRequest.ID, "sent")
 	require.Equal(t, second.EventID, routeRequest.ReturnedDeliveryID)
-	require.Equal(t, "outside scope", routeRequest.Content.Body)
+	require.Equal(t, "outside scope", routeRequest.Body)
 	require.Equal(t, "sent", readRecord[observedRouteDelivery](t, p, "routing-deliveries/"+second.EventID).Status)
 	retry := core.RouteRequest{OperationID: "redeliver", MessageIDs: []string{second.MessageID}, Rounds: map[string]int{second.MessageID: 2}, Kind: "route", Reason: "reconsider", Targets: []core.RouteTarget{{TopicID: topicID, MessageIDs: []string{second.MessageID}}}}
 	rerouted := decide(t, p, token, retry)
@@ -804,6 +798,12 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 		Requirements: "Inspect the archived build output.", NotifyWorker: true,
 	})
 	waitWorkDelivery(t, p, updated.NotificationEventID, "sent")
+	card := core.StructuredContent{Type: "options", Data: json.RawMessage(`{"prompt":"**Which archive should we review?**","options":[{"id":"current","label":"Current build"},{"id":"previous","label":"Previous build"}]}`)}
+	supplement := roleWork[core.WorkReceipt](t, p, topicToken, "issue_worker_update", core.WorkerUpdateRequest{
+		OperationID: "observer-supplement", IssueID: blocked.Issue.ID, ExpectedRevision: updated.Issue.Revision,
+		Mode: "context_supplement", Content: &card,
+	})
+	waitWorkDelivery(t, p, supplement.NotificationEventID, "sent")
 	_ = roleWork[core.WorkReceipt](t, p, topicToken, "issue_update_blockers", core.UpdateBlockersRequest{
 		OperationID: "observer-add-blockers", IssueID: blocked.Issue.ID, ExpectedRevision: updated.Issue.Revision,
 		Add: []core.BlockerInput{human("Confirm the archive with the reviewer"), dependency(work.Issue)},
@@ -1107,8 +1107,8 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	event := decodeInternalBatch(t, routerInput, returnID)[0]
 	require.Equal(t, "route_request", event.Kind)
 	require.Equal(t, b.OwnerID, event.Sender.TopicID)
-	require.JSONEq(t, fmt.Sprintf(`{"kind":"trigger_message","id":%q}`, m.MessageID), string(event.Content.Refs[0]))
-	require.JSONEq(t, fmt.Sprintf(`{"kind":"internal_delivery","id":%q}`, bID), string(event.Content.Refs[1]))
+	require.JSONEq(t, fmt.Sprintf(`{"kind":"trigger_message","id":%q}`, m.MessageID), string(event.Refs[0]))
+	require.JSONEq(t, fmt.Sprintf(`{"kind":"internal_delivery","id":%q}`, bID), string(event.Refs[1]))
 	routerInput.accept()
 	waitRouteStatus(t, p, returnID, "sent")
 	require.True(t, waitRouteStatus(t, p, bID, "superseded").Returned)

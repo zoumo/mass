@@ -31,15 +31,16 @@ const conversationEvents = `
  SELECT i.topic_id,'worker_dispatch',d.created_at,d.id,
  json_object('actor','topic','recipient','worker','deliveryId',d.id,'issueId',i.id,
   'executionId',x.id,'generation',x.generation,'title',json_extract(i.body,'$.title'),
-  'summary',substr(coalesce(json_extract(d.content,'$.body.note'),json_extract(d.content,'$.body.instruction')),1,240),
+  'summary',substr(coalesce(json_extract(d.content,'$.data.text'),json_extract(d.content,'$.data.prompt'),
+    json_extract(d.body,'$.instruction')),1,240),
   'status',d.status,
   'dispatchKind',CASE WHEN d.kind='worker_update' AND d.id GLOB 'goal-update_*' THEN 'goal_notification' ELSE d.kind END)
  FROM internal_deliveries d
  JOIN executions x ON x.id=json_extract(d.recipient,'$.execution_id')
- JOIN issues i ON i.id=x.issue_id AND i.id=json_extract(d.content,'$.refs[0].id')
+ JOIN issues i ON i.id=x.issue_id AND i.id=json_extract(d.refs,'$[0].id')
  WHERE d.kind IN ('worker_started','worker_update','context_supplement')
   AND json_extract(d.sender,'$.kind')='topic' AND json_extract(d.sender,'$.topic_id')=i.topic_id
-  AND json_extract(d.recipient,'$.kind')='worker' AND json_extract(d.content,'$.refs[0].kind')='issue'
+  AND json_extract(d.recipient,'$.kind')='worker' AND json_extract(d.refs,'$[0].kind')='issue'
   AND d.rowid<=:deliveries AND i.seq<=:issues AND (:topic='' OR i.topic_id=:topic)
  UNION ALL
  SELECT i.topic_id,'report',r.created_at,r.id,

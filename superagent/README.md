@@ -27,8 +27,8 @@ bin/superagent observe outbox --message-id MESSAGE_ID
 ```
 
 The default data directory is `./superagent-core-data`, relative to the YAML
-file. Use an empty directory for your first schema 21 startup. Startup rejects
-earlier SQLite schemas (including 20) and JSON v4 state directories while preserving the original files.
+file. Use an empty directory for your first schema 22 startup. Startup rejects
+earlier SQLite schemas and JSON v4 state directories while preserving the original files.
 Set `dataDir` to another empty directory if the configured path contains
 earlier data. Use the original executable to inspect retained MVP history.
 

@@ -8,10 +8,10 @@ type Party = { kind: string, topic_id?: string }
 type Delivery = {
   id: string, kind: string, createdAt: string, sentAt?: string, status: string,
   sender: Party, recipient: Party, topicId?: string, topicTitle?: string, returnedDeliveryId?: string,
-  content: { body?: string, refs?: { kind: string, id: string }[] }
+  body?: string, refs?: { kind: string, id: string }[]
 }
 type Issue = WorkbenchRow & { id: string, topicId: string, topicTitle?: string }
-type Reply = { id: string, status: string, text: string, receipt?: { messageId?: string, conversationId?: string, taskId?: string, errorCode?: string } }
+type Reply = { id: string, status: string, preview: string, receipt?: { messageId?: string, conversationId?: string, taskId?: string, errorCode?: string } }
 type Selection = { kind: 'channel' | 'core' | 'router' | 'topic' | 'issue' | 'delivery', id: string }
 type Toggle = (event: MouseEvent<HTMLButtonElement>, kind: Selection['kind'], id?: string) => void
 
@@ -154,7 +154,7 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
       {(selected.kind === 'topic' || selected.kind === 'issue') && <ObjectDetail kind={selected.kind} id={selected.id} messageID={message.id} references={issuesByTopic.get(selected.id)} incomplete={Boolean(issues.next || !issues.data || issues.error)}/>}
     </section>}
     {(replies.data?.length || replies.next || replies.error) ? <section className="path-outbox"><h3><ArrowDownRight size={16}/>渠道回执 · {source}</h3>
-      {replies.data?.map(row => <details key={row.id}><summary><span>{row.text}</span><b>{row.status === 'sent' ? '渠道已发送' : '渠道 · ' + stateLabel(row.status)}</b></summary>
+      {replies.data?.map(row => <details key={row.id}><summary><span>{row.preview}</span><b>{row.status === 'sent' ? '渠道已发送' : '渠道 · ' + stateLabel(row.status)}</b></summary>
         <Fields fields={[['Outbox ID', row.id], ['渠道消息 ID', row.receipt?.messageId], ['会话 ID', row.receipt?.conversationId], ['任务 ID', row.receipt?.taskId], ['错误码', row.receipt?.errorCode]]}/>
         <a className="path-link" href={'/observer/?view=outbox&id=' + encodeURIComponent(row.id)}>查看渠道回执<ArrowRight size={14}/></a>
       </details>)}<PageStatus page={replies} name="渠道回执"/></section> : null}
@@ -167,8 +167,8 @@ function DeliveryDetail({ id }: { id: string }) {
   return <>{read.error && <p className="path-error">{read.error}{row && ' · 快照已过时'}</p>}
     {row ? <Fields fields={[['投递 ID', row.id], ['发送方', partyLabel(row.sender)], ['接收方', partyLabel(row.recipient)],
       ['动作', action(row)], ['状态', routingDeliveryLabel(row.status)], ['登记时间', row.createdAt], ['受理时间', row.sentAt],
-      [row.returnedDeliveryId ? '退回理由' : row.kind === 'routed_message' ? '投递理由' : '内容', row.content.body],
-      ['内容引用', row.content.refs?.map(ref => <p key={ref.kind + ref.id}>{ref.kind} · {ref.id}</p>)],
+      [row.returnedDeliveryId ? '退回理由' : row.kind === 'routed_message' ? '投递理由' : '内容', row.body],
+      ['内容引用', row.refs?.map(ref => <p key={ref.kind + ref.id}>{ref.kind} · {ref.id}</p>)],
       ...(row.returnedDeliveryId ? [['原投递 ID', row.returnedDeliveryId] as [string, string]] : [])]}/> : !read.error && <p className="path-muted">正在读取投递…</p>}</>
 }
 

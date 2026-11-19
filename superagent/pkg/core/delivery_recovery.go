@@ -460,7 +460,7 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 	}
 	return enqueueInternalDelivery(ctx, tx, internalDelivery{
 		ID: newID("dlv"), Kind: kind, Sender: deliveryIdentity{Kind: "core"}, Recipient: recipient,
-		Content: deliveryContent{Body: payload},
+		Body: payload,
 	})
 }
 

@@ -42,25 +42,43 @@ func businessDeliveryCurrent(ctx context.Context, tx *sql.Tx, d internalDelivery
 func encodeInternalDelivery(d internalDelivery) (json.RawMessage, error) {
 	event := struct {
 		internalDelivery
-		BodyPreview string             `json:"body_preview,omitempty"`
-		Truncated   bool               `json:"truncated,omitempty"`
-		ContentRef  *deliveryReference `json:"content_ref,omitempty"`
+		BodyPreview    string             `json:"body_preview,omitempty"`
+		ContentPreview string             `json:"content_preview,omitempty"`
+		Truncated      bool               `json:"truncated,omitempty"`
+		ContentRef     *deliveryReference `json:"content_ref,omitempty"`
 	}{internalDelivery: d}
 	truncate := func() {
 		event.Truncated = true
 		event.ContentRef = &deliveryReference{Kind: "internal_delivery", ID: d.ID}
 	}
-	if len(d.Content.Body) > previewBytes {
-		event.BodyPreview = truncatePreview(string(d.Content.Body))
-		event.Content.Body = nil
+	if len(d.Body) > previewBytes {
+		event.BodyPreview = truncatePreview(string(d.Body))
+		event.Body = nil
+		truncate()
+	}
+	if d.Content != nil && len(d.Content.Data) > previewBytes {
+		var prose struct {
+			Text   string `json:"text"`
+			Prompt string `json:"prompt"`
+		}
+		if err := json.Unmarshal(d.Content.Data, &prose); err != nil {
+			return nil, err
+		}
+		event.ContentPreview = prose.Text + prose.Prompt
+		if len(event.ContentPreview) > previewBytes {
+			event.ContentPreview = truncatePreview(event.ContentPreview)
+		}
+		event.Content = nil
 		truncate()
 	}
 	raw, err := json.Marshal(event)
 	if err != nil || len(raw) <= batchBytes-512 {
 		return raw, err
 	}
-	// Large reference lists can also be read in full through delivery_get.
-	event.Content.Refs = nil
+	// Unabridged content and references remain available through delivery_get.
+	event.Content = nil
+	event.ContentPreview = ""
+	event.Refs = nil
 	truncate()
 	return json.Marshal(event)
 }
@@ -75,7 +93,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	if err := checkBinding(ctx, tx, b); err != nil {
 		return batch, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,kind,sender,recipient,content,created_at
+	rows, err := tx.QueryContext(ctx, `SELECT `+internalDeliveryColumns+`
  FROM internal_deliveries WHERE `+deliveryRecipientKind+`=? AND `+deliveryRecipientOwner+`=?
  AND status IN ('pending','dispatching')
 
@@ -104,7 +122,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	}
 	var deadline time.Time
 	batch.method = "inject"
-	envelope := inputBatch{BindingID: b.ID, Generation: b.Generation, SchemaVersion: 3}
+	envelope := inputBatch{BindingID: b.ID, Generation: b.Generation, SchemaVersion: 4}
 	at, full := time.Now(), false
 	for _, q := range queue {
 		current, err := businessDeliveryCurrent(ctx, tx, q.item)

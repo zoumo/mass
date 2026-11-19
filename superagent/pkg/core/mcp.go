@@ -42,8 +42,10 @@ func roleTools(role string) []mcpTool {
 		mcpTool{Name: "binding_get", Description: "Read your startup-bound role, owner, generation, workspace and preparation state. No credentials or Session transcript.", InputSchema: objectSchema(nil)},
 		mcpTool{Name: "source_query", Description: "Read source Messages, Threads, routing-deliveries and your own Outbox replies. Filter routing deliveries by messageId. Router sees source history. Topic sees only associated Messages and subscribed Thread metadata. Filter Outbox by messageId or threadKey. A Topic Message can include quotedReply with the matched Outbox and blockerRef. Lists use cursor/limit; id selects one detail.", InputSchema: query},
 		mcpTool{Name: "topic_query", Description: "Router reads Topic summaries only. Topic reads only its own Topic; an out-of-scope id is denied. No Issue, Report or Worker Session expansion.", InputSchema: objectSchema(map[string]any{"collection": map[string]any{"type": "string", "enum": []string{"topics"}}, "id": str, "cursor": str, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}}, "collection")},
+		mcpTool{Name: "message_content_schema_list", Description: "List structured message content types and their intended uses.", InputSchema: objectSchema(nil)},
+		mcpTool{Name: "message_content_schema_get", Description: "Read a structured message content type's data schema and a complete content example.", InputSchema: objectSchema(map[string]any{"type": str}, "type")},
 	)
-	replyProps := map[string]any{"operationId": str, "text": str, "messageId": str}
+	replyProps := map[string]any{"operationId": str, "content": structuredContentInputSchema(), "messageId": str}
 	replyDescription := "Queue a reply to an associated Message. With no messageId, Core uses your oldest associated Message. Reuse operationId for a retry. The receipt confirms the reply was stored."
 	if role == "topic" {
 		replyProps["blockerRef"] = objectSchema(map[string]any{"issueId": str, "blockerId": str}, "issueId", "blockerId")
@@ -53,7 +55,8 @@ func roleTools(role string) []mcpTool {
 		replyProps["messageIds"] = ids
 		replyDescription = "Queue a clarification or reply to an explicit messageId or the oldest Message among your current routing messageIds. Reuse operationId for a retry. The receipt confirms the reply was stored."
 	}
-	tools = append(tools, mcpTool{Name: "message_reply", Description: replyDescription, InputSchema: objectSchema(replyProps, "operationId", "text")})
+	replyDescription += " Use message_content_schema_list to pick a content type and message_content_schema_get to see its data fields."
+	tools = append(tools, mcpTool{Name: "outbox_message_reply_structured", Description: replyDescription, InputSchema: objectSchema(replyProps, "operationId", "content")})
 	switch role {
 	case "router":
 		target := objectSchema(map[string]any{"topicId": str, "create": objectSchema(map[string]any{"title": str, "description": map[string]any{"type": "string"}, "goal": str, "workspace": str}, "title", "workspace"), "messageIds": ids}, "messageIds")
@@ -96,10 +99,10 @@ func topicWorkTools() []mcpTool {
 			InputSchema: objectSchema(map[string]any{"operationId": str, "issueId": str, "expectedRevision": revision, "add": map[string]any{"type": "array", "items": blocker}, "resolve": resolve, "notifyWorker": map[string]any{"type": "boolean"}, "unblockedStatus": map[string]any{"type": "string", "enum": []string{"pending", "active"}}}, "operationId", "issueId", "expectedRevision"),
 		},
 		{
-			Name: "issue_worker_update", Description: "Send context_supplement to add background or materials without opening a turn. Use continue to advance a current active Execution after all blockers are resolved. Neither mode changes the goal.",
+			Name: "issue_worker_update", Description: "Send structured content or materials with context_supplement to add background without opening a turn. Use continue to advance a current active Execution after all blockers are resolved. Use message_content_schema_get for the fields of a content type. Use issue_update_requirements to change the goal.",
 			InputSchema: objectSchema(map[string]any{
 				"operationId": str, "issueId": str, "expectedRevision": revision,
-				"mode": map[string]any{"type": "string", "enum": []string{"continue", contextSupplement}}, "note": str,
+				"mode": map[string]any{"type": "string", "enum": []string{"continue", contextSupplement}}, "content": structuredContentInputSchema(),
 				"materials": map[string]any{"type": "array", "items": material},
 			}, "operationId", "issueId", "expectedRevision", "mode"),
 		},

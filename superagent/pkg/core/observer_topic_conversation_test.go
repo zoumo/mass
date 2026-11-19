@@ -172,11 +172,12 @@ func TestObserverTopicConversationWorkerDispatch(t *testing.T) {
 
 	supplemented := roleWork[core.WorkReceipt](t, p, token, "issue_worker_update", core.WorkerUpdateRequest{
 		OperationID: "supplement", IssueID: issue.ID, ExpectedRevision: started.Issue.Revision, Mode: "context_supplement",
-		Note: "Context for Worker", Materials: []core.Material{{Label: "Ingress", MessageID: ingress.MessageID}},
+		Content:   &core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"Context for Worker"}`)},
+		Materials: []core.Material{{Label: "Ingress", MessageID: ingress.MessageID}},
 	})
 	continued := roleWork[core.WorkReceipt](t, p, token, "issue_worker_update", core.WorkerUpdateRequest{
 		OperationID: "continue", IssueID: issue.ID, ExpectedRevision: supplemented.Issue.Revision, Mode: "continue",
-		Note: "Continue the current work",
+		Content: &core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"Continue the current work"}`)},
 	})
 	updated := roleWork[core.WorkReceipt](t, p, token, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "goal", IssueID: issue.ID, ExpectedRevision: continued.Issue.Revision, Goal: "Updated goal", NotifyWorker: true,

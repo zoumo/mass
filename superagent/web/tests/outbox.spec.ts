@@ -16,6 +16,25 @@ test('Outbound echo links to its Outbox receipt in read-only reply history', asy
  await expect(dialog.getByText('actual:conversation', { exact: true })).toBeVisible()
 })
 
+test('Outbox detail renders Markdown and ordered options', async ({ page }) => {
+ const imageRequests: string[] = []
+ page.on('request', request => {
+  if (request.url().includes('outbox-image.png')) imageRequests.push(request.url())
+ })
+ await page.goto('/observer/?view=outbox')
+ const dialog = page.getByRole('dialog')
+ const content = dialog.getByTestId('structured-content')
+ await page.getByRole('button', { name: '**Formatted reply**', exact: true }).click()
+ await expect(content.locator('strong')).toHaveText('Formatted reply')
+ await dialog.getByRole('button', { name: '关闭' }).click()
+ await page.getByRole('button', { name: /^\*\*Choose what to do\.\*\*/ }).click()
+ await expect(content.locator('strong')).toHaveText('Choose what to do.')
+ await expect(content.getByRole('listitem')).toHaveText(['Pause', 'Continue'])
+ await expect(content.getByRole('img', { name: 'Do not fetch' })).toHaveCount(0)
+ await expect(content.locator('[data-marker="outbox-raw-html"]')).toHaveCount(0)
+ expect(imageRequests).toEqual([])
+})
+
 test('Message and Thread link to read-only reply history and channel evidence', async ({ page, request }, testInfo) => {
  const methods = new Set<string>()
  page.on('request', r => {

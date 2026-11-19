@@ -24,22 +24,22 @@ type deliveryParty struct {
 }
 
 type internalEvent struct {
-	ID        string        `json:"delivery_id"`
-	Kind      string        `json:"kind"`
-	Sender    deliveryParty `json:"sender"`
-	Recipient deliveryParty `json:"recipient"`
-	Content   struct {
-		Body json.RawMessage   `json:"body"`
-		Refs []json.RawMessage `json:"refs,omitempty"`
-	} `json:"content"`
-	Truncated   bool            `json:"truncated,omitempty"`
-	BodyPreview string          `json:"body_preview,omitempty"`
-	ContentRef  json.RawMessage `json:"content_ref,omitempty"`
+	ID             string                  `json:"delivery_id"`
+	Kind           string                  `json:"kind"`
+	Sender         deliveryParty           `json:"sender"`
+	Recipient      deliveryParty           `json:"recipient"`
+	Content        *core.StructuredContent `json:"content,omitempty"`
+	Body           json.RawMessage         `json:"body,omitempty"`
+	Refs           []json.RawMessage       `json:"refs,omitempty"`
+	Truncated      bool                    `json:"truncated,omitempty"`
+	BodyPreview    string                  `json:"body_preview,omitempty"`
+	ContentPreview string                  `json:"content_preview,omitempty"`
+	ContentRef     json.RawMessage         `json:"content_ref,omitempty"`
 }
 
 type internalDeliveryRow struct {
 	ID, Kind, Status, SentAt string
-	Body                     json.RawMessage
+	Body, Content            json.RawMessage
 }
 
 func internalRows(t *testing.T, f *fixture, where string, args ...any) []internalDeliveryRow {
@@ -47,16 +47,16 @@ func internalRows(t *testing.T, f *fixture, where string, args ...any) []interna
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.data, "core.sqlite")+"?mode=ro&_pragma=busy_timeout(1000)")
 	require.NoError(t, err)
 	defer db.Close()
-	rows, err := db.QueryContext(t.Context(), `SELECT id,kind,status,COALESCE(sent_at,''),json_extract(content,'$.body')
+	rows, err := db.QueryContext(t.Context(), `SELECT id,kind,status,COALESCE(sent_at,''),body,content
  FROM internal_deliveries WHERE `+where+` ORDER BY rowid`, args...)
 	require.NoError(t, err)
 	defer rows.Close()
 	var result []internalDeliveryRow
 	for rows.Next() {
 		var d internalDeliveryRow
-		var body []byte
-		require.NoError(t, rows.Scan(&d.ID, &d.Kind, &d.Status, &d.SentAt, &body))
-		d.Body = body
+		var body, content []byte
+		require.NoError(t, rows.Scan(&d.ID, &d.Kind, &d.Status, &d.SentAt, &body, &content))
+		d.Body, d.Content = body, content
 		result = append(result, d)
 	}
 	require.NoError(t, rows.Err())
@@ -65,7 +65,7 @@ func internalRows(t *testing.T, f *fixture, where string, args ...any) []interna
 
 func dependencyDeliveries(t *testing.T, f *fixture) []internalDeliveryRow {
 	t.Helper()
-	return internalRows(t, f, "json_extract(content,'$.body.type')='issue.dependency_changed'")
+	return internalRows(t, f, "json_extract(body,'$.type')='issue.dependency_changed'")
 }
 
 func waitInternalDelivery(t *testing.T, f *fixture, id, status string) internalDeliveryRow {
@@ -90,7 +90,7 @@ func decodeInternalBatch(t *testing.T, call nativeDeliveryCall, ids ...string) [
 	}
 	require.LessOrEqual(t, len(call.text), 64*1024)
 	require.NoError(t, json.Unmarshal([]byte(call.text), &batch))
-	require.Equal(t, 3, batch.Version)
+	require.Equal(t, 4, batch.Version)
 	if ids != nil {
 		var actual []string
 		for _, event := range batch.Events {
@@ -103,7 +103,7 @@ func decodeInternalBatch(t *testing.T, call nativeDeliveryCall, ids ...string) [
 
 func newInternalEvent(id, kind string, recipient deliveryParty) internalEvent {
 	e := internalEvent{ID: id, Kind: kind, Sender: deliveryParty{Kind: "core"}, Recipient: recipient}
-	e.Content.Body = json.RawMessage(`{"example":"fixture"}`)
+	e.Body = json.RawMessage(`{"example":"fixture"}`)
 	return e
 }
 
@@ -149,7 +149,7 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 	var large []internalEvent
 	for i := range 9 {
 		e := contextEvent("bytes-" + strconv.Itoa(i))
-		e.Content.Body = json.RawMessage(`"` + strings.Repeat("x", 8150) + `"`)
+		e.Body = json.RawMessage(`"` + strings.Repeat("x", 8150) + `"`)
 		large = append(large, e)
 	}
 	queueInternal(t, p, large...)
@@ -169,8 +169,8 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 	waitInternalDelivery(t, f, large[offset-1].ID, "sent")
 
 	long := contextEvent("long-context")
-	long.Content.Body = json.RawMessage(`{"text":"` + strings.Repeat("界", 3000) + `"}`)
-	long.Content.Refs = []json.RawMessage{json.RawMessage(`{"kind":"fixture","id":"source-reference"}`)}
+	long.Body = json.RawMessage(`{"text":"` + strings.Repeat("界", 3000) + `"}`)
+	long.Refs = []json.RawMessage{json.RawMessage(`{"kind":"fixture","id":"source-reference"}`)}
 	action := newInternalEvent("action", "route_request", recipient)
 	queueInternal(t, p, long, action)
 	mixed := peer.next(t, "turn/start")
@@ -180,11 +180,11 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 	require.Equal(t, recipient, events[0].Recipient)
 	require.True(t, events[0].Truncated)
 	require.True(t, utf8.ValidString(events[0].BodyPreview))
-	require.Empty(t, events[0].Content.Body)
-	require.JSONEq(t, string(long.Content.Refs[0]), string(events[0].Content.Refs[0]))
+	require.Empty(t, events[0].Body)
+	require.JSONEq(t, string(long.Refs[0]), string(events[0].Refs[0]))
 	require.JSONEq(t, `{"kind":"internal_delivery","id":"long-context"}`, string(events[0].ContentRef))
 	full := mcpWork[internalEvent](t, role, "delivery_get", map[string]string{"delivery_id": long.ID})
-	require.JSONEq(t, string(long.Content.Body), string(full.Content.Body))
+	require.JSONEq(t, string(long.Body), string(full.Body))
 	mixed.accept()
 	waitInternalDelivery(t, f, action.ID, "sent")
 	peer.quiet(t, 250*time.Millisecond)

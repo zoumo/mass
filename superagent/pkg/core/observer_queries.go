@@ -74,13 +74,14 @@ func observerListProjection(kind, full string) string {
 	case "messages":
 		return `json_set(json_remove(body,'$.meta','$.quotedMessage','$.channel'), '$.text', substr(json_extract(body,'$.text'),1,240))`
 	case "outbox":
-		return `json_set(` + full + `, '$.text', substr(outbox.text,1,240))`
+		return `json_set(json_remove(` + full + `,'$.content'), '$.preview',
+ substr(COALESCE(json_extract(outbox.content,'$.data.text'),json_extract(outbox.content,'$.data.prompt')),1,240))`
 	case "issues":
 		return `json_remove(` + full + `,'$.goal','$.materials','$.reports','$.resolvedBlockers')`
 	case "executions":
 		return `json_remove(` + full + `,'$.startup.payload','$.startup.receipt','$.startup.content','$.reminder.payload','$.reminder.receipt','$.reminder.content')`
 	case "internal-deliveries":
-		return `json_set(json_remove(` + full + `,'$.content.body'),'$.goalUpdate',json(CASE WHEN kind='worker_update' AND id GLOB 'goal-update_*' THEN 'true' ELSE 'false' END))`
+		return `json_set(json_remove(` + full + `,'$.body','$.content'),'$.goalUpdate',json(CASE WHEN kind='worker_update' AND id GLOB 'goal-update_*' THEN 'true' ELSE 'false' END))`
 	case "reports":
 		return `json_remove(body,'$.details','$.evidence','$.questions')`
 	case "timers":
@@ -90,10 +91,11 @@ func observerListProjection(kind, full string) string {
 	}
 }
 
-const internalDeliveryProjection = `json_object(
+const internalDeliveryProjection = `json_patch(json_object(
  'id',id,'delivery_id',id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
- 'sender',json(sender),'recipient',json(recipient),'content',json(content),
- 'revision',json_extract(content,'$.refs[0].goal_revision'))`
+ 'sender',json(sender),'recipient',json(recipient),'refs',json(refs),
+ 'revision',json_extract(refs,'$[0].goal_revision')),
+ json_object('content',json(content),'body',json(body)))`
 
 func workNotificationProjection(table, field string) string {
 	return "(SELECT " + internalDeliveryProjection + " FROM internal_deliveries WHERE id=json_extract(" + table + ".body,'$." + field + "'))"

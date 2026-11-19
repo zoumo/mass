@@ -95,7 +95,7 @@ func updateBlockers(r UpdateBlockersRequest) workMutation {
 					materials = append(materials, Material{MessageID: item.MessageID})
 				}
 			}
-			return notifyWorker(ctx, tx, issue, newID("delivery"), workerUpdateKind, "", materials)
+			return notifyWorker(ctx, tx, issue, newID("delivery"), workerUpdateKind, nil, materials)
 		}
 		return WorkReceipt{Issue: issue, Execution: retired}, nil
 	}
@@ -217,7 +217,7 @@ func saveIssueLifecycleTransition(ctx context.Context, tx *sql.Tx, issue Issue, 
 	if err := enqueueInternalDelivery(ctx, tx, internalDelivery{
 		ID: newID("delivery"), Kind: contextSupplement,
 		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "topic", TopicID: issue.TopicID},
-		Content: deliveryContent{Body: payload, Refs: []deliveryReference{{Kind: "issue", ID: issue.ID}}},
+		Body: payload, Refs: []deliveryReference{{Kind: "issue", ID: issue.ID}},
 	}); err != nil {
 		return err
 	}

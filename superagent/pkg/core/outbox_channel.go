@@ -239,9 +239,9 @@ func enqueueOutboxFailure(ctx context.Context, tx *sql.Tx, item OutboxItem) erro
 	}
 	return enqueueInternalDelivery(ctx, tx, internalDelivery{
 		ID: newID("dlv"), Kind: "outbox_failed", Sender: deliveryIdentity{Kind: "core"}, Recipient: recipient,
-		Content: deliveryContent{Body: body, Refs: []deliveryReference{
+		Body: body, Refs: []deliveryReference{
 			{Kind: "outbox", ID: item.ID}, {Kind: messageRefKind, ID: item.MessageID},
-		}},
+		},
 	})
 }
 

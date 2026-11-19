@@ -3,6 +3,7 @@ import { ArrowDown, ArrowRight, ChevronRight, ClipboardList, GitBranch, Hash, Ne
 import { Button } from '../components/ui/button'
 import { formatTime, routingDeliveryLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import CopyLink from './CopyLink'
+import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { navigate, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
 import './conversation.css'
 
@@ -32,13 +33,12 @@ type WorkerReport = EventIdentity & {
   reportId: string; reportKind: keyof typeof reportLabels; summary: string; deliveryId: string
 }
 type ConversationEvent = IngressEvent | IssueCreated | WorkerDispatch | WorkerReport
-type RoutingDelivery = WorkbenchRow & { content?: { body?: string }; sentAt?: string }
+type RoutingDelivery = { status: string; body?: string }
 type WorkerDelivery = {
   status: string
-  content?: {
-    body?: { note?: string; instruction?: string; materials?: WorkbenchRow['materials'] }
-    refs?: { kind: string; id: string; goal_revision?: number }[]
-  }
+  content?: StructuredBody
+  body?: { instruction?: string; materials?: WorkbenchRow['materials'] }
+  refs?: { kind: string; id: string; goal_revision?: number }[]
 }
 type Subscription = { id: string; threadKey: string }
 type Issue = {
@@ -288,7 +288,7 @@ function IngressDetails({ event }: { event: IngressEvent }) {
       <dl>
         <Fact label="登记时间"><time dateTime={event.at}>{formatTime(event.at)}</time></Fact>
         <Fact label="投递状态">{routingDeliveryLabel(delivery.data?.status || event.status)}</Fact>
-        {delivery.data?.content?.body && <Fact label="投递理由">{delivery.data.content.body}</Fact>}
+        {delivery.data?.body && <Fact label="投递理由">{delivery.data.body}</Fact>}
         {message.data && <Fact label="来源">{sourceLabel(message.data.source)}{message.data.actor && ` · ${message.data.actor}`}</Fact>}
         {event.threadKey && <Fact label="来源 Thread"><ThreadLink threadKey={event.threadKey}/></Fact>}
       </dl>
@@ -314,17 +314,19 @@ function IssueCreatedDetails({ event }: { event: IssueCreated }) {
 function DispatchDetails({ event }: { event: WorkerDispatch }) {
   const delivery = useRecord<WorkerDelivery>('internal-deliveries/' + encodeURIComponent(event.deliveryId))
   const content = delivery.data?.content
-  const body = content?.body
-  const revision = content?.refs?.find(ref => ref.kind === 'issue' && ref.id === event.issueId)?.goal_revision
+  const body = delivery.data?.body
+  const refs = delivery.data?.refs
+  const revision = refs?.find(ref => ref.kind === 'issue' && ref.id === event.issueId)?.goal_revision
   const materials = body?.materials || []
-  const messageIds = new Set(content?.refs?.filter(ref => ref.kind === 'trigger_message').map(ref => ref.id))
+  const messageIds = new Set(refs?.filter(ref => ref.kind === 'trigger_message').map(ref => ref.id))
   for (const material of materials) if (material.messageId) messageIds.add(material.messageId)
   return <>
     {delivery.error && <ReadError error={delivery.error} stale={!!delivery.data}/>}
     <section className="conversation-section">
       <h3>{dispatchLabels[event.dispatchKind]}</h3>
       <p>{event.title}</p>
-      {(body?.note || body?.instruction || event.summary) && <p className="conversation-original">{body?.note || body?.instruction || event.summary}</p>}
+      {content ? <StructuredContent content={content}/>
+        : (body?.instruction || event.summary) && <p className="conversation-original">{body?.instruction || event.summary}</p>}
     </section>
     <section className="conversation-section">
       <dl>

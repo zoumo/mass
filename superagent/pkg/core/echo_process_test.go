@@ -21,8 +21,8 @@ func TestEchoUsesActualSourceConversationAndMessage(t *testing.T) {
 	target := submit(t, p, f, input("echo-original"))
 	var sentIDs []string
 	for _, native := range []string{"native-exact", "native-other-conversation"} {
-		item := roleWork[core.OutboxItem](t, p, roleToken(t, f, router), "message_reply", core.ReplyRequest{
-			OperationID: "echo-reply-" + native, MessageID: target.MessageID, Text: "outbound",
+		item := roleWork[core.OutboxItem](t, p, roleToken(t, f, router), "outbox_message_reply_structured", core.ReplyRequest{
+			OperationID: "echo-reply-" + native, MessageID: target.MessageID, Content: markdownReply("outbound"),
 		})
 		resultOutbox(t, p, f.token, outboxResult(item, "sent", "", native))
 		sentIDs = append(sentIDs, item.ID)

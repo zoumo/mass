@@ -14,8 +14,8 @@ const (
 	routedMessageKind  = "routed_message"
 	messageRefKind     = "trigger_message"
 	returnedRefKind    = "internal_delivery"
-	routingMessageID   = "json_extract(content,'$.refs[0].id')"
-	returnedDeliveryID = "json_extract(content,'$.refs[1].id')"
+	routingMessageID   = "json_extract(refs,'$[0].id')"
+	returnedDeliveryID = "json_extract(refs,'$[1].id')"
 )
 
 const routingViews = `
@@ -31,7 +31,7 @@ CREATE VIEW thread_subscriptions AS
  FROM threads t,json_each(t.subscriptions) sub;
 
 CREATE VIEW routing_deliveries AS
- SELECT rowid AS seq, id, kind, created_at, status, sent_at, sender, recipient, content,
+ SELECT rowid AS seq, id, kind, created_at, status, sent_at, sender, recipient, content, body, refs,
  ` + routingMessageID + ` AS message_id, ` + returnedDeliveryID + ` AS returned_id,
  coalesce(json_extract(recipient,'$.topic_id'),json_extract(sender,'$.topic_id')) AS topic_id
  FROM internal_deliveries WHERE kind IN ('routed_message','route_request');
@@ -40,7 +40,7 @@ CREATE VIEW routing_relations AS
  SELECT d.seq,d.id,d.message_id,d.topic_id,d.created_at,
  json_object('id',d.id,'messageId',d.message_id,'topicId',d.topic_id,'createdAt',d.created_at,
  'action',CASE d.kind WHEN 'routed_message' THEN 'received' ELSE 'returned' END,
- 'status',d.status,'deliveryId',coalesce(d.returned_id,d.id),'reason',json_extract(d.content,'$.body'),
+ 'status',d.status,'deliveryId',coalesce(d.returned_id,d.id),'reason',json_extract(d.body,'$'),
  'returned',json(CASE WHEN EXISTS(SELECT 1 FROM internal_deliveries r WHERE r.kind='route_request'
  AND ` + returnedDeliveryID + `=d.id) THEN 'true' ELSE 'false' END)) AS body
  FROM routing_deliveries d WHERE d.topic_id IS NOT NULL;
@@ -91,7 +91,7 @@ func acceptRoute(ctx context.Context, tx *sql.Tx, m Message, deliveryID, at stri
 	d := internalDelivery{
 		ID: deliveryID, Kind: routeRequestKind,
 		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "router"},
-		Content: deliveryContent{Refs: []deliveryReference{{Kind: messageRefKind, ID: m.ID}}},
+		Refs: []deliveryReference{{Kind: messageRefKind, ID: m.ID}},
 	}
 	if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
 		return err
@@ -134,7 +134,7 @@ func recordRoutedMessage(ctx context.Context, tx *sql.Tx, messageID, threadKey, 
 	d := internalDelivery{
 		ID: deliveryID, Kind: routedMessageKind,
 		Sender: deliveryIdentity{Kind: sender}, Recipient: deliveryIdentity{Kind: "topic", TopicID: topicID},
-		Content: deliveryContent{Body: body, Refs: []deliveryReference{{Kind: messageRefKind, ID: messageID}}},
+		Body: body, Refs: []deliveryReference{{Kind: messageRefKind, ID: messageID}},
 	}
 	if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
 		return "", err
@@ -315,9 +315,9 @@ func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (json.Ra
 	d := internalDelivery{
 		ID: newID("dlv"), Kind: routeRequestKind,
 		Sender: deliveryIdentity{Kind: "topic", TopicID: b.OwnerID}, Recipient: deliveryIdentity{Kind: "router"},
-		Content: deliveryContent{Body: raw, Refs: []deliveryReference{
+		Body: raw, Refs: []deliveryReference{
 			{Kind: messageRefKind, ID: messageID}, {Kind: returnedRefKind, ID: r.DeliveryID},
-		}},
+		},
 	}
 	if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
 		return nil, err

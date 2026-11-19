@@ -1,0 +1,11 @@
+.structured-content { overflow-wrap: anywhere; }
+.structured-content > * + * { margin-block-start: .65em; }
+.structured-content :is(ol, ul) { padding-inline-start: 1.5em; }
+.structured-content ol { list-style: decimal; }
+.structured-content ul { list-style: disc; }
+.structured-content a { text-decoration: underline; }
+.structured-content blockquote {
+  border-inline-start: 2px solid var(--line);
+  padding-inline-start: .75em;
+}
+.structured-content pre { overflow: auto; }

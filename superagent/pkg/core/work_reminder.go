@@ -278,7 +278,7 @@ func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *Execution, issue 
 	return enqueueInternalDelivery(ctx, tx, internalDelivery{
 		ID: x.ReminderEventID, Kind: reportReminderKind,
 		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
-		Content: deliveryContent{Body: payload, Refs: []deliveryReference{issueGoalRef(issue)}},
+		Body: payload, Refs: []deliveryReference{issueGoalRef(issue)},
 	})
 }
 

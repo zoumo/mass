@@ -42,12 +42,12 @@ const (
 )
 
 type WorkerUpdateRequest struct {
-	OperationID      string     `json:"operationId"`
-	IssueID          string     `json:"issueId"`
-	ExpectedRevision int        `json:"expectedRevision"`
-	Mode             string     `json:"mode"`
-	Note             string     `json:"note,omitempty"`
-	Materials        []Material `json:"materials,omitempty"`
+	OperationID      string             `json:"operationId"`
+	IssueID          string             `json:"issueId"`
+	ExpectedRevision int                `json:"expectedRevision"`
+	Mode             string             `json:"mode"`
+	Content          *StructuredContent `json:"content,omitempty"`
+	Materials        []Material         `json:"materials,omitempty"`
 }
 
 func issueGoal(goal, legacy string) (string, error) {
@@ -94,12 +94,17 @@ func updateRequirements(r UpdateRequirementsRequest) workMutation {
 			return nil, err
 		}
 		commitGate("requirements_before_notification")
-		return notifyWorker(ctx, tx, issue, issue.LatestRequirementsEventID, workerUpdateKind, "", nil)
+		return notifyWorker(ctx, tx, issue, issue.LatestRequirementsEventID, workerUpdateKind, nil, nil)
 	}
 }
 
 func workerUpdate(r WorkerUpdateRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+		if r.Content != nil {
+			if err := r.Content.normalize(); err != nil {
+				return nil, err
+			}
+		}
 		key := creationKey("delivery", b.ID, r.OperationID)
 		id := creationID(key, r)
 		if existing, err := existingCreation(ctx, tx, "internal_deliveries", key, id); err != nil {
@@ -117,8 +122,8 @@ func workerUpdate(r WorkerUpdateRequest) workMutation {
 		case "continue":
 		case contextSupplement:
 			kind = contextSupplement
-			if strings.TrimSpace(r.Note) == "" && len(r.Materials) == 0 {
-				return nil, problem("invalid_argument", "context supplement requires a note or materials")
+			if r.Content == nil && len(r.Materials) == 0 {
+				return nil, problem("invalid_argument", "context supplement requires content or materials")
 			}
 		default:
 			return nil, problem("invalid_argument", "mode must be continue or context_supplement")
@@ -133,7 +138,7 @@ func workerUpdate(r WorkerUpdateRequest) workMutation {
 				return nil, err
 			}
 		}
-		return notifyWorker(ctx, tx, issue, id, kind, r.Note, r.Materials)
+		return notifyWorker(ctx, tx, issue, id, kind, r.Content, r.Materials)
 	}
 }
 
@@ -151,7 +156,7 @@ func canContinueIssue(issue Issue) bool {
 	return issue.Status == "active" && len(issue.Blockers) == 0
 }
 
-func notifyWorker(ctx context.Context, tx *sql.Tx, issue Issue, id, kind, note string, materials []Material) (WorkReceipt, error) {
+func notifyWorker(ctx context.Context, tx *sql.Tx, issue Issue, id, kind string, content *StructuredContent, materials []Material) (WorkReceipt, error) {
 	if issue.CurrentExecutionID == "" {
 		return WorkReceipt{}, problem("failed_precondition", "Worker update requires a current Execution")
 	}
@@ -172,12 +177,11 @@ func notifyWorker(ctx context.Context, tx *sql.Tx, issue Issue, id, kind, note s
 		}
 	}
 	var body json.RawMessage
-	if note != "" || len(materials) != 0 {
+	if len(materials) != 0 {
 		var err error
 		body, err = json.Marshal(struct {
-			Note      string     `json:"note,omitempty"`
-			Materials []Material `json:"materials,omitempty"`
-		}{note, materials})
+			Materials []Material `json:"materials"`
+		}{materials})
 		if err != nil {
 			return WorkReceipt{}, err
 		}
@@ -186,7 +190,9 @@ func notifyWorker(ctx context.Context, tx *sql.Tx, issue Issue, id, kind, note s
 		ID: id, Kind: kind,
 		Sender:    deliveryIdentity{Kind: "topic", TopicID: issue.TopicID},
 		Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
-		Content:   deliveryContent{Body: body, Refs: refs},
+		Content:   content,
+		Body:      body,
+		Refs:      refs,
 	})
 	return WorkReceipt{Issue: issue, NotificationEventID: id}, err
 }
@@ -211,5 +217,5 @@ func workDeliveryCurrent(ctx context.Context, tx *sql.Tx, d internalDelivery) (b
 	if d.Kind == reportReminderKind {
 		return d.ID == x.ReminderEventID && !issueHasExecutionReport(issue, x.ID), nil
 	}
-	return canContinueIssue(issue) && slices.Contains(d.Content.Refs, issueGoalRef(issue)), nil
+	return canContinueIssue(issue) && slices.Contains(d.Refs, issueGoalRef(issue)), nil
 }

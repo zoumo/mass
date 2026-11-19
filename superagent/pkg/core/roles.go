@@ -107,7 +107,33 @@ func (s *Server) role(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			result, err = s.store.Return(r.Context(), b, args)
 		}
-	case "message_reply":
+	case "message_content_schema_list", "message_content_schema_get":
+		if b.Role != "router" && b.Role != "topic" {
+			err = problem("forbidden", "only Router and Topic can query message content schemas")
+			break
+		}
+		if tool == "message_content_schema_list" {
+			var args struct{}
+			if err = decodeStrict(raw, &args); err == nil {
+				items := make([]contentSchemaSummary, 0, len(contentSchemas))
+				for _, schema := range contentSchemas {
+					items = append(items, schema.contentSchemaSummary)
+				}
+				result = map[string]any{"items": items}
+			}
+			break
+		}
+		var args struct {
+			Type string `json:"type"`
+		}
+		if err = decodeStrict(raw, &args); err == nil {
+			if schema, ok := contentSchemaByType(args.Type); ok {
+				result = schema
+			} else {
+				err = problem("invalid_argument", "type must identify a supported message content schema")
+			}
+		}
+	case "outbox_message_reply_structured":
 		var args ReplyRequest
 		err = decodeStrict(raw, &args)
 		if err == nil {
@@ -221,11 +247,11 @@ func projection(kind string, b *Binding) string {
 	case "internal-deliveries":
 		return internalDeliveryProjection
 	case "routing-deliveries":
-		return `json_object('id',id,'delivery_id',id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
+		return `json_patch(json_object('id',id,'delivery_id',id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
  'messageId',message_id,'topicId',topic_id,'returnedDeliveryId',returned_id,'sender',json(sender),
- 'recipient',json(recipient),'content',json(content),'returned',json(CASE WHEN EXISTS(
+ 'recipient',json(recipient),'refs',json(refs),'returned',json(CASE WHEN EXISTS(
  SELECT 1 FROM internal_deliveries r WHERE r.kind='route_request' AND ` + returnedDeliveryID + `=routing_deliveries.id
- ) THEN 'true' ELSE 'false' END))`
+ ) THEN 'true' ELSE 'false' END)),json_object('content',json(content),'body',json(body)))`
 	case "threads":
 		if b != nil && b.Role == "topic" {
 			// The Topic can see its subscription through the Thread scope. Peer subscriptions are visible to Router and Observer.

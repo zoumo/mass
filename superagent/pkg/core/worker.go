@@ -201,7 +201,7 @@ func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.R
 			ID: report.EventID, Kind: kind,
 			Sender:    deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
 			Recipient: deliveryIdentity{Kind: "topic", TopicID: x.TopicID},
-			Content:   deliveryContent{Refs: []deliveryReference{{Kind: "report", ID: report.ID, IssueID: issue.ID, GoalRevision: revision}}},
+			Refs:      []deliveryReference{{Kind: "report", ID: report.ID, IssueID: issue.ID, GoalRevision: revision}},
 		})
 		return report, err
 	})

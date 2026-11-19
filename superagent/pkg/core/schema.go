@@ -1,6 +1,6 @@
 package core
 
-// Schema 21 is initialized in a new directory. Earlier databases remain in
+// Schema 22 is initialized in a new directory. Earlier databases remain in
 // their original format and are never opened for writing by this version.
 const schema = `
 CREATE TABLE threads (
@@ -58,7 +58,7 @@ CREATE INDEX scheduled_tasks_due ON scheduled_tasks(` + timerDueAt + `,seq) WHER
 CREATE TABLE outbox (
  id TEXT PRIMARY KEY NOT NULL,
  message_id TEXT NOT NULL REFERENCES trigger_messages(id),
- text TEXT NOT NULL,
+ content TEXT NOT NULL CHECK (` + structuredContentObjectCheck + `),
  status TEXT NOT NULL CHECK(status IN ('pending','sent','failed')),
  receipt TEXT,
  blocker_ref TEXT

@@ -400,7 +400,7 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, send
 		ID: x.StartEventID, Kind: workerStarted,
 		Sender:    sender,
 		Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
-		Content:   deliveryContent{Body: payload, Refs: []deliveryReference{issueGoalRef(issue)}},
+		Body:      payload, Refs: []deliveryReference{issueGoalRef(issue)},
 	})
 	return WorkReceipt{Issue: issue, Execution: &x}, err
 }

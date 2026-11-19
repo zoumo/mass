@@ -1,4 +1,5 @@
 import ExecutionProfileFields from '../ExecutionProfileFields'
+import StructuredContent from '../StructuredContent'
 import { routingDeliveryLabel, stateLabel } from '../../workbench'
 import SessionEvidence from './SessionEvidence'
 import ChannelEvidence from './ChannelEvidence'
@@ -22,6 +23,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       {detail.reason && <p>{detail.reason}</p>}
       {detail.lastError && <p role="status">{detail.lastError}</p>}
       {detail.actor && <h2>{detail.actor}</h2>}
+      {(kind === 'outbox' || kind === 'internal-deliveries') && detail.content && typeof detail.content !== 'string' && <StructuredContent content={detail.content} />}
       {detail.text && (
         <pre className="body-text" data-testid="message-body">
           {detail.text}
@@ -225,7 +227,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       {kind === 'timers' && (
         <>
           <h2>跟进内容</h2>
-          <pre className="body-text">{detail.content}</pre>
+          <pre className="body-text">{typeof detail.content === 'string' ? detail.content : undefined}</pre>
           <dl>
             <dt>定时器状态</dt>
             <dd>{stateLabel(detail.status)}</dd>

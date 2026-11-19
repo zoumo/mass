@@ -1,4 +1,5 @@
 import { stateLabel, routingDeliveryLabel, type WorkbenchRow } from '../../workbench'
+import type { StructuredBody } from '../StructuredContent'
 
 export type DiagnosticRow = WorkbenchRow & {
   type?: string
@@ -74,7 +75,8 @@ export type DiagnosticRow = WorkbenchRow & {
   lastError?: string
   observationGap?: string
   workspace?: string
-  content?: string
+  content?: string | StructuredBody
+  preview?: string
   dueAt?: string
   firedAt?: string
   details?: string

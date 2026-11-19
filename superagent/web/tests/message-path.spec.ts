@@ -6,7 +6,7 @@ const standard = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_P
 type Message = { id: string, sourceMessageId: string, echo?: { match: { outboxId: string } } }
 type Delivery = {
   id: string, kind: string, status: string, topicId?: string, sender: { kind: string }, recipient: { kind: string },
-  createdAt: string, sentAt?: string, content: { body: string }, returnedDeliveryId?: string
+  createdAt: string, sentAt?: string, body: string, returnedDeliveryId?: string
 }
 type Issue = { id: string, title: string, topicId: string, materials: { messageId?: string }[] }
 async function get<T>(request: APIRequestContext, url: string): Promise<T> {
@@ -46,7 +46,7 @@ test('Message branches use the sender, acceptance and explicit return ID committ
     await expect(panel).toBeFocused()
     await expect(panel).toContainText(d.id)
     await expect(panel).toContainText(d.createdAt)
-    await expect(panel).toContainText(d.content.body)
+    await expect(panel).toContainText(d.body)
     await expect(panel).toContainText(d.sender.kind === 'core' ? 'Core' : d.sender.kind === 'router' ? 'Router' : 'Topic')
     if (d.sentAt) await expect(panel).toContainText(d.sentAt)
     await expect(edge).toHaveText(new RegExp(d.status === 'sent' ? 'Session 已受理' : '已被替代'))
@@ -83,7 +83,7 @@ test('Message branches use the sender, acceptance and explicit return ID committ
   await expect(page).toHaveURL(new RegExp('perspective=topic&id=' + target.topicId))
   await page.goBack()
   await graph.locator('[data-delivery-id="' + returned.id + '"]').click()
-  await expect(panel).toContainText(returned.content.body)
+  await expect(panel).toContainText(returned.body)
   await page.screenshot({ path: testInfo.outputPath('message-branches-desktop.png'), animations: 'disabled', fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(graph.locator('.path-trunk')).toHaveCSS('flex-direction', 'column')

@@ -60,9 +60,9 @@ func TestObserverTopicActivityWatermark(t *testing.T) {
 	insert(`INSERT INTO issues(topic_id,number,created_at,body,creation_key,creation_digest) VALUES('mass-t1',2,?1,
  json_object('id','mass-t1-i2','topicId','mass-t1','title','Issue B','status','pending','createdAt',?1,'updatedAt',?1),'b','')`, at)
 	addDelivery := func(id string) {
-		insert(`INSERT INTO internal_deliveries(id,kind,created_at,sender,recipient,content,status)
+		insert(`INSERT INTO internal_deliveries(id,kind,created_at,sender,recipient,refs,status)
  VALUES(?1,'routed_message',?2,'{"kind":"router"}','{"kind":"topic","topic_id":"mass-t1"}',
- json_object('refs',json_array(json_object('kind','trigger_message','id',?3))),'sent')`, id, at, receipt.MessageID)
+ json_array(json_object('kind','trigger_message','id',?3)),'sent')`, id, at, receipt.MessageID)
 	}
 	addDelivery("receive")
 	query := "topicId=mass-t1&limit=1"

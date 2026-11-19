@@ -81,7 +81,7 @@ func (a *observerBrowserAudit) pollOutbox(ctx context.Context, endpoint, token, 
 				if item.ID == sentID {
 					a.offers.Add(1)
 				}
-				if item.Text == "Observer reply pending" {
+				if item.Content.Type == "markdown" && string(item.Content.Data) == string(markdownReply("Observer reply pending").Data) {
 					a.pending.Add(1)
 				}
 			}
@@ -94,10 +94,13 @@ func (a *observerBrowserAudit) pollOutbox(ctx context.Context, endpoint, token, 
 func serveObserverBrowserAudit(t *testing.T, audit *observerBrowserAudit, boundary *routeBoundary, f *fixture, p *process, binding core.Binding, roleToken string) {
 	t.Helper()
 	var sentID string
-	for _, row := range page(t, p, "outbox").Items {
-		var item core.OutboxItem
+	for _, row := range page(t, p, "outbox?preview=true").Items {
+		var item struct {
+			ID      string `json:"id"`
+			Preview string `json:"preview"`
+		}
 		require.NoError(t, json.Unmarshal(row, &item))
-		if item.Text == "Observer reply sent" {
+		if item.Preview == "Observer reply sent" {
 			sentID = item.ID
 		}
 	}

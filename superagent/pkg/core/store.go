@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	schemaVersion = 21
+	schemaVersion = 22
 	applicationID = 1398096210
 )
 
@@ -340,7 +340,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		relatedFilter = "message_id IN (SELECT message_id FROM topic_message_history WHERE topic_id=?)"
 	case q.IssueID != "" && q.TopicID == "" && binding == nil && source == nil && kind == "internal-deliveries":
 		parentColumn, parent = "referenced_issue", q.IssueID
-		relatedFilter = `EXISTS (SELECT 1 FROM json_each(content,'$.refs') ref
+		relatedFilter = `EXISTS (SELECT 1 FROM json_each(refs) ref
  WHERE CASE json_extract(ref.value,'$.kind') WHEN 'issue' THEN json_extract(ref.value,'$.id') ELSE json_extract(ref.value,'$.issue_id') END=?)`
 	case q.IssueID != "" && q.TopicID == "" && (kind == "reports" || kind == "executions" || kind == "pull-requests"):
 		parentColumn, parent = "issue_id", q.IssueID

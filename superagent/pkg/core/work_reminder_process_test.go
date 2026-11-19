@@ -90,8 +90,8 @@ func checkReminderCall(t *testing.T, peer *nativeDeliveryPeer, b core.Binding, o
 	ev := decodeInternalBatch(t, call, observed.ReminderEventID)[0]
 	require.Equal(t, reportReminder, ev.Kind)
 	require.Equal(t, b.OwnerID, ev.Recipient.ExecutionID)
-	require.Contains(t, string(ev.Content.Body), `"executionId":"`+b.OwnerID+`"`)
-	require.Contains(t, string(ev.Content.Body), "Do not run the Issue again")
+	require.Contains(t, string(ev.Body), `"executionId":"`+b.OwnerID+`"`)
+	require.Contains(t, string(ev.Body), "Do not run the Issue again")
 	return call
 }
 

@@ -4,7 +4,7 @@ const audit = 'http://127.0.0.1:' + (process.env.SUPERAGENT_OBSERVER_AUDIT_PORT 
 const routing = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794')
 
 type Message = { id: string; sourceMessageId: string; eventId: string }
-type Delivery = { id: string; createdAt: string; kind: string; topicId?: string; returnedDeliveryId?: string; content: { body?: string } }
+type Delivery = { id: string; createdAt: string; kind: string; topicId?: string; returnedDeliveryId?: string; body?: string }
 type RouterRow = { id: string; state: string; activityAt: string; activityId: string; targets: { id: string; topicId: string; reason: string }[] }
 async function list<T>(request: APIRequestContext, url: string): Promise<T[]> {
   const result = await request.get(url)
@@ -81,7 +81,7 @@ test('Router connects each target and return reason to its source delivery', asy
   for (const target of summary.targets) {
     const branch = row.locator('.router-brief').filter({ has: page.locator(`a[href*="${target.topicId}"]`) })
     const fact = deliveries.find(d => d.id === target.id)!
-    await expect(branch).toContainText(fact.content.body!)
+    await expect(branch).toContainText(fact.body!)
     expect(fact.topicId).toBe(target.topicId)
   }
   await expect(row.locator('time')).toHaveAttribute('datetime', deliveries.find(d => d.id === summary.activityId)!.createdAt)
@@ -96,12 +96,12 @@ test('Router connects each target and return reason to its source delivery', asy
   for (const d of deliveries) {
     // Locate by the persisted ID, which also occurs inside the return reference.
     const entry = history.locator('li').filter({ has: page.getByText(d.id, { exact: true }) })
-    if (d.content.body) await expect(entry.first()).toContainText(d.content.body)
+    if (d.body) await expect(entry.first()).toContainText(d.body)
     await expect(entry.first().locator('time').first()).toHaveAttribute('datetime', d.createdAt)
   }
   const ref = history.getByRole('button', { name: '原投递 ' + original.id })
   await ref.click()
-  await expect(ref.locator('..').locator('dd').last()).toHaveText(original.content.body!)
+  await expect(ref.locator('..').locator('dd').last()).toHaveText(original.body!)
   await ref.click()
   await row.evaluate(el => {
     const scroll = el.closest('.router-scroll')!
@@ -137,7 +137,7 @@ test('ignored Message displays the recorded return time and identifies the missi
   const row = page.locator(`[data-message-id="${ignored.id}"]`)
   await expect(row.locator('.router-grid')).toContainText('已忽略')
   await expect(row.locator('.router-grid')).toContainText('原因未记录')
-  await expect(row.locator('.router-brief')).toContainText(returned.content.body!)
+  await expect(row.locator('.router-brief')).toContainText(returned.body!)
   await expect(row.locator('.router-time')).toContainText('退回登记')
   await expect(row.locator('.router-time time')).toHaveAttribute('datetime', returned.createdAt)
   await expect(row).not.toContainText('Observer ignore reason')
@@ -145,7 +145,7 @@ test('ignored Message displays the recorded return time and identifies the missi
   await expect(flow.locator('.flow-state')).toContainText('已忽略 · 原因未记录')
   const returnLane = flow.locator(`[data-flow-id="${returned.id}"]`)
   await expect(returnLane.locator('.flow-node').last()).toHaveText('Router')
-  await expect(returnLane.locator('.flow-edge').last()).toContainText(returned.content.body!)
+  await expect(returnLane.locator('.flow-edge').last()).toContainText(returned.body!)
 })
 
 for (const [size, width, height] of [['desktop', 1360, 900], ['narrow', 390, 844]] as const) {

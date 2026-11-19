@@ -27,7 +27,7 @@ test('Issue shows blockers and report provenance before explicit acceptance', as
   expect(scoped.ok()).toBeTruthy()
   const {items} = await scoped.json()
   expect(items.some((d:{goalUpdate:boolean}) => d.goalUpdate)).toBeTruthy()
-  for (const d of items) expect(d.content.refs.some((r:{kind:string;id:string;issue_id?:string}) => r.kind === 'issue' ? r.id === blocked.id : r.issue_id === blocked.id)).toBeTruthy()
+  for (const d of items) expect(d.refs.some((r:{kind:string;id:string;issue_id?:string}) => r.kind === 'issue' ? r.id === blocked.id : r.issue_id === blocked.id)).toBeTruthy()
   const href = page.url()
   await issue.getByRole('link',{name:'查看依赖 Issue'}).click()
   await issue.getByRole('button',{name:'Topic 已验收'}).click()

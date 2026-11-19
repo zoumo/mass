@@ -11,7 +11,8 @@ import (
 const internalDeliverySchema = `
 CREATE TABLE internal_deliveries (
  id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL,
- content TEXT NOT NULL, created_at TEXT NOT NULL,
+ content TEXT CHECK (content IS NULL OR (` + structuredContentObjectCheck + `)),
+ body TEXT, refs TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL,
  status TEXT NOT NULL CHECK(status IN ('pending','dispatching','sent','superseded')), sent_at TEXT
 );
 CREATE INDEX internal_deliveries_pending ON internal_deliveries(` + deliveryRecipientKind + `, ` + deliveryRecipientOwner + `)
@@ -51,17 +52,14 @@ type deliveryReference struct {
 	GoalRevision int    `json:"goal_revision,omitempty"`
 }
 
-type deliveryContent struct {
-	Body json.RawMessage     `json:"body,omitempty"`
-	Refs []deliveryReference `json:"refs,omitempty"`
-}
-
 type internalDelivery struct {
-	ID        string           `json:"delivery_id"`
-	Kind      string           `json:"kind"`
-	Sender    deliveryIdentity `json:"sender"`
-	Recipient deliveryIdentity `json:"recipient"`
-	Content   deliveryContent  `json:"content"`
+	ID        string              `json:"delivery_id"`
+	Kind      string              `json:"kind"`
+	Sender    deliveryIdentity    `json:"sender"`
+	Recipient deliveryIdentity    `json:"recipient"`
+	Content   *StructuredContent  `json:"content,omitempty"`
+	Body      json.RawMessage     `json:"body,omitempty"`
+	Refs      []deliveryReference `json:"refs,omitempty"`
 }
 
 // enqueueInternalDelivery writes a pending item in the producer's transaction.
@@ -70,10 +68,10 @@ type internalDelivery struct {
 func enqueueInternalDelivery(ctx context.Context, tx *sql.Tx, d internalDelivery) error {
 	if d.ID == "" || len(d.ID) > 128 || strings.TrimSpace(d.Kind) == "" || len(d.Kind) > 128 ||
 		!d.Sender.valid() || !d.Recipient.valid() || d.Recipient.Kind == "core" ||
-		(len(d.Content.Body) == 0 && len(d.Content.Refs) == 0) {
+		(d.Content == nil && len(d.Body) == 0 && len(d.Refs) == 0) {
 		return problem("invalid_argument", "invalid internal delivery identity or content")
 	}
-	for _, ref := range d.Content.Refs {
+	for _, ref := range d.Refs {
 		if ref.Kind == "" || ref.ID == "" || ref.GoalRevision < 0 {
 			return problem("invalid_argument", "invalid internal delivery reference")
 		}
@@ -88,8 +86,8 @@ func enqueueInternalDelivery(ctx context.Context, tx *sql.Tx, d internalDelivery
 	if err != nil {
 		return problem("invalid_argument", "invalid internal delivery JSON content")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO internal_deliveries(id,kind,sender,recipient,content,created_at,status)
- VALUES(?1,?2,json_extract(?3,'$.sender'),json_extract(?3,'$.recipient'),json_extract(?3,'$.content'),?4,'pending')`,
+	_, err = tx.ExecContext(ctx, `INSERT INTO internal_deliveries(id,kind,sender,recipient,content,body,refs,created_at,status)
+ VALUES(?1,?2,?3->'$.sender',?3->'$.recipient',?3->'$.content',?3->'$.body',coalesce(?3->'$.refs','[]'),?4,'pending')`,
 		d.ID, d.Kind, string(raw), now())
 	if err != nil {
 		return storageError()
@@ -118,13 +116,16 @@ func checkDeliveryIdentity(ctx context.Context, tx *sql.Tx, r deliveryIdentity, 
 	return nil
 }
 
+const internalDeliveryColumns = `id,kind,sender,recipient,content,body,refs,created_at`
+
 func scanInternalDelivery(row interface{ Scan(...any) error }, d *internalDelivery, createdAt *string) error {
-	var sender, recipient, content []byte
-	if err := row.Scan(&d.ID, &d.Kind, &sender, &recipient, &content, createdAt); err != nil {
+	var sender, recipient, content, body, refs []byte
+	if err := row.Scan(&d.ID, &d.Kind, &sender, &recipient, &content, &body, &refs, createdAt); err != nil {
 		return err
 	}
+	d.Body = body
 	if json.Unmarshal(sender, &d.Sender) != nil || json.Unmarshal(recipient, &d.Recipient) != nil ||
-		json.Unmarshal(content, &d.Content) != nil {
+		(len(content) != 0 && json.Unmarshal(content, &d.Content) != nil) || json.Unmarshal(refs, &d.Refs) != nil {
 		return storageError()
 	}
 	return nil
@@ -141,7 +142,7 @@ func (s *Store) getInternalDelivery(ctx context.Context, b Binding, id string) (
 		return d, err
 	}
 	var at string
-	err = scanInternalDelivery(tx.QueryRowContext(ctx, `SELECT id,kind,sender,recipient,content,created_at
+	err = scanInternalDelivery(tx.QueryRowContext(ctx, `SELECT `+internalDeliveryColumns+`
  FROM internal_deliveries WHERE id=? AND `+deliveryRecipientKind+`=? AND `+deliveryRecipientOwner+`=?
  AND status IN ('dispatching','sent')`, id, b.Role, b.OwnerID), &d, &at)
 	if errors.Is(err, sql.ErrNoRows) {

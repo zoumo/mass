@@ -24,10 +24,10 @@ WITH ranked AS (
 SELECT json_object(
  'id',p.message_id,'text',p.preview,'source',p.source,'state',p.routing_state,
  'activityAt',p.created_at,'activityId',p.id,'activityKind',a.kind,'returnedDeliveryId',a.returned_id,
- 'activityReason',substr(json_extract(a.content,'$.body'),1,240),'activityTopicId',a.topic_id,
+ 'activityReason',substr(json_extract(a.body,'$'),1,240),'activityTopicId',a.topic_id,
  'activityTopicTitle',json_extract(t.body,'$.title'),
  'targets',json((SELECT json_group_array(json_object('id',d.id,'topicId',d.topic_id,
- 'title',json_extract(target.body,'$.title'),'reason',substr(json_extract(d.content,'$.body'),1,240)) ORDER BY d.created_at,d.seq)
+ 'title',json_extract(target.body,'$.title'),'reason',substr(json_extract(d.body,'$'),1,240)) ORDER BY d.created_at,d.seq)
  FROM routing_deliveries d LEFT JOIN topics target ON target.id=d.topic_id
  WHERE d.message_id=p.message_id AND ` + activeRoute + `))),
  p.created_at,p.message_id

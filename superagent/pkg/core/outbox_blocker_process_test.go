@@ -50,16 +50,16 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testin
 	require.Equal(t, "mass-t1-i2-b1", b.Blockers[0].ID)
 	ask := func(issue core.Issue, blocker core.Blocker, id string) core.OutboxItem {
 		ref := &core.BlockerRef{IssueID: issue.ID, BlockerID: blocker.ID}
-		req := core.ReplyRequest{OperationID: "ask-" + id, MessageID: source.MessageID, Text: blocker.Reason, BlockerRef: ref}
-		item := roleWork[core.OutboxItem](t, p, role, "message_reply", req)
+		req := core.ReplyRequest{OperationID: "ask-" + id, MessageID: source.MessageID, Content: markdownReply(blocker.Reason), BlockerRef: ref}
+		item := roleWork[core.OutboxItem](t, p, role, "outbox_message_reply_structured", req)
 		require.Equal(t, ref, item.BlockerRef)
 		return item
 	}
 	region := ask(a, a.Blockers[0], "a1")
 	date := ask(a, a.Blockers[1], "a2")
 	owner := ask(b, b.Blockers[0], "b")
-	code, raw := request(t, http.MethodPost, p.endpoint, "/v1/role/message_reply", routerToken,
-		core.ReplyRequest{OperationID: "router-blocker", MessageID: source.MessageID, Text: "Ask", BlockerRef: region.BlockerRef})
+	code, raw := request(t, http.MethodPost, p.endpoint, "/v1/role/outbox_message_reply_structured", routerToken,
+		core.ReplyRequest{OperationID: "router-blocker", MessageID: source.MessageID, Content: markdownReply("Ask"), BlockerRef: region.BlockerRef})
 	errorCode(t, code, raw, http.StatusForbidden, "forbidden")
 
 	conv := origin.Message.Channel.ConversationID

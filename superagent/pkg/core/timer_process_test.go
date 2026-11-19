@@ -184,11 +184,11 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	nativeEvent := decodeInternalBatch(t, advance, fired.Followup.ID)[0]
 	require.Equal(t, "routed_message", nativeEvent.Kind)
 	require.Equal(t, deliveryParty{Kind: "topic", TopicID: binding.OwnerID}, nativeEvent.Recipient)
-	require.Len(t, nativeEvent.Content.Refs, 1)
-	require.JSONEq(t, `{"kind":"trigger_message","id":"`+fired.TriggerMessageID+`"}`, string(nativeEvent.Content.Refs[0]))
+	require.Len(t, nativeEvent.Refs, 1)
+	require.JSONEq(t, `{"kind":"trigger_message","id":"`+fired.TriggerMessageID+`"}`, string(nativeEvent.Refs[0]))
 	message := roleWork[core.Message](t, p, roleToken(t, f, binding), "source_query", core.QueryRequest{Collection: "messages", ID: fired.TriggerMessageID})
 	require.Equal(t, fired.Content, message.Text)
-	mcpWorkError(t, topic, "message_reply", "failed_precondition", core.ReplyRequest{OperationID: "timer-reply", MessageID: message.ID, Text: "fixture"})
+	mcpWorkError(t, topic, "outbox_message_reply_structured", "failed_precondition", core.ReplyRequest{OperationID: "timer-reply", MessageID: message.ID, Content: markdownReply("fixture")})
 	advance.answer <- nativeDeliveryAnswer{complete: true}
 	d := waitTimerDelivery(t, p, fired.Followup.ID, "sent")
 	require.NotEmpty(t, d.SentAt)

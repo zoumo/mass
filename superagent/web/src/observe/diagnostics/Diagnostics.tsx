@@ -41,12 +41,13 @@ function href(view: Kind, filterId = '', scope: Filter = 'topicId', id = '') {
   return '/observer/?' + q
 }
 function nameOf(kind: Kind, row: DiagnosticRow) {
-  if (kind === 'messages' || kind === 'outbox') return row.text || identity(row)
+  if (kind === 'messages') return row.text || identity(row)
+  if (kind === 'outbox') return row.preview || identity(row)
   return (
     row.canonicalUrl ||
     row.title ||
     row.summary ||
-    (kind === 'timers' && row.content) ||
+    (kind === 'timers' && typeof row.content === 'string' && row.content) ||
     (row.role || row.action || row.kind ? stateLabel(row.role || row.action || row.kind) : identity(row))
   )
 }

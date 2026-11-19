@@ -43,11 +43,11 @@ const topicIssueEvents = `
  UNION ALL
  SELECT CASE WHEN d.id=json_extract(i.body,'$.latestRequirementsEventId') OR d.id GLOB 'goal-update_*'
   THEN 'goal_notification' ELSE d.kind END, d.created_at,d.id,i.id,json_extract(d.sender,'$.kind'),
- json_object('goalRevision',json_extract(d.content,'$.refs[0].goal_revision'),'deliveryId',d.id,
+ json_object('goalRevision',json_extract(d.refs,'$[0].goal_revision'),'deliveryId',d.id,
   'executionId',json_extract(d.recipient,'$.execution_id'),'status',d.status)
- FROM internal_deliveries d JOIN owned i ON i.id=json_extract(d.content,'$.refs[0].id')
+ FROM internal_deliveries d JOIN owned i ON i.id=json_extract(d.refs,'$[0].id')
  WHERE d.rowid<=:deliveries AND d.kind IN ('worker_update','context_supplement')
-  AND json_extract(d.content,'$.refs[0].kind')='issue' AND json_extract(d.recipient,'$.kind')='worker'
+  AND json_extract(d.refs,'$[0].kind')='issue' AND json_extract(d.recipient,'$.kind')='worker'
  UNION ALL
  SELECT 'report_submitted', json_extract(r.value,'$.createdAt'),json_extract(r.value,'$.id'),i.id,'worker',
  json_object('reportId',json_extract(r.value,'$.id'),'bindingId',json_extract(r.value,'$.bindingId'),

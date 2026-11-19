@@ -39,7 +39,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 21, version)
+	require.Equal(t, 22, version)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
 		require.NoError(t, err)
@@ -56,7 +56,9 @@ func assertCutoverSchema(t *testing.T, path string) {
 	}
 	check("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
 		[]string{"executions", "internal_deliveries", "issues", "outbox", "scheduled_tasks", "session_bindings", "threads", "topics", "trigger_messages"})
-	check("SELECT name FROM pragma_table_info('outbox') ORDER BY cid", []string{"id", "message_id", "text", "status", "receipt", "blocker_ref"})
+	check("SELECT name FROM pragma_table_info('outbox') ORDER BY cid", []string{"id", "message_id", "content", "status", "receipt", "blocker_ref"})
+	check("SELECT name FROM pragma_table_info('internal_deliveries') ORDER BY cid",
+		[]string{"id", "kind", "sender", "recipient", "content", "body", "refs", "created_at", "status", "sent_at"})
 	check(`SELECT m.name||'.'||f."from"||' -> '||f."table"||'.'||f."to"
  FROM sqlite_schema m,pragma_foreign_key_list(m.name) f WHERE m.type='table' ORDER BY 1`,
 		[]string{
@@ -65,6 +67,17 @@ func assertCutoverSchema(t *testing.T, path string) {
 			"scheduled_tasks.trigger_message_id -> trigger_messages.id", "trigger_messages.thread_key -> threads.key",
 		})
 	check(`SELECT "table" FROM pragma_foreign_key_check`, nil)
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tx.Rollback()) }()
+	insert := `INSERT INTO internal_deliveries (id,kind,sender,recipient,content,body,created_at,status)
+ VALUES ('constraint-probe','test','{"kind":"core"}','{"kind":"router"}',?,'"reason"',?,'pending')`
+	for _, value := range []string{"plain text", "[]", "null"} {
+		_, err := tx.ExecContext(t.Context(), insert, value, time.Now().UTC().Format(time.RFC3339Nano))
+		require.ErrorContains(t, err, "constraint failed")
+	}
+	_, err = tx.ExecContext(t.Context(), insert, nil, time.Now().UTC().Format(time.RFC3339Nano))
+	require.NoError(t, err)
 }
 
 func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
@@ -160,8 +173,8 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 	waiting := blockers(t, topic, work.Issue, "cutover-human-blocker", human(question))
 	require.Equal(t, "blocked", waiting.Status)
 	ref := &core.BlockerRef{IssueID: waiting.ID, BlockerID: waiting.Blockers[0].ID}
-	reply := mcpWork[core.OutboxItem](t, topic, "message_reply", core.ReplyRequest{
-		OperationID: "cutover-question", MessageID: first.ID, Text: question, BlockerRef: ref,
+	reply := mcpWork[core.OutboxItem](t, topic, "outbox_message_reply_structured", core.ReplyRequest{
+		OperationID: "cutover-question", MessageID: first.ID, Content: markdownReply(question), BlockerRef: ref,
 	})
 	var task string
 	require.Eventually(t, func() bool {

@@ -16,7 +16,7 @@ type RouterMessage = {
 type Delivery = {
   id: string; kind: string; status: string; createdAt: string; sentAt?: string
   sender: { kind: string }; recipient: { kind: string }; topicId?: string
-  returnedDeliveryId?: string; returned: boolean; content: { body?: string }
+  returnedDeliveryId?: string; returned: boolean; body?: string
 }
 const outcomes: Record<string, string> = { pending: '待决策', routed: '已分发', ignored: '已忽略' }
 
@@ -36,7 +36,7 @@ function DeliveryFacts({ row }: { row: Delivery }) {
     <dt>登记时间</dt><dd><time dateTime={row.createdAt}>{row.createdAt}</time></dd>
     {row.sentAt && <><dt>Session 受理时间</dt><dd><time dateTime={row.sentAt}>{row.sentAt}</time></dd></>}
     {(row.kind === 'routed_message' || row.returnedDeliveryId) && <>
-      <dt>{row.returnedDeliveryId ? '退回理由' : row.sender.kind === 'core' ? '直投依据' : '分发理由'}</dt><dd className="router-full-reason">{row.content.body || '原因未记录'}</dd>
+      <dt>{row.returnedDeliveryId ? '退回理由' : row.sender.kind === 'core' ? '直投依据' : '分发理由'}</dt><dd className="router-full-reason">{row.body || '原因未记录'}</dd>
     </>}
   </dl>
 }

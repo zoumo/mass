@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const outboxProjection = `json_patch(json_object('id',outbox.id,'messageId',outbox.message_id,'text',outbox.text,'status',outbox.status),
+const outboxProjection = `json_patch(json_object('id',outbox.id,'messageId',outbox.message_id,'content',json(outbox.content),'status',outbox.status),
  json_object('receipt',json(outbox.receipt),'blockerRef',json(outbox.blocker_ref)))`
 
 const channelOutboxProjection = `json_patch(` + outboxProjection + `,(SELECT json_object(
@@ -27,11 +27,11 @@ const (
 )
 
 type ReplyRequest struct {
-	OperationID string      `json:"operationId"`
-	Text        string      `json:"text"`
-	MessageID   string      `json:"messageId,omitempty"`
-	MessageIDs  []string    `json:"messageIds,omitempty"`
-	BlockerRef  *BlockerRef `json:"blockerRef,omitempty"`
+	OperationID string            `json:"operationId"`
+	Content     StructuredContent `json:"content"`
+	MessageID   string            `json:"messageId,omitempty"`
+	MessageIDs  []string          `json:"messageIds,omitempty"`
+	BlockerRef  *BlockerRef       `json:"blockerRef,omitempty"`
 }
 
 type BlockerRef struct {
@@ -41,10 +41,10 @@ type BlockerRef struct {
 
 type OutboxItem struct {
 	OutboxState
-	ID         string      `json:"id"`
-	MessageID  string      `json:"messageId"`
-	Text       string      `json:"text"`
-	BlockerRef *BlockerRef `json:"blockerRef,omitempty"`
+	ID         string            `json:"id"`
+	MessageID  string            `json:"messageId"`
+	Content    StructuredContent `json:"content"`
+	BlockerRef *BlockerRef       `json:"blockerRef,omitempty"`
 }
 
 type OutboxState struct {
@@ -65,8 +65,8 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (json.Ra
 	if b.Role != "router" && b.Role != "topic" {
 		return nil, problem("forbidden", "only Router and Topic can reply")
 	}
-	if strings.TrimSpace(req.Text) == "" || strings.ContainsRune(req.Text, 0) {
-		return nil, problem("invalid_argument", "reply text is required")
+	if err := req.Content.normalize(); err != nil {
+		return nil, err
 	}
 	if len(req.MessageIDs) > 0 && (b.Role != "router" || req.MessageID != "") {
 		return nil, problem("invalid_argument", "messageIds is only for Router replies without an explicit messageId")
@@ -121,8 +121,12 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (json.Ra
 		return nil, problem("failed_precondition", "no Outbox consumer is configured for the Message account")
 	}
 	item := OutboxItem{
-		ID: id, MessageID: message.ID, Text: req.Text, BlockerRef: req.BlockerRef,
+		ID: id, MessageID: message.ID, Content: req.Content, BlockerRef: req.BlockerRef,
 		OutboxState: OutboxState{Status: "pending"},
+	}
+	content, err := json.Marshal(item.Content)
+	if err != nil {
+		return nil, storageError()
 	}
 	var blocker any
 	if item.BlockerRef != nil {
@@ -132,8 +136,8 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (json.Ra
 		}
 		blocker = string(raw)
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO outbox(id,message_id,text,status,blocker_ref) VALUES(?,?,?,?,?)",
-		item.ID, item.MessageID, item.Text, item.Status, blocker); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO outbox(id,message_id,content,status,blocker_ref) VALUES(?,?,?,?,?)",
+		item.ID, item.MessageID, string(content), item.Status, blocker); err != nil {
 		return nil, storageError()
 	}
 	if err = tx.Commit(); err != nil {
