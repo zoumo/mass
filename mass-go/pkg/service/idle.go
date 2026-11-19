@@ -144,13 +144,9 @@ func (s *Service) idleCurrentLocked(run *runBinding, l *lane, version uint64) bo
 	if l.idlePrompt.unresolved || l.idleObservationVersion < l.idlePrompt.dispatchFloor {
 		return false
 	}
-	if work := l.idlePrompt.work; work != "" {
-		if l.idleSettledWork != work || l.idleSettledVersion < l.idlePrompt.dispatchFloor {
-			return false
-		}
-		if l.idleObservationWork != "" && l.idleObservationWork != work {
-			return false
-		}
+	if work := l.idlePrompt.work; work != "" &&
+		(l.idleSettledWork != work || l.idleSettledVersion < l.idlePrompt.dispatchFloor) {
+		return false
 	}
 	if l.idleChangeApplied < l.idleChangeReceived {
 		return false

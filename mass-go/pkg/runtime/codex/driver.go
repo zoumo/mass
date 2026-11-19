@@ -758,8 +758,9 @@ func codexEventSource(event events.SessionEvent) events.Source {
 	if turnID == "" {
 		return event.Source()
 	}
-	// A completed turn may leave the Session waiting on other interactions.
-	if _, state := event.Payload().(events.StateUpdate); state && codexMeta["method"] == "turn/completed" {
+	// Only a root turn completion can settle the Prompt, even when a child shares its ID.
+	_, child := codexMeta["sourceThreadId"]
+	if _, state := event.Payload().(events.StateUpdate); state && !child && codexMeta["method"] == "turn/completed" {
 		return event.Source().WithTerminalWork(turnID)
 	}
 	return event.Source().WithWork(turnID)

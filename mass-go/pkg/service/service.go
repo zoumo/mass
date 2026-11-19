@@ -135,8 +135,7 @@ type lane struct {
 	interactions       map[string]struct{}
 
 	idleObservationVersion uint64 // when the current native state was admitted for delivery
-	idleObservationWork    string // work association of that native state, if proven by the adapter
-	idleSettledWork        string // last work with terminal or idle evidence for the current Prompt
+	idleSettledWork        string // last work with explicit terminal evidence
 	idleSettledVersion     uint64
 	idlePrompt             promptIdleFence
 	idleChangeReceived     uint64 // newest queued state or pending-work change
@@ -923,12 +922,11 @@ func (s *Service) process(run *runBinding, l *lane) {
 				l.stateObserved = true
 				l.observedState = events.Unknown
 				l.idleObservationVersion = entry.idleChangeVersion
-				l.idleObservationWork = e.Source().Work()
 				if payload.State != nil {
 					l.observedState = *payload.State
 				}
-				if work := l.idleObservationWork; work != "" && (l.idlePrompt.work == "" || l.idlePrompt.work == work) &&
-					(l.observedState == events.Idle || e.Source().WorkTerminal()) {
+				source := e.Source()
+				if work := source.Work(); source.WorkTerminal() && (l.idlePrompt.work == "" || l.idlePrompt.work == work) {
 					l.idleSettledWork = work
 					l.idleSettledVersion = entry.idleChangeVersion
 				}
@@ -950,12 +948,11 @@ func (s *Service) process(run *runBinding, l *lane) {
 			case events.ToolResult:
 				delete(l.activeTools, payload.ID)
 			case events.InteractionRequested:
-				if payload.Blocking {
-					if l.interactions == nil {
-						l.interactions = map[string]struct{}{}
-					}
-					l.interactions[string(payload.Interaction)] = struct{}{}
+				// Admission stamps only blocking interaction requests.
+				if l.interactions == nil {
+					l.interactions = map[string]struct{}{}
 				}
+				l.interactions[string(payload.Interaction)] = struct{}{}
 			case events.InteractionClosed:
 				delete(l.interactions, string(payload.Interaction))
 			}

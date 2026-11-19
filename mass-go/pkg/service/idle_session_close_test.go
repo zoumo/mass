@@ -551,7 +551,8 @@ func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
 	}
 	oldIdle := observation{state: events.Idle, work: oldWork}
 	untaggedIdle := observation{state: events.Idle}
-	matchingIdle := observation{state: events.Idle, work: newWork, wantRearm: true}
+	matchingIdle := observation{state: events.Idle, work: newWork, terminal: true, wantRearm: true}
+	matchingWithoutTerminal := observation{state: events.Idle, work: newWork}
 	for _, scenario := range []struct {
 		name         string
 		during       []observation
@@ -579,9 +580,14 @@ func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
 			wantAtReturn: true,
 		},
 		{
-			name:   "matching completion with a pending action",
+			name:   "child settlement shares the root turn ID",
+			during: []observation{untaggedIdle, matchingWithoutTerminal},
+			after:  []observation{matchingWithoutTerminal, matchingIdle},
+		},
+		{
+			name:   "matching completion with a pending child interaction",
 			during: []observation{{state: events.RequiresAction, work: newWork, terminal: true}},
-			after:  []observation{oldIdle, {state: events.Idle, wantRearm: true}},
+			after:  []observation{{state: events.Idle, work: "child-turn", wantRearm: true}},
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

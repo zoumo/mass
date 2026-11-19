@@ -123,19 +123,25 @@ func TestCodexTerminalWorkSource(t *testing.T) {
 		name     string
 		method   string
 		work     string
+		thread   string
 		payload  events.Payload
 		terminal bool
 	}{
-		{"completed turn with pending action", "turn/completed", "turn-1", events.StateUpdate{State: &requiresAction}, true},
-		{"stale completion diagnostic", "turn/completed", "turn-1", events.SessionError{Reason: "stale_native_turn", Message: "stale"}, false},
-		{"started turn", "turn/started", "turn-1", events.StateUpdate{State: &running}, false},
-		{"untagged state", "thread/status/changed", "", events.StateUpdate{State: &running}, false},
+		{"completed turn with pending action", "turn/completed", "turn-1", "", events.StateUpdate{State: &requiresAction}, true},
+		{"completed child turn with shared ID", "turn/completed", "turn-1", "child-thread", events.StateUpdate{State: &requiresAction}, false},
+		{"stale completion diagnostic", "turn/completed", "turn-1", "", events.SessionError{Reason: "stale_native_turn", Message: "stale"}, false},
+		{"started turn", "turn/started", "turn-1", "", events.StateUpdate{State: &running}, false},
+		{"untagged state", "thread/status/changed", "", "", events.StateUpdate{State: &running}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			original := events.NewSource()
+			meta := map[string]any{"method": tc.method, "turnId": tc.work}
+			if tc.thread != "" {
+				meta["sourceThreadId"] = tc.thread
+			}
 			event, err := events.NewEvent(events.EventBase{
 				EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "prompt", SessionID: "native",
-				Time: time.Now(), Meta: map[string]any{"codex": map[string]any{"method": tc.method, "turnId": tc.work}},
+				Time: time.Now(), Meta: map[string]any{"codex": meta},
 			}, tc.payload, original)
 			require.NoError(t, err)
 			source := codexEventSource(event)
