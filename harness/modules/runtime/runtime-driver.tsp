@@ -108,7 +108,5 @@ interface InjectDriver {
   /** Append context through the original native Session without starting, steering,
    * interrupting, queuing or retrying work. Shares input admission with sendPrompt.
    * Preserve actual acceptance, including false/absent evidence and failure receipts. */
-  inject(sessionId: string, input: SessionInput):
-    | InjectReceipt
-    | OperationError;
+  inject(sessionId: string, input: SessionInput): InjectReceipt | InjectFailure;
 }

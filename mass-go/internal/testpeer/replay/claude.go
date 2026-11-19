@@ -5,8 +5,13 @@ import (
 	"errors"
 	"strconv"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/internal/testpeer/rawjson"
 )
+
+// GeneratedClaudeUserUUID marks a client user-frame field to bind to a v4 UUID.
+const GeneratedClaudeUserUUID = "generated-user-uuid"
 
 const assignedSessionPlaceholder = "claude-session"
 
@@ -104,6 +109,17 @@ func (a *claudeAdapter) client(expected, actual rawjson.Value) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if kind == "user" && stringMember(expected, "uuid") == GeneratedClaudeUserUUID {
+		live := member(actual, "uuid")
+		id, err := live.String()
+		if err != nil || !ValidClaudeUserUUID(id) {
+			return false, errors.New("expected a generated Claude user UUID")
+		}
+		expected, err = expected.Replace([]string{"uuid"}, live)
+		if err != nil {
+			return false, err
+		}
+	}
 	if kind == "control_request" || kind == "control_response" {
 		key, err := identity(recordedID, true)
 		if err != nil {
@@ -136,6 +152,12 @@ func (a *claudeAdapter) client(expected, actual rawjson.Value) (bool, error) {
 		}
 	}
 	return false, match(expected, actual)
+}
+
+// ValidClaudeUserUUID checks the canonical v4 identifier used by SDK submissions.
+func ValidClaudeUserUUID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.Version() == 4 && id.Variant() == uuid.RFC4122 && id.String() == value
 }
 
 func (a *claudeAdapter) server(expected rawjson.Value) (rawjson.Value, error) {

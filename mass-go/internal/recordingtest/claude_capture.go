@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
 )
 
 func auditClaudeCapture(material, model, sessionID, project string) error {
@@ -203,4 +205,51 @@ func nativePathKey(value string) string {
 		}
 	}
 	return cleaned
+}
+
+const claudeReplayReceipt = "claude-replay-complete"
+
+func capturedClaudeUserUUID(material string, legacy bool) (string, error) {
+	file, err := os.Open(filepath.Join(material, "raw", "raw.jsonl"))
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	var uuid string
+	userSeen := false
+	for {
+		var frame struct {
+			Direction string `json:"direction"`
+			Channel   string `json:"channel"`
+			Wire      struct {
+				Type string          `json:"type"`
+				UUID json.RawMessage `json:"uuid"`
+			} `json:"wire"`
+		}
+		if err := decoder.Decode(&frame); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return "", err
+		}
+		if frame.Direction != "c2s" || frame.Channel != "protocol" || frame.Wire.Type != "user" {
+			continue
+		}
+		if userSeen {
+			return "", errors.New("claude capture has more than one user input")
+		}
+		userSeen = true
+		if legacy {
+			if len(frame.Wire.UUID) != 0 {
+				return "", errors.New("legacy Claude capture unexpectedly has a user UUID")
+			}
+		} else if json.Unmarshal(frame.Wire.UUID, &uuid) != nil || !replay.ValidClaudeUserUUID(uuid) {
+			return "", errors.New("claude capture requires a canonical v4 user UUID")
+		}
+	}
+	if !userSeen {
+		return "", errors.New("claude capture has no user input")
+	}
+	return uuid, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
@@ -181,7 +180,7 @@ func (s *Server) dispatchStop(ctx context.Context, b Binding, spec resource.Sess
 	err = c.Cancel(ctx, ref, &receipt)
 	if err != nil {
 		stop.Status, stop.ErrorCode = "unknown", errorCode(err)
-		if errors.Is(err, client.ErrWorkResponseUnconfirmed) {
+		if workResponseUnconfirmed(err) {
 			stop.ErrorCode = "stop_response_unconfirmed"
 		}
 		return

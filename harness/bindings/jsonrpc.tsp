@@ -26,15 +26,10 @@ model ProtocolErrorData {
   reason: string;
 }
 
-/** session.inject service errors retain the observed receipt alongside OperationError. */
-model InjectErrorData extends MASS.Design.OperationError {
-  receipt: InjectReceipt;
-}
-
 model Error {
   code: int32;
   message: string;
-  data?: MASS.Design.OperationError | InjectErrorData | ProtocolErrorData;
+  data?: MASS.Design.OperationError | InjectFailure | ProtocolErrorData;
 }
 
 /** Params/Result 由方法声明决定，T 不是任意语言对象。 */

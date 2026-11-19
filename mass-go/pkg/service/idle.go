@@ -32,6 +32,12 @@ type Options struct {
 	Clock              Clock
 }
 
+type promptIdleFence struct {
+	dispatchFloor uint64 // all idle observations must be newer than the dispatch boundary
+	work          string // adapter-proven association for the latest accepted Prompt
+	unresolved    bool   // only explicit lifecycle operations can release an unknown native Prompt
+}
+
 func (s *Service) invalidateIdleLocked(l *lane) {
 	if l == nil {
 		return
@@ -47,18 +53,43 @@ func stopIdleTimerLocked(l *lane) {
 	}
 }
 
+// A queued state or pending-work change can supersede the lane's idle facts
+// before the delivery owner reaches it. All events still reset the deadline.
+func (s *Service) admitDeliveryLocked(l *lane, e events.SessionEvent) delivery {
+	s.invalidateIdleLocked(l)
+	entry := delivery{event: e}
+	if e.Replay != nil || !l.source.SameRun(e.Source()) {
+		return entry
+	}
+	switch payload := e.Payload().(type) {
+	case events.StateUpdate, events.ToolChunk, events.ToolCall, events.ToolResult, events.InteractionClosed:
+	case events.InteractionRequested:
+		if !payload.Blocking {
+			return entry
+		}
+	default:
+		return entry
+	}
+	entry.idleChangeVersion = l.idleVersion
+	l.idleChangeReceived = entry.idleChangeVersion
+	return entry
+}
+
 func (s *Service) scheduleIdleLocked(run *runBinding, l *lane) {
 	if l == nil {
 		return
 	}
 	stopIdleTimerLocked(l)
-	if s.idleTimeout <= 0 || !s.idleCurrentLocked(run, l, l.idleVersion) {
+	if !s.idleCurrentLocked(run, l, l.idleVersion) {
+		l.idleAfterAdmission = false
 		return
 	}
 	if !l.admission.TryLock() {
+		l.idleAfterAdmission = true
 		return
 	}
 	l.admission.Unlock()
+	l.idleAfterAdmission = false
 
 	version := l.idleVersion
 	l.idleTimer = s.clock.AfterFunc(s.idleTimeout, func() {
@@ -66,10 +97,16 @@ func (s *Service) scheduleIdleLocked(run *runBinding, l *lane) {
 	})
 }
 
-func (s *Service) rearmIdleAfterActivity(run *runBinding, l *lane) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.scheduleIdleLocked(run, l)
+// An eligible rearm follows the lane until every admitted operation has
+// settled. Keep native state observations authoritative at each attempt.
+func (s *Service) releaseLaneAdmissionLocked(run *runBinding, l *lane, rearmIdle bool) {
+	l.admission.RUnlock()
+	// Let input settle before processing any pending rearm. A Prompt
+	// that may have applied requires an observation from its dispatch.
+	if !l.inputInFlight && (rearmIdle || l.idleAfterAdmission) {
+		l.idleAfterAdmission = true
+		s.scheduleIdleLocked(run, l)
+	}
 }
 
 func (s *Service) expireIdle(run *runBinding, l *lane, version uint64) {
@@ -102,6 +139,16 @@ func (s *Service) idleCurrentLocked(run *runBinding, l *lane, version uint64) bo
 		return false
 	}
 	if l.closing || l.releasing || l.overloaded || !l.stateObserved || l.observedState != events.Idle {
+		return false
+	}
+	if l.idlePrompt.unresolved || l.idleObservationVersion < l.idlePrompt.dispatchFloor {
+		return false
+	}
+	if work := l.idlePrompt.work; work != "" &&
+		(l.idleSettledWork != work || l.idleSettledVersion < l.idlePrompt.dispatchFloor) {
+		return false
+	}
+	if l.idleChangeApplied < l.idleChangeReceived {
 		return false
 	}
 	if len(l.activeTools) != 0 || len(l.interactions) != 0 {

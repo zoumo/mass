@@ -33,13 +33,13 @@ var currentCodexArtifacts = []artifactCase{
 var currentClaudeArtifacts = []artifactCase{
 	{
 		provider: "claude", name: "basic", suite: claudeRecordingSuite,
-		sdk: ClaudeRecordingSDKVersion, testify: TestifyVersion,
+		sdk: ClaudeRecordingSDKVersion, testify: ClaudeRecordingTestifyVersion,
 		materialID: "5cf2bc799cde1a0f60ed6706ca36ef15",
 		flow:       flowCase{name: "basic", provider: "claude", prompt: claudePrompt, project: "/var/tmp/mass-record-claude-153315685/project", initialInput: true, ignoreStreamKinds: true},
 	},
 	{
 		provider: "claude", name: "permission", suite: claudeRecordingSuite,
-		sdk: ClaudeRecordingSDKVersion, testify: TestifyVersion,
+		sdk: ClaudeRecordingSDKVersion, testify: ClaudeRecordingTestifyVersion,
 		materialID: "21e27325e989edaf20923eade3fada20",
 		flow:       flowCase{name: "permission", provider: "claude", prompt: claudePermissionPrompt, project: "/var/tmp/mass-record-claude-permission-3946514327/project", initialInput: true, ignoreStreamKinds: true, expectPermission: true},
 	},

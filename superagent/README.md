@@ -37,7 +37,7 @@ Configuration uses [Viper](https://github.com/spf13/viper), CLI commands use
 [modernc driver](https://pkg.go.dev/modernc.org/sqlite). Dependencies are pinned
 in go.mod/go.sum. Core consumes the public mass-go client/resource/runtime packages through the
 monorepo module path; no private mass-go package or direct SDK operation is used.
-The transitive SDK remains pinned to v0.0.0-20261117073811-4890981672bf.
+The transitive Agent SDK Go version matches the pin in `mass-go/go.mod`.
 
 ## Configuration
 

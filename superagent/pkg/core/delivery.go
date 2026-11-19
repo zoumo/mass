@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -43,7 +43,7 @@ func classifyAttempt(a Attempt, acceptance runtime.Acceptance, result string, is
 	var op *runtime.OperationError
 	var rpc *rpcwire.RPCError
 	switch {
-	case errors.Is(err, client.ErrWorkResponseUnconfirmed):
+	case workResponseUnconfirmed(err):
 		a.Status, a.ErrorCode, a.ObservationGap = "transport_unknown", "transport_unknown", "massd_receipt_unconfirmed"
 	case errors.As(err, &op):
 		a.ErrorCode, a.ErrorReason = op.Code, op.Reason
@@ -80,6 +80,22 @@ func classifyAttempt(a Attempt, acceptance runtime.Acceptance, result string, is
 	return a
 }
 
+func workResponseUnconfirmed(err error) bool {
+	var op *runtime.OperationError
+	return errors.As(err, &op) && op.Code == "outcome_unknown" && op.Reason == "operation_unconfirmed"
+}
+
+func permanentHandshakeRejection(err error) bool {
+	// The MASS client reports HTTP upgrade failures as text with the response status.
+	status, ok := strings.CutPrefix(err.Error(), "WebSocket handshake failed: ")
+	if !ok {
+		return false
+	}
+	code, _, _ := strings.Cut(status, " ")
+	statusCode, parseErr := strconv.Atoi(code)
+	return parseErr == nil && statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError && statusCode != http.StatusTooManyRequests
+}
+
 func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resource.SessionSpec, a Attempt,
 	method string, wire []byte, admit func(*workerWatch) (bool, error),
 ) (Attempt, *workerWatch) {
@@ -92,8 +108,7 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resou
 	if err = c.Initialize(ctx, nil, nil); err != nil {
 		a.Status, a.ErrorCode = "pending", "massd_connect_unavailable"
 		var op *runtime.OperationError
-		var handshake *client.WebSocketHandshakeError
-		if errors.As(err, &handshake) && handshake.StatusCode >= http.StatusBadRequest && handshake.StatusCode < http.StatusInternalServerError && handshake.StatusCode != http.StatusTooManyRequests {
+		if permanentHandshakeRejection(err) {
 			a.Status, a.ErrorCode = "blocked", "massd_handshake_rejected"
 		} else if errors.As(err, &op) && (op.Code == "unauthenticated" || op.Code == "permission_denied" || op.Code == "unsupported" || op.Code == "invalid_argument") {
 			a.Status, a.ErrorCode, a.ErrorReason = "blocked", op.Code, op.Reason

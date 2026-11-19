@@ -181,7 +181,7 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 			if kind == "claude" {
 				if _, ok := e.Payload().(events.AgentMessage); ok {
 					meta, _ := e.Meta["claude"].(map[string]any)
-					s.NotContains(meta, "userMessageUuid", "the SDK does not attach its receipt UUID to native input")
+					s.Equal(receipt.Submission, meta["userMessageUuid"], "retain the linkage carried by the native frame")
 					s.NotContains(meta, "submission")
 					s.NotContains(meta, "attribution")
 				}
@@ -326,7 +326,7 @@ func ticket08Released(t *testing.T, s *entrypointSuite, ref resource.SessionRef,
 		input, answer := records[2+i*2], records[3+i*2]
 		if kind == "claude" {
 			require.NoError(t, uuid.Validate(r.Submission))
-			require.Empty(t, input.UUID, "SDK receipt identity must not be invented on the native wire")
+			require.Equal(t, r.Submission, input.UUID, "native input carries the receipt UUID")
 			require.Equal(t, input.UUID, answer.UUID)
 			require.Equal(t, i+1, input.Input)
 			require.Equal(t, input.Input, answer.Input)

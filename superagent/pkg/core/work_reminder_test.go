@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -22,7 +21,8 @@ func TestWorkerSubmissionReceipt(t *testing.T) {
 		{"native rejection", "applied_best_effort", runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}, nil, "blocked", "unknown"},
 		{"not sent", "applied_best_effort", runtime.Acceptance{Sent: runtime.Bool(false)}, nil, "blocked", "unknown"},
 		{"no write evidence", "applied_best_effort", runtime.Acceptance{}, nil, "blocked", "unknown"},
-		{"lost response", "", runtime.Acceptance{}, client.ErrWorkResponseUnconfirmed, "transport_unknown", "unknown"},
+		{"lost response", "", runtime.Acceptance{}, &runtime.OperationError{Code: "outcome_unknown", Reason: "operation_unconfirmed"}, "transport_unknown", "unknown"},
+		{"native outcome unknown", "", runtime.Acceptance{}, &runtime.OperationError{Code: "outcome_unknown", Reason: "input_outcome_unknown"}, "blocked_unknown", "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			attempt := classifyAttempt(Attempt{}, tc.acceptance, tc.result, true, tc.err)

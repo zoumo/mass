@@ -212,6 +212,12 @@ an explicit daemon prototype policy; pending form/question interactions require
 the typed client `client.Answer` method. This CLI version deliberately has no
 answer command.
 
+The Go client uses the same answer method for MCP forms and URL requests.
+Claude URL completion is correlated by native Session, MCP server, and
+elicitation ID. The pinned Codex path keeps an accepted URL pending when it
+has no correlated completion event. Verified Session release expires a pending
+URL interaction.
+
 ### Consumer recording and replay
 
 From the repository root, run `make test-simulation-go` (or its compatibility
@@ -226,9 +232,14 @@ The active cases come from the current Codex suite
 `recordings-4959190bc518` and the Claude suite
 `recordings-09d4ddf1ff20`. The Claude cases were re-recorded on November 13,
 2026 with Claude CLI `2.1.293`, SDK `09d4ddf1ff20`, and testify `v0.2.1`, then
-passed two strict replays before publication. All four active replays pass at
-the current pins. The older `recordings/` exports retain their original bytes
-and hashes for audit provenance but are no longer active replay evidence. See
+passed two strict replays before publication. At the current SDK pin a replay-only
+launcher validates the generated Claude user UUID and matches each user frame
+against the capture. The two historical captures predate the UUID field. New
+captures bind the live UUID to the captured UUID and translate only matching
+server-side user references back to the live UUID. Testify compares the full
+adapted input, and the gate verifies both the Testify execution and the
+launcher's completion receipt. All four active cases verify the original
+material hashes and MASS public events. The older `recordings/` exports are available for provenance audits. See
 [current-pin recording acceptance](docs/codex-current-pin-recording.md) and the
 [historical snapshot](docs/recording-acceptance.md).
 
@@ -344,9 +355,9 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261117073811-4890981672bf`,
-source commit `4890981672bf36a5e028ec12cf49f19065bbde54`, without a local replacement. The external
-`agent-sdk-testify` tool is pinned to `v0.2.1` for consumer recording and
+The runtime SDK is pinned to `v0.0.0-20261119055031-27b9a36509ba`,
+source commit `27b9a36509ba106ed9c438fa2fafce090ab598ff`, without a local replacement. The external
+`agent-sdk-testify` tool is pinned to `v0.2.2-0.20261119051234-1c7981ff332a` for consumer recording and
 replay and is not a production dependency.
 The active Claude fixtures retain SDK `09d4ddf1ff20` and testify `v0.2.1` as recording provenance. The
 current Codex suite and the historical `recordings/` exports retain their
@@ -595,7 +606,7 @@ No additional WebSocket message-size cap is introduced by the subscription layer
 
 The JSON-RPC input codec preserves all five ContentBlock shapes; existing native
 adapters execute text input only. Claude accepts exactly one text block.
-Complete text/thinking, tool calls/results, permission/form interactions, state
+Complete text/thinking, tool calls/results, permission/form/URL interactions, state
 and sanitized Session errors are mapped; deltas are previews and never fabricated
 into complete history. Unsupported complete content fails explicitly. Images,
 audio, files, arbitrary native extension/subagent attribution, full event-handler

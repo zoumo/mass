@@ -12,7 +12,7 @@ sources:
 
 # TypeSpec 合同入口
 
-当前接口版本记录在本页元数据。v0.3.3 增加可选 InjectDriver、Service inject 和 session.inject，保留 context-only 接受证据及错误 receipt，不分配 work identity、不扩大历史持久化。v0.3.2 在 SDK 统一事件与配置合同之后增加 JSON-RPC 消息及方法绑定；v0.3.1 增加主 Session 初始配置与瞬态单项配置操作，沿用既有错误与接受证据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
+当前接口版本记录在本页元数据。v0.3.3 增加可选 InjectDriver、Service inject 和 session.inject，保留 context-only 接受证据及错误 receipt，不分配 work identity、不扩大历史持久化。同一版本同步统一权限选项的 kind/scope 和可选 toolCallId，保留已录制的历史选项读法。v0.3.2 在 SDK 统一事件与配置合同之后增加 JSON-RPC 消息及方法绑定；v0.3.1 增加主 Session 初始配置与瞬态单项配置操作，沿用既有错误与接受证据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
 
 v0.3.2 增加 [JSON-RPC 消息与方法绑定](../bindings/jsonrpc.tsp)，公共业务入口改为 [WebSocket](../bindings/websocket.md)。复用既有 Service DTO，显式 SessionRef 取代路径歧义；客户端普通 RPC 与每个实时订阅使用独立连接，服务端每连接最多一个活动订阅。Go 选择 sourcegraph/jsonrpc2，首版 profile 明确 batch/ID 限制，不宣称完整标准形态兼容。详细协议与语言绑定仍为 draft；版本修订不是设计批准或实现完成证明。
 

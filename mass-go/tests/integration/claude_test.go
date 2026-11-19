@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -327,9 +328,9 @@ func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string)
 		_, err := os.Stat(work)
 		require.True(t, os.IsNotExist(err))
 	})
-	// Only cwd values change. Native request matching remains strict.
 	normalizeCodexResumeInput(scenario)
 	normalizeCodexTurnInput(scenario)
+	expectClaudeSubmissionUUID(scenario)
 	var replace func(any)
 	replace = func(v any) {
 		switch value := v.(type) {
@@ -354,6 +355,21 @@ func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string)
 	path := filepath.Join(t.TempDir(), "scenario.json")
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 	return path, work
+}
+
+// MASS provider scenarios use the unified SDK, which emits a fresh UUID for
+// each Claude user submission. The peer verifies the UUID and all other fields.
+func expectClaudeSubmissionUUID(scenario map[string]any) {
+	frames, _ := scenario["frames"].([]any)
+	for _, value := range frames {
+		frame, _ := value.(map[string]any)
+		data, _ := frame["data"].(map[string]any)
+		if frame["direction"] == "client" && data["type"] == "user" {
+			if _, exists := data["uuid"]; !exists {
+				data["uuid"] = replay.GeneratedClaudeUserUUID
+			}
+		}
+	}
 }
 
 // normalizeCodexResumeInput reflects the SDK provider's explicit workspace on

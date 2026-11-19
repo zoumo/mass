@@ -20,10 +20,11 @@ import (
 type Sink func(context.Context, events.SessionEvent) error
 
 type Config struct {
-	Session agent.Session
-	Address runtime.Address
-	Source  events.Source
-	Sink    Sink
+	Session      agent.Session
+	Address      runtime.Address
+	Source       events.Source
+	Sink         Sink
+	Interactions *Interactions
 	// ExpectedEOF identifies a transport EOF requested by the Driver owner.
 	// A nil predicate treats EOF as a normal end of observation.
 	ExpectedEOF func() bool
@@ -101,6 +102,17 @@ func (r *Relay) consume(ctx context.Context, config Config, stream agent.EventSt
 				// Make the loss visible to concurrent operations before a
 				// backpressured sink has accepted the triggering SDK event.
 				r.setErr(failure)
+			}
+		}
+		if config.Interactions != nil {
+			var publish bool
+			mapped, publish, err = config.Interactions.observe(mapped)
+			if err != nil {
+				r.setErr(err)
+				return
+			}
+			if !publish {
+				continue
 			}
 		}
 		if err := config.Sink(ctx, mapped); err != nil {

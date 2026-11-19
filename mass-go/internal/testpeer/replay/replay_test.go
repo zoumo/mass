@@ -303,3 +303,20 @@ func TestExtraClientByteFailsAfterCompleteConsumption(t *testing.T) {
 	_, err := runScript(t, "codex", directions, wires, `{"id":"live","method":"one"}`+"\n"+" ")
 	require.ErrorContains(t, err, "extra client byte")
 }
+
+func TestClaudeUserUUIDBindingKeepsOtherFieldsStrict(t *testing.T) {
+	wire := `{"type":"user","uuid":"` + GeneratedClaudeUserUUID + `","message":{"role":"user","content":"hello"}}`
+	directions := []scenario.Direction{scenario.ClientToServer}
+	valid := strings.ReplaceAll(wire, GeneratedClaudeUserUUID, "a4b5135b-5da0-4ed5-95fc-d27ad5bf5b4d")
+	_, err := runScript(t, "claude", directions, []string{wire}, valid+"\n")
+	require.NoError(t, err)
+
+	for _, invalid := range []string{
+		wire,
+		`{"type":"user","message":{"role":"user","content":"hello"}}`,
+		strings.ReplaceAll(valid, "hello", "other"),
+	} {
+		_, err := runScript(t, "claude", directions, []string{wire}, invalid+"\n")
+		require.Error(t, err)
+	}
+}

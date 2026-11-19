@@ -331,12 +331,14 @@
             {
               "optionId": "allow-once",
               "name": "允许一次",
-              "kind": "allow_once"
+              "kind": "allow",
+              "scope": "once"
             },
             {
               "optionId": "reject-once",
               "name": "拒绝",
-              "kind": "reject_once"
+              "kind": "reject",
+              "scope": "once"
             }
           ]
         }

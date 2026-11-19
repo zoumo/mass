@@ -159,6 +159,8 @@ daemon 对所有 Session 使用单一 `sessionIdleTimeout` 配置，YAML 键为 
 
 只有当前运行绑定能够证明 Session 为 `idle`，且没有在途 open、resume 或 close，没有等待交互，也没有已知子 Agent 或工具工作时，才启动空闲计时。任何该 Session 已接纳的业务活动或已知运行事件都会重置计时；get、list、history 和 watch 本身不重置。计时器触发时必须基于当前状态、当前运行绑定和待办重新校验，不能依据可能落后的持久状态关闭已经活跃的 Session。
 
+Prompt 接受证据能关联到具体工作时，必须观察到该工作已结算并确认当前会话空闲，才能重新计时。单独的会话级 idle 不能证明该工作已经结算。原生 Prompt 派发结果未知时，该绑定由显式生命周期操作结算。调用者提前结束等待时，仍由原派发的实际结果决定计时资格。Inject 的计时规则见[上下文注入](session.md#context-injection)。
+
 到期后调用与人工 close 相同的 closeSession 路径，并采用相同的成功、失败和重试规则。自动 close 失败保持 `closing`，不自动重试。计时器只存在于当前应用进程，不持久化；服务重启后不为旧 Session 建立自动启动或回收责任。
 
 已知后台活动可以延长 Session 生命周期；无法观测的静默后台工作不承诺获得保活。`idle` 只表示当前已观察到没有前台工作或已知待办，不证明所有不可观测的后台任务已经结束。空闲调度不修改 Runtime 配置 generation，也不写入 Session generation。

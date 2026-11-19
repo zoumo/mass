@@ -66,6 +66,7 @@ func (o *options) sessionCommands() *cobra.Command {
 			cmd.MarkFlagsMutuallyExclusive("text", "input-file")
 		}
 		if action == "inject" {
+			cmd.Example = "  massctl session inject review -n demo --text 'Read-only review'\n  massctl session inject SESSION_ID --input-file context.json"
 			cmd.Long += " Append context without requesting a model response. Supply exactly one of --text or --input-file. Receipt reports acceptance only; calls never retry or resume."
 			cmd.MarkFlagsOneRequired("text", "input-file")
 		}

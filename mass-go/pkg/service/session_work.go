@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zoumo/agent-sdk-go/agent"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -33,9 +35,16 @@ func sessionResumeRequired(state events.SessionState) error {
 	return &sessionResumeRequiredError{state: state}
 }
 
+type sessionWorkOptions struct {
+	input     bool
+	prompt    bool
+	canceling bool
+	rearmIdle bool
+}
+
 // Admission pins the resolved identity and original run until dispatch settles.
-// Caller cancellation ends only the wait; the owner retains the admission gate.
-func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef, canceling, rearmIdle bool, dispatch func(context.Context, *runBinding, string) (T, error)) (T, error) {
+// Caller cancellation ends only the wait after dispatch begins.
+func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef, opts sessionWorkOptions, dispatch func(context.Context, *runBinding, string) (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, err
@@ -44,13 +53,15 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	if err != nil {
 		return zero, err
 	}
-	run, l, err := s.controlWork(r, canceling)
+	run, l, err := s.controlWork(r, opts)
 	if err != nil {
 		return zero, err
 	}
 	if err := ctx.Err(); err != nil {
-		l.admission.RUnlock()
-		run.admission.RUnlock()
+		// Admission paused the timer, but there is no native operation to
+		// produce the next idle observation.
+		opts.rearmIdle = true
+		s.settleWork(run, l, opts, err)
 		return zero, err
 	}
 	type result struct {
@@ -59,14 +70,8 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	}
 	done := make(chan result, 1)
 	go func() {
-		value, err := func() (T, error) {
-			defer run.admission.RUnlock()
-			defer l.admission.RUnlock()
-			return dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
-		}()
-		if rearmIdle {
-			s.rearmIdleAfterActivity(run, l)
-		}
+		value, err := dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
+		s.settleWork(run, l, opts, err)
 		done <- result{value, err}
 	}()
 	select {
@@ -82,31 +87,40 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	}
 }
 
-// Both input operations share an original-binding gate. Rejected overlap is
-// never queued, and an uncertain native dispatch seals further input.
-func sessionInputWork[T any](ctx context.Context, s *Service, ref resource.SessionRef, rearmIdle bool, dispatch func(context.Context, *runBinding, string) (T, error)) (T, error) {
-	return sessionWork(ctx, s, ref, false, rearmIdle, func(owner context.Context, run *runBinding, id string) (T, error) {
-		var zero T
-		s.mu.Lock()
-		l := run.lanes[id]
-		source := l.source
-		s.mu.Unlock()
-		if !l.input.TryLock() {
-			return zero, &runtime.OperationError{Code: "conflict", Reason: "input_in_flight", Message: "Another input is in flight; input was not sent"}
+func (s *Service) settleWork(run *runBinding, l *lane, opts sessionWorkOptions, err error) {
+	var problem *runtime.OperationError
+	uncertain := opts.input && errors.As(err, &problem) && problem.Code == "outcome_unknown"
+	s.mu.Lock()
+	if opts.input {
+		if uncertain {
+			l.unknownInputSource = l.source
+			l.idlePrompt.unresolved = opts.prompt
 		}
-		defer l.input.Unlock()
-		// Resume may reuse the delivery lane for history continuity. Its new
-		// native source has independent input admission after verified close.
-		if source.SameRun(l.unknownInputSource) {
-			return zero, &runtime.OperationError{Code: "conflict", Reason: "input_outcome_unknown", Message: "Previous input outcome is unknown; reconcile before sending input"}
+		l.inputInFlight = false
+	}
+	s.releaseLaneAdmissionLocked(run, l, opts.rearmIdle)
+	s.mu.Unlock()
+	run.admission.RUnlock()
+}
+
+// Supersede the idle observation only for an input that could have made native progress.
+func promptNotApplied(receipt runtime.InputReceipt, err error) bool {
+	var problem *runtime.OperationError
+	if errors.As(err, &problem) && problem.Code == string(agent.ErrorOutcomeUnknown) {
+		return false
+	}
+	if receipt.Result != "" {
+		return receipt.Result == agent.InputNotApplied
+	}
+	if problem != nil {
+		switch agent.ErrorCode(problem.Code) {
+		case agent.ErrorNativeRejected, agent.ErrorInvalidArgument, agent.ErrorUnsupported:
+			return true
 		}
-		result, err := dispatch(owner, run, id)
-		var problem *runtime.OperationError
-		if errors.As(err, &problem) && problem.Code == "outcome_unknown" {
-			l.unknownInputSource = source
-		}
-		return result, err
-	})
+	}
+	return receipt.Acceptance.Sent != nil && !*receipt.Acceptance.Sent ||
+		receipt.Acceptance.NativeAccepted != nil && !*receipt.Acceptance.NativeAccepted ||
+		errors.Is(err, runtime.ErrInvalidArgument) || errors.Is(err, runtime.ErrFailedPrecondition)
 }
 
 // Inject appends context only to the currently bound native Session.
@@ -120,7 +134,7 @@ func (s *Service) Inject(ctx context.Context, ref resource.SessionRef, input run
 		receipt    runtime.InjectReceipt
 		dispatched bool
 	}
-	result, err := sessionInputWork(ctx, s, ref, true, func(owner context.Context, run *runBinding, id string) (dispatchResult, error) {
+	result, err := sessionWork(ctx, s, ref, sessionWorkOptions{input: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (dispatchResult, error) {
 		driver, ok := run.driver.(runtime.InjectDriver)
 		if !ok {
 			return dispatchResult{notSent, true}, runtime.UnsupportedOption("inject_unsupported", "Driver does not support context injection")

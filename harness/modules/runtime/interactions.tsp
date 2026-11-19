@@ -12,7 +12,10 @@ union InteractionRequest {
 /** 参考 ACP 权限请求；拒绝应选择原生提供的 reject 选项，不冒充取消。 */
 model PermissionInteractionRequest {
   kind: "permission";
-  toolCallId: string;
+
+  /** Present when the native request identifies a tool call. */
+  toolCallId?: string;
+
   title?: string;
   content?: ContentBlock[];
 
@@ -20,11 +23,29 @@ model PermissionInteractionRequest {
   options: PermissionOption[];
 }
 
-model PermissionOption {
+union PermissionOption {
+  scoped: ScopedPermissionOption,
+  cancel: CancelPermissionOption,
+  historical: HistoricalPermissionOption,
+}
+
+/** 选择权限始终依据原请求提供的 optionId。 */
+model PermissionOptionIdentity {
   optionId: string;
   name: string;
+}
 
-  /** ACP 标准提示值；选择权限始终依据 optionId，不靠 kind 猜测。 */
+model ScopedPermissionOption extends PermissionOptionIdentity {
+  kind: "allow" | "reject";
+  scope: "once" | "turn" | "session" | "always";
+}
+
+model CancelPermissionOption extends PermissionOptionIdentity {
+  kind: "cancel";
+}
+
+/** 已录制的旧式权限选项保留原含义。 */
+model HistoricalPermissionOption extends PermissionOptionIdentity {
   kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
 }
 

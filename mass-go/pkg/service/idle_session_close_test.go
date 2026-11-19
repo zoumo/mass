@@ -133,8 +133,16 @@ func (f *idleFixture) emitState(t *testing.T, state events.SessionState) {
 
 func (f *idleFixture) emit(t *testing.T, payload events.Payload) {
 	t.Helper()
+	f.emitWork(t, payload, "", false)
+}
+
+func (f *idleFixture) emitWork(t *testing.T, payload events.Payload, work string, terminal bool) {
+	t.Helper()
 	f.driver.mu.Lock()
-	source := f.driver.source
+	source := f.driver.source.WithWork(work)
+	if terminal {
+		source = source.WithTerminalWork(work)
+	}
 	f.driver.mu.Unlock()
 	event, err := events.NewEvent(events.EventBase{
 		EventID:     uuid.NewString(),
@@ -395,14 +403,406 @@ func TestIdleAcceptedPromptInvalidatesTimer(t *testing.T) {
 		t.Fatal("idle close overtook an in-flight prompt")
 	case <-time.After(50 * time.Millisecond):
 	}
+	receipt, err := f.svc.Cancel(t.Context(), f.ref)
+	require.NoError(t, err)
+	require.Equal(t, "noActiveWork", receipt.Result)
 	f.driver.releasePrompt()
 	require.NoError(t, <-promptDone)
+	require.Zero(t, f.clock.Active(), "a control operation cannot authorize idle close before the admitted Prompt's next native state")
 	require.Zero(t, f.driver.closes.Load())
+
+	// An unrelated canceled operation or an ordinary stream event may not
+	// turn the last known idle state into authorization to close after input.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	answer := &workDispatchContext{Context: ctx, pauseAt: 3, paused: make(chan struct{}), resume: make(chan struct{})}
+	resumeAnswer := sync.OnceFunc(func() { close(answer.resume) })
+	t.Cleanup(resumeAnswer)
+	answered := make(chan error, 1)
+	go func() {
+		_, err := f.svc.AnswerInteraction(answer, f.ref, "question", nil)
+		answered <- err
+	}()
+	select {
+	case <-answer.paused:
+	case <-time.After(time.Second):
+		t.Fatal("Answer did not reach the post-admission checkpoint")
+	}
+	cancel()
+	resumeAnswer()
+	require.ErrorIs(t, <-answered, context.Canceled)
+	require.Zero(t, f.clock.Active(), "canceling unrelated work cannot use the stale pre-Prompt idle state")
+
+	subscription, err := f.svc.SubscribeEvents(f.ref)
+	require.NoError(t, err)
+	defer subscription.Close()
+	f.emit(t, events.AgentMessage{MessageID: "idle-test", Content: []events.ContentBlock{events.Text("follow-up output")}})
+	select {
+	case <-subscription.Events():
+	case <-time.After(time.Second):
+		t.Fatal("message was not published")
+	}
+	require.Zero(t, f.clock.Active(), "a message is not a state observation")
 
 	f.emitState(t, events.Idle)
 	require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
 	f.clock.Advance(5 * time.Second)
 	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleNativeObservationAtPromptSettlement(t *testing.T) {
+	for _, queuedBefore := range []bool{false, true} {
+		name := "arrived during prompt"
+		if queuedBefore {
+			name = "queued before prompt"
+		}
+		t.Run(name, func(t *testing.T) {
+			testIdleObservationAtPromptSettlement(t, queuedBefore)
+		})
+	}
+}
+
+func testIdleObservationAtPromptSettlement(t *testing.T, queuedBefore bool) {
+	t.Helper()
+	f := newIdleFixture(t, time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+	subscription, err := f.svc.SubscribeEvents(f.ref)
+	require.NoError(t, err)
+	defer subscription.Close()
+
+	var releasePublication func()
+	if queuedBefore {
+		broadcast, err := f.svc.EventBroadcast(f.ref)
+		require.NoError(t, err)
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		releasePublication = sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releasePublication)
+		require.NoError(t, broadcast.AddHandler(&observingHandler{required: true, handle: func(e events.SessionEvent) error {
+			if _, ok := e.Payload().(events.AgentMessage); ok {
+				close(entered)
+				<-release
+			}
+			return nil
+		}}))
+		f.emit(t, events.AgentMessage{MessageID: "idle-test", Content: []events.ContentBlock{events.Text("publication barrier")}})
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("required handler did not hold publication")
+		}
+		// The stream reader receives this StateUpdate while the delivery
+		// owner is blocked in the earlier handler.
+		f.emitState(t, events.Idle)
+	}
+
+	promptDone := make(chan error, 1)
+	go func() {
+		_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+		promptDone <- err
+	}()
+	select {
+	case <-f.driver.promptEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Prompt did not reach the driver")
+	}
+
+	if queuedBefore {
+		releasePublication()
+		// The barrier message precedes the queued state in the subscription.
+		select {
+		case <-subscription.Events():
+		case <-time.After(time.Second):
+			t.Fatal("barrier message was not published")
+		}
+	} else {
+		f.emitState(t, events.Idle)
+	}
+	select {
+	case event := <-subscription.Events():
+		require.IsType(t, events.StateUpdate{}, event.Payload())
+	case <-time.After(time.Second):
+		t.Fatal("idle state was not published")
+	}
+	require.Zero(t, f.clock.Active(), "the in-flight Prompt still holds admission")
+
+	f.driver.releasePrompt()
+	require.NoError(t, <-promptDone)
+	if queuedBefore {
+		require.Zero(t, f.clock.Active(), "an idle state queued before the Prompt cannot settle it")
+		f.emitState(t, events.Idle)
+		require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+	} else {
+		require.Equal(t, 1, f.clock.Active(), "the new idle observation must schedule close at settlement")
+	}
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
+	const newWork = "close-test"
+	const oldWork = "earlier-turn"
+	type observation struct {
+		state     events.SessionState
+		work      string
+		terminal  bool
+		wantRearm bool
+	}
+	oldIdle := observation{state: events.Idle, work: oldWork}
+	untaggedIdle := observation{state: events.Idle}
+	matchingIdle := observation{state: events.Idle, work: newWork, terminal: true, wantRearm: true}
+	matchingWithoutTerminal := observation{state: events.Idle, work: newWork}
+	for _, scenario := range []struct {
+		name         string
+		during       []observation
+		after        []observation
+		wantAtReturn bool
+	}{
+		{
+			name:   "old work during dispatch",
+			during: []observation{oldIdle},
+			after:  []observation{oldIdle, untaggedIdle, matchingIdle},
+		},
+		{
+			name:   "untagged during dispatch",
+			during: []observation{untaggedIdle},
+			after:  []observation{untaggedIdle, matchingIdle},
+		},
+		{
+			name:         "matching idle during dispatch",
+			during:       []observation{matchingIdle},
+			wantAtReturn: true,
+		},
+		{
+			name:         "matching then untagged idle during dispatch",
+			during:       []observation{matchingIdle, untaggedIdle},
+			wantAtReturn: true,
+		},
+		{
+			name:   "child settlement shares the root turn ID",
+			during: []observation{untaggedIdle, matchingWithoutTerminal},
+			after:  []observation{matchingWithoutTerminal, matchingIdle},
+		},
+		{
+			name:   "matching completion with a pending child interaction",
+			during: []observation{{state: events.RequiresAction, work: newWork, terminal: true}},
+			after:  []observation{{state: events.Idle, work: "child-turn", wantRearm: true}},
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.promptWork = newWork
+			f.driver.releaseClose()
+			f.waitIdle(t)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			emitState := func(observed observation) {
+				t.Helper()
+				f.emitWork(t, events.StateUpdate{State: &observed.state}, observed.work, observed.terminal)
+				event, err := nextSubscription(subscription, ctx)
+				require.NoError(t, err)
+				require.Equal(t, events.StateUpdate{State: &observed.state}, event.Payload())
+				require.Eventually(t, func() bool {
+					current, err := f.svc.GetSession(f.ref)
+					return err == nil && current.Status.State == observed.state
+				}, time.Second, time.Millisecond)
+			}
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the native submit gate")
+			}
+
+			for _, observed := range scenario.during {
+				emitState(observed)
+				require.Zero(t, f.clock.Active(), "the Prompt still holds admission")
+			}
+			f.driver.releasePrompt()
+			require.NoError(t, <-promptDone)
+			require.Equal(t, scenario.wantAtReturn, f.clock.Active() == 1, "timer eligibility when the receipt settles")
+
+			for _, observed := range scenario.after {
+				emitState(observed)
+				require.Equal(t, observed.wantRearm, f.clock.Active() == 1, "timer eligibility after the native state")
+			}
+			require.Equal(t, 1, f.clock.Active())
+			f.clock.Advance(time.Second)
+			require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+		})
+	}
+}
+
+func TestIdlePromptUnknownRequiresExplicitRelease(t *testing.T) {
+	for _, work := range []string{"earlier-turn", ""} {
+		name := "tagged"
+		if work == "" {
+			name = "untagged"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.promptErr = &runtime.OperationError{Code: "outcome_unknown", Reason: "synthetic_native_submit"}
+			f.driver.releaseClose()
+			f.waitIdle(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			emitIdle := func() {
+				t.Helper()
+				idle := events.Idle
+				f.emitWork(t, events.StateUpdate{State: &idle}, work, false)
+				event, err := nextSubscription(subscription, ctx)
+				require.NoError(t, err)
+				require.IsType(t, events.StateUpdate{}, event.Payload())
+			}
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("uncertain")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the native submit gate")
+			}
+			emitIdle()
+			f.driver.releasePrompt()
+			require.ErrorIs(t, <-promptDone, f.driver.promptErr)
+			require.Zero(t, f.clock.Active(), "an unresolved Prompt must keep automatic close fenced")
+			emitIdle()
+			require.Zero(t, f.clock.Active(), "later state without settlement proof cannot lift the fence")
+			f.clock.Advance(time.Hour)
+			require.Zero(t, f.driver.closes.Load())
+
+			_, err = f.svc.CloseSession(ctx, f.ref)
+			require.NoError(t, err)
+			f.driver.releaseResume()
+			_, err = f.svc.ResumeSession(ctx, f.ref)
+			require.NoError(t, err)
+			f.waitIdle(t)
+		})
+	}
+}
+
+func TestIdlePromptSettlementWithQueuedNativeEvents(t *testing.T) {
+	running := events.Running
+	idle := events.Idle
+	for _, scenario := range []struct {
+		name     string
+		queued   events.Payload
+		finished events.Payload
+	}{
+		{
+			name:     "running state",
+			queued:   events.StateUpdate{State: &running},
+			finished: events.StateUpdate{State: &idle},
+		},
+		{
+			name:     "tool work",
+			queued:   events.ToolChunk{ID: "tool-1", Content: []events.ContentBlock{events.Text("working")}},
+			finished: events.ToolResult{ID: "tool-1", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "completed"},
+		},
+		{
+			name:     "interaction",
+			queued:   events.InteractionRequested{Interaction: "ask", Request: events.PermissionRequest("tool", "Allow?"), Blocking: true},
+			finished: events.InteractionClosed{Interaction: "ask", Outcome: "answered"},
+		},
+		{
+			name:   "message",
+			queued: events.AgentMessage{MessageID: "idle-test", Content: []events.ContentBlock{events.Text("follow-up output")}},
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.releaseClose()
+			f.waitIdle(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			broadcast, err := f.svc.EventBroadcast(f.ref)
+			require.NoError(t, err)
+			publishing := make(chan struct{})
+			release := make(chan struct{})
+			releasePublication := sync.OnceFunc(func() { close(release) })
+			t.Cleanup(releasePublication)
+			holdPublication := sync.OnceFunc(func() {
+				close(publishing)
+				<-release
+			})
+			require.NoError(t, broadcast.AddHandler(&observingHandler{required: true, handle: func(e events.SessionEvent) error {
+				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+					holdPublication()
+				}
+				return nil
+			}}))
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the driver")
+			}
+			f.emitState(t, events.Idle)
+			select {
+			case <-publishing:
+			case <-ctx.Done():
+				t.Fatal("required handler did not hold idle publication")
+			}
+			f.emit(t, scenario.queued)
+			f.driver.releasePrompt()
+			require.NoError(t, <-promptDone)
+
+			if scenario.finished == nil {
+				require.Equal(t, 1, f.clock.Active(), "a queued message does not supersede the native idle observation")
+			} else {
+				require.Zero(t, f.clock.Active(), "queued activity must be processed before idle close can be armed")
+				f.clock.Advance(time.Second)
+				require.Zero(t, f.driver.closes.Load())
+			}
+			releasePublication()
+			first, err := nextSubscription(subscription, ctx)
+			require.NoError(t, err)
+			require.IsType(t, events.StateUpdate{}, first.Payload())
+			second, err := nextSubscription(subscription, ctx)
+			require.NoError(t, err)
+			require.IsType(t, scenario.queued, second.Payload())
+			if scenario.finished != nil {
+				require.Zero(t, f.clock.Active())
+				if state, ok := scenario.queued.(events.StateUpdate); ok {
+					require.Eventually(t, func() bool {
+						current, err := f.svc.GetSession(f.ref)
+						return err == nil && current.Status.State == *state.State
+					}, time.Second, time.Millisecond)
+				}
+				f.emit(t, scenario.finished)
+			}
+			require.Eventually(t, func() bool {
+				current, err := f.svc.GetSession(f.ref)
+				return err == nil && current.Status.State == events.Idle && f.clock.Active() == 1
+			}, time.Second, time.Millisecond)
+			f.clock.Advance(time.Second)
+			require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+		})
+	}
 }
 
 func TestIdleCloseFailureStaysClosingWithoutRetry(t *testing.T) {
