@@ -110,7 +110,7 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
     const observed = new Set<string>()
     page.on('request', req => {
       const url = new URL(req.url())
-      if (url.pathname === '/v1/observer/topic-activity' && url.searchParams.get('topicId') === topic.id) {
+      if (url.pathname === '/v1/observer/topic-activity' && url.searchParams.get('topicId') === topic.id && !url.searchParams.has('mode')) {
         observed.add(url.searchParams.get('filter') || 'all')
         expect(req.method()).toBe('GET')
         expect(Number(url.searchParams.get('limit'))).toBeLessThanOrEqual(10)

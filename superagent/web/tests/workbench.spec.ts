@@ -21,7 +21,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
   const topic = page.getByRole('article', { name: '当前 Topic' })
   const nav = page.getByRole('navigation', { name: '观察视角' })
-  await expect(nav.getByRole('link', { name: 'Topic' })).toHaveAttribute('aria-current', 'page')
+  await expect(nav.getByRole('link', { name: 'Topic', exact: true })).toHaveAttribute('aria-current', 'page')
   await topic.getByRole('link', { name: '消息', exact: true }).click()
   const returned = topic.locator('li[data-kind="route_request"]')
   await returned.locator('summary').click()

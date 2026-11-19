@@ -218,7 +218,12 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "topic-activity" {
-		page, err := s.store.topicActivity(r.Context(), r.URL.Query())
+		query := r.URL.Query()
+		read := s.store.topicActivity
+		if query.Get("mode") == "conversation" {
+			read = s.store.topicConversation
+		}
+		page, err := read(r.Context(), query)
 		if err != nil {
 			s.fail(w, err)
 			return

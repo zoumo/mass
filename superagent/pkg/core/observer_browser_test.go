@@ -124,10 +124,22 @@ func serveObserverBrowserAudit(t *testing.T, audit *observerBrowserAudit, bounda
 	require.NoError(t, emit(t.Context(), "Stored before browsing <b>plain text</b> "+f.token+" "+roleToken, true))
 
 	pathCore := seedMessagePathObserver(t)
+	conversation := seedTopicConversation(t, 22)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /message-path-fixture", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"endpoint": pathCore})
+	})
+	mux.HandleFunc("GET /topic-conversation-fixture", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"endpoint": conversation.process.endpoint})
+	})
+	mux.HandleFunc("POST /topic-conversation-fixture/report", func(w http.ResponseWriter, r *http.Request) {
+		if err := postReport(r.Context(), conversation.process, conversation.workerToken, conversation.report); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /state", func(w http.ResponseWriter, _ *http.Request) {
 		audit.mu.Lock()
