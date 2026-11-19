@@ -8,7 +8,7 @@ This document describes the current Core implementation.
 `dataDir`, opens `core.sqlite` and starts HTTP. The default directory is
 `./superagent-core-data` relative to the YAML file. Startup prints one JSON
 object with `endpoint`, `observerEndpoint`, and `status: ready`.
-Schema 20 uses SQLite WAL, FULL synchronous durability and foreign keys.
+Schema 21 uses SQLite WAL, FULL synchronous durability and foreign keys.
 
 The database has nine business tables. `threads` and `trigger_messages`
 record ingress and Thread subscriptions. `topics`, `issues`, `executions`,
@@ -82,7 +82,7 @@ link, such as a comment permalink, when available. See
 Success HTTP 200:
 
 ```json
-{"status":"accepted","duplicate":false,"messageId":"msg_...","threadKey":"dws:native-conversation-id","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"dlv_..."}
+{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadKey":"dws:native-conversation-id","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"dlv_..."}
 ```
 
 Message, Thread update and the initial internal delivery commit together.
@@ -258,6 +258,7 @@ Topic to select it. Core checks Runtime availability during Session preparation.
 
 Namespace is a DNS label of at most 24 bytes. The Router is unique per Core
 store, in `<namespace>-router/router-g1`. Each Topic has a stable namespace derived from its ID and Session `topic-g1`.
+Configure distinct execution namespaces for Core stores that share one massd.
 A Worker uses its Topic namespace and a fixed
 `worker-<executionId with underscores changed to hyphens>-g<generation>` name.
 Each binding stores the selected Runtime, model and any effort, along with the
@@ -329,13 +330,13 @@ cannot submit channel messages. Neither surface is part of Observer.
 ```json
 {
   "operationId": "router-decision-17",
-  "messageIds": ["msg_a", "msg_b"],
-  "rounds": {"msg_a": 1, "msg_b": 2},
+  "messageIds": ["mass-m1", "mass-m2"],
+  "rounds": {"mass-m1": 1, "mass-m2": 2},
   "kind": "route",
   "reason": "Two explicit independent requests",
   "targets": [
-    {"create": {"title": "First request", "workspace": "/absolute/existing/workspace"}, "messageIds": ["msg_a"]},
-    {"topicId": "topic_existing", "messageIds": ["msg_b"]}
+    {"create": {"title": "First request", "workspace": "/absolute/existing/workspace"}, "messageIds": ["mass-m1"]},
+    {"topicId": "mass-t42", "messageIds": ["mass-m2"]}
   ]
 }
 ```
@@ -376,10 +377,26 @@ is described below. Routing keeps Issue ownership within its original Topic.
 
 ## Issue, Execution, Report and acceptance
 
+Core assigns IDs with decimal counters starting at 1.
+
+| Object | Example | Numbering |
+| --- | --- | --- |
+| Message | `mass-m42` | `trigger_messages.seq` within the Core database |
+| Topic | `mass-t42` | Topic sequence within the Core database |
+| Issue | `mass-t42-i3` | Issue sequence within the Topic |
+| Execution | `mass-t42-i3-e2` | Execution generation within the Issue |
+| Report | `mass-t42-i3-r5` | Report submission sequence within the Issue, across Executions |
+| Timer | `mass-t42-tm3` | Timer sequence within the Topic, across Topic generations |
+| Blocker | `mass-t42-i3-b2` | Blocker sequence within the Issue, including resolved blockers |
+
+These IDs stay fixed after creation, including when an Issue or Topic is
+reopened. Report IDs are separate from their Topic notification IDs.
+
 All changes require an `operationId` scoped to the authenticated binding and
-tool. The HTTP role bridge and stdio MCP call the same transactions.
-Creation commands and Reports use stable business IDs. Reusing their
-operation ID with different parameters returns `conflict`.
+tool. Report submissions scope their `operationId` to their Execution.
+The HTTP role bridge and stdio MCP call the same transactions. Replaying an
+identical creation request returns the saved ID. Reusing its operation ID
+with different parameters returns `conflict`.
 Revision-guarded updates return `conflict` when the expected revision is stale.
 After a lost response, read the current resource and any associated
 delivery before submitting another mutation.
@@ -657,10 +674,11 @@ These tools are available over stdio MCP and `POST /v1/role/{tool}`.
 `dueAt` accepts RFC3339 with `Z` or a numeric offset and up to nine fractional
 digits. The record stores the UTC instant. Content must be nonblank. Materials
 use the Issue material shape and the same Topic scope for Message references.
-`timer_set` uses the operation ID to replay the same Timer identity.
-Updates and cancellations compare the current revision.
-Reusing it with different parameters or using a stale revision fails with
-`conflict`. Changes to a current `fired`, `canceled` or `invalidated` Timer
+Replaying the original `timer_set` request with the same binding and operation
+ID returns the current Timer record. Reusing that operation ID with different
+parameters returns `conflict`. Updates and cancellations compare the current
+revision. A stale revision returns `conflict`.
+Changes to a current `fired`, `canceled` or `invalidated` Timer
 fail with `failed_precondition`. Use a new `timer_set` for another followup.
 
 Core scans on startup and every 250 ms while execution is enabled. A valid past

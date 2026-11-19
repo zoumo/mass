@@ -880,10 +880,12 @@ func TestRoutingCrashAtomicRoute(t *testing.T) {
 			require.Len(t, page(t, p, "relations").Items, expected)
 			require.Len(t, bindings(t, p), expected+1)
 			replay := decide(t, p, token, r)
+			require.Equal(t, "mass-t1", replay.Targets[0].TopicID)
 			topic := waitBinding(t, p, "topic", replay.Targets[0].TopicID, "ready")
 			waitDelivered(t, p, m.MessageID, "topic", topic.OwnerID)
 			require.Len(t, page(t, p, "topics").Items, 1)
 			require.Equal(t, replay.ID, decide(t, p, token, r).ID)
+			require.Equal(t, "mass-t1", readRecord[core.Topic](t, p, "topics/mass-t1").ID)
 			t.Logf("%s: public restart readback and identical retry preserve one complete decision", stage)
 		})
 	}

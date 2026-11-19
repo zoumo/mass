@@ -75,10 +75,12 @@ func (t *Timer) setDetails(ctx context.Context, tx *sql.Tx, dueAt, content strin
 func setTimer(r SetTimerRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
 		key := creationKey("timer", b.ID, r.OperationID)
-		id := creationID(key, r)
-		if existing, err := existingCreation(ctx, tx, "scheduled_tasks", key, id); err != nil {
+		digest := creationDigest(r)
+		id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM scheduled_tasks WHERE creation_key=?", key)
+		if err != nil {
 			return nil, err
-		} else if existing {
+		}
+		if id != "" {
 			var t Timer
 			err := readJSON(ctx, tx, "SELECT body FROM scheduled_tasks WHERE id=?", &t, id)
 			return t, err
@@ -89,13 +91,22 @@ func setTimer(r SetTimerRequest) workMutation {
 		}
 		at := now()
 		t := Timer{
-			ID: id, TopicID: topic.ID, TopicGeneration: topic.LifecycleGeneration, Revision: 1,
+			TopicID: topic.ID, TopicGeneration: topic.LifecycleGeneration, Revision: 1,
 			Type: timerFollowup, Status: "scheduled", CreatedAt: at, UpdatedAt: at,
 		}
 		if err := t.setDetails(ctx, tx, r.DueAt, r.Content, r.Materials); err != nil {
 			return nil, err
 		}
-		return t, putJSON(ctx, tx, "INSERT INTO scheduled_tasks(id,topic_id,created_at,body) VALUES(?,?,?,?)", t, t.ID, t.TopicID, at)
+		var number int64
+		if err := tx.QueryRowContext(ctx, `UPDATE topics SET timer_number=timer_number+1
+ WHERE id=? RETURNING timer_number`, t.TopicID).Scan(&number); err != nil {
+			return nil, storageError()
+		}
+		if err := tx.QueryRowContext(ctx, `INSERT INTO scheduled_tasks(topic_id,number,created_at,body,creation_key,creation_digest)
+ VALUES(?,?,?,'{}',?,?) RETURNING id`, t.TopicID, number, at, key, digest).Scan(&t.ID); err != nil {
+			return nil, storageError()
+		}
+		return t, saveTimer(ctx, tx, t)
 	}
 }
 

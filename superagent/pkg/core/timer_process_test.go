@@ -139,14 +139,16 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 
 	r.Materials = []core.Material{{Label: "Original request", MessageID: source.MessageID}, {URI: "notes/build.txt"}}
 	scheduled := mcpWork[core.Timer](t, topic, "timer_set", r)
+	require.Equal(t, "mass-t1-tm1", scheduled.ID)
 	require.Equal(t, binding.OwnerID, scheduled.TopicID)
 	require.Equal(t, "scheduled", scheduled.Status)
 	require.Equal(t, 1, scheduled.Revision)
 	require.Equal(t, "2090-01-02T00:00:00.012000000Z", scheduled.DueAt)
 	require.Equal(t, r.Materials, scheduled.Materials)
 	require.Equal(t, scheduled, mcpWork[core.Timer](t, topic, "timer_set", r))
-	r.Content = "Different content under the same operation ID"
-	mcpWorkError(t, topic, "timer_set", "conflict", r)
+	changedRequest := r
+	changedRequest.Content = "Different content under the same operation ID"
+	mcpWorkError(t, topic, "timer_set", "conflict", changedRequest)
 	query := core.QueryRequest{Collection: "timers", ID: scheduled.ID}
 	mcpWorkError(t, foreign, "work_query", "not_found", query)
 	mcpWorkError(t, foreign, "timer_cancel", "not_found", cancelTimerInput("foreign-cancel", scheduled))
@@ -154,6 +156,8 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 		CancelTimerRequest: cancelTimerInput("foreign-update", scheduled), DueAt: timerPast, Content: r.Content,
 	})
 	require.Empty(t, mcpWork[core.Page](t, foreign, "work_query", core.QueryRequest{Collection: "timers"}).Items)
+	foreignTimer := mcpWork[core.Timer](t, foreign, "timer_set", timerInput(r.OperationID, timerFuture))
+	require.Equal(t, "mass-t2-tm1", foreignTimer.ID)
 
 	// Fire the revised task only when the controlled clock reaches its due time.
 	due := advanceClock(0).Add(time.Minute).In(time.FixedZone("UTC+8", 8*60*60))
@@ -162,6 +166,7 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 		DueAt:              due.Format(time.RFC3339Nano), Content: "Review the revised build evidence.", Materials: r.Materials,
 	}
 	rescheduled := mcpWork[core.Timer](t, topic, "timer_update", update)
+	require.Equal(t, scheduled.ID, rescheduled.ID)
 	require.Equal(t, 2, rescheduled.Revision)
 	require.Equal(t, update.Content, rescheduled.Content)
 	require.Equal(t, 2, mcpWorkError(t, topic, "timer_cancel", "conflict", cancelTimerInput("stale-cancel", scheduled)).CurrentRevision)
@@ -202,6 +207,13 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	restarted := readRecord[timerRecord](t, p, "timers/"+fired.ID)
 	require.Equal(t, fired.Timer, restarted.Timer)
 	require.Equal(t, d, *restarted.Followup)
+	token := roleToken(t, f, binding)
+	// Timer queries project the followup Message and Thread onto the stored Timer.
+	expectedReplay := fired.Timer
+	expectedReplay.TriggerMessageID, expectedReplay.ThreadKey = "", ""
+	require.Equal(t, expectedReplay, roleWork[core.Timer](t, p, token, "timer_set", r))
+	next := roleWork[core.Timer](t, p, token, "timer_set", timerInput("next-followup", timerFuture))
+	require.Equal(t, "mass-t1-tm2", next.ID)
 	peer.quiet(t, 600*time.Millisecond)
 	assertTimerFollowup(t, p, restarted)
 	t.Log("Controlled time fired exactly one normal ingress Message. Real massd StartOrSteer accepted its routed_message.")
@@ -334,6 +346,8 @@ func TestTimerTopicLifecycleFence(t *testing.T) {
 				reopened := roleWork[core.Topic](t, p, token, "topic_reopen", lifecycle("reopen-topic", terminal.Revision))
 				require.Equal(t, "active", reopened.Status)
 				require.Greater(t, reopened.LifecycleGeneration, fired.TopicGeneration)
+				next := roleWork[core.Timer](t, p, token, "timer_set", timerInput("reopened-timer", timerFuture))
+				require.Equal(t, "mass-t1-tm3", next.ID)
 			}
 			write(t, filepath.Join(gate, "release"), "release")
 			delivery := waitTimerDelivery(t, p, fired.Followup.ID, "superseded")

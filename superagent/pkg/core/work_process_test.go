@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -113,6 +114,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	router := startRoleMCP(t, f, routerBinding)
 	mainBinding, source := nativeWorkTopic(t, f, p, peer, router, "work-main")
 	otherBinding, other := nativeWorkTopic(t, f, p, peer, router, "work-other")
+	require.Equal(t, "mass-t1", mainBinding.OwnerID)
+	require.Equal(t, "mass-t2", otherBinding.OwnerID)
 	topic := startRoleMCP(t, f, mainBinding)
 	foreign := startRoleMCP(t, f, otherBinding)
 	token := roleToken(t, f, mainBinding)
@@ -122,6 +125,10 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	create.Materials = []core.Material{{Label: "Original request", MessageID: source.MessageID}, {URI: "notes/check.txt"}}
 	pending := mcpWork[core.WorkReceipt](t, topic, "issue_create", create)
 	require.Equal(t, pending, mcpWork[core.WorkReceipt](t, topic, "issue_create", create))
+	require.Equal(t, "mass-t1-i1", pending.Issue.ID)
+	changedCreate := create
+	changedCreate.Title = "Changed title"
+	mcpWorkError(t, topic, "issue_create", "conflict", changedCreate)
 	require.Equal(t, "pending", pending.Issue.Status)
 	require.Equal(t, mainBinding.OwnerID, pending.Issue.TopicID)
 	require.Equal(t, create.Goal, pending.Issue.Requirements)
@@ -141,6 +148,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	mcpWorkError(t, foreign, "issue_start", "not_found", core.StartIssueRequest{OperationID: "foreign", IssueID: pending.Issue.ID, ExpectedRevision: 1})
 	mcpWorkError(t, topic, "topic_complete", "failed_precondition", acceptance("too-early", 1, "notes/check.txt"))
 	require.Len(t, page(t, p, "issues").Items, 1)
+	foreignIssue := mcpWork[core.WorkReceipt](t, foreign, "issue_create", issueInput(f.dir, "create"))
+	require.Equal(t, "mass-t2-i1", foreignIssue.Issue.ID)
 	t.Log("default create remained pending without a Worker binding or native input and cross-Topic material/start was rejected")
 
 	type response struct {
@@ -180,6 +189,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	mcpWorkError(t, topic, "issue_start", "conflict", winning[0].request)
 	require.NotNil(t, started.Execution)
 	x := *started.Execution
+	require.Equal(t, "mass-t1-i1-e1", x.ID)
 	require.Equal(t, x.ID, started.Issue.CurrentExecutionID)
 	require.Len(t, page(t, p, "executions").Items, 1)
 	require.Len(t, workDeliveries(t, p, "worker_started"), 1)
@@ -228,12 +238,13 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	t.Log("Worker stdio and authenticated HTTP reject forged identity, foreign material and Topic management")
 
 	var ready core.Report
-	for _, kind := range []string{"progress", "blocked", "failed", "ready"} {
+	for i, kind := range []string{"progress", "blocked", "failed", "ready"} {
 		r := core.ReportRequest{
 			OperationID: "report-" + kind, Kind: kind, Summary: "Worker " + kind,
 			Details: "Check output recorded in workspace.", Evidence: []string{"notes/check.txt"}, Questions: []string{"Inspect exit code?"}, Revision: started.Issue.RequirementsRevision,
 		}
 		report := mcpWork[core.Report](t, worker, "report_submit", r)
+		require.Equal(t, "mass-t1-i1-r"+strconv.Itoa(i+1), report.ID)
 		require.Equal(t, report, mcpWork[core.Report](t, worker, "report_submit", r))
 		require.Equal(t, x.ID, report.ExecutionID)
 		require.Equal(t, x.Generation, report.Generation)
@@ -256,6 +267,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+mainBinding.OwnerID).Status)
 	review := mcpWork[core.Report](t, topic, "work_query", core.QueryRequest{Collection: "reports", ID: ready.ID})
 	require.Equal(t, ready, review)
+	require.Equal(t, ready, readRecord[core.Report](t, p, "reports/"+ready.ID))
 	mcpWorkError(t, foreign, "work_query", "not_found", core.QueryRequest{Collection: "reports", ID: ready.ID})
 	firstPage := mcpWork[core.Page](t, topic, "work_query", core.QueryRequest{Collection: "reports", IssueID: started.Issue.ID, Limit: 1})
 	require.NotEmpty(t, firstPage.NextCursor)
@@ -298,6 +310,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	historicalWorker := startRoleMCP(t, f, workerBinding)
 	late := core.ReportRequest{OperationID: "late", Kind: "progress", Summary: "Late report from retired Worker", GoalRevision: x.Revision}
 	report := mcpWork[core.Report](t, historicalWorker, "report_submit", late)
+	require.Equal(t, "mass-t1-i1-r5", report.ID)
 	require.True(t, report.Historical)
 	require.Equal(t, x.ID, report.ExecutionID)
 	require.Equal(t, report, mcpWork[core.Report](t, worker, "report_submit", late))
@@ -312,6 +325,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	auto.Start = true
 	second := mcpWork[core.WorkReceipt](t, topic, "issue_create", auto)
 	require.Equal(t, second, mcpWork[core.WorkReceipt](t, topic, "issue_create", auto))
+	require.Equal(t, "mass-t1-i2", second.Issue.ID)
+	require.Equal(t, "mass-t1-i2-e1", second.Execution.ID)
 	secondBinding := waitBinding(t, p, "worker", second.Execution.ID, "ready")
 	final := peer.next(t, "turn/start")
 	require.Equal(t, secondBinding.SessionID, final.session)
@@ -409,6 +424,7 @@ func TestIssueReportCommitCrash(t *testing.T) {
 			require.Len(t, workDeliveries(t, p, "report_submitted"), expected)
 			mcp := startRoleMCP(t, f, binding)
 			saved := mcpWork[core.Report](t, mcp, "report_submit", r)
+			require.Equal(t, "mass-t1-i1-r1", saved.ID)
 			require.Equal(t, saved, mcpWork[core.Report](t, mcp, "report_submit", r))
 			require.Len(t, page(t, p, "reports").Items, 1)
 			require.Equal(t, []core.Report{saved}, readRecord[core.Issue](t, p, "issues/"+work.Issue.ID).Reports)

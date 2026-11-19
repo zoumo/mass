@@ -35,7 +35,7 @@ test('Topic Timer shows the fired revision and followup delivery evidence', asyn
  await expect(page).toHaveURL(/view=routing-deliveries&id=dlv_/)
  await page.goto(taskURL)
  await dialog.getByRole('button', { name: '查看触发消息', exact: true }).click()
- await expect(page).toHaveURL(/view=messages&id=msg_/)
+ await expect(page).toHaveURL(/view=messages&id=mass-m[1-9]\d*(?:&|$)/)
  await expect(dialog.getByText('Review the archived build.', { exact: true })).toBeVisible()
  await dialog.getByRole('button', { name: /^查看线程 core%3Atimer:/ }).click()
  await expect(dialog.getByRole('button', { name: '查看线程订阅' })).toBeVisible()
@@ -119,7 +119,7 @@ test('Blocked Issue shows separate Worker observation, dependency and requiremen
  await expect(dialog.getByTestId('routing-record')).toContainText('worker_update')
  await page.goto('/observer/?view=issues&mode=records')
  await page.getByRole('button', { name: 'Review blocked build', exact: true }).click()
- await dialog.getByRole('button', { name: /^查看依赖的 Issue issue_/ }).click()
+ await dialog.getByRole('button', { name: /^查看依赖的 Issue mass-t[1-9]\d*-i[1-9]\d*$/ }).click()
  await expect(dialog.getByText('Reviewed the sample build log', { exact: true })).toBeVisible()
 })
 

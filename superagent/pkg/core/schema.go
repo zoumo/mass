@@ -1,6 +1,6 @@
 package core
 
-// Schema 20 is initialized in a new directory. Earlier databases remain in
+// Schema 21 is initialized in a new directory. Earlier databases remain in
 // their original format and are never opened for writing by this version.
 const schema = `
 CREATE TABLE threads (
@@ -10,7 +10,8 @@ CREATE TABLE threads (
  UNIQUE(source,native_id)
 );
 CREATE TABLE trigger_messages (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+ seq INTEGER PRIMARY KEY AUTOINCREMENT,
+ id TEXT GENERATED ALWAYS AS ('mass-m' || seq) STORED NOT NULL UNIQUE,
  source TEXT NOT NULL, account_id TEXT NOT NULL, native_id TEXT NOT NULL,
  thread_key TEXT NOT NULL REFERENCES threads(key), accepted_at TEXT NOT NULL,
  canonical BLOB NOT NULL, body BLOB NOT NULL, routing_state TEXT,
@@ -19,12 +20,22 @@ CREATE TABLE trigger_messages (
 CREATE INDEX trigger_messages_thread ON trigger_messages(thread_key,accepted_at,id);
 CREATE INDEX trigger_messages_echo_hold ON trigger_messages(json_extract(body,'$.echo.deadline'))
  WHERE json_extract(body,'$.echo.status')='held';
-CREATE TABLE topics (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, body BLOB NOT NULL);
+CREATE TABLE topics (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT,
+ id TEXT GENERATED ALWAYS AS ('mass-t' || seq) STORED NOT NULL UNIQUE,
+ created_at TEXT NOT NULL, body BLOB NOT NULL,
+ creation_key TEXT NOT NULL UNIQUE, creation_digest TEXT NOT NULL,
+ issue_number INTEGER NOT NULL DEFAULT 0, timer_number INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE session_bindings (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, role TEXT NOT NULL, owner_id TEXT NOT NULL, generation INTEGER NOT NULL, created_at TEXT NOT NULL, token TEXT NOT NULL UNIQUE, spec BLOB NOT NULL, state TEXT NOT NULL, next_attempt_at TEXT NOT NULL DEFAULT '', body BLOB NOT NULL, UNIQUE(role,owner_id,generation));
 CREATE UNIQUE INDEX sole_router ON session_bindings(role) WHERE role='router' AND state<>'revoked';
 CREATE TABLE issues (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, topic_id TEXT NOT NULL REFERENCES topics(id),
- created_at TEXT NOT NULL, body BLOB NOT NULL
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL REFERENCES topics(id),
+ number INTEGER NOT NULL CHECK(number>0),
+ id TEXT GENERATED ALWAYS AS (topic_id || '-i' || number) STORED NOT NULL UNIQUE,
+ created_at TEXT NOT NULL, body BLOB NOT NULL,
+ creation_key TEXT NOT NULL UNIQUE, creation_digest TEXT NOT NULL,
+ report_creations TEXT NOT NULL DEFAULT '{}', UNIQUE(topic_id,number)
 );
 CREATE INDEX issues_topic ON issues(topic_id,created_at,id);
 CREATE TABLE executions (
@@ -35,8 +46,12 @@ CREATE TABLE executions (
 
 CREATE INDEX session_bindings_stop ON session_bindings(id) WHERE json_extract(body,'$.stop.status')='requested';
 CREATE TABLE scheduled_tasks (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, topic_id TEXT NOT NULL REFERENCES topics(id),
- created_at TEXT NOT NULL, body BLOB NOT NULL, trigger_message_id TEXT REFERENCES trigger_messages(id)
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL REFERENCES topics(id),
+ number INTEGER NOT NULL CHECK(number>0),
+ id TEXT GENERATED ALWAYS AS (topic_id || '-tm' || number) STORED NOT NULL UNIQUE,
+ created_at TEXT NOT NULL, body BLOB NOT NULL, trigger_message_id TEXT REFERENCES trigger_messages(id),
+ creation_key TEXT NOT NULL UNIQUE, creation_digest TEXT NOT NULL,
+ UNIQUE(topic_id,number)
 );
 CREATE INDEX scheduled_tasks_topic ON scheduled_tasks(topic_id,created_at,id);
 CREATE INDEX scheduled_tasks_due ON scheduled_tasks(` + timerDueAt + `,seq) WHERE ` + timerStatus + `='scheduled';

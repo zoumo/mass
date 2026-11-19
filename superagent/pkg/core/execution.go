@@ -285,9 +285,9 @@ func makeSpec(c Config, b Binding) resource.SessionSpec {
 	return resource.SessionSpec{RuntimeRef: b.RuntimeRef, SessionSpec: runtime.SessionSpec{Config: b.sessionConfig(), Cwd: b.Workspace, SystemPrompt: prompt, MCPServers: &servers}}
 }
 
-func (s *Store) newTopic(ctx context.Context, tx *sql.Tx, id string, n NewTopic, at string) (Topic, error) {
+func (s *Store) newTopic(ctx context.Context, tx *sql.Tx, key, digest string, n NewTopic, at string) (string, error) {
 	if err := checkWorkspace(n.Workspace); err != nil {
-		return Topic{}, err
+		return "", err
 	}
 	goal := strings.TrimSpace(n.Goal)
 	if goal == "" {
@@ -296,13 +296,17 @@ func (s *Store) newTopic(ctx context.Context, tx *sql.Tx, id string, n NewTopic,
 	if goal == "" {
 		goal = n.Title
 	}
-	t := Topic{Goal: goal, ID: id, Title: n.Title, Description: n.Description, Workspace: n.Workspace, Status: "active", Revision: 1, CreatedAt: at, UpdatedAt: at}
+	t := Topic{Goal: goal, Title: n.Title, Description: n.Description, Workspace: n.Workspace, Status: "active", Revision: 1, CreatedAt: at, UpdatedAt: at}
+	if err := tx.QueryRowContext(ctx, `INSERT INTO topics(created_at,body,creation_key,creation_digest)
+ VALUES(?,'{}',?,?) RETURNING id`, at, key, digest).Scan(&t.ID); err != nil {
+		return "", storageError()
+	}
 	b, err := createBinding(ctx, tx, s.config, "topic", t.ID, t.Workspace, at, 1)
 	if err != nil {
-		return t, err
+		return "", err
 	}
 	t.BindingID = b.ID
-	return t, putJSON(ctx, tx, "INSERT INTO topics(id,created_at,body) VALUES(?,?,?)", t, t.ID, at)
+	return t.ID, putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", t, t.ID)
 }
 
 func checkBinding(ctx context.Context, tx *sql.Tx, b Binding) error {

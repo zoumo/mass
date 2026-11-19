@@ -217,26 +217,23 @@ func (s *Store) routeTargets(ctx context.Context, tx *sql.Tx, b Binding, result 
 		if target.Create != nil {
 			scope := b.ID + "/" + strconv.Itoa(i)
 			key := creationKey("topic", scope, result.OperationID)
-			id := creationID(key, decision)
-			existing, err := existingCreation(ctx, tx, "topics", key, id)
+			digest := creationDigest(decision)
+			id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM topics WHERE creation_key=?", key)
 			if err != nil {
 				return err
 			}
-			var topic Topic
-			if existing {
-				err = readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, id)
-			} else {
+			if id == "" {
 				for _, messageID := range target.MessageIDs {
 					if messages[messageID].state != "pending" {
 						return problem("conflict", "Message routing already decided")
 					}
 				}
-				topic, err = s.newTopic(ctx, tx, id, *target.Create, result.CreatedAt)
+				id, err = s.newTopic(ctx, tx, key, digest, *target.Create, result.CreatedAt)
+				if err != nil {
+					return err
+				}
 			}
-			if err != nil {
-				return err
-			}
-			target.TopicID = topic.ID
+			target.TopicID = id
 		}
 		target.DeliveryIDs = make(map[string]string, len(target.MessageIDs))
 		for _, id := range target.MessageIDs {

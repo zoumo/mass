@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -55,7 +56,10 @@ func updateBlockers(r UpdateBlockersRequest) workMutation {
 			if err := validateBlocker(ctx, tx, b, issue.ID, input); err != nil {
 				return nil, err
 			}
-			issue.Blockers = append(issue.Blockers, Blocker{ID: newID("blocker"), BlockerInput: input})
+			// Resolved blockers retain their numbers and count toward the next one.
+			number := len(issue.Blockers) + len(issue.ResolvedBlockers) + 1
+			id := issue.ID + "-b" + strconv.Itoa(number)
+			issue.Blockers = append(issue.Blockers, Blocker{ID: id, BlockerInput: input})
 		}
 		if len(issue.Blockers) == 0 {
 			if r.UnblockedStatus != "pending" && r.UnblockedStatus != "active" {

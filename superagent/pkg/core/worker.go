@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -151,11 +152,15 @@ func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.R
 		if err != nil {
 			return nil, err
 		}
-		key := creationKey("report", x.ID, r.OperationID)
-		id := creationID(key, r)
-		if existing, err := existingCreation(ctx, tx, "reports", key, id); err != nil {
+		key := "$." + creationKey("report", x.ID, r.OperationID)
+		digest := creationDigest(r)
+		id, err := numberedCreation(ctx, tx, digest, `SELECT json_extract(creation,'$.id'),json_extract(creation,'$.digest')
+ FROM (SELECT json_extract(report_creations,?2) AS creation FROM issues WHERE id=?1)
+ WHERE creation IS NOT NULL`, issue.ID, key)
+		if err != nil {
 			return nil, err
-		} else if existing {
+		}
+		if id != "" {
 			var report Report
 			err := readJSON(ctx, tx, "SELECT body FROM reports WHERE id=?", &report, id)
 			return report, err
@@ -172,12 +177,14 @@ func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.R
 			return nil, storageError()
 		}
 		report := Report{
-			ID: id, TopicID: x.TopicID, IssueID: x.IssueID, ExecutionID: x.ID, BindingID: binding.ID,
+			ID: issue.ID + "-r" + strconv.Itoa(len(issue.Reports)+1), TopicID: x.TopicID, IssueID: x.IssueID, ExecutionID: x.ID, BindingID: binding.ID,
 			Generation: x.Generation, Revision: revision, Sequence: seq, Kind: r.Kind, Summary: r.Summary, Details: r.Details,
 			Evidence: r.Evidence, Questions: r.Questions, CreatedAt: now(), EventID: newID("delivery"), Historical: historical,
 		}
 		issue.Reports = append(issue.Reports, report)
-		if err := saveIssue(ctx, tx, issue); err != nil {
+		if err := putJSON(ctx, tx, `UPDATE issues SET body=?5,
+ report_creations=json_set(report_creations,?2,json_object('id',?3,'digest',?4))
+ WHERE id=?1`, issue, issue.ID, key, report.ID, digest); err != nil {
 			return nil, err
 		}
 		if !historical && x.ReminderEventID != "" {

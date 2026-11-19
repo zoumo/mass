@@ -45,6 +45,9 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testin
 	}
 	a := add(work.Issue, "wait-a", human("Confirm the region"), human("Confirm the date"))
 	b := add(second, "wait-b", human("Confirm the owner"))
+	require.Equal(t, "mass-t1-i1-b1", a.Blockers[0].ID)
+	require.Equal(t, "mass-t1-i1-b2", a.Blockers[1].ID)
+	require.Equal(t, "mass-t1-i2-b1", b.Blockers[0].ID)
 	ask := func(issue core.Issue, blocker core.Blocker, id string) core.OutboxItem {
 		ref := &core.BlockerRef{IssueID: issue.ID, BlockerID: blocker.ID}
 		req := core.ReplyRequest{OperationID: "ask-" + id, MessageID: source.MessageID, Text: blocker.Reason, BlockerRef: ref}
@@ -140,6 +143,8 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testin
 	require.Equal(t, work.Execution.ID, continued.Issue.CurrentExecutionID)
 	require.Equal(t, "active", continued.Issue.Status)
 	require.Empty(t, continued.Issue.Blockers)
+	require.Equal(t, region.BlockerRef.BlockerID, continued.Issue.ResolvedBlockers[0].ID)
+	require.Equal(t, date.BlockerRef.BlockerID, continued.Issue.ResolvedBlockers[1].ID)
 	require.NotEmpty(t, continued.NotificationEventID)
 	waitWorkGate(t, f.dir, stage)
 	p.stop(t, true)
@@ -154,7 +159,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testin
 	require.Equal(t, b, readRecord[core.Issue](t, p, "issues/"+b.ID))
 
 	reblocked := add(continued.Issue, "new-region-blocker", human("Confirm the region"))
-	require.NotEqual(t, region.BlockerRef.BlockerID, reblocked.Blockers[0].ID)
+	require.Equal(t, "mass-t1-i1-b3", reblocked.Blockers[0].ID)
 	late := submit(t, p, f, quote("late-region", conv, "native-region", "The region is still east"))
 	require.Equal(t, *region.BlockerRef, match(late).QuotedReply.BlockerRef)
 	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/role/issue_update_blockers", role,

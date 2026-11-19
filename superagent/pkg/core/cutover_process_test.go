@@ -39,7 +39,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 20, version)
+	require.Equal(t, 21, version)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
 		require.NoError(t, err)

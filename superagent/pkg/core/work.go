@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -266,10 +267,10 @@ func validateMaterials(ctx context.Context, tx *sql.Tx, topicID string, material
 func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
 		key := creationKey("issue", b.ID, r.OperationID)
-		id := creationID(key, r)
-		if existing, err := existingCreation(ctx, tx, "issues", key, id); err != nil {
+		digest := creationDigest(r)
+		if id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM issues WHERE creation_key=?", key); err != nil {
 			return nil, err
-		} else if existing {
+		} else if id != "" {
 			issue, err := topicIssue(ctx, tx, b, id)
 			if err != nil || !r.Start {
 				return WorkReceipt{Issue: issue}, err
@@ -298,19 +299,25 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		}
 		at := now()
 		issue := Issue{
-			ID: id, TopicID: t.ID, Title: r.Title, Requirements: goal, Workspace: filepath.Clean(r.Workspace),
+			TopicID: t.ID, Title: r.Title, Requirements: goal, Workspace: filepath.Clean(r.Workspace),
 			ExecutionProfile: profile, Materials: r.Materials, Status: "pending", Revision: 1, RequirementsRevision: 1, CreatedAt: at, UpdatedAt: at,
 		}
 		if err := checkWorkspace(issue.Workspace); err != nil {
 			return nil, err
 		}
-		if err := putJSON(ctx, tx, "INSERT INTO issues(id,topic_id,created_at,body) VALUES(?,?,?,?)", issue, issue.ID, t.ID, at); err != nil {
-			return nil, err
+		var number int64
+		if err := tx.QueryRowContext(ctx, `UPDATE topics SET issue_number=issue_number+1
+ WHERE id=? RETURNING issue_number`, t.ID).Scan(&number); err != nil {
+			return nil, storageError()
+		}
+		if err := tx.QueryRowContext(ctx, `INSERT INTO issues(topic_id,number,created_at,body,creation_key,creation_digest)
+ VALUES(?,?,?,'{}',?,?) RETURNING id`, t.ID, number, at, key, digest).Scan(&issue.ID); err != nil {
+			return nil, storageError()
 		}
 		if r.Start {
 			return s.scheduleIssue(ctx, tx, issue, deliveryIdentity{Kind: "topic", TopicID: b.OwnerID})
 		}
-		return WorkReceipt{Issue: issue}, nil
+		return WorkReceipt{Issue: issue}, saveIssue(ctx, tx, issue)
 	}
 }
 
@@ -361,8 +368,9 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, send
 		return WorkReceipt{}, err
 	}
 	at := now()
+	generation := previous.Generation + 1
 	x := Execution{
-		ID: newID("exec"), IssueID: issue.ID, TopicID: issue.TopicID, Generation: previous.Generation + 1,
+		ID: issue.ID + "-e" + strconv.Itoa(generation), IssueID: issue.ID, TopicID: issue.TopicID, Generation: generation,
 		CreatedAt: at, StartEventID: newID("delivery"), Authority: "current",
 	}
 	b, err := createWorkerBinding(ctx, tx, s.config, x, issue, previous)

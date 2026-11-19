@@ -284,7 +284,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	r.Message.Meta = map[string]any{"a": 1, "b": "reference"}
 	r.Message.QuotedMessage = json.RawMessage(`{"text":"quote"}`)
 	accepted := submit(t, p, f, r)
-	if accepted.Status != "accepted" || accepted.Duplicate || accepted.MessageID == "" || accepted.EventID == "" {
+	if accepted.Status != "accepted" || accepted.Duplicate || accepted.MessageID != "mass-m1" || accepted.EventID == "" {
 		t.Fatalf("bad receipt %+v", accepted)
 	}
 	same := submit(t, p, f, r)
@@ -338,7 +338,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatal(err)
 	}
-	if m.At != "" || m.Human != nil || m.URL != "" || m.ReceivedAt != accepted.AcceptedAt || m.Text != r.Message.Text {
+	if m.At != "" || m.Human != nil || m.URL != "" || m.ReceivedAt != accepted.AcceptedAt || m.Text != r.Message.Text || m.ID != accepted.MessageID || m.SourceMessageID != r.Message.SourceMessageID {
 		t.Fatalf("unknown values fabricated: %+v", m)
 	}
 	ref, err := core.ParseThreadKey(accepted.ThreadKey)
@@ -354,8 +354,8 @@ func TestPublicIngressDurability(t *testing.T) {
 	}
 	p.stop(t, true)
 	p = f.start()
-	if got := submit(t, p, f, input("message-2")); got.MessageID == accepted.MessageID {
-		t.Fatal("identity reused")
+	if got := submit(t, p, f, input("message-2")); got.MessageID != "mass-m2" {
+		t.Fatalf("numbering did not resume after restart: %+v", got)
 	}
 	if len(page(t, p, "messages").Items) != 2 || len(page(t, p, "routing-deliveries").Items) != 2 {
 		t.Fatal("restart lost commit")
@@ -747,7 +747,7 @@ func TestConfigDefaultAndExplicitListen(t *testing.T) {
 }
 
 func TestUnknownSchemaCompatibilityFixture(t *testing.T) {
-	for _, version := range []int{19, 999} {
+	for _, version := range []int{19, 20, 999} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			assertUnsupportedSchemaPreserved(t, version)
 		})

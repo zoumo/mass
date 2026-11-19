@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	schemaVersion = 20
+	schemaVersion = 21
 	applicationID = 1398096210
 )
 
@@ -244,7 +244,7 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r Submi
 	}
 
 	at, key := now(), ThreadKey(r.Message.ThreadRef)
-	m := Message{MessageInput: r.Message, ID: newID("msg"), ThreadKey: key, ReceivedAt: at, Acceptance: "accepted"}
+	m := Message{MessageInput: r.Message, ThreadKey: key, ReceivedAt: at, Acceptance: "accepted"}
 	m.Echo, err = classifyEcho(ctx, tx, m, r.SelfSent && source.InstanceID != "")
 	if err != nil {
 		return result, err
@@ -252,18 +252,20 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r Submi
 	if m.Echo == nil {
 		m.EventID = newID("dlv")
 	}
-	result = messageReceipt(m, false)
 	if err := upsertThread(ctx, tx, key, r.Message.ThreadRef, at, at); err != nil {
 		return Receipt{}, err
 	}
-	if err := putJSON(ctx, tx, `INSERT INTO trigger_messages(id,source,account_id,native_id,thread_key,accepted_at,canonical,body)
- VALUES(?,?,?,?,?,?,?,?)`, m, m.ID, source.Source, source.AccountID, r.Message.SourceMessageID, key, at, canonical); err != nil {
+	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_key,accepted_at,canonical,body)
+ VALUES(?,?,?,?,?,?,'{}') RETURNING id`, source.Source, source.AccountID, r.Message.SourceMessageID, key, at, canonical).Scan(&m.ID); err != nil {
+		return Receipt{}, storageError()
+	}
+	if err := putJSON(ctx, tx, "UPDATE trigger_messages SET body=?2 WHERE id=?1", m, m.ID); err != nil {
 		return Receipt{}, err
 	}
 	if m.Echo == nil {
 		err = acceptRoute(ctx, tx, m, m.EventID, at)
 	}
-	return result, err
+	return messageReceipt(m, false), err
 }
 
 func messageReceipt(m Message, duplicate bool) Receipt {

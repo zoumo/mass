@@ -28,7 +28,7 @@ test('Message and Thread link to read-only reply history and channel evidence', 
  const dialog = page.getByRole('dialog')
  await page.getByRole('button', { name: 'Original input outbox-observer-source', exact: true }).click()
  await dialog.getByRole('button', { name: '查看消息回执' }).click()
- await expect(page).toHaveURL(/view=outbox&messageId=msg_/)
+ await expect(page).toHaveURL(/view=outbox&messageId=mass-m[1-9]\d*(?:&|$)/)
  const table = page.getByRole('table')
  for (const status of ['待发送', '失败', '已发送']) {
   await expect(table.getByRole('cell', { name: status, exact: true }).first()).toBeVisible()

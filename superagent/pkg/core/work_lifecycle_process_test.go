@@ -410,6 +410,12 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.Equal(t, "offline", string(released.Status.State))
 	reopened := mcpWork[core.WorkReceipt](t, topic, "issue_reopen", issueLifecycle("claude-reopen", canceled.Issue))
 	next := mcpWork[core.WorkReceipt](t, topic, "issue_start", startRequest("claude-start-new-generation", reopened.Issue))
+	require.Equal(t, "mass-t1-i1-e1", work.Execution.ID)
+	require.Equal(t, "mass-t1-i1-e2", next.Execution.ID)
+	replayed := mcpWork[core.WorkReceipt](t, topic, "issue_create", create)
+	require.Equal(t, work.Issue.ID, replayed.Issue.ID)
+	require.Equal(t, next.Execution.ID, replayed.Issue.CurrentExecutionID)
+	require.Equal(t, work.Execution.ID, replayed.Execution.ID)
 	fresh := waitBinding(t, p, "worker", next.Execution.ID, "ready")
 	require.Equal(t, old.SessionID, fresh.SessionID)
 	require.Equal(t, old.SessionUID, fresh.SessionUID)
@@ -419,9 +425,21 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	current := startRoleMCP(t, f, fresh)
 	require.Equal(t, next.Execution.ID, mcpWork[core.WorkReceipt](t, current, "issue_get_current", struct{}{}).Execution.ID)
 	mcpWorkError(t, oldProcess, "issue_get_current", "stale_binding", struct{}{})
-	require.Equal(t, work.Execution.ID, mcpWork[core.Report](t, oldProcess, "report_submit", core.ReportRequest{
-		OperationID: "claude-old-report", Kind: "progress", Summary: "Old execution facts", GoalRevision: work.Execution.Revision,
-	}).ExecutionID)
+	reportRequest := core.ReportRequest{
+		OperationID: "claude-report", Kind: "progress", Summary: "Execution facts", GoalRevision: work.Execution.Revision,
+	}
+	historicalReport := mcpWork[core.Report](t, oldProcess, "report_submit", reportRequest)
+	require.Equal(t, "mass-t1-i1-r1", historicalReport.ID)
+	require.Equal(t, work.Execution.ID, historicalReport.ExecutionID)
+	require.True(t, historicalReport.Historical)
+	reportRequest.GoalRevision = next.Execution.Revision
+	currentReport := mcpWork[core.Report](t, current, "report_submit", reportRequest)
+	require.Equal(t, "mass-t1-i1-r2", currentReport.ID)
+	require.Equal(t, next.Execution.ID, currentReport.ExecutionID)
+	require.False(t, currentReport.Historical)
+	require.Equal(t, currentReport, mcpWork[core.Report](t, current, "report_submit", reportRequest))
+	reportRequest.GoalRevision = work.Execution.Revision
+	require.Equal(t, historicalReport, mcpWork[core.Report](t, oldProcess, "report_submit", reportRequest))
 	waitWorkDelivery(t, p, next.Execution.StartEventID, "sent")
 	recanceled := mcpWork[core.WorkReceipt](t, topic, "issue_cancel", issueLifecycle("cancel-resumed", next.Issue))
 	waitObservedStop(t, p, "executions", next.Execution.ID)
