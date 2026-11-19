@@ -65,14 +65,15 @@ type nativeDeliveryAnswer struct {
 }
 
 type nativeDeliveryPeer struct {
-	listener   net.Listener
-	calls      chan nativeDeliveryCall
-	trace      chan string
-	active     sync.Map
-	done       chan struct{}
-	released   chan struct{}
-	threadIDs  atomic.Int64
-	workspaces sync.Map
+	listener       net.Listener
+	calls          chan nativeDeliveryCall
+	trace          chan string
+	active         sync.Map
+	done           chan struct{}
+	released       chan struct{}
+	threadIDs      atomic.Int64
+	workspaces     sync.Map
+	initialConfigs sync.Map
 }
 
 func newNativeDeliveryPeer(t *testing.T) *nativeDeliveryPeer {
@@ -125,7 +126,11 @@ type nativeDeliveryRequest struct {
 		ThreadID string `json:"threadId"`
 		TurnID   string `json:"turnId"`
 		Cwd      string `json:"cwd"`
-		Input    []struct {
+		Model    string `json:"model"`
+		Config   struct {
+			Effort string `json:"model_reasoning_effort"`
+		} `json:"config"`
+		Input []struct {
 			Text string `json:"text"`
 		} `json:"input"`
 		Items []struct {
@@ -181,6 +186,7 @@ func (p *nativeDeliveryPeer) serve(conn net.Conn) {
 			if req.Method == "thread/start" {
 				session = "native-delivery-" + strconv.FormatInt(p.threadIDs.Add(1), 10)
 				p.workspaces.Store(session, req.Params.Cwd)
+				p.initialConfigs.Store(session, runtime.InitialSessionConfig{Model: req.Params.Model, Effort: req.Params.Config.Effort})
 			}
 			respond(map[string]any{
 				"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": workspace(),

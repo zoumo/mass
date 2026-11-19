@@ -747,6 +747,15 @@ func TestConfigDefaultAndExplicitListen(t *testing.T) {
 }
 
 func TestUnknownSchemaCompatibilityFixture(t *testing.T) {
+	for _, version := range []int{19, 999} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			assertUnsupportedSchemaPreserved(t, version)
+		})
+	}
+}
+
+func assertUnsupportedSchemaPreserved(t *testing.T, version int) {
+	t.Helper()
 	f := fixtureAt(t)
 	if err := os.MkdirAll(f.data, 0o700); err != nil {
 		t.Fatal(err)
@@ -757,7 +766,7 @@ func TestUnknownSchemaCompatibilityFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.ExecContext(context.Background(), "PRAGMA application_id=1398096210; PRAGMA user_version=999;"); err != nil {
+	if _, err = db.ExecContext(context.Background(), fmt.Sprintf("PRAGMA application_id=1398096210; PRAGMA user_version=%d;", version)); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {

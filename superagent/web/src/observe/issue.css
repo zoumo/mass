@@ -27,3 +27,6 @@
 .issue-sources details[open] ul, .issue-sources details[open] p { margin-top: 10px; }
 .issue-links { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; }
 .object-workspace .row-title { color: var(--text); }
+.issue-profile dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 18px; padding: 14px 20px; }
+.issue-profile dt { color: var(--muted); }
+.issue-profile dd { overflow-wrap: anywhere; }

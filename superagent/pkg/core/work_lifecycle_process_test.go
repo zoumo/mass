@@ -421,7 +421,29 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 		OperationID: "claude-old-report", Kind: "progress", Summary: "Old execution facts", GoalRevision: work.Execution.Revision,
 	}).ExecutionID)
 	waitWorkDelivery(t, p, next.Execution.StartEventID, "sent")
-	t.Logf("Claude native PID %d and its initialized MCP PID %d released before reporting offline; the same Session resumed with a fresh role token", nativePID, nativeMCP)
+	recanceled := mcpWork[core.WorkReceipt](t, topic, "issue_cancel", issueLifecycle("cancel-resumed", next.Issue))
+	waitObservedStop(t, p, "executions", next.Execution.ID)
+	settled := recoverRoleBinding(t, p, operatorFile, recoveryFor("settle-resumed", "settle", fresh.ID))
+	require.True(t, settled.Close.Reusable)
+	reopened = mcpWork[core.WorkReceipt](t, topic, "issue_reopen", issueLifecycle("open-for-review", recanceled.Issue))
+	reselect := startRequest("start-review", reopened.Issue)
+	reselect.RuntimeRef, reselect.Model = new("agent"), new("review-model")
+	review := mcpWork[core.WorkReceipt](t, topic, "issue_start", reselect)
+	reviewBinding := waitBinding(t, p, "worker", review.Execution.ID, "ready")
+	require.NotEqual(t, fresh.SessionID, reviewBinding.SessionID)
+	require.NotEqual(t, fresh.SessionUID, reviewBinding.SessionUID)
+	require.Empty(t, reviewBinding.CapabilityFileID)
+	require.Equal(t, reviewModel, reviewBinding.ExecutionProfile)
+	require.Equal(t, reviewModel, review.Issue.ExecutionProfile)
+	var reviewSession resource.Session
+	require.NoError(t, c.GetSession(t.Context(), resource.SessionRef{SessionID: reviewBinding.SessionID}, &reviewSession))
+	require.Equal(t, &runtime.InitialSessionConfig{Model: reviewModel.Model}, reviewSession.Spec.Config)
+	historical := mcpWork[struct{ Preparation core.Binding }](t, topic, "work_query", core.QueryRequest{
+		Collection: "executions", ID: next.Execution.ID,
+	})
+	require.Equal(t, fresh.SessionID, historical.Preparation.SessionID)
+	require.Equal(t, workerModel, historical.Preparation.ExecutionProfile)
+	t.Logf("Claude native PID %d and its MCP PID %d released before offline readback. Matching parameters resumed the same Session with a fresh token, and a new profile created a separate Session.", nativePID, nativeMCP)
 }
 
 func TestLifecycleDependencyCrashConsistency(t *testing.T) {

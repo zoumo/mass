@@ -1,3 +1,4 @@
+import ExecutionProfileFields from '../ExecutionProfileFields'
 import { routingDeliveryLabel, stateLabel } from '../../workbench'
 import SessionEvidence from './SessionEvidence'
 import ChannelEvidence from './ChannelEvidence'
@@ -160,6 +161,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
             <dd>{detail.revision}</dd>
             <dt>目标版本</dt>
             <dd>{detail.goalRevision}</dd>
+            {detail.executionProfile && <ExecutionProfileFields profile={detail.executionProfile}/>}
             <dt>执行器 Session</dt>
             <dd>
               {detail.currentExecutionId ? stateLabel(detail.workerSession?.state) : '当前没有执行'}

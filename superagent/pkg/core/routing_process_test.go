@@ -226,11 +226,30 @@ func proxyRPC(t *testing.T, upstream string, intercept func(string, func()) bool
 	return "ws" + strings.TrimPrefix(proxy.URL, "http") + "/rpc"
 }
 
+const fixtureExecutionProfiles = `  roles:
+    router:
+      runtimeRef: agent
+      model: router-model
+      effort: low
+    topic:
+      runtimeRef: agent
+      model: topic-model
+  workerTemplates:
+    - runtimeRef: agent
+      model: worker-model
+      effort: medium
+      description: Implement changes
+    - runtimeRef: agent
+      model: review-model
+      description: Review results
+`
+
 func (f *fixture) execution(boundary *routeBoundary) {
 	f.t.Helper()
 	b, err := os.ReadFile(f.config)
 	require.NoError(f.t, err)
-	b = append(b, fmt.Appendf(nil, "execution:\n  massdEndpoint: %s\n  runtimeRef: agent\n  routerWorkspace: %s\n  namespace: superagent\n", boundary.url, f.dir)...)
+	b = append(b, fmt.Appendf(nil, "execution:\n  massdEndpoint: %s\n  routerWorkspace: %s\n  namespace: superagent\n", boundary.url, f.dir)...)
+	b = append(b, fixtureExecutionProfiles...)
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
 }
 

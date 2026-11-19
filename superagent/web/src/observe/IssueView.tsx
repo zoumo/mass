@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { AlertTriangle, ChevronRight, CircleDot, Clock3 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { formatTime, routingDeliveryLabel, stateLabel, type WorkbenchRow } from '../workbench'
+import ExecutionProfileFields from './ExecutionProfileFields'
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
 import { usePages, useRecord, viewHref, type ViewProps } from './observer'
@@ -122,6 +123,10 @@ function IssueDetail({ id, scope }: { id: string; scope: string }) {
         <ul>{issue.blockers.map(b => <li key={b.id}><strong>{b.kind === 'human' ? '等待人工处理' : '依赖 Issue'}</strong> · {b.reason}
           {b.dependencyIssueId && <a href={viewHref('issue', b.dependencyIssueId)}>查看依赖 Issue</a>}</li>)}</ul></div>}
     </section>
+    {issue.executionProfile && <section className="panel issue-profile" aria-labelledby="issue-profile">
+      <div className="panel-heading"><h2 id="issue-profile">执行配置</h2></div>
+      <dl><ExecutionProfileFields profile={issue.executionProfile}/></dl>
+    </section>}
     <IssueFlow issue={issue} topicTitle={topic.data?.title} executions={executions.data || []}/>
     <section className="panel"><div className="panel-heading"><h2>进展记录</h2><span>目标版本 {issue.goalRevision ?? '未记录'}</span></div>
       {executions.error && <p role="alert" className="read-error">执行记录读取失败 · {executions.error}</p>}

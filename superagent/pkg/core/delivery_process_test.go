@@ -23,7 +23,7 @@ func deliveryFixture(t *testing.T, endpoint string) (*fixture, string) {
 	write(t, token, strings.Repeat("O", 48))
 	cwd, err := filepath.EvalSymlinks(f.dir)
 	require.NoError(t, err)
-	write(t, f.config, fixedListen(t, string(saved))+"execution:\n  massdEndpoint: "+endpoint+"\n  runtimeRef: agent\n  routerWorkspace: "+cwd+"\n  operatorTokenFile: "+token+"\n")
+	write(t, f.config, fixedListen(t, string(saved))+"execution:\n  massdEndpoint: "+endpoint+"\n  routerWorkspace: "+cwd+"\n  operatorTokenFile: "+token+"\n"+fixtureExecutionProfiles)
 	return f, token
 }
 

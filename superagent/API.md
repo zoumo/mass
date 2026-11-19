@@ -8,7 +8,7 @@ This document describes the current Core implementation.
 `dataDir`, opens `core.sqlite` and starts HTTP. The default directory is
 `./superagent-core-data` relative to the YAML file. Startup prints one JSON
 object with `endpoint`, `observerEndpoint`, and `status: ready`.
-Schema 19 uses SQLite WAL, FULL synchronous durability and foreign keys.
+Schema 20 uses SQLite WAL, FULL synchronous durability and foreign keys.
 
 The database has nine business tables. `threads` and `trigger_messages`
 record ingress and Thread subscriptions. `topics`, `issues`, `executions`,
@@ -155,7 +155,8 @@ omitted, or its persisted `pending/ready/blocked` preparation state. Messages
 include current `routing: {round,state}`. Observer/Router projections also include
 source reception/return relations. Topic-role Message queries omit other Topics'
 relations. Thread details expose key, ref and timestamps. Bindings expose fixed
-role, owner, generation, workspace, namespace/name, Runtime, actual Session IDs,
+role, owner, generation, workspace, namespace/name, `runtimeRef`, `model`,
+optional `effort`, actual Session IDs,
 preparation state/error and next attempt time, never token or MCP capability files.
 Internal delivery details expose sender, recipient, content references, status
 and the Session acceptance timestamp.
@@ -219,28 +220,53 @@ headers without opening a massd connection.
 
 ## Execution configuration and fixed Session preparation
 
-Execution is optional for intake-only operation. To enable it, configure an
-existing massd Runtime and an existing absolute Router workspace:
+Execution is optional for intake-only operation. To enable it, configure the
+Router workspace, fixed role profiles and at least one Worker template.
 
 ```yaml
 execution:
   massdEndpoint: ws://127.0.0.1:24368/rpc
-  runtimeRef: agent
   routerWorkspace: /absolute/workspace
   namespace: superagent
+  roles:
+    router:
+      runtimeRef: codex-fast
+      model: gpt-6.2-sol
+      effort: low
+    topic:
+      runtimeRef: codex-standard
+      model: gpt-6.2-sol
+  workerTemplates:
+    - runtimeRef: codex-deepseek
+      model: deepseek-chat
+      description: Implement and verify code.
+      effort: medium
+    - runtimeRef: codex-standard
+      model: gpt-6.2-astra
+      description: Evaluate architecture and diagnose complex problems.
   # tokenFile: /private/massd.token  # omit only for explicit local massd access
   # operatorTokenFile: /private/operator.token  # enables local input recovery
   # mcpCommand: /absolute/bin/superagent  # defaults to this executable
 ```
 
+Both role profiles require a legal Runtime name and a nonblank model.
+A Worker template also requires a nonblank description. Each
+`(runtimeRef, model)` pair must be unique in the list. Several templates
+may use the same Runtime with different models. Effort is optional, and model
+and effort are passed literally to massd. A configured pair permits a
+Topic to select it. Core checks Runtime availability during Session preparation.
+
 Namespace is a DNS label of at most 24 bytes. The Router is unique per Core
 store, in `<namespace>-router/router-g1`. Each Topic has a stable namespace derived from its ID and Session `topic-g1`.
 A Worker uses its Topic namespace and a fixed
 `worker-<executionId with underscores changed to hyphens>-g<generation>` name.
-Runtime, workspace, fixed prompt, role, owner, generation, MCP configuration and
-preparation operation are persisted before any Session creation. Startup YAML
-supplies the HTTP listener and massd endpoint. On restart, compatible execution
-configuration preserves binding identities. Enabling execution on an intake-only
+Each binding stores the selected Runtime, model and any effort, along with the
+workspace and other Session preparation parameters. Core sends `runtimeRef`
+and `config: {model, effort?}` in the MASS Session spec. The template list
+and descriptions live in the startup YAML. On restart, compatible execution
+configuration preserves binding identities. A changed Router profile fails
+startup with `failed_precondition`. Existing Topic generation specs stay
+fixed. A newly created Topic binding uses the current Topic profile. Enabling execution on an intake-only
 directory processes its pending Router deliveries.
 
 Use a fixed listener port with execution enabled and keep that endpoint stable
@@ -351,13 +377,10 @@ is described below. Routing keeps Issue ownership within its original Topic.
 ## Issue, Execution, Report and acceptance
 
 All changes require an `operationId` scoped to the authenticated binding and
-tool. An identical request returns the original committed receipt, including
-after the business state changes. Changing its parameters returns `conflict`.
-Use the read tools for live state. The HTTP role bridge and stdio MCP call the
-same transactions.
-
-Creation commands and Reports use stable business IDs. Revision-guarded
-updates return a conflict when the caller's expected revision is stale.
+tool. The HTTP role bridge and stdio MCP call the same transactions.
+Creation commands and Reports use stable business IDs. Reusing their
+operation ID with different parameters returns `conflict`.
+Revision-guarded updates return `conflict` when the expected revision is stale.
 After a lost response, read the current resource and any associated
 delivery before submitting another mutation.
 
@@ -368,8 +391,9 @@ A new Topic can supply `create.goal` in `route_decide`. Router reads it in
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `issue_create` | `operationId,title,goal,workspace`, optional `materials,start` | `{issue, execution?}`. The Issue belongs to the authenticated Topic and defaults to `pending`. |
-| `issue_start` | `operationId,issueId,expectedRevision`, optional `resolve` | `{issue, execution}`. Schedules an Execution after all blockers are resolved. The call can resolve blockers and start in one transaction. |
+| `execution_template_query` | `{}` | `{items: [{runtimeRef, model, description, effort?}, ...]}` in YAML order. Only the Topic role can call this tool. |
+| `issue_create` | `operationId,title,goal,workspace,runtimeRef,model`, optional `materials,start` | `{issue, execution?}`. The Issue belongs to the authenticated Topic and defaults to `pending`. |
+| `issue_start` | `operationId,issueId,expectedRevision`, optional `resolve` and `runtimeRef,model` as a pair | `{issue, execution}`. Schedules an Execution after all blockers are resolved. The call can resolve blockers and start in one transaction. |
 | `issue_update_requirements` | `operationId,issueId,expectedRevision,goal`, optional `notifyWorker` | `{issue, notificationEventId?}`. Saves the goal and can explicitly continue the active Execution. |
 | `issue_update_blockers` | `operationId,issueId,expectedRevision`, at least one of `add,resolve`, optional `notifyWorker`, and `unblockedStatus` when resolving the last blocker | `{issue, notificationEventId?}`. Updates the specified blockers and records the resolution basis. |
 | `issue_worker_update` | `operationId,issueId,expectedRevision,mode`, optional `note,materials` | `{issue, notificationEventId}`. Sends background or explicitly continues the current Execution. |
@@ -388,11 +412,22 @@ Supply a nonblank Issue goal and an absolute existing workspace.
 Topic's reception history. A stale `expectedRevision` returns `conflict` with
 `resource` and `currentRevision`.
 
-`start: true` uses the same scheduling transaction as `issue_start`. Core saves
-the new Execution generation, its Session binding, a `worker_started` internal
-delivery together. Another start with a current
+For each explicit selection, Core validates the complete Runtime and model
+pair against the current list and takes effort from that entry. An incomplete
+or unlisted pair returns `invalid_argument`. An `issue_start` with neither
+field uses the saved Issue profile, even if the template changed or was
+removed. Issue reads include `executionProfile: {runtimeRef, model, effort?}`,
+including through the Worker's `issue_get_current`. An identical create retry
+returns the original Issue identity and, for `start: true`, its first Execution.
+
+`start: true` uses the same scheduling transaction as `issue_start`. Core
+saves the Issue's profile, the new Execution, its Session binding, and a
+`worker_started` internal delivery together. Another start with a current
 Execution returns `conflict`. The Execution records the goal revision at
-startup. Its details project Session `preparation` and `startup` delivery state.
+startup. Its details project the Session binding as `preparation`, so
+historical Executions retain their own Runtime, model and effort after
+another start changes the Issue's profile. Execution details also project
+the `startup` delivery state.
 
 Completion requires a reason and at least one evidence reference, such as a
 Report ID or artifact path. Core stores the acceptance author and timestamp.
@@ -524,6 +559,8 @@ to pending or stays blocked by open blockers. A later explicit start creates
 the next Execution. A start requires
 proof that prior preparation never began or that the original native owner
 was released. It assigns a fresh Execution ID, generation and credential.
+When the previous Session was verified reusable, Core can reuse it only with
+the same workspace, Runtime, model, effort and namespace.
 A canceled Topic still accepts new Messages through its subscriptions.
 Messages wait durably while the Topic has no current Session. After settlement,
 they reach the next Topic generation with the same IDs. The Topic stays

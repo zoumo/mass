@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	schemaVersion = 19
+	schemaVersion = 20
 	applicationID = 1398096210
 )
 

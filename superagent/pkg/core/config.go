@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
 
@@ -59,6 +60,15 @@ func LoadConfig(path string) (Config, error) {
 	}
 	c.DataDir = resolve(c.DataDir)
 	if c.Execution != nil {
+		var execution ExecutionConfig
+		if err := v.UnmarshalKey("execution", &execution, func(d *mapstructure.DecoderConfig) {
+			d.ErrorUnused = true
+			d.WeaklyTypedInput = false
+			d.DecodeHook = nil
+		}); err != nil {
+			return c, problem("invalid_argument", "execution configuration contains unknown or invalid fields")
+		}
+		c.Execution = &execution
 		if err := c.Execution.validate(resolve); err != nil {
 			return c, err
 		}

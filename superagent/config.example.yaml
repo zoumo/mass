@@ -1,4 +1,4 @@
-# Defaults to this directory beside the YAML file. Use an empty directory for schema 19.
+# Defaults to this directory beside the YAML file. Use an empty directory for schema 20.
 dataDir: ./superagent-core-data
 # Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
 listen: 127.0.0.1:24370
@@ -12,12 +12,28 @@ sources:
 storageMaxPages: 0
 
 # Optional: enabling execution allows Core to start Sessions through massd.
-# Use an existing Runtime and choose the Router workspace explicitly.
+# Choose the Router workspace, fixed role profiles and available Worker profiles.
 # execution:
 #   massdEndpoint: ws://127.0.0.1:24368/rpc
-#   runtimeRef: agent
 #   routerWorkspace: /absolute/workspace
 #   namespace: superagent
 #   tokenFile: ./massd.token  # omit only for explicit local massd access
 #   operatorTokenFile: ./operator.token  # optional, for loopback CLI input recovery
 #   mcpCommand: /absolute/bin/superagent  # defaults to the current executable
+#   roles:
+#     router:
+#       runtimeRef: codex-fast
+#       model: gpt-6.2-sol
+#       effort: low
+#     topic:
+#       runtimeRef: codex-standard
+#       model: gpt-6.2-sol
+#       effort: medium
+#   workerTemplates:
+#     - runtimeRef: codex-deepseek
+#       model: deepseek-chat
+#       description: Implement, fix and verify code.
+#       effort: medium
+#     - runtimeRef: codex-standard
+#       model: gpt-6.2-astra
+#       description: Evaluate architecture and diagnose complex problems.

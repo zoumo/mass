@@ -34,6 +34,7 @@ type Issue struct {
 	Reports                   []Report          `json:"reports,omitempty"`
 	PullRequests              []pullRequestLink `json:"pullRequests,omitempty"`
 	Workspace                 string            `json:"workspace"`
+	ExecutionProfile          ExecutionProfile  `json:"executionProfile"`
 	Materials                 []Material        `json:"materials,omitempty"`
 	Status                    string            `json:"status"`
 	Revision                  int               `json:"revision"`
@@ -69,6 +70,8 @@ type CreateIssueRequest struct {
 	Requirements string     `json:"requirements,omitempty"`
 	Goal         string     `json:"goal,omitempty"`
 	Workspace    string     `json:"workspace"`
+	RuntimeRef   string     `json:"runtimeRef"`
+	Model        string     `json:"model"`
 	Materials    []Material `json:"materials,omitempty"`
 	Start        bool       `json:"start,omitempty"`
 }
@@ -78,6 +81,34 @@ type StartIssueRequest struct {
 	IssueID          string              `json:"issueId"`
 	ExpectedRevision int                 `json:"expectedRevision"`
 	Resolve          []BlockerResolution `json:"resolve,omitempty"`
+	RuntimeRef       *string             `json:"runtimeRef,omitempty"`
+	Model            *string             `json:"model,omitempty"`
+}
+
+// UnmarshalJSON distinguishes omitted selections from explicit null values.
+func (r *StartIssueRequest) UnmarshalJSON(data []byte) error {
+	type request StartIssueRequest
+	wire := struct {
+		*request
+		RuntimeRef json.RawMessage `json:"runtimeRef"`
+		Model      json.RawMessage `json:"model"`
+	}{request: (*request)(r)}
+	if err := decodeStrict(data, &wire); err != nil {
+		return err
+	}
+	for _, field := range []struct {
+		raw  json.RawMessage
+		dest **string
+	}{{wire.RuntimeRef, &r.RuntimeRef}, {wire.Model, &r.Model}} {
+		if len(field.raw) == 0 {
+			*field.dest = nil
+			continue
+		}
+		if err := json.Unmarshal(field.raw, field.dest); err != nil || *field.dest == nil {
+			return problem("invalid_argument", "runtimeRef and model must be strings")
+		}
+	}
+	return nil
 }
 
 type CompleteRequest struct {
@@ -258,13 +289,17 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		if strings.TrimSpace(r.Title) == "" || !filepath.IsAbs(r.Workspace) {
 			return nil, problem("invalid_argument", "title and an absolute workspace are required")
 		}
+		profile, err := s.config.Execution.workerProfile(r.RuntimeRef, r.Model)
+		if err != nil {
+			return nil, err
+		}
 		if err := validateMaterials(ctx, tx, t.ID, r.Materials); err != nil {
 			return nil, err
 		}
 		at := now()
 		issue := Issue{
 			ID: id, TopicID: t.ID, Title: r.Title, Requirements: goal, Workspace: filepath.Clean(r.Workspace),
-			Materials: r.Materials, Status: "pending", Revision: 1, RequirementsRevision: 1, CreatedAt: at, UpdatedAt: at,
+			ExecutionProfile: profile, Materials: r.Materials, Status: "pending", Revision: 1, RequirementsRevision: 1, CreatedAt: at, UpdatedAt: at,
 		}
 		if err := checkWorkspace(issue.Workspace); err != nil {
 			return nil, err
@@ -288,6 +323,9 @@ func checkWorkspace(path string) error {
 
 func (s *Store) startIssue(r StartIssueRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+		if (r.RuntimeRef == nil) != (r.Model == nil) {
+			return nil, problem("invalid_argument", "provide both runtimeRef and model, or omit both")
+		}
 		issue, err := editableIssue(ctx, tx, b, r.IssueID, r.ExpectedRevision)
 		if err != nil {
 			return nil, err
@@ -297,6 +335,12 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 		}
 		if issue.CurrentExecutionID != "" {
 			return nil, problem("conflict", "Issue already has a current Execution")
+		}
+		if r.RuntimeRef != nil {
+			issue.ExecutionProfile, err = s.config.Execution.workerProfile(*r.RuntimeRef, *r.Model)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := resolveBlockers(ctx, tx, &issue, r.Resolve); err != nil {
 			return nil, err
@@ -321,7 +365,7 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, send
 		ID: newID("exec"), IssueID: issue.ID, TopicID: issue.TopicID, Generation: previous.Generation + 1,
 		CreatedAt: at, StartEventID: newID("delivery"), Authority: "current",
 	}
-	b, err := createWorkerBinding(ctx, tx, s.config, x, issue.Workspace, previous)
+	b, err := createWorkerBinding(ctx, tx, s.config, x, issue, previous)
 	if err != nil {
 		return WorkReceipt{}, err
 	}

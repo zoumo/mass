@@ -46,7 +46,7 @@ func roleWork[T any](t *testing.T, p *process, token, name string, request any) 
 }
 
 func issueInput(workspace, id string) core.CreateIssueRequest {
-	return core.CreateIssueRequest{OperationID: id, Title: "Validate sample output", Requirements: "Run the checks and record exact output.", Workspace: workspace}
+	return core.CreateIssueRequest{OperationID: id, Title: "Validate sample output", Requirements: "Run the checks and record exact output.", Workspace: workspace, RuntimeRef: "agent", Model: "worker-model"}
 }
 
 func acceptance(op string, revision int, ref string) core.CompleteRequest {

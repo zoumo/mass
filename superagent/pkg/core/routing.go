@@ -28,14 +28,14 @@ type Topic struct {
 	Stop                *StopRequest      `json:"stop,omitempty"`
 }
 type Binding struct {
-	ID                   string        `json:"id"`
-	Role                 string        `json:"role"`
-	OwnerID              string        `json:"ownerId"`
-	Generation           int           `json:"generation"`
-	Workspace            string        `json:"workspace"`
-	Namespace            string        `json:"namespace"`
-	Name                 string        `json:"name"`
-	RuntimeRef           string        `json:"runtimeRef"`
+	ID         string `json:"id"`
+	Role       string `json:"role"`
+	OwnerID    string `json:"ownerId"`
+	Generation int    `json:"generation"`
+	Workspace  string `json:"workspace"`
+	Namespace  string `json:"namespace"`
+	Name       string `json:"name"`
+	ExecutionProfile
 	RuntimeType          string        `json:"runtimeType,omitempty"`
 	RuntimeUID           string        `json:"runtimeUid,omitempty"`
 	RuntimeVersion       string        `json:"runtimeResourceVersion,omitempty"`

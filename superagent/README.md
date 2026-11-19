@@ -27,8 +27,8 @@ bin/superagent observe outbox --message-id MESSAGE_ID
 ```
 
 The default data directory is `./superagent-core-data`, relative to the YAML
-file. Use an empty directory for your first schema 19 startup. Startup rejects
-earlier SQLite schemas and mass-sa JSON and preserves the original files.
+file. Use an empty directory for your first schema 20 startup. Startup rejects
+earlier SQLite schemas (including 19) and mass-sa JSON and preserves the original files.
 Set `dataDir` to another empty directory if the configured path contains
 earlier data. Use the original executable to inspect retained MVP history.
 
@@ -71,8 +71,15 @@ instance-bound credentials, select the consumer with `outboxConsumer: true`.
 The [Outbox contract](API.md#trigger-outbox) covers task recovery and result
 writeback.
 
-Optional `execution` config selects massdEndpoint, fixed runtimeRef,
-routerWorkspace and namespace. See [API.md](API.md#execution-configuration-and-fixed-session-preparation).
+Optional `execution` config sets the massd endpoint, Router workspace,
+namespace, fixed Router and Topic profiles, and the ordered Worker template
+list. Each profile has a `runtimeRef`, `model` and optional `effort`.
+Set those values to the literal names supported by your massd and its drivers.
+Topic uses `execution_template_query` to choose a Runtime and model when
+creating an Issue. Core copies the template's effort into the Issue and Worker
+binding. A later `issue_start` can use the saved profile or select a new
+pair for an Issue without a current Execution. Changing the Router profile
+requires a new Core data directory. See the [execution configuration](API.md#execution-configuration-and-fixed-session-preparation).
 Core persists role identity and configuration before creation, reconciles lost
 create responses by querying the same Session, and retains failed preparation
 on the same Topic. Keep the configured listener address stable across restarts so existing MCP
@@ -112,8 +119,9 @@ When execution is configured, accepted input is automatically dispatched through
 massd after fixed-identity Session preparation. No DWS call is made by Core.
 
 Open the printed `/observer/` URL and select Topic for its recent deliveries,
-returns and Issue activity. The Issue view shows goals, Worker executions,
-Reports and explicit business acceptance. Message shows the channel original,
+returns and Issue activity. The Issue view shows goals, the saved execution profile, Worker executions,
+Reports and explicit business acceptance. Session binding details show the
+runtime, model and configured effort for the selected binding generation. Message shows the channel original,
 Thread and routing or echo history. Diagnostics opens collection lists and
 record details, including full message bodies, Session preparation, live
 Session previews and channel receipts. Topic and Issue link to the PR URLs

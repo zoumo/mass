@@ -76,6 +76,15 @@ func (s *Server) role(w http.ResponseWriter, r *http.Request) {
 			// The stdio handshake proves only startup identity, even for historical credentials.
 			result = Binding{ID: b.ID, Role: b.Role, OwnerID: b.OwnerID, TopicID: b.TopicID, IssueID: b.IssueID, Generation: b.Generation}
 		}
+	case "execution_template_query":
+		if b.Role != "topic" {
+			err = problem("forbidden", "only Topic can query Worker templates")
+			break
+		}
+		var args struct{}
+		if err = decodeStrict(raw, &args); err == nil {
+			result = map[string]any{"items": s.config.Execution.WorkerTemplates}
+		}
 	case "issue_create", "issue_start", "issue_update_requirements", "issue_update_blockers", "issue_worker_update",
 		"issue_complete", "issue_cancel", "issue_reopen", "topic_complete", "topic_cancel", "topic_reopen",
 		"timer_set", "timer_update", "timer_cancel":

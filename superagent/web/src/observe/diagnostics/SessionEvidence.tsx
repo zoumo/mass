@@ -169,6 +169,8 @@ export default function SessionEvidence({ kind, detail, navigate }: RecordProps)
             <dd>{detail.sessionId || '尚未准备'}</dd>
             <dt>运行时</dt>
             <dd>{detail.runtimeRef}</dd>
+            {detail.model && <><dt>模型</dt><dd>{detail.model}</dd></>}
+            {detail.effort && <><dt>推理强度</dt><dd>{detail.effort}</dd></>}
             <dt>工作目录</dt>
             <dd>{detail.workspace}</dd>
           </dl>

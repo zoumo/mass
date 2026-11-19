@@ -78,13 +78,14 @@ func topicWorkTools() []mcpTool {
 		"reason": str, "dependencyIssueId": str,
 	}, "kind", "reason")
 	return []mcpTool{
+		{Name: "execution_template_query", Description: "List Worker templates in configuration order. Choose a runtimeRef and model together based on the description. Core supplies the optional effort.", InputSchema: objectSchema(nil)},
 		{
-			Name: "issue_create", Description: "Create an Issue in your Topic with a goal that states the deliverable, constraints and acceptance criteria. Use an existing absolute workspace. Each material names one URI/path or one associated Message. Defaults to pending; start=true also schedules a Worker atomically.",
-			InputSchema: objectSchema(map[string]any{"operationId": str, "title": str, "goal": str, "requirements": str, "workspace": str, "materials": map[string]any{"type": "array", "items": material}, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "workspace"),
+			Name: "issue_create", Description: "Create an Issue in your Topic with a goal that states the deliverable, constraints and acceptance criteria. Choose runtimeRef and model together using execution_template_query. Use an existing absolute workspace. Each material names one URI/path or one associated Message. Defaults to pending; start=true also schedules a Worker atomically.",
+			InputSchema: objectSchema(map[string]any{"operationId": str, "title": str, "goal": str, "requirements": str, "workspace": str, "runtimeRef": str, "model": str, "materials": map[string]any{"type": "array", "items": material}, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "workspace", "runtimeRef", "model"),
 		},
 		{
-			Name: "issue_start", Description: "Explicitly schedule the only current Execution for your Issue. Resolve each blocker with its ID and basis before starting, or provide all resolutions in the same call. Read execution preparation and startup evidence with work_query.",
-			InputSchema: objectSchema(map[string]any{"operationId": str, "issueId": str, "expectedRevision": revision, "resolve": resolve}, "operationId", "issueId", "expectedRevision"),
+			Name: "issue_start", Description: "Explicitly schedule the only current Execution for your Issue. Omit runtimeRef and model to keep the saved profile, or supply both to select a Worker template. Resolve each blocker with its ID and basis before starting, or provide all resolutions in the same call. Read execution preparation and startup evidence with work_query.",
+			InputSchema: objectSchema(map[string]any{"operationId": str, "issueId": str, "expectedRevision": revision, "resolve": resolve, "runtimeRef": str, "model": str}, "operationId", "issueId", "expectedRevision"),
 		},
 		{
 			Name: "issue_update_requirements", Description: "Save your Issue goal using its current Issue revision. Set notifyWorker=true to continue its current active Execution in the same transaction.",
@@ -152,7 +153,7 @@ func workerTools() []mcpTool {
 	refs := map[string]any{"type": "array", "items": str}
 	return []mcpTool{
 		registerPRTool(false),
-		{Name: "issue_get_current", Description: "Read the startup-bound Issue goal and goalRevision, blockers, material references, workspace and current Execution. Takes no identifiers.", InputSchema: objectSchema(nil)},
+		{Name: "issue_get_current", Description: "Read the startup-bound Issue goal and goalRevision, blockers, material references, workspace, execution profile and current Execution. Takes no identifiers.", InputSchema: objectSchema(nil)},
 		{Name: "issue_material_get", Description: "Read a source Message explicitly listed as material of your bound Issue.", InputSchema: objectSchema(map[string]any{"messageId": str}, "messageId")},
 		{
 			Name: "report_submit", Description: "Append a Report for the startup-bound Execution and queue a Topic notification in the same transaction. Supply the goalRevision of the goal you worked from. Reuse the same operationId for an identical retry. A retired binding can append only a historical Report.",

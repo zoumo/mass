@@ -1,6 +1,6 @@
 package core
 
-// Schema 19 is initialized in a new directory. Earlier databases remain in
+// Schema 20 is initialized in a new directory. Earlier databases remain in
 // their original format and are never opened for writing by this version.
 const schema = `
 CREATE TABLE threads (
