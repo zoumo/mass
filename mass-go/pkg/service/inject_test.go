@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -202,18 +203,18 @@ func waitForInjectIdleTimer(t *testing.T, svc *service.Service, d *injectWorkDri
 	}, time.Second, time.Millisecond)
 }
 
-// Hold a SendPrompt at its cancellation check following Service admission.
-// The first two checks precede reference resolution and work admission.
-type promptDispatchContext struct {
+// Pause an operation at its cancellation check following Service admission.
+type workDispatchContext struct {
 	context.Context
-	checks int
-	paused chan struct{}
-	resume chan struct{}
+	checks  int
+	pauseAt int
+	paused  chan struct{}
+	resume  chan struct{}
 }
 
-func (c *promptDispatchContext) Err() error {
+func (c *workDispatchContext) Err() error {
 	c.checks++
-	if c.checks == 3 {
+	if c.checks == c.pauseAt {
 		close(c.paused)
 		<-c.resume
 	}
@@ -239,7 +240,7 @@ func TestInjectServiceIdleAfterOverlappingPrompt(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	prompt := &promptDispatchContext{Context: ctx, paused: make(chan struct{}), resume: make(chan struct{})}
+	prompt := &workDispatchContext{Context: ctx, pauseAt: 3, paused: make(chan struct{}), resume: make(chan struct{})}
 	resumePrompt := sync.OnceFunc(func() { close(prompt.resume) })
 	t.Cleanup(resumePrompt)
 	prompted := make(chan error, 1)
@@ -281,7 +282,7 @@ func TestPromptCancellationBeforeDispatchRestoresIdleTimer(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	prompt := &promptDispatchContext{Context: ctx, paused: make(chan struct{}), resume: make(chan struct{})}
+	prompt := &workDispatchContext{Context: ctx, pauseAt: 3, paused: make(chan struct{}), resume: make(chan struct{})}
 	resumePrompt := sync.OnceFunc(func() { close(prompt.resume) })
 	t.Cleanup(resumePrompt)
 	prompted := make(chan error, 1)
@@ -303,8 +304,45 @@ func TestPromptCancellationBeforeDispatchRestoresIdleTimer(t *testing.T) {
 	require.Equal(t, 1, clock.Active())
 }
 
+type idlePromptDriver struct {
+	*injectWorkDriver
+	promptReceipt runtime.InputReceipt
+	promptErr     error
+}
+
+func (d *idlePromptDriver) SendPrompt(context.Context, string, runtime.Input) (runtime.InputReceipt, error) {
+	return d.promptReceipt, d.promptErr
+}
+
 func TestInjectServiceDefersIdleTimerUntilOverlappingAnswerSettles(t *testing.T) {
-	d := newInjectWorkDriver()
+	tests := []struct {
+		name          string
+		prompt        bool
+		promptReceipt runtime.InputReceipt
+		promptErr     error
+	}{
+		{name: "answer only"},
+		{
+			name:          "prompt not applied",
+			prompt:        true,
+			promptReceipt: runtime.InputReceipt{Result: agent.InputNotApplied, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}},
+		},
+		{
+			name:      "prompt rejected",
+			prompt:    true,
+			promptErr: &runtime.OperationError{Code: "native_rejected", Reason: "synthetic_rejection"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testDeferredIdleRearm(t, tt.prompt, tt.promptReceipt, tt.promptErr)
+		})
+	}
+}
+
+func testDeferredIdleRearm(t *testing.T, prompt bool, promptReceipt runtime.InputReceipt, promptErr error) {
+	t.Helper()
+	d := &idlePromptDriver{injectWorkDriver: newInjectWorkDriver(), promptReceipt: promptReceipt, promptErr: promptErr}
 	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
 	answerRelease := make(chan struct{})
 	d.onFinish = func() error {
@@ -317,11 +355,12 @@ func TestInjectServiceDefersIdleTimerUntilOverlappingAnswerSettles(t *testing.T)
 	t.Cleanup(settleInject)
 	settleAnswer := sync.OnceFunc(func() { close(answerRelease) })
 	t.Cleanup(settleAnswer)
-	waitForInjectIdleTimer(t, svc, d, ref, clock)
+	waitForInjectIdleTimer(t, svc, d.injectWorkDriver, ref, clock)
 
+	input := runtime.Input{Content: []events.ContentBlock{events.Text("context")}}
 	injected := make(chan error, 1)
 	go func() {
-		_, err := svc.Inject(t.Context(), ref, runtime.Input{Content: []events.ContentBlock{events.Text("context")}})
+		_, err := svc.Inject(t.Context(), ref, input)
 		injected <- err
 	}()
 	select {
@@ -343,7 +382,39 @@ func TestInjectServiceDefersIdleTimerUntilOverlappingAnswerSettles(t *testing.T)
 	settleInject()
 	require.NoError(t, <-injected)
 	require.Zero(t, clock.Active(), "idle close must wait for the in-flight answer")
+	if prompt {
+		receipt, err := svc.SendPrompt(t.Context(), ref, input)
+		require.ErrorIs(t, err, promptErr)
+		require.Equal(t, promptReceipt, receipt)
+		require.Zero(t, clock.Active(), "the Answer still holds admission")
+	}
 	settleAnswer()
 	require.NoError(t, <-answered)
 	require.Equal(t, 1, clock.Active(), "the final work owner must honor the pending idle rearm")
+}
+
+func TestIdleUnsentPromptPreservesEarlierUnobservedWork(t *testing.T) {
+	d := &idlePromptDriver{
+		injectWorkDriver: newInjectWorkDriver(),
+		promptReceipt: runtime.InputReceipt{
+			Submission: "first", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+		},
+	}
+	close(d.release)
+	clock := newManualClock()
+	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: time.Second})
+	waitForInjectIdleTimer(t, svc, d.injectWorkDriver, ref, clock)
+
+	input := runtime.Input{Content: []events.ContentBlock{events.Text("prompt")}}
+	_, err := svc.SendPrompt(t.Context(), ref, input)
+	require.NoError(t, err)
+	require.Zero(t, clock.Active())
+
+	d.promptReceipt = runtime.InputReceipt{
+		Result: agent.InputNotApplied, Acceptance: runtime.Acceptance{Sent: runtime.Bool(false)},
+	}
+	_, err = svc.SendPrompt(t.Context(), ref, input)
+	require.NoError(t, err)
+	require.Zero(t, clock.Active(), "the second Prompt cannot settle earlier unobserved work")
+	waitForInjectIdleTimer(t, svc, d.injectWorkDriver, ref, clock)
 }

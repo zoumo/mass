@@ -195,7 +195,14 @@ func (p *Interactions) claudeCompletion(event events.SessionEvent) (events.Sessi
 	if entry.completed {
 		return events.SessionEvent{}, false, nil
 	}
+	identity, err := uuid.NewRandom()
+	if err != nil {
+		return events.SessionEvent{}, false, err
+	}
+	// The SDK diagnostic supplies native evidence for a separate MASS
+	// lifecycle event. Do not reuse the diagnostic's event identity.
 	base := event.EventBase
+	base.EventID = identity.String()
 	base.Meta = nil
 	closed, err := events.NewEvent(base, events.InteractionClosed{
 		Interaction: match,

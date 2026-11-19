@@ -69,10 +69,13 @@ func TestURLClosesOnCorrelatedCompletionInEitherOrder(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, publish)
 		}
-		got, publish, err = pending.observe(completion("flow-id"))
+		nativeCompletion := completion("flow-id")
+		got, publish, err = pending.observe(nativeCompletion)
 		require.NoError(t, err)
 		require.True(t, publish)
 		require.Equal(t, events.InteractionClosed{Interaction: "mcp-url", Outcome: agent.InteractionCompleted}, got.Payload())
+		require.NotEqual(t, nativeCompletion.EventID, got.EventID)
+		require.Equal(t, nativeCompletion.Time, got.Time)
 		require.Nil(t, got.Meta)
 		if early {
 			_, publish, err = pending.observe(ack)

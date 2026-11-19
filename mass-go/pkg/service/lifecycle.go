@@ -577,6 +577,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.releasing = false
 	l.observedState = ""
 	l.stateObserved = false
+	l.idleObservationVersion = 0
+	l.idleObservationFloor = 0
 	l.idleAfterAdmission = false
 	l.activeTools = nil
 	l.interactions = nil
@@ -670,10 +672,6 @@ func (s *Service) controlWork(r resource.Session, opts sessionWorkOptions) (*run
 			s.mu.Unlock()
 			run.admission.RUnlock()
 			return nil, nil, err
-		}
-		if !opts.rearmIdle {
-			// A newly admitted Prompt needs a new native idle observation.
-			l.idleAfterAdmission = false
 		}
 	}
 	l.admission.RLock()

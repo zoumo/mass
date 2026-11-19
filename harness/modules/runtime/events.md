@@ -19,9 +19,11 @@ sources:
 
 ## 职责归属
 
-Runtime 拥有 SessionEvent 信封，事件 type 与 payload 以 SDK `agent.Event` 为唯一真相源。SDK Provider/Session 产生的实时事件先交给每个 Session 唯一的 MASS relay；relay 原样保留 SDK 的 eventId、sessionId、time、itemId、type、payload 与 `_meta`，只补 namespace、sessionName 和 MASS Source。Service 在 openSession/resumeSession 时传入 DriverSessionAddress，adapter 固定名称与原运行的绑定。Driver.events() 只交付名称与身份完整的 SessionEvent；Service 核对已有绑定后协调持久提交与发布，不补写或猜测缺失名称，也不另建半完整事件模型。Runtime 不查询 MetaStore，不导入 Service 资源 DTO。
+Runtime 拥有 SessionEvent 信封。SDK Provider/Session 产生的实时事实以 SDK `agent.Event` 为唯一真相源。SDK Provider/Session 产生的实时事件先交给每个 Session 唯一的 MASS relay；relay 原样保留 SDK 的 eventId、sessionId、time、itemId、type、payload 与 `_meta`，只补 namespace、sessionName 和 MASS Source。Service 在 openSession/resumeSession 时传入 DriverSessionAddress，adapter 固定名称与原运行的绑定。Driver.events() 只交付名称与身份完整的 SessionEvent；Service 核对已有绑定后协调持久提交与发布，不补写或猜测缺失名称，也不另建半完整事件模型。Runtime 不查询 MetaStore，不导入 Service 资源 DTO。
 
-实时 SessionEvent 的 eventId、time、itemId 和 type 来自 SDK `agent.Event`，relay 与 Service 不得重生成、替换或按接收时间覆盖；同一事件的发布、持久保存与失败重试使用该原 UUID。`session.history_replay` 是 MASS 专属控制事件，不属于 SDK live event 联合，由 MASS 在显式 load 生命周期中生成并保持一次 UUID。
+由 SDK 交付的实时 SessionEvent 保留原始 eventId、time、itemId 和 type。同一事件的发布、持久保存与失败重试使用原 UUID。`session.history_replay` 由 MASS 在显式 load 生命周期中生成，同一事件保持一次 UUID。
+
+URL 交互的外部流程由 Runtime 维护。SDK 仅确认已回复 URL 接受时，Runtime 保持交互待决。原生完成观察能关联到原流程时，Runtime 发布独立的 `session.interaction_closed`，使用新 UUID 和支持该结算的 SDK 观察时间。Runtime 在内部消费已用于结算的 SDK 未映射诊断、URL 接受回复的关闭通知，以及同一已完成交互随后到达的 SDK 关闭通知。原生 Session 确认释放时，仍待完成的流程用独立事件报告 `expired`。其余 SDK 事件按原样交付。详见 [交互结算合同](interactions.md#请求与结束)。
 
 ## Driver 事件流
 
@@ -70,9 +72,9 @@ EventStore 使用不透明游标分页，getSyncProgress 返回最后同步的 s
 | namespace | Session 的 namespace，直接保存 |
 | sessionName | Session 的 metadata.name，直接保存 |
 | sessionId | 全局唯一的原生会话身份 |
-| eventId | SDK 实时事件提供的 UUID；relay 与重试不得重生成 |
+| eventId | SDK 实时事件保留原 UUID。MASS 控制事件使用独立 UUID |
 | type | Base 内统一声明的 SessionEventType |
-| time | SDK 实时事件提供；relay、重试与同步不得改写 |
+| time | SDK 实时事件保留原时间。MASS 控制事件使用对应的观察或生命周期时间 |
 | itemId | 条目事件提供的不透明身份；不解析成原生坐标 |
 | replay | 显式 load 的历史来源，loadId 及可证明原生记录/parent ID；不是当前运行控制上下文 |
 | _meta | 顶层可选扩展 map，键为 string，值可以是任意类型，即 Record<unknown>，对应 Go map[string]any |

@@ -105,8 +105,9 @@ func (o *opening) finish() {
 }
 
 type delivery struct {
-	event   events.SessionEvent
-	barrier chan struct{}
+	event                events.SessionEvent
+	barrier              chan struct{}
+	idleVersionAtReceive uint64
 }
 type lane struct {
 	inputInFlight      bool          // protected by Service.mu
@@ -129,9 +130,12 @@ type lane struct {
 	publicationErr     error
 	idleTimer          Timer
 	idleVersion        uint64
-	idleAfterAdmission bool // an explicit rearm waits for the final admission reader
+	idleAfterAdmission bool // a pending rearm waits for the final admission reader
 	activeTools        map[string]struct{}
 	interactions       map[string]struct{}
+
+	idleObservationVersion uint64 // when the current native state was admitted for delivery
+	idleObservationFloor   uint64 // the latest possibly applied Prompt requires a newer native state
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -645,7 +649,22 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 		return runtime.InputReceipt{}, err
 	}
 	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, sessionWorkOptions{input: true}, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
-		return run.driver.SendPrompt(owner, id, input)
+		// Admission holds the original lane through dispatch. A state event
+		// already queued at this point cannot settle the new prompt.
+		s.mu.Lock()
+		l := run.lanes[id]
+		previousIdleFloor := l.idleObservationFloor
+		l.idleObservationFloor = l.idleVersion + 1
+		s.mu.Unlock()
+
+		receipt, err := run.driver.SendPrompt(owner, id, input)
+		if promptNotApplied(receipt, err) {
+			s.mu.Lock()
+			l.idleObservationFloor = previousIdleFloor
+			l.idleAfterAdmission = true
+			s.mu.Unlock()
+		}
+		return receipt, err
 	})
 }
 
@@ -793,7 +812,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			return
 		}
 		select {
-		case l.queue <- delivery{event: e}:
+		case l.queue <- delivery{event: e, idleVersionAtReceive: l.idleVersion}:
 		default:
 			l.err = errors.New("session event queue exhausted; stream responsibility retained")
 			run.err = l.err
@@ -890,6 +909,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 			if !l.closing && l.source.SameRun(e.Source()) {
 				l.stateObserved = true
 				l.observedState = events.Unknown
+				l.idleObservationVersion = entry.idleVersionAtReceive
 				if state.State != nil {
 					l.observedState = *state.State
 				}

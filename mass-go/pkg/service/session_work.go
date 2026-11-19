@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zoumo/agent-sdk-go/agent"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -97,6 +99,27 @@ func (s *Service) settleWork(run *runBinding, l *lane, opts sessionWorkOptions, 
 	s.releaseLaneAdmissionLocked(run, l, opts.rearmIdle)
 	s.mu.Unlock()
 	run.admission.RUnlock()
+}
+
+// Supersede the idle observation only for an input that could have made
+// native progress. Uncertain dispatch must still wait for a new state.
+func promptNotApplied(receipt runtime.InputReceipt, err error) bool {
+	var problem *runtime.OperationError
+	if errors.As(err, &problem) && problem.Code == string(agent.ErrorOutcomeUnknown) {
+		return false
+	}
+	if receipt.Result != "" {
+		return receipt.Result == agent.InputNotApplied
+	}
+	if problem != nil {
+		switch agent.ErrorCode(problem.Code) {
+		case agent.ErrorNativeRejected, agent.ErrorInvalidArgument, agent.ErrorUnsupported:
+			return true
+		}
+	}
+	return receipt.Acceptance.Sent != nil && !*receipt.Acceptance.Sent ||
+		receipt.Acceptance.NativeAccepted != nil && !*receipt.Acceptance.NativeAccepted ||
+		errors.Is(err, runtime.ErrInvalidArgument) || errors.Is(err, runtime.ErrFailedPrecondition)
 }
 
 // Inject appends context only to the currently bound native Session.
