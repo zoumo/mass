@@ -32,6 +32,7 @@ type closeDriver struct {
 	promptEntered chan context.Context
 	promptRelease chan struct{}
 	promptOnce    sync.Once
+	promptWork    string
 	resumeEntered chan struct{}
 	resumeRelease chan struct{}
 	resumeOnce    sync.Once
@@ -129,7 +130,7 @@ func (d *closeDriver) SendPrompt(ctx context.Context, _ string, _ runtime.Input)
 			return runtime.InputReceipt{}, ctx.Err()
 		}
 	}
-	return runtime.InputReceipt{Submission: "close-test", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "close-test", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}, Work: d.promptWork}, nil
 }
 
 func (d *closeDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {

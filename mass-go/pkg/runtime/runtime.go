@@ -119,6 +119,7 @@ type InputReceipt struct {
 	Submission string            `json:"submission"`
 	Result     agent.InputResult `json:"result"`
 	Acceptance Acceptance        `json:"acceptance"`
+	Work       string            `json:"-"` // Adapter-proven association with events.Source.Work.
 }
 type InteractionReceipt struct {
 	Interaction string     `json:"interaction"`

@@ -435,6 +435,11 @@ func (d *Driver) sendPrompt(ctx context.Context, id string, input runtime.Input)
 		}
 		return mapped, agentrelay.MapError(err)
 	}
+	switch mapped.Result {
+	case agent.InputAppliedNewWork, agent.InputAppliedCurrentWork:
+		// Codex returns the same native turn ID in the receipt and its event source.
+		mapped.Work = mapped.Submission
+	}
 	if mapped.Result != agent.InputNotApplied && mapped.Submission != "" {
 		s.controlMu.Lock()
 		if mapped.Submission != s.lastFinished {

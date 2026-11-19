@@ -81,6 +81,41 @@ func TestPromptFailurePreservesDispatchEvidence(t *testing.T) {
 	}
 }
 
+func TestPromptReturnsAssociationForIdentifiedTurn(t *testing.T) {
+	for _, tc := range []struct {
+		result agent.InputResult
+		work   string
+	}{
+		{result: agent.InputAppliedNewWork, work: "turn-id"},
+		{result: agent.InputAppliedCurrentWork, work: "turn-id"},
+		{result: agent.InputAppliedBestEffort},
+	} {
+		t.Run(string(tc.result), func(t *testing.T) {
+			native := &promptSDKSession{promptReceipt: agent.InputReceipt{
+				Submission: "turn-id",
+				Result:     tc.result,
+				Acceptance: agent.Acceptance{Sent: runtime.Yes()},
+			}}
+			relay, err := agentrelay.Start(t.Context(), agentrelay.Config{
+				Session: native,
+				Address: runtime.Address{Namespace: "one", SessionName: "prompt"},
+				Sink:    func(context.Context, events.SessionEvent) error { return nil },
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { relay.Close(); <-relay.Done() })
+			driver := &Driver{sessions: map[string]*session{"native": {native: native, relay: relay}}}
+			receipt, err := driver.SendPrompt(t.Context(), "native", runtime.Input{Content: []events.ContentBlock{events.Text("prompt")}})
+			require.NoError(t, err)
+			require.Equal(t, tc.work, receipt.Work)
+			wire, err := json.Marshal(receipt)
+			require.NoError(t, err)
+			expected, err := json.Marshal(agentrelay.MapInputReceipt(native.promptReceipt))
+			require.NoError(t, err)
+			require.JSONEq(t, string(expected), string(wire))
+		})
+	}
+}
+
 func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)

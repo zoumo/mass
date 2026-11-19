@@ -135,7 +135,8 @@ type lane struct {
 	interactions       map[string]struct{}
 
 	idleObservationVersion uint64 // when the current native state was admitted for delivery
-	idleObservationFloor   uint64 // the latest possibly applied Prompt requires a newer native state
+	idleObservationWork    string // work association of that native state, if proven by the adapter
+	idlePrompt             promptIdleFence
 	idleChangeReceived     uint64 // newest queued state or pending-work change
 	idleChangeApplied      uint64 // newest such change reflected in this lane
 }
@@ -655,17 +656,20 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 		// already queued at this point cannot settle the new prompt.
 		s.mu.Lock()
 		l := run.lanes[id]
-		previousIdleFloor := l.idleObservationFloor
-		l.idleObservationFloor = l.idleVersion + 1
+		previousIdlePrompt := l.idlePrompt
+		l.idlePrompt = promptIdleFence{dispatchFloor: l.idleVersion + 1}
 		s.mu.Unlock()
 
 		receipt, err := run.driver.SendPrompt(owner, id, input)
+		s.mu.Lock()
 		if promptNotApplied(receipt, err) {
-			s.mu.Lock()
-			l.idleObservationFloor = previousIdleFloor
+			l.idlePrompt = previousIdlePrompt
 			l.idleAfterAdmission = true
-			s.mu.Unlock()
+		} else if receipt.Work != "" {
+			l.idlePrompt.work = receipt.Work
+			l.idlePrompt.untaggedFloor = l.idleVersion + 1
 		}
+		s.mu.Unlock()
 		return receipt, err
 	})
 }
@@ -907,13 +911,14 @@ func (s *Service) process(run *runBinding, l *lane) {
 			}
 		}
 		s.mu.Lock()
-		if e.Replay == nil && !l.closing && l.source.SameRun(e.Source()) {
+		if entry.idleChangeVersion != 0 && !l.closing && l.source.SameRun(e.Source()) {
 			l.idleChangeApplied = max(l.idleChangeApplied, entry.idleChangeVersion)
 			switch payload := e.Payload().(type) {
 			case events.StateUpdate:
 				l.stateObserved = true
 				l.observedState = events.Unknown
 				l.idleObservationVersion = entry.idleChangeVersion
+				l.idleObservationWork = e.Source().Work()
 				if payload.State != nil {
 					l.observedState = *payload.State
 				}

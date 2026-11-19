@@ -133,8 +133,13 @@ func (f *idleFixture) emitState(t *testing.T, state events.SessionState) {
 
 func (f *idleFixture) emit(t *testing.T, payload events.Payload) {
 	t.Helper()
+	f.emitWork(t, payload, "")
+}
+
+func (f *idleFixture) emitWork(t *testing.T, payload events.Payload, work string) {
+	t.Helper()
 	f.driver.mu.Lock()
-	source := f.driver.source
+	source := f.driver.source.WithWork(work)
 	f.driver.mu.Unlock()
 	event, err := events.NewEvent(events.EventBase{
 		EventID:     uuid.NewString(),
@@ -530,6 +535,68 @@ func testIdleObservationAtPromptSettlement(t *testing.T, queuedBefore bool) {
 	}
 	f.clock.Advance(time.Second)
 	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
+	const newWork = "close-test"
+	const oldWork = "earlier-turn"
+	for _, scenario := range []struct {
+		name      string
+		during    string
+		wantRearm bool
+		followUp  string
+	}{
+		{name: "old work during dispatch", during: oldWork, followUp: newWork},
+		{name: "untagged during dispatch", followUp: ""},
+		{name: "matching work during dispatch", during: newWork, wantRearm: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.promptWork = newWork
+			f.driver.releaseClose()
+			f.waitIdle(t)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			emitIdle := func(work string) {
+				t.Helper()
+				idle := events.Idle
+				f.emitWork(t, events.StateUpdate{State: &idle}, work)
+				event, err := nextSubscription(subscription, ctx)
+				require.NoError(t, err)
+				require.IsType(t, events.StateUpdate{}, event.Payload())
+			}
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the native submit gate")
+			}
+
+			emitIdle(scenario.during)
+			require.Zero(t, f.clock.Active(), "the Prompt still holds admission")
+			f.driver.releasePrompt()
+			require.NoError(t, <-promptDone)
+
+			if !scenario.wantRearm {
+				require.Zero(t, f.clock.Active(), "Idle during submission is eligible only when associated with its accepted work")
+				emitIdle(oldWork)
+				require.Zero(t, f.clock.Active(), "a later delivery of an explicitly different work ID cannot settle the Prompt")
+				emitIdle(scenario.followUp)
+			}
+			require.Equal(t, 1, f.clock.Active(), "a matching Idle or fresh untagged Idle must rearm")
+			f.clock.Advance(time.Second)
+			require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+		})
+	}
 }
 
 func TestIdlePromptSettlementWithQueuedNativeEvents(t *testing.T) {
