@@ -37,6 +37,7 @@ func sessionResumeRequired(state events.SessionState) error {
 
 type sessionWorkOptions struct {
 	input     bool
+	prompt    bool
 	canceling bool
 	rearmIdle bool
 }
@@ -93,6 +94,7 @@ func (s *Service) settleWork(run *runBinding, l *lane, opts sessionWorkOptions, 
 	if opts.input {
 		if uncertain {
 			l.unknownInputSource = l.source
+			l.idlePrompt.unresolved = opts.prompt
 		}
 		l.inputInFlight = false
 	}
@@ -101,8 +103,7 @@ func (s *Service) settleWork(run *runBinding, l *lane, opts sessionWorkOptions, 
 	run.admission.RUnlock()
 }
 
-// Supersede the idle observation only for an input that could have made
-// native progress. Uncertain dispatch must still wait for a new state.
+// Supersede the idle observation only for an input that could have made native progress.
 func promptNotApplied(receipt runtime.InputReceipt, err error) bool {
 	var problem *runtime.OperationError
 	if errors.As(err, &problem) && problem.Code == string(agent.ErrorOutcomeUnknown) {

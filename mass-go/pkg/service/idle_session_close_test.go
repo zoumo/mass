@@ -133,13 +133,16 @@ func (f *idleFixture) emitState(t *testing.T, state events.SessionState) {
 
 func (f *idleFixture) emit(t *testing.T, payload events.Payload) {
 	t.Helper()
-	f.emitWork(t, payload, "")
+	f.emitWork(t, payload, "", false)
 }
 
-func (f *idleFixture) emitWork(t *testing.T, payload events.Payload, work string) {
+func (f *idleFixture) emitWork(t *testing.T, payload events.Payload, work string, terminal bool) {
 	t.Helper()
 	f.driver.mu.Lock()
 	source := f.driver.source.WithWork(work)
+	if terminal {
+		source = source.WithTerminalWork(work)
+	}
 	f.driver.mu.Unlock()
 	event, err := events.NewEvent(events.EventBase{
 		EventID:     uuid.NewString(),
@@ -540,15 +543,46 @@ func testIdleObservationAtPromptSettlement(t *testing.T, queuedBefore bool) {
 func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
 	const newWork = "close-test"
 	const oldWork = "earlier-turn"
-	for _, scenario := range []struct {
-		name      string
-		during    string
+	type observation struct {
+		state     events.SessionState
+		work      string
+		terminal  bool
 		wantRearm bool
-		followUp  string
+	}
+	oldIdle := observation{state: events.Idle, work: oldWork}
+	untaggedIdle := observation{state: events.Idle}
+	matchingIdle := observation{state: events.Idle, work: newWork, wantRearm: true}
+	for _, scenario := range []struct {
+		name         string
+		during       []observation
+		after        []observation
+		wantAtReturn bool
 	}{
-		{name: "old work during dispatch", during: oldWork, followUp: newWork},
-		{name: "untagged during dispatch", followUp: ""},
-		{name: "matching work during dispatch", during: newWork, wantRearm: true},
+		{
+			name:   "old work during dispatch",
+			during: []observation{oldIdle},
+			after:  []observation{oldIdle, untaggedIdle, matchingIdle},
+		},
+		{
+			name:   "untagged during dispatch",
+			during: []observation{untaggedIdle},
+			after:  []observation{untaggedIdle, matchingIdle},
+		},
+		{
+			name:         "matching idle during dispatch",
+			during:       []observation{matchingIdle},
+			wantAtReturn: true,
+		},
+		{
+			name:         "matching then untagged idle during dispatch",
+			during:       []observation{matchingIdle, untaggedIdle},
+			wantAtReturn: true,
+		},
+		{
+			name:   "matching completion with a pending action",
+			during: []observation{{state: events.RequiresAction, work: newWork, terminal: true}},
+			after:  []observation{oldIdle, {state: events.Idle, wantRearm: true}},
+		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			f := newIdleFixture(t, time.Second)
@@ -561,13 +595,16 @@ func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
 			subscription, err := f.svc.SubscribeEvents(f.ref)
 			require.NoError(t, err)
 			defer subscription.Close()
-			emitIdle := func(work string) {
+			emitState := func(observed observation) {
 				t.Helper()
-				idle := events.Idle
-				f.emitWork(t, events.StateUpdate{State: &idle}, work)
+				f.emitWork(t, events.StateUpdate{State: &observed.state}, observed.work, observed.terminal)
 				event, err := nextSubscription(subscription, ctx)
 				require.NoError(t, err)
-				require.IsType(t, events.StateUpdate{}, event.Payload())
+				require.Equal(t, events.StateUpdate{State: &observed.state}, event.Payload())
+				require.Eventually(t, func() bool {
+					current, err := f.svc.GetSession(f.ref)
+					return err == nil && current.Status.State == observed.state
+				}, time.Second, time.Millisecond)
 			}
 
 			promptDone := make(chan error, 1)
@@ -581,20 +618,75 @@ func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
 				t.Fatal("Prompt did not reach the native submit gate")
 			}
 
-			emitIdle(scenario.during)
-			require.Zero(t, f.clock.Active(), "the Prompt still holds admission")
+			for _, observed := range scenario.during {
+				emitState(observed)
+				require.Zero(t, f.clock.Active(), "the Prompt still holds admission")
+			}
 			f.driver.releasePrompt()
 			require.NoError(t, <-promptDone)
+			require.Equal(t, scenario.wantAtReturn, f.clock.Active() == 1, "timer eligibility when the receipt settles")
 
-			if !scenario.wantRearm {
-				require.Zero(t, f.clock.Active(), "Idle during submission is eligible only when associated with its accepted work")
-				emitIdle(oldWork)
-				require.Zero(t, f.clock.Active(), "a later delivery of an explicitly different work ID cannot settle the Prompt")
-				emitIdle(scenario.followUp)
+			for _, observed := range scenario.after {
+				emitState(observed)
+				require.Equal(t, observed.wantRearm, f.clock.Active() == 1, "timer eligibility after the native state")
 			}
-			require.Equal(t, 1, f.clock.Active(), "a matching Idle or fresh untagged Idle must rearm")
+			require.Equal(t, 1, f.clock.Active())
 			f.clock.Advance(time.Second)
 			require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+		})
+	}
+}
+
+func TestIdlePromptUnknownRequiresExplicitRelease(t *testing.T) {
+	for _, work := range []string{"earlier-turn", ""} {
+		name := "tagged"
+		if work == "" {
+			name = "untagged"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.promptErr = &runtime.OperationError{Code: "outcome_unknown", Reason: "synthetic_native_submit"}
+			f.driver.releaseClose()
+			f.waitIdle(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			emitIdle := func() {
+				t.Helper()
+				idle := events.Idle
+				f.emitWork(t, events.StateUpdate{State: &idle}, work, false)
+				event, err := nextSubscription(subscription, ctx)
+				require.NoError(t, err)
+				require.IsType(t, events.StateUpdate{}, event.Payload())
+			}
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("uncertain")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the native submit gate")
+			}
+			emitIdle()
+			f.driver.releasePrompt()
+			require.ErrorIs(t, <-promptDone, f.driver.promptErr)
+			require.Zero(t, f.clock.Active(), "an unresolved Prompt must keep automatic close fenced")
+			emitIdle()
+			require.Zero(t, f.clock.Active(), "later state without settlement proof cannot lift the fence")
+			f.clock.Advance(time.Hour)
+			require.Zero(t, f.driver.closes.Load())
+
+			_, err = f.svc.CloseSession(ctx, f.ref)
+			require.NoError(t, err)
+			f.driver.releaseResume()
+			_, err = f.svc.ResumeSession(ctx, f.ref)
+			require.NoError(t, err)
+			f.waitIdle(t)
 		})
 	}
 }

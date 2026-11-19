@@ -579,6 +579,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.stateObserved = false
 	l.idleObservationVersion = 0
 	l.idleObservationWork = ""
+	l.idleSettledWork = ""
+	l.idleSettledVersion = 0
 	l.idlePrompt = promptIdleFence{}
 	l.idleChangeReceived = 0
 	l.idleChangeApplied = 0

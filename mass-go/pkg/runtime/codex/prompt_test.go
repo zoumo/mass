@@ -116,6 +116,36 @@ func TestPromptReturnsAssociationForIdentifiedTurn(t *testing.T) {
 	}
 }
 
+func TestCodexTerminalWorkSource(t *testing.T) {
+	requiresAction := events.RequiresAction
+	running := events.Running
+	for _, tc := range []struct {
+		name     string
+		method   string
+		work     string
+		payload  events.Payload
+		terminal bool
+	}{
+		{"completed turn with pending action", "turn/completed", "turn-1", events.StateUpdate{State: &requiresAction}, true},
+		{"stale completion diagnostic", "turn/completed", "turn-1", events.SessionError{Reason: "stale_native_turn", Message: "stale"}, false},
+		{"started turn", "turn/started", "turn-1", events.StateUpdate{State: &running}, false},
+		{"untagged state", "thread/status/changed", "", events.StateUpdate{State: &running}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := events.NewSource()
+			event, err := events.NewEvent(events.EventBase{
+				EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "prompt", SessionID: "native",
+				Time: time.Now(), Meta: map[string]any{"codex": map[string]any{"method": tc.method, "turnId": tc.work}},
+			}, tc.payload, original)
+			require.NoError(t, err)
+			source := codexEventSource(event)
+			require.True(t, source.SameRun(original))
+			require.Equal(t, tc.work, source.Work())
+			require.Equal(t, tc.terminal, source.WorkTerminal())
+		})
+	}
+}
+
 func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)

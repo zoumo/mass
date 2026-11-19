@@ -386,9 +386,10 @@ func (d *Driver) bindSession(native agent.Session, address runtime.Address, sour
 			}
 		},
 		Sink: func(ctx context.Context, event events.SessionEvent) error {
-			if work := codexTurnID(event); work != "" {
+			source := codexEventSource(event)
+			if work := source.Work(); work != "" {
 				s.observeWork(event, work)
-				remapped, err := events.NewEvent(event.EventBase, event.Payload(), event.Source().WithWork(work))
+				remapped, err := events.NewEvent(event.EventBase, event.Payload(), source)
 				if err != nil {
 					return err
 				}
@@ -751,13 +752,17 @@ func outcomeUnknown(reason, message string, cause error) error {
 	return err
 }
 
-func codexTurnID(event events.SessionEvent) string {
-	codexMeta, ok := event.Meta["codex"].(map[string]any)
-	if !ok {
-		return ""
-	}
+func codexEventSource(event events.SessionEvent) events.Source {
+	codexMeta, _ := event.Meta["codex"].(map[string]any)
 	turnID, _ := codexMeta["turnId"].(string)
-	return turnID
+	if turnID == "" {
+		return event.Source()
+	}
+	// A completed turn may leave the Session waiting on other interactions.
+	if _, state := event.Payload().(events.StateUpdate); state && codexMeta["method"] == "turn/completed" {
+		return event.Source().WithTerminalWork(turnID)
+	}
+	return event.Source().WithWork(turnID)
 }
 
 func sameNativeCreatedAt(a, b int64) bool {

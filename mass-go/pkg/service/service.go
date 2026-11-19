@@ -136,6 +136,8 @@ type lane struct {
 
 	idleObservationVersion uint64 // when the current native state was admitted for delivery
 	idleObservationWork    string // work association of that native state, if proven by the adapter
+	idleSettledWork        string // last work with terminal or idle evidence for the current Prompt
+	idleSettledVersion     uint64
 	idlePrompt             promptIdleFence
 	idleChangeReceived     uint64 // newest queued state or pending-work change
 	idleChangeApplied      uint64 // newest such change reflected in this lane
@@ -651,12 +653,13 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, sessionWorkOptions{input: true}, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, sessionWorkOptions{input: true, prompt: true}, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
 		// Admission holds the original lane through dispatch. A state event
 		// already queued at this point cannot settle the new prompt.
 		s.mu.Lock()
 		l := run.lanes[id]
 		previousIdlePrompt := l.idlePrompt
+		previousSettledWork, previousSettledVersion := l.idleSettledWork, l.idleSettledVersion
 		l.idlePrompt = promptIdleFence{dispatchFloor: l.idleVersion + 1}
 		s.mu.Unlock()
 
@@ -664,10 +667,12 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 		s.mu.Lock()
 		if promptNotApplied(receipt, err) {
 			l.idlePrompt = previousIdlePrompt
+			if l.idleSettledWork != previousIdlePrompt.work {
+				l.idleSettledWork, l.idleSettledVersion = previousSettledWork, previousSettledVersion
+			}
 			l.idleAfterAdmission = true
 		} else if receipt.Work != "" {
 			l.idlePrompt.work = receipt.Work
-			l.idlePrompt.untaggedFloor = l.idleVersion + 1
 		}
 		s.mu.Unlock()
 		return receipt, err
@@ -921,6 +926,11 @@ func (s *Service) process(run *runBinding, l *lane) {
 				l.idleObservationWork = e.Source().Work()
 				if payload.State != nil {
 					l.observedState = *payload.State
+				}
+				if work := l.idleObservationWork; work != "" && (l.idlePrompt.work == "" || l.idlePrompt.work == work) &&
+					(l.observedState == events.Idle || e.Source().WorkTerminal()) {
+					l.idleSettledWork = work
+					l.idleSettledVersion = entry.idleChangeVersion
 				}
 			case events.ToolChunk:
 				if l.activeTools == nil {

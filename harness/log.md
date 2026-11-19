@@ -2,7 +2,7 @@
 
 ## 2026-11-19
 
-- **v0.3.3** 增加可选 Runtime Inject、Service 和 JSON-RPC 的 context-only 输入以及 Go 失败回执。Inject 和 prompt 共用输入准入。统一权限选项增加 kind/scope，独立审批可省略 toolCallId，历史录制保留原选项值。 URL 接受后保持待决，Runtime 按关联原生证据生成独立的完成或过期事件。
+- **v0.3.3** 增加可选 Runtime Inject、Service 和 JSON-RPC 的 context-only 输入以及 Go 失败回执。Inject 和 prompt 共用输入准入。Prompt 的空闲回收依据当前工作结算证据。原生派发结果未知的绑定由显式生命周期操作结算。统一权限选项增加 kind/scope，独立审批可省略 toolCallId，历史录制保留原选项值。URL 接受后保持待决，Runtime 按关联原生证据生成独立的完成或过期事件。
 
 ## 2026-11-12
 

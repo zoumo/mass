@@ -191,6 +191,23 @@ func TestInjectServiceRearmsIdleWithoutNativeStateEvent(t *testing.T) {
 	}, time.Second, time.Millisecond)
 }
 
+func TestInjectServiceUnknownStillRearmsIdle(t *testing.T) {
+	d := newInjectWorkDriver()
+	close(d.release)
+	d.err = &runtime.OperationError{Code: "outcome_unknown", Reason: "synthetic_inject_unknown"}
+	clock := newManualClock()
+	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: time.Second})
+	waitForInjectIdleTimer(t, svc, d, ref, clock)
+	_, err := svc.Inject(t.Context(), ref, runtime.Input{Content: []events.ContentBlock{events.Text("context")}})
+	require.ErrorIs(t, err, d.err)
+	require.Equal(t, 1, clock.Active(), "context injection does not start work")
+	clock.Advance(time.Second)
+	require.Eventually(t, func() bool {
+		r, err := svc.GetSession(ref)
+		return err == nil && r.Status.State == "offline"
+	}, time.Second, time.Millisecond)
+}
+
 func waitForInjectIdleTimer(t *testing.T, svc *service.Service, d *injectWorkDriver, ref resource.SessionRef, clock *manualClock) {
 	t.Helper()
 	state := events.Idle

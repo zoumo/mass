@@ -35,7 +35,7 @@ type Options struct {
 type promptIdleFence struct {
 	dispatchFloor uint64 // all idle observations must be newer than the dispatch boundary
 	work          string // adapter-proven association for the latest accepted Prompt
-	untaggedFloor uint64 // an untagged observation must also be newer than the receipt boundary
+	unresolved    bool   // only explicit lifecycle operations can release an unknown native Prompt
 }
 
 func (s *Service) invalidateIdleLocked(l *lane) {
@@ -141,15 +141,14 @@ func (s *Service) idleCurrentLocked(run *runBinding, l *lane, version uint64) bo
 	if l.closing || l.releasing || l.overloaded || !l.stateObserved || l.observedState != events.Idle {
 		return false
 	}
-	if l.idleObservationVersion < l.idlePrompt.dispatchFloor {
+	if l.idlePrompt.unresolved || l.idleObservationVersion < l.idlePrompt.dispatchFloor {
 		return false
 	}
-	if l.idlePrompt.work != "" {
-		if l.idleObservationWork == "" {
-			if l.idleObservationVersion < l.idlePrompt.untaggedFloor {
-				return false
-			}
-		} else if l.idleObservationWork != l.idlePrompt.work {
+	if work := l.idlePrompt.work; work != "" {
+		if l.idleSettledWork != work || l.idleSettledVersion < l.idlePrompt.dispatchFloor {
+			return false
+		}
+		if l.idleObservationWork != "" && l.idleObservationWork != work {
 			return false
 		}
 	}
