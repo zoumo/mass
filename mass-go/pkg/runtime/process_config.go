@@ -100,6 +100,11 @@ func (o ProcessConfig) Environment(provider string) []string {
 	if o.EnvPolicy == "inherit" {
 		for _, entry := range os.Environ() {
 			k, v, _ := strings.Cut(entry, "=")
+			// Daemon export configuration can contain Collector credentials.
+			// A Runtime can supply its own OpenTelemetry settings explicitly.
+			if strings.HasPrefix(k, "OTEL_") {
+				continue
+			}
 			values[k] = v
 		}
 	}
@@ -125,7 +130,7 @@ func (o ProcessConfig) LookupEnv(key string) (string, bool) {
 	if value, ok := o.Env[key]; ok {
 		return value, true
 	}
-	if o.EnvPolicy != "inherit" {
+	if o.EnvPolicy != "inherit" || strings.HasPrefix(key, "OTEL_") {
 		return "", false
 	}
 	return os.LookupEnv(key)

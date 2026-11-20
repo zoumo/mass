@@ -14,6 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/zoumo/agent-sdk-go/agent"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -85,18 +88,22 @@ func (f workFactory) New(string, runtime.Config) (runtime.Driver, error) { retur
 
 type SessionWorkSuite struct {
 	suite.Suite
-	svc    *service.Service
-	driver *workDriver
-	ref    resource.SessionRef
+	svc       *service.Service
+	driver    *workDriver
+	ref       resource.SessionRef
+	telemetry *serviceTelemetryFixture
 }
 
 func (s *SessionWorkSuite) SetupTest() {
+	s.telemetry = newServiceTelemetryFixture(s.T())
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	d := &workDriver{pipe: events.NewEventPipe(16), entered: make(chan context.Context, 64), release: make(chan struct{})}
 	s.driver = d
-	s.svc = service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{d}}))
+	var options service.Options
+	s.telemetry.configure(&options)
+	s.svc = service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{d}}), options)
 	s.T().Cleanup(func() {
 		select {
 		case <-d.release:
@@ -241,7 +248,9 @@ func (s *SessionWorkSuite) TestNonJSONAnswersAndInvalidReferencesRejectedBeforeD
 }
 
 func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent() {
-	h, err := transport.New(s.svc, withServiceTestWriteTimeout(transport.Options{Token: "test-token"}))
+	h, err := transport.New(s.svc, withServiceTestWriteTimeout(transport.Options{
+		Token: "test-token", TracerProvider: s.telemetry.traces, MeterProvider: s.telemetry.meters,
+	}))
 	s.Require().NoError(err)
 	s.T().Cleanup(h.Shutdown)
 	server := httptest.NewServer(h)
@@ -268,6 +277,22 @@ func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent()
 	case <-observed.Done():
 		s.FailNow("request not admitted")
 	}
+	inflight := func() map[string]int64 {
+		sum := s.telemetry.metric(s.T(), "mass.rpc.inflight").(metricdata.Sum[int64])
+		points := make(map[string]int64, len(sum.DataPoints))
+		for _, point := range sum.DataPoints {
+			method, _ := point.Attributes.Value("rpc.method")
+			points[method.AsString()] = point.Value
+		}
+		return points
+	}
+	s.EqualValues(1, inflight()["session.prompt"])
+	reader := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	s.T().Cleanup(func() { s.Require().NoError(reader.Close()) })
+	var current resource.Session
+	s.Require().NoError(reader.GetSession(observed, s.ref, &current))
+	s.Equal(s.ref.SessionID, current.Status.SessionID)
+	s.EqualValues(1, inflight()["session.prompt"])
 	cancelWait()
 	select {
 	case err := <-done:
@@ -279,6 +304,7 @@ func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent()
 		s.FailNow("RPC wait did not end")
 	}
 	s.Require().NoError(owner.Err())
+	s.Empty(s.telemetry.spans("mass.session.prompt"), "canceling the caller must leave the owner span open")
 	close(s.driver.release)
 	event, err = watch.Next(observed)
 	s.Require().NoError(err)
@@ -288,6 +314,15 @@ func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent()
 	s.Require().Len(page.Events, 1)
 	s.Equal("agent.message", page.Events[0].Type())
 	s.Equal(int32(1), s.driver.calls.Load())
+	s.Require().Eventually(func() bool {
+		return len(s.telemetry.spans("mass.session.prompt")) == 1 && len(s.telemetry.spans("session.prompt")) == 1
+	}, time.Second, time.Millisecond)
+	settled := s.telemetry.spans("mass.session.prompt")[0]
+	s.Equal(trace.SpanContextFromContext(owner), settled.SpanContext())
+	s.Equal(s.telemetry.spans("session.prompt")[0].SpanContext(), settled.Parent())
+	s.Contains(settled.Attributes(), attribute.String("outcome", "success"))
+	s.Zero(inflight()["session.prompt"])
+	s.Zero(inflight()["session.get"])
 }
 
 func (s *SessionWorkSuite) TestExpiredCallerDoesNotDispatchWork() {

@@ -30,6 +30,7 @@ type entrypointSuite struct {
 	suite.Suite
 	url, data    string
 	backend      string
+	coldRuntime  bool
 	claudeConfig string
 	daemonCtx    context.Context
 	daemon       *exec.Cmd
@@ -187,6 +188,9 @@ func (s *entrypointSuite) openWithExecutable(kind, mode, bin string) (resource.S
 	if kind == "claude" && filepath.Base(bin) == "claude-linked-replay" {
 		path = replaceClaudeScenarioSessionID(s.T(), path, "55555555-5555-4555-8555-555555555555")
 	}
+	if s.coldRuntime {
+		path = withPromptTraceScenario(s.T(), path, kind)
+	}
 	return s.openPrepared(kind, bin, path, work)
 }
 
@@ -198,7 +202,9 @@ func (s *entrypointSuite) openPrepared(kind, bin, path, work string) (resource.S
 	}
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: config}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
-	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
+	if !s.coldRuntime {
+		s.call("runtime.start", workflowParams{Name: "agent"}, nil)
+	}
 	var session resource.Session
 	create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "session"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}}
 	s.call("session.create", workflowParams{Create: &create}, &session)
@@ -378,6 +384,9 @@ func (s *entrypointSuite) basic(kind string) {
 	if kind == "claude" {
 		resumePath = replaceClaudeScenarioSessionID(s.T(), resumePath, ref.SessionID)
 	}
+	if s.coldRuntime {
+		resumePath = withPromptTraceScenario(s.T(), resumePath, kind)
+	}
 	spec := resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": resumePath}}
 	if kind == "claude" {
 		spec.Config["env"] = map[string]any{"CLAUDE_CONFIG_DIR": s.claudeConfig}
@@ -391,10 +400,12 @@ func (s *entrypointSuite) basic(kind string) {
 	s.Require().NoError(e)
 	s.Equal(before, disk)
 	s.Require().NoError(st.Close())
-	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
+	if !s.coldRuntime {
+		s.call("runtime.start", workflowParams{Name: "agent"}, nil)
+	}
 	var resumed resource.Session
 	resumeInput := runtime.Input{}
-	if kind == "claude" {
+	if kind == "claude" && !s.coldRuntime {
 		resumeInput.Content = []events.ContentBlock{events.Text("continue")}
 	}
 	var scan *bufio.Scanner

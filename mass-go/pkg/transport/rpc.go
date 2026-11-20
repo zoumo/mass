@@ -25,6 +25,7 @@ type rpcEndpoint struct {
 	writeTimeout  time.Duration
 	serverVersion string
 	origins       map[string]struct{}
+	telemetry     *rpcTelemetry
 
 	mu     sync.Mutex
 	closed bool
@@ -51,6 +52,7 @@ func newRPCEndpoint(life context.Context, api API, opts Options) *rpcEndpoint {
 		writeTimeout:  opts.WriteTimeout,
 		serverVersion: version,
 		origins:       origins,
+		telemetry:     newRPCTelemetry(opts),
 		conns:         map[*rpc2.Conn]rpcConnectionEntry{},
 	}
 }
@@ -242,6 +244,25 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 		slog.Default().Debug("ignored JSON-RPC notification", "method", req.Method)
 		return
 	}
+	var telemetry *rpcTelemetry
+	if c.endpoint != nil {
+		telemetry = c.endpoint.telemetry
+	}
+	ctx, finish := telemetry.start(ctx, req.Method)
+	async := false
+	defer func() {
+		if !async {
+			finish()
+		}
+	}()
+	dispatch := func(key string, call func()) {
+		async = true
+		go func() {
+			defer c.end(key)
+			defer finish()
+			call()
+		}()
+	}
 	if c.endpoint != nil && c.endpoint.isClosed() {
 		replyServiceError(ctx, conn, req.ID, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
 		return
@@ -275,7 +296,7 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 			replyServiceError(ctx, conn, req.ID, subscriptionAlreadyActive())
 			return
 		}
-		go c.dispatchSubscribe(ctx, conn, req, key, ref, subscription)
+		dispatch(key, func() { c.dispatchSubscribe(ctx, conn, req, ref, subscription) })
 		return
 	}
 	if req.Method == "session.unsubscribe" {
@@ -285,7 +306,7 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 			replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
 			return
 		}
-		go c.dispatchUnsubscribe(ctx, conn, req, key, subscriptionID)
+		dispatch(key, func() { c.dispatchUnsubscribe(ctx, conn, req, subscriptionID) })
 		return
 	}
 	call, known, paramsErr := c.prepareRuntimeCall(req.Method, req.Params)
@@ -302,7 +323,7 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 		replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
 		return
 	}
-	go c.dispatchCall(ctx, conn, req, key, call)
+	dispatch(key, func() { c.dispatchCall(ctx, conn, req, call) })
 }
 
 func (c *rpcConnection) begin(id string) bool {
@@ -414,7 +435,7 @@ func (c *rpcConnection) initialize(ctx context.Context, conn *rpc2.Conn, req *rp
 	}); err != nil {
 		return
 	}
-	if err := conn.SendResponse(ctx, response); err != nil {
+	if err := sendRPCResponse(ctx, conn, response); err != nil {
 		return
 	}
 	c.mu.Lock()
@@ -463,7 +484,7 @@ func replyError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, code int64, me
 		}
 		rpcErr.Data = (*json.RawMessage)(&data)
 	}
-	_ = conn.SendResponse(ctx, &rpc2.Response{ID: id, Error: rpcErr})
+	_ = sendRPCResponse(ctx, conn, &rpc2.Response{ID: id, Error: rpcErr})
 }
 
 type rpcLogger struct{}

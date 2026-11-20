@@ -67,6 +67,7 @@ type SessionService interface {
 }
 type runBinding struct {
 	runtimeName   string
+	provider      string
 	driver        runtime.Driver
 	stream        events.Stream
 	generation    uint64
@@ -162,6 +163,7 @@ type Service struct {
 	resumeSlots chan struct{}
 	idleTimeout time.Duration
 	clock       Clock
+	telemetry   serviceTelemetry
 }
 
 func New(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry) *Service {
@@ -179,7 +181,7 @@ func NewWithOptions(meta metastore.MetaStore, history eventstore.EventStore, reg
 	if clock == nil {
 		clock = systemClock{}
 	}
-	return &Service{
+	s := &Service{
 		policy:      options.InteractionPolicy,
 		meta:        meta,
 		history:     history,
@@ -191,6 +193,8 @@ func NewWithOptions(meta metastore.MetaStore, history eventstore.EventStore, reg
 		idleTimeout: options.SessionIdleTimeout,
 		clock:       clock,
 	}
+	s.configureTelemetry(options)
+	return s
 }
 
 func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer any) (runtime.InteractionReceipt, error) {
@@ -217,7 +221,7 @@ func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef
 	if err = decoder.Decode(&answer); err != nil {
 		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid JSON answer")
 	}
-	return sessionWork(ctx, s, ref, sessionWorkOptions{}, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
+	return sessionWork(ctx, s, ref, sessionWorkOptions{operation: "mass.session.answer"}, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
 		evidence, err := run.driver.AnswerInteraction(owner, id, interaction, answer)
 		return runtime.InteractionReceipt{Interaction: interaction, Evidence: evidence}, err
 	})
@@ -255,11 +259,15 @@ func validateMetadata(m resource.Metadata, session bool) error {
 	return nil
 }
 func addressKey(a runtime.Address) string { return a.Namespace + "/" + a.SessionName }
-func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runtime, error) {
+func (s *Service) StartRuntime(ctx context.Context, name string) (_ resource.Runtime, resultErr error) {
+	ctx, span := s.telemetry.start(ctx, "mass.runtime.start")
+	outcome := ""
+	defer func() { finishOperation(span, resultErr, outcome) }()
 	r, err := s.GetRuntime(name)
 	if err != nil {
 		return r, err
 	}
+	span.SetAttributes(providerAttribute(r.Spec.Type))
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
@@ -285,7 +293,11 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		if !started {
 			return r, errors.New("runtime start not confirmed")
 		}
-		return s.meta.GetRuntime(name)
+		current, err := s.meta.GetRuntime(name)
+		if err == nil {
+			outcome = "reused"
+		}
+		return current, err
 	}
 	// A nil run binding means this process has no owner for the persisted
 	// Runtime. Explicit start/resume may replace a cold unknown from a restart;
@@ -299,7 +311,7 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		return r, errors.New("runtime capacity exhausted")
 	}
 	// Reserve the original owner before constructing or starting any Driver.
-	run := &runBinding{runtimeName: name, done: make(chan struct{}), pending: map[string]*opening{}, lanes: map[string]*lane{}}
+	run := &runBinding{runtimeName: name, provider: r.Spec.Type, done: make(chan struct{}), pending: map[string]*opening{}, lanes: map[string]*lane{}}
 	run.op.Lock()
 	s.runs[name] = run
 	s.mu.Unlock()
@@ -393,7 +405,14 @@ func (s *Service) CreateSessionWithInput(ctx context.Context, input resource.Ses
 	return s.createSession(ctx, resource.Session{Metadata: input.Metadata, Spec: input.Spec}, input.InitialInput)
 }
 
-func (s *Service) createSession(ctx context.Context, r resource.Session, initial *runtime.Input) (resource.SessionCreated, error) {
+func (s *Service) createSession(ctx context.Context, r resource.Session, initial *runtime.Input) (_ resource.SessionCreated, resultErr error) {
+	ctx, span := s.telemetry.start(ctx, "mass.session.create")
+	owned := false
+	defer func() {
+		if !owned {
+			finishOperation(span, resultErr, "")
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return resource.SessionCreated{}, err
 	}
@@ -444,6 +463,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	if run == nil || closing {
 		return resource.SessionCreated{Session: r}, errors.New("runtime unavailable")
 	}
+	span.SetAttributes(providerAttribute(run.provider))
 	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec)
 	if err != nil {
 		return resource.SessionCreated{Session: r}, err
@@ -502,6 +522,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		err     error
 	}
 	resultCh := make(chan result, 1)
+	owned = true
 	go func() {
 		defer op.finish()
 		defer cancel()
@@ -518,7 +539,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			if err != nil && native.SessionID != "" {
 				// Native thread exists even when its first dispatch receipt is uncertain.
 				// Keep its original address and buffered facts until explicit settlement.
-				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+				cleanup := run.driver.CloseSession(context.WithoutCancel(owner), native.SessionID)
 				s.mu.Lock()
 				op.native = native
 				op.released = cleanup == nil
@@ -542,7 +563,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			abandoned := op.abandoned || run.stopping
 			s.mu.Unlock()
 			if invalid := resource.ValidateSessionID(native.SessionID); invalid != nil {
-				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+				cleanup := run.driver.CloseSession(context.WithoutCancel(owner), native.SessionID)
 				s.mu.Lock()
 				op.released = cleanup == nil
 				if cleanup == nil {
@@ -555,7 +576,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				return resource.Session{}, invalid
 			}
 			if abandoned {
-				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+				cleanup := run.driver.CloseSession(context.WithoutCancel(owner), native.SessionID)
 				if cleanup == nil {
 					removePending()
 				}
@@ -567,7 +588,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			s.mu.Unlock()
 			r, err = s.meta.CreateSession(r)
 			if err != nil {
-				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+				cleanup := run.driver.CloseSession(context.WithoutCancel(owner), native.SessionID)
 				s.mu.Lock()
 				op.released = cleanup == nil
 				s.mu.Unlock()
@@ -594,7 +615,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			go s.process(run, l)
 			s.watchObservation(run, l, native)
 			if abandoned {
-				cleanup := s.settleAbandoned(run, l)
+				cleanup := s.settleAbandoned(context.WithoutCancel(owner), run, l)
 				if cleanup == nil {
 					removePending()
 				}
@@ -609,6 +630,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		if err != nil {
 			receipt = nil
 		}
+		finishOperation(span, err, "")
 		resultCh <- result{resource.SessionCreated{Session: value, InitialInputReceipt: receipt}, err}
 	}()
 	select {
@@ -652,7 +674,7 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, sessionWorkOptions{input: true, prompt: true}, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, sessionWorkOptions{operation: "mass.session.prompt", input: true, prompt: true}, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
 		// Admission holds the original lane through dispatch. A state event
 		// already queued at this point cannot settle the new prompt.
 		s.mu.Lock()
@@ -718,6 +740,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			stopping := run.stopping
 			s.mu.Unlock()
 			if !errors.Is(err, io.EOF) || !stopping {
+				s.telemetry.recordEventFailure("driver_stream")
 				s.mu.Lock()
 				if errors.Is(err, io.EOF) {
 					err = unknownOutcome("runtime_stream_unexpected_eof", "Runtime event stream ended unexpectedly; inspect state before further action")
@@ -889,6 +912,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 		}
 		if e.Persistent() {
 			if _, err := s.history.Append(e.SessionID, []events.SessionEvent{e}); err != nil {
+				s.telemetry.recordEventFailure("history_commit")
 				s.fail(l, fmt.Errorf("history commit failed: %w", err))
 				s.failLoad(run, l, "failed", err)
 				s.mu.Lock()
@@ -967,6 +991,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 			// A required handler may have partially delivered this UUID. Never
 			// retry it or let later load facts overtake its failed publication.
 			if err != nil {
+				s.telemetry.recordEventFailure("realtime_publish")
 				slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
 				s.mu.Lock()
 				l.publicationErr = errors.Join(l.publicationErr, err)
@@ -1053,7 +1078,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // Cancel targets the original lane and remains available during drain. A receipt
 // records only dispatch/acknowledgment; native termination must still be observed.
 func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
-	return sessionWork(ctx, s, ref, sessionWorkOptions{canceling: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
+	return sessionWork(ctx, s, ref, sessionWorkOptions{operation: "mass.session.cancel", canceling: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
 		return run.driver.Cancel(owner, id)
 	})
 }
@@ -1199,7 +1224,7 @@ func (s *Service) ReconcileDelivery(ctx context.Context, name string) error {
 
 // Called only by the original opening owner. Stop waits op.done before touching
 // this lane, so late cleanup must not wait on Stop's runtime operation mutex.
-func (s *Service) settleAbandoned(run *runBinding, l *lane) error {
+func (s *Service) settleAbandoned(ctx context.Context, run *runBinding, l *lane) error {
 	s.mu.Lock()
 	l.closing = true
 	s.mu.Unlock()
@@ -1207,10 +1232,10 @@ func (s *Service) settleAbandoned(run *runBinding, l *lane) error {
 	if _, err := s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 		return err
 	}
-	if err := run.driver.CloseSession(context.Background(), ref.SessionID); err != nil {
+	if err := run.driver.CloseSession(ctx, ref.SessionID); err != nil {
 		return err
 	}
-	if err := s.drainLane(context.Background(), l); err != nil {
+	if err := s.drainLane(ctx, l); err != nil {
 		return err
 	}
 	if _, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r) }); err != nil {
