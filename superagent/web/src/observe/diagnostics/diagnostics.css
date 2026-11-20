@@ -1,0 +1,167 @@
+.diagnostic-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.diag-health {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.diag-health dl {
+  padding: 14px 20px;
+  border-inline-end: 1px solid var(--line);
+}
+.diag-health dt,
+.diag-table-panel th,
+.record-detail dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.diag-health dd + dt {
+  margin-top: 8px;
+}
+.diag-collections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.diag-table-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+.diag-table-panel form,
+.diag-table-panel footer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 18px;
+}
+.diag-table-panel input {
+  min-width: 0;
+  background: var(--canvas);
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.diag-table-panel footer {
+  color: var(--muted);
+  justify-content: space-between;
+}
+.diag-scroll {
+  overflow-x: auto;
+}
+.diag-scroll table {
+  width: 100%;
+  text-align: left;
+  border-collapse: collapse;
+}
+.diag-scroll td,
+.diag-scroll th {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.diag-scroll td:first-child {
+  max-width: 34rem;
+}
+.diag-scroll td button,
+.record-detail a,
+.record-detail button,
+.diag-table-panel .panel-heading button {
+  color: var(--teal);
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.diag-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(720px, calc(100vw - 24px));
+  max-height: min(86dvh, 1000px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.diag-dialog::backdrop {
+  background: rgb(1 5 12 / 80%);
+}
+.diag-dialog-header {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 1;
+}
+.diag-dialog-header h2,
+.record-detail h2 {
+  font-size: 18px;
+  font-weight: 650;
+}
+.diag-dialog-header button {
+  padding: 6px;
+}
+.record-detail {
+  padding: 18px 20px 24px;
+  overflow-wrap: anywhere;
+}
+.record-detail > * + *,
+.record-detail section > * + * {
+  margin-top: 12px;
+}
+.record-detail dl {
+  display: grid;
+  grid-template-columns: minmax(6em, 1fr) minmax(0, 3fr);
+  gap: 6px 12px;
+}
+.record-detail dd {
+  grid-column: 2;
+}
+.record-detail dt {
+  grid-column: 1;
+}
+.record-detail pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--canvas);
+  padding: 12px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+.record-detail ul,
+.record-detail ol {
+  padding-left: 18px;
+  list-style: disc;
+}
+.record-detail button {
+  margin-right: 14px;
+}
+.record-state {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+@media (max-width: 760px) {
+  .diag-health {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .diag-health dl {
+    padding: 10px;
+  }
+  .diag-scroll table {
+    min-width: 560px;
+  }
+}

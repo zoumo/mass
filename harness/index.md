@@ -61,4 +61,4 @@ Service 的详细职责：[Session](modules/service/session.md)、[历史](modul
 
 共享开放值见 [types.tsp](shared/types.tsp) 与[语义说明](shared/types.md)，统一历史查询见 [history-models.tsp](shared/history-models.tsp)，进程内处理器接口见 [event-handlers.tsp](modules/events/event-handlers.tsp)。
 
-主 Session 初始 model/effort 与当前运行瞬态更新见[配置合同](modules/runtime/session-config.md)；ACP 观察结构独立保留。
+主 Session 初始模型、推理强度和权限预设与当前运行瞬态更新见[配置合同](modules/runtime/session-config.md)。

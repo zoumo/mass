@@ -31,6 +31,7 @@ import (
 type options struct {
 	MetaStore          metastore.Config `mapstructure:"metaStore"`
 	Data               string           `mapstructure:"data"`
+	DataDir            *string          `mapstructure:"dataDir"`
 	Listen             string           `mapstructure:"listen"`
 	TokenFile          string           `mapstructure:"tokenFile"`
 	TLSCert            string           `mapstructure:"tlsCert"`
@@ -282,7 +283,11 @@ func dataDirectoryError(err error) error {
 
 func main() {
 	if err := newCommand().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, transport.PublicError(err))
+		if errors.Is(err, errConflictingDataFields) {
+			fmt.Fprintln(os.Stderr, errConflictingDataFields)
+		} else {
+			fmt.Fprintln(os.Stderr, transport.PublicError(err))
+		}
 		os.Exit(1)
 	}
 }

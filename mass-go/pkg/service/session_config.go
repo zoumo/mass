@@ -16,7 +16,7 @@ func validateSessionConfig(spec runtime.SessionSpec) error {
 	if err := spec.Config.Validate(); err != nil {
 		return err
 	}
-	if err := (agent.OpenOptions{Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
+	if err := spec.SDKOpenOptions().Validate(); err != nil {
 		return agentrelay.MapError(err)
 	}
 	if spec.MCPServers == nil {

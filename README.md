@@ -99,13 +99,22 @@ describes the intended design in detail.
 The checked-in architecture diagram still shows the retired HTTP/SSE binding;
 current transport is WebSocket JSON-RPC.
 
+## Superagent business Core
+
+The [superagent](superagent/README.md) business entrypoint accepts durable
+messages, routes them to Topics, and coordinates Worker Sessions through massd.
+Its read-only React Observer follows Messages through the Router, Topics and
+Issues, with diagnostics for internal delivery, Sessions and Outbox state. Build it with `make build-superagent`. Root `make check`
+covers its Go module and browser suite. Schema 20 starts in a new data
+directory and preserves earlier SQLite and JSON v4 state directories.
+
 ## Build
 
 Requires **Go 1.26.9 or later**.
 
 ```sh
 make build
-# Produces bin/massctl and bin/massd
+# Produces bin/massctl, bin/massd and bin/superagent
 ```
 
 | Binary | Role |

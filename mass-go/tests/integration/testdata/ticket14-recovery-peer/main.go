@@ -64,6 +64,22 @@ func main() {
 		sessionID = uuid.NewString()
 	}
 	mode := os.Getenv("RESUME_INPUT_MODE")
+	fullAccess := os.Getenv("PEER_CLAUDE_FULL_ACCESS") == "1"
+	if fullAccess {
+		var nativeMode, settings string
+		for _, arg := range os.Args[1:] {
+			if value, ok := strings.CutPrefix(arg, "--permission-mode="); ok {
+				nativeMode = value
+			}
+			if value, ok := strings.CutPrefix(arg, "--settings="); ok {
+				settings = value
+			}
+		}
+		if nativeMode != "bypassPermissions" || settings != `{"sandbox":{"enabled":false}}` {
+			panic("expected full-access Claude startup")
+		}
+		log("full_access", map[string]any{"sessionId": sessionID, "resumed": resumed})
+	}
 	init := func() {
 		id, work := sessionID, cwd
 		if resumed && mode == "wrong-id" {
@@ -104,7 +120,18 @@ func main() {
 					}
 					continue
 				}
-				send(clipeer.StartupReply(r["subtype"].(string), v["request_id"]))
+				subtype := r["subtype"].(string)
+				reply := clipeer.StartupReply(subtype, v["request_id"])
+				if fullAccess {
+					body := reply["response"].(map[string]any)["response"].(map[string]any)
+					switch subtype {
+					case "initialize":
+						body["current_permission_mode"] = "bypassPermissions"
+					case "get_settings":
+						body["effective"] = map[string]any{"sandbox": map[string]any{"enabled": false}}
+					}
+				}
+				send(reply)
 				if r["subtype"] == "initialize" && !(resumed && mode == "hold-init") {
 					init()
 				}

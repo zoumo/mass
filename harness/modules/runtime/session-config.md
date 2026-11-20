@@ -27,10 +27,12 @@ select 的 currentValue 为字符串选项 ID，options 为平铺 ConfigOptionVa
 
 ## 初始配置与恢复
 
-DriverSessionSpec 及 SessionSpec 可提供 `config: {model?, effort?}`，SessionLoad 提供同形字段。
+DriverSessionSpec 及 SessionSpec 可提供 `config: {model?, effort?, permissionPreset?}`，SessionLoad 提供同形字段。
 仅接受对象和字符串；省略、空对象及字段空字符串按 SDK 省略，null、非字符串、NUL、
-非法 UTF-8 或不能编码的值在任何原生副作用前拒绝。非空值不 trim、不改大小写、不解释
-别名、枚举或 `default`，直接传入 SDK Open/Resume 的 Config。Runtime 不提供 model/effort 默认值。
+非法 UTF-8 或不能编码的值在任何原生副作用前拒绝。model 和 effort 原样传入
+SDK Open/Resume 的 Config。非空权限预设仅接受 `manualReview`、`autoReview` 和 `fullAccess`，
+原样传入 SDK Open/Resume 的 PermissionPreset。省略预设时，SDK 使用 `autoReview`。
+Runtime 不提供初始配置默认值。
 
 初始显式配置持久保存在 Session spec，resume 重新请求这些初始值，不提供临时覆盖。
 load 保存本次显式值，并在同一原生恢复连接使用它们。可变配置不属于恢复身份；
@@ -78,6 +80,7 @@ SDK 明确拒绝保留 native_rejected code/reason，HTTP 为 422；确定未写
 |---|---|---|
 | 初始 model | SDK Open/Resume 的 Config → 原生 model | SDK Open/Resume 的 Config → --model |
 | 初始 effort | SDK → model_reasoning_effort | SDK → --effort |
+| 初始 permissionPreset | SDK → 原生审批与沙箱 | SDK → 原生权限模式与沙箱 |
 | 在线 model | SDK SetConfig → SetModel/thread settings update | SDK SetConfig → set_model |
 | 在线 effort | SDK SetConfig → SetThinking/thread settings update | SDK SetConfig → get_settings 预检与 apply_flag_settings |
 

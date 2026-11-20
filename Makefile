@@ -1,10 +1,10 @@
 .PHONY: fmt lint test build check fmt-massctl lint-massctl test-massctl build-massctl check-massctl
 
-fmt: fmt-go
-lint: lint-go
-test: test-go
-build: build-go
-check: check-go
+fmt: fmt-go fmt-superagent
+lint: lint-go lint-superagent
+test: test-go test-superagent observer-check
+build: build-go build-superagent
+check: check-go check-superagent
 
 # Go experimental Service-backed CLI and HTTP/SSE.
 .PHONY: fmt-go lint-go test-go test-unit-go test-integration-go test-simulation-go test-e2e-go build-go check-go
@@ -63,3 +63,26 @@ prototype-go:
 .PHONY: acceptance-sdk-go
 acceptance-sdk-go:
 	cd mass-go && GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./tests/integration -run '^TestTicket08'
+
+# The Superagent Go module and read-only Observer are part of the root offline gates.
+.PHONY: fmt-superagent lint-superagent test-superagent vet-superagent build-superagent check-superagent observer-build observer-check
+fmt-superagent:
+	cd superagent && golangci-lint fmt
+lint-superagent: observer-build
+	cd superagent && golangci-lint run ./...
+	cd superagent && golangci-lint run --build-tags observerweb,coretest ./...
+test-superagent:
+	cd superagent && GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=240s ./...
+vet-superagent:
+	cd superagent && GOWORK=off GOPROXY=off GOSUMDB=off go vet ./...
+	cd superagent && GOWORK=off GOPROXY=off GOSUMDB=off go vet -tags observerweb,coretest ./...
+observer-build:
+	cd superagent/web && npm ci --offline --no-audit --no-fund
+	cd superagent/web && npm run build
+build-superagent: observer-build
+	mkdir -p bin
+	cd superagent && GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -tags observerweb -o ../bin/superagent ./cmd/superagent
+observer-check: observer-build
+	cd superagent/web && npm run test:e2e
+check-superagent: lint-superagent test-superagent vet-superagent build-superagent observer-check
+	cd superagent && golangci-lint fmt --diff
