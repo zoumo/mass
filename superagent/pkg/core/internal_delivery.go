@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -12,18 +15,21 @@ import (
 )
 
 type inputBatch struct {
-	BindingID     string            `json:"bindingId"`
-	Generation    int               `json:"generation"`
+	BindingID     string            `json:"bindingId,omitempty"`
+	Generation    int               `json:"generation,omitempty"`
 	Events        []json.RawMessage `json:"events"`
-	SchemaVersion int               `json:"schemaVersion"`
+	SchemaVersion int               `json:"schemaVersion,omitempty"`
 }
 
+const inlineMessageBytes = 2 * 1024
+
 type internalDeliveryBatch struct {
-	wire     []byte
-	items    []internalDelivery
-	queuedAt time.Time
-	method   string
-	links    []trace.Link
+	workerIssueRevision int
+	wire                []byte
+	items               []internalDelivery
+	queuedAt            time.Time
+	method              string
+	links               []trace.Link
 }
 
 // businessDeliveryCurrent is evaluated in both the selection and final admission
@@ -43,7 +49,7 @@ func businessDeliveryCurrent(ctx context.Context, tx *sql.Tx, d internalDelivery
 	return !terminal(topic.Status), nil
 }
 
-func encodeInternalDelivery(d internalDelivery) (json.RawMessage, error) {
+func encodeLegacyInternalDelivery(d internalDelivery) (json.RawMessage, error) {
 	event := struct {
 		internalDelivery
 		BodyPreview    string             `json:"body_preview,omitempty"`
@@ -125,8 +131,12 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 		return batch, err
 	}
 	var deadline time.Time
+	var workerIssue *Issue
 	batch.method = "inject"
-	envelope := inputBatch{BindingID: b.ID, Generation: b.Generation, SchemaVersion: 4}
+	var envelope inputBatch
+	if b.AgentPromptVersion == 0 {
+		envelope.BindingID, envelope.Generation, envelope.SchemaVersion = b.ID, b.Generation, 4
+	}
 	at, full := time.Now(), false
 	for _, q := range queue {
 		current, err := businessDeliveryCurrent(ctx, tx, q.item)
@@ -149,7 +159,51 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 		if created.After(deadline) {
 			break
 		}
-		raw, err := encodeInternalDelivery(q.item)
+		var raw, referenceOnly json.RawMessage
+		if b.AgentPromptVersion == 0 {
+			raw, err = encodeLegacyInternalDelivery(q.item)
+		} else {
+			view := q.item
+			view.promptVersion = b.AgentPromptVersion
+			raw, err = view.MarshalAgentPromptJSON()
+			if err == nil && len(raw) > previewBytes {
+				view.truncated = true
+				raw, err = view.MarshalAgentPromptJSON()
+			}
+			inlineTopic := b.Role == "topic" && view.Kind == routedMessageKind
+			inlineRouter := b.Role == "router" && b.AgentPromptVersion >= agentPromptVersion && view.Kind == routeRequestKind
+			maxViewBytes := min(previewBytes, batchBytes-len(batch.wire)-1)
+			workerContext := false
+			if err == nil && !view.truncated && view.Content == nil && len(view.Refs) == 1 &&
+				view.Refs[0].Kind == messageRefKind && (inlineTopic || inlineRouter) {
+				err = view.loadInlineTriggerMessage(ctx, tx, b)
+			} else if err == nil && !view.truncated && b.AgentPromptVersion >= agentPromptVersion {
+				switch {
+				case b.Role == "topic" && view.Kind == reportSubmittedKind:
+					err = view.loadInlineReport(ctx, tx, b)
+				case b.Role == "worker" && (view.Kind == workerStarted || view.Kind == workerUpdateKind || view.Kind == contextSupplement):
+					if workerIssue == nil {
+						issue, _, readErr := currentWorkerIssue(ctx, tx, b)
+						if readErr != nil {
+							return batch, readErr
+						}
+						workerIssue = &issue
+					}
+					err = view.loadInlineWorkerContext(ctx, tx, workerIssue, maxViewBytes)
+					workerContext = view.issue != nil || len(view.messages) != 0
+				}
+			}
+			if err == nil && (view.Content != q.item.Content || view.issue != nil || len(view.messages) != 0) {
+				var enriched json.RawMessage
+				enriched, err = view.MarshalAgentPromptJSON()
+				if err == nil && (b.AgentPromptVersion < agentPromptVersion || len(enriched) <= maxViewBytes) {
+					referenceOnly, raw = raw, enriched
+					if workerContext {
+						batch.workerIssueRevision = workerIssue.Revision
+					}
+				}
+			}
+		}
 		if err != nil {
 			return batch, err
 		}
@@ -157,6 +211,13 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 		wire, err := json.Marshal(envelope)
 		if err != nil {
 			return batch, err
+		}
+		if len(wire) > batchBytes && referenceOnly != nil {
+			envelope.Events[len(envelope.Events)-1] = referenceOnly
+			wire, err = json.Marshal(envelope)
+			if err != nil {
+				return batch, err
+			}
 		}
 		if len(wire) > batchBytes {
 			full = true
@@ -182,6 +243,173 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	return batch, tx.Commit()
 }
 
+// loadInlineTriggerMessage uses the same scope as source_query. A matched Topic
+// quote carries the open blocker snapshot from the same transaction.
+func (d *internalDelivery) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx, b Binding) error {
+	scope, args, err := scopeSQL("messages", &b)
+	if err != nil {
+		return err
+	}
+	var text, threadKey string
+	var routing []byte
+	var hasQuote bool
+	var quotedReply []byte
+	columns := "body->>'$.text'"
+	var projectionArgs []any
+	filter := " AND body->>'$.quotedMessage' IS NULL"
+	dest := []any{&text}
+	if b.Role == "router" {
+		columns += ",thread_key,json_object('round'," + routingRound + ",'state'," + routingState + ")"
+		filter += " AND " + routingState + "='pending' AND " + routingRound + "=1"
+		dest = append(dest, &threadKey, &routing)
+	} else if b.AgentPromptVersion >= agentPromptVersion {
+		columns += ",body->>'$.quotedMessage' IS NOT NULL,CASE WHEN body->>'$.quotedMessage' IS NOT NULL THEN " + quotedReplyForTopic + " END"
+		projectionArgs = append(projectionArgs, b.OwnerID)
+		dest = append(dest, &hasQuote, &quotedReply)
+		filter = ""
+	}
+	queryArgs := append(projectionArgs, d.Refs[0].ID, timerSource, pullRequestSource, pullRequestSource, inlineMessageBytes)
+	err = tx.QueryRowContext(ctx, `SELECT `+columns+` FROM trigger_messages
+ WHERE id=? AND source<>? AND source<>'github' AND source<>? AND body->>'$.threadRef.source'<>?
+ AND (body->>'$.meta' IS NULL OR body->>'$.meta'='{}')
+ AND length(CAST(body->>'$.text' AS BLOB))<=?`+filter+scope, append(queryArgs, args...)...).Scan(dest...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(text) == "" || hasQuote && len(quotedReply) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(markdownContentData{Text: text})
+	if err != nil {
+		return err
+	}
+	content := StructuredContent{Type: "markdown", Data: data}
+	contentJSON, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	if len(contentJSON) > inlineMessageBytes {
+		return nil
+	}
+	if hasQuote {
+		var match struct {
+			BlockerRef BlockerRef `json:"blockerRef"`
+		}
+		if err := json.Unmarshal(quotedReply, &match); err != nil {
+			return err
+		}
+		issue, err := topicIssue(ctx, tx, b, match.BlockerRef.IssueID)
+		if errorCode(err) == "not_found" {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if terminal(issue.Status) || !slices.ContainsFunc(issue.Blockers, func(blocker Blocker) bool {
+			return blocker.ID == match.BlockerRef.BlockerID
+		}) {
+			return nil
+		}
+		d.quotedReply, d.issue = quotedReply, &issue
+	}
+	d.Content, d.threadKey, d.routing = &content, threadKey, routing
+	return nil
+}
+
+func (d *internalDelivery) loadInlineReport(ctx context.Context, tx *sql.Tx, b Binding) error {
+	if len(d.Refs) != 1 || d.Refs[0].Kind != "report" {
+		return nil
+	}
+	var report Report
+	err := readJSON(ctx, tx, `SELECT r.body FROM reports r
+ JOIN issues i ON i.id=r.issue_id WHERE r.id=? AND i.topic_id=?`, &report, d.Refs[0].ID, b.OwnerID)
+	if errorCode(err) == "not_found" {
+		return nil
+	}
+	if err != nil || report.Historical {
+		return err
+	}
+	issue, err := topicIssue(ctx, tx, b, report.IssueID)
+	if err != nil {
+		return err
+	}
+	if issue.CurrentExecutionID == report.ExecutionID && issue.RequirementsRevision == report.Revision {
+		d.issue, d.report = &issue, &report
+	}
+	return nil
+}
+
+func (d *internalDelivery) loadInlineWorkerContext(ctx context.Context, tx *sql.Tx, issue *Issue, maxBytes int) error {
+	if d.Kind != contextSupplement {
+		// A durable startup still reaches the Worker after a new blocker.
+		// Without an inline Issue the Worker must read the current state.
+		if !canContinueIssue(*issue) {
+			return nil
+		}
+		d.issue = issue
+	}
+	raw, err := d.MarshalAgentPromptJSON()
+	if err != nil {
+		return err
+	}
+	remaining := maxBytes - len(raw) - len(`,"messages":[]`)
+	if remaining <= 0 {
+		return nil
+	}
+	var ids []string
+	for _, material := range issue.Materials {
+		if material.MessageID == "" {
+			continue
+		}
+		if d.Kind == contextSupplement && !slices.ContainsFunc(d.Refs, func(ref deliveryReference) bool {
+			return ref.Kind == messageRefKind && ref.ID == material.MessageID
+		}) {
+			continue
+		}
+		if !slices.Contains(ids, material.MessageID) {
+			ids = append(ids, material.MessageID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.body->>'$.text',m.body->>'$.actor',
+ COALESCE(m.body->>'$.at',''),COALESCE(m.body->>'$.url','')
+ FROM json_each(?) ref JOIN trigger_messages m ON m.id=ref.value
+ WHERE length(CAST(m.body->>'$.text' AS BLOB))<=?
+ ORDER BY ref.key`, string(payload), inlineMessageBytes)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(&message.ID, &message.Text, &message.Actor, &message.At, &message.URL); err != nil {
+			return err
+		}
+		raw, err := message.MarshalAgentPromptJSON()
+		if err != nil {
+			return err
+		}
+		if len(raw) > inlineMessageBytes || len(raw) > remaining {
+			continue
+		}
+		d.messages = append(d.messages, raw)
+		remaining -= len(raw) + 1 // Space for the comma before a subsequent item.
+		if remaining <= 0 {
+			break
+		}
+	}
+	return rows.Err()
+}
+
 func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch internalDeliveryBatch, watch *workerWatch) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -200,6 +428,15 @@ func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch interna
 	}
 	if !ready {
 		return false, problem("stale_binding", "Session binding changed before submission")
+	}
+	if batch.workerIssueRevision != 0 {
+		issue, _, err := currentWorkerIssue(ctx, tx, b)
+		if err != nil {
+			return false, err
+		}
+		if issue.Revision != batch.workerIssueRevision {
+			return false, problem("conflict", "Issue changed before Worker input submission")
+		}
 	}
 	for _, item := range batch.items {
 		current, err := businessDeliveryCurrent(ctx, tx, item)

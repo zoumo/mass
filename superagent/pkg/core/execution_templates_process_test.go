@@ -205,6 +205,11 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	topic := startRoleMCP(t, f, topicBinding)
 	topicProfile := core.ExecutionProfile{RuntimeRef: "topic-agent", Model: "topic-model"}
 	assertSessionProfile(t, massd, peer, topicBinding, topicProfile)
+	var topicSession resource.Session
+	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: topicBinding.SessionID}, &topicSession))
+	require.Contains(t, topicSession.Spec.SystemPrompt, "runtimeRef")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "worker-model")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "Review results")
 	assertTemplateAccess(t, p, topicBinding, f, topic, true)
 	missing := core.ExecutionProfile{RuntimeRef: "missing-agent", Model: "missing-model"}
 	require.Equal(t, []core.WorkerTemplate{
@@ -318,8 +323,7 @@ func verifyTemplateWorker(t *testing.T, p *process, massd *client.Client, peer *
 	assertSessionProfile(t, massd, peer, binding, profile)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, call.session)
-	decodeInternalBatch(t, call, work.Execution.StartEventID)
-	require.Contains(t, call.text, work.Issue.ID)
+	require.Equal(t, "worker_started", decodeInternalBatch(t, call, work.Execution.StartEventID)[0].Kind)
 	call.accept()
 	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
 	return binding

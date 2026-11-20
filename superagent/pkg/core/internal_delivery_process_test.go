@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -24,17 +23,17 @@ type deliveryParty struct {
 }
 
 type internalEvent struct {
-	ID             string                  `json:"delivery_id"`
-	Kind           string                  `json:"kind"`
-	Sender         deliveryParty           `json:"sender"`
-	Recipient      deliveryParty           `json:"recipient"`
-	Content        *core.StructuredContent `json:"content,omitempty"`
-	Body           json.RawMessage         `json:"body,omitempty"`
-	Refs           []json.RawMessage       `json:"refs,omitempty"`
-	Truncated      bool                    `json:"truncated,omitempty"`
-	BodyPreview    string                  `json:"body_preview,omitempty"`
-	ContentPreview string                  `json:"content_preview,omitempty"`
-	ContentRef     json.RawMessage         `json:"content_ref,omitempty"`
+	ID        string                  `json:"delivery_id"`
+	Kind      string                  `json:"kind"`
+	Sender    deliveryParty           `json:"sender"`
+	Recipient deliveryParty           `json:"recipient"`
+	Content   *core.StructuredContent `json:"content,omitempty"`
+	Body      json.RawMessage         `json:"body,omitempty"`
+	Refs      []json.RawMessage       `json:"refs,omitempty"`
+	Truncated bool                    `json:"truncated,omitempty"`
+	Issue     json.RawMessage         `json:"issue,omitempty"`
+	Report    json.RawMessage         `json:"report,omitempty"`
+	Messages  []json.RawMessage       `json:"messages,omitempty"`
 }
 
 type internalDeliveryRow struct {
@@ -85,12 +84,17 @@ func waitInternalDelivery(t *testing.T, f *fixture, id, status string) internalD
 func decodeInternalBatch(t *testing.T, call nativeDeliveryCall, ids ...string) []internalEvent {
 	t.Helper()
 	var batch struct {
-		Version int             `json:"schemaVersion"`
-		Events  []internalEvent `json:"events"`
+		Events []internalEvent `json:"events"`
 	}
 	require.LessOrEqual(t, len(call.text), 64*1024)
 	require.NoError(t, json.Unmarshal([]byte(call.text), &batch))
-	require.Equal(t, 4, batch.Version)
+	var wire map[string][]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(call.text), &wire))
+	require.Len(t, wire, 1)
+	for _, event := range wire["events"] {
+		require.NotContains(t, event, "sender")
+		require.NotContains(t, event, "recipient")
+	}
 	if ids != nil {
 		var actual []string
 		for _, event := range batch.Events {
@@ -149,7 +153,8 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 	var large []internalEvent
 	for i := range 9 {
 		e := contextEvent("bytes-" + strconv.Itoa(i))
-		e.Body = json.RawMessage(`"` + strings.Repeat("x", 8150) + `"`)
+		content := markdownReply(strings.Repeat("x", 7900))
+		e.Content = &content
 		large = append(large, e)
 	}
 	queueInternal(t, p, large...)
@@ -169,22 +174,19 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 	waitInternalDelivery(t, f, large[offset-1].ID, "sent")
 
 	long := contextEvent("long-context")
-	long.Body = json.RawMessage(`{"text":"` + strings.Repeat("界", 3000) + `"}`)
-	long.Refs = []json.RawMessage{json.RawMessage(`{"kind":"fixture","id":"source-reference"}`)}
+	content := markdownReply(strings.Repeat("界", 3000))
+	long.Content = &content
 	action := newInternalEvent("action", "route_request", recipient)
 	queueInternal(t, p, long, action)
 	mixed := peer.next(t, "turn/start")
 	events := decodeInternalBatch(t, mixed, long.ID, action.ID)
 	require.Equal(t, "context_supplement", events[0].Kind)
 	require.Equal(t, "route_request", events[1].Kind)
-	require.Equal(t, recipient, events[0].Recipient)
 	require.True(t, events[0].Truncated)
-	require.True(t, utf8.ValidString(events[0].BodyPreview))
 	require.Empty(t, events[0].Body)
-	require.JSONEq(t, string(long.Refs[0]), string(events[0].Refs[0]))
-	require.JSONEq(t, `{"kind":"internal_delivery","id":"long-context"}`, string(events[0].ContentRef))
+	require.Nil(t, events[0].Content)
 	full := mcpWork[internalEvent](t, role, "delivery_get", map[string]string{"delivery_id": long.ID})
-	require.JSONEq(t, string(long.Body), string(full.Body))
+	require.Equal(t, long.Content, full.Content)
 	mixed.accept()
 	waitInternalDelivery(t, f, action.ID, "sent")
 	peer.quiet(t, 250*time.Millisecond)

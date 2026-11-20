@@ -12,7 +12,6 @@ type UpdateRequirementsRequest struct {
 	OperationID      string `json:"operationId"`
 	IssueID          string `json:"issueId"`
 	ExpectedRevision int    `json:"expectedRevision"`
-	Requirements     string `json:"requirements,omitempty"`
 	Goal             string `json:"goal,omitempty"`
 	NotifyWorker     bool   `json:"notifyWorker,omitempty"`
 }
@@ -50,14 +49,11 @@ type WorkerUpdateRequest struct {
 	Materials        []Material         `json:"materials,omitempty"`
 }
 
-func issueGoal(goal, legacy string) (string, error) {
-	if goal == "" {
-		goal = legacy
+func validateGoal(goal string) error {
+	if strings.TrimSpace(goal) == "" {
+		return problem("invalid_argument", "goal is required")
 	}
-	if strings.TrimSpace(goal) == "" || (legacy != "" && legacy != goal) {
-		return "", problem("invalid_argument", "supply one nonblank goal")
-	}
-	return goal, nil
+	return nil
 }
 
 func issueGoalRef(issue Issue) deliveryReference {
@@ -70,12 +66,11 @@ func updateRequirements(r UpdateRequirementsRequest) workMutation {
 		if err != nil {
 			return nil, err
 		}
-		goal, err := issueGoal(r.Goal, r.Requirements)
-		if err != nil {
+		if err := validateGoal(r.Goal); err != nil {
 			return nil, err
 		}
-		if goal != issue.Requirements {
-			issue.Requirements, issue.UpdatedAt = goal, now()
+		if r.Goal != issue.Requirements {
+			issue.Requirements, issue.UpdatedAt = r.Goal, now()
 			issue.Revision++
 			issue.RequirementsRevision++
 		}

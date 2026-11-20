@@ -337,8 +337,7 @@ structuredContent on success; JSON-RPC errors include the Core error as data.
 
 | Tool | Router | Topic | Arguments |
 | --- | --- | --- | --- |
-| `binding_get` | Own binding | Own binding | `{}` |
-| `source_query` | All source Messages/Threads and own replies | Associated Messages, subscribed Thread metadata and own replies | `collection: messages/threads/outbox`, optional `id`, or list `threadKey/cursor/limit`. Outbox also accepts `messageId` |
+| `source_query` | All source Messages/Threads and own replies | Associated Messages, subscribed Thread metadata and own replies | `collection: messages/threads/routing-deliveries/outbox`, optional `id`, or list `threadKey/cursor/limit`. Outbox also accepts `messageId` |
 | `topic_query` | Topic summaries only | Only own Topic | `collection: topics`, optional `id` or `cursor/limit` |
 | `route_decide` | Allowed | Forbidden | Route request below |
 | `message_return` | Forbidden | Own routed delivery | Return request below |
@@ -351,10 +350,24 @@ messages from a shared Thread. Role list cursors additionally bind the exact
 binding; Observer or another role cannot reuse them to change scope. A scoped
 missing detail returns not_found without revealing its existence.
 
+For `source_query` with `collection: "messages"`, each item includes `id`,
+`source`, `text`, `threadKey`, and `actor`. `at` and `url` appear when available.
+Router also sees `routing` and the routing relations, including the reason for
+a return. Topic sees `quotedReply` for a matching answer in its scope.
+Timer and PR sources can include `meta` with facts about the underlying event.
+Forwarded DWS Messages can include `meta.forwardMessages`. Lists and details
+use the same fields.
+
 The authenticated HTTP bridge is `POST /v1/role/TOOL`, using the same tool names,
 arguments and domain commands. Success is `{"result": ...}`; failures use the
 standard error envelope. Channel tokens cannot call role tools; role tokens
 cannot submit channel messages. Neither surface is part of Observer.
+
+At startup, the MCP process calls the internal `POST /v1/role/binding_get`
+endpoint to verify its authenticated binding identity before serving tools.
+The response contains `id`, `role`, `ownerId`, `generation`, and the applicable
+`topicId` and `issueId`. Agents use `topic_query` or `issue_get_current` for
+scoped business state.
 
 ## Atomic RouteDecision
 
@@ -440,7 +453,7 @@ A new Topic can supply `create.goal` in `route_decide`. Router reads it in
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `execution_template_query` | `{}` | `{items: [{runtimeRef, model, description, effort?}, ...]}` in YAML order. Only the Topic role can call this tool. |
-| `issue_create` | `operationId,title,goal,workspace,runtimeRef,model`, optional `materials,start` | `{issue, execution?}`. The Issue belongs to the authenticated Topic and defaults to `pending`. |
+| `issue_create` | `operationId,title,goal,runtimeRef,model`, optional `workspace,materials,start` | `{issue, execution?}`. The Issue belongs to the authenticated Topic and defaults to `pending`. |
 | `issue_start` | `operationId,issueId,expectedRevision`, optional `resolve` and `runtimeRef,model` as a pair | `{issue, execution}`. Schedules an Execution after all blockers are resolved. The call can resolve blockers and start in one transaction. |
 | `issue_update_requirements` | `operationId,issueId,expectedRevision,goal`, optional `notifyWorker` | `{issue, notificationEventId?}`. Saves the goal and can explicitly continue the active Execution. |
 | `issue_update_blockers` | `operationId,issueId,expectedRevision`, at least one of `add,resolve`, optional `notifyWorker`, and `unblockedStatus` when resolving the last blocker | `{issue, notificationEventId?}`. Updates the specified blockers and records the resolution basis. |
@@ -454,11 +467,11 @@ A new Topic can supply `create.goal` in `route_decide`. Router reads it in
 | `topic_cancel` | `operationId,expectedRevision,reason` | Cancels the Topic and its nonterminal Issues, retires the Topic binding and requests stops. |
 | `topic_reopen` | `operationId,expectedRevision,reason` | Reopens the Topic on its current binding. |
 
-Supply a nonblank Issue goal and an absolute existing workspace.
-`requirements` is a legacy input alias for `goal`. Each material is
-`{label?,uri}` or `{label?,messageId}`. The Message must already belong to the
-Topic's reception history. A stale `expectedRevision` returns `conflict` with
-`resource` and `currentRevision`.
+Supply a nonblank Issue goal. When `workspace` is omitted, Core uses the
+current Topic's workspace. Supply an existing absolute path to override it.
+Each material is `{label?,uri}` or `{label?,messageId}`. The Message must
+already belong to the Topic's reception history. A stale `expectedRevision`
+returns `conflict` with `resource` and `currentRevision`.
 
 For each explicit selection, Core validates the complete Runtime and model
 pair against the current list and takes effort from that entry. An incomplete
@@ -523,15 +536,14 @@ including observation time or an unknown-state reason.
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `issue_get_current` | `{}` | Bound Issue and current Execution. |
-| `issue_material_get` | `{messageId}` | Original Message listed in the Issue materials. |
+| `issue_material_get` | `{messageId}` | Message listed in the Issue materials, with `id`, full `text`, `actor`, and `at` and `url` when available. |
 | `report_submit` | `operationId,kind,summary,goalRevision`, optional `details,evidence,questions` | Appended Report with its Topic notification ID. |
 | `pr_register` | `operationId,url` | PR link on the current Issue and its parent Topic. |
-| `delivery_get` | `{delivery_id}` | Full delivery addressed to the authenticated binding, with `content`, `body` and `refs` at the top level when present. |
+| `delivery_get` | `{delivery_id}` | Complete Agent view of the delivery addressed to this binding. Read `content`, `body`, or `refs` when provided. |
 
 Report kinds are `progress`, `ready`, `blocked` and `failed`. The Worker
-supplies the goal revision it used. `requirementsRevision` remains a legacy
-input alias. Core derives ownership and the generation from the authenticated
-Session binding.
+supplies the goal revision it used. Core derives ownership and the generation
+from the authenticated Session binding.
 
 The Report is appended to `issue.reports` in the same transaction as its
 Topic notification. Current Reports register `report_submitted` with a
@@ -609,23 +621,77 @@ credential can replay its exact cancellation receipt.
 
 ## Durable input delivery
 
-Internal deliveries use `schemaVersion: 4` with ordered `events`.
-Each event carries `delivery_id`, `kind`, `sender` and `recipient`. The sender
-and recipient carry a role kind and, when applicable, a `topic_id` or
-`execution_id`. Deduplicate by `delivery_id`.
+Core sends each Session a JSON object with ordered `events`. Read `kind` to
+select the action. Deduplicate by `delivery_id`.
 
-- `content` is an optional `{type,data}` object. It uses the same schemas as
-  Outbox content, including Markdown prompts for `options`.
-- `body` carries event-specific JSON, such as a routing reason or the current
-  goal revision.
-- `refs` carries references to Messages, Issues, Reports and other records.
+For a Router `route_request`, use the `trigger_message` ID, `content.data.text`,
+`threadKey`, and `routing` when supplied. Pass `routing.round` in
+`route_decide.rounds` keyed by Message ID. For a reference-only event or a stale
+round error, use `source_query` with `collection: "messages"` and the Message ID
+to read the current state and any return reason.
 
-Core stores these fields in separate columns of `internal_deliveries`.
-`content` is nullable SQLite `TEXT` with a JSON object check. Core validates
-its card schema before insertion. Observer details and `delivery_get` expose
-these fields at the top level. A truncated envelope event carries
-`truncated: true` and a `content_ref` for `delivery_get`. It may include a
-`body_preview` or `content_preview`. The saved record retains the complete fields.
+```json
+{"events":[{"delivery_id":"dlv_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"content":{"type":"markdown","data":{"text":"Verify the report."}},"threadKey":"dws:release","routing":{"round":1,"state":"pending"}}]}
+```
+
+For a Topic `routed_message`, use `content` when present. Core inlines ordinary
+short Message text as Markdown when the encoded `content` fits within 2 KiB
+and the batch has space. A matched short quoted reply can include `quotedReply`
+and the relevant Issue's `revision`, `status`, and open `blockers`. On a
+reference-only event, including an unmatched quote, use `source_query` with the
+`trigger_message` ID. Use the same query to read source facts such as Timer
+materials or PR observations. Each
+`routed_message` carries one such reference, including when it has `content`.
+Use its `delivery_id` as `deliveryId` when returning the Message to Router.
+
+```json
+{"events":[{"delivery_id":"dlv_topic","kind":"routed_message","refs":[{"kind":"trigger_message","id":"mass-m1"}],"content":{"type":"markdown","data":{"text":"Verify the report."}}}]}
+```
+
+On `report_submitted`, use the supplied `report` and `issue` to compare
+`executionId` with `currentExecutionId` and check both goal revisions.
+Verify the evidence before accepting the Issue. When either view is missing,
+read the relevant record with `work_query`. For an Issue mutation, supply the
+Issue's `revision` as `expectedRevision`; read current state on a conflict.
+
+For a Worker `worker_started` or `worker_update`, use the supplied `issue`
+for the current goal, `goalRevision`, status, blockers and materials. Call
+`issue_get_current` when the Issue view is absent or current state is in doubt.
+Find material Messages in `messages` by `id`, and use `issue_material_get` for
+referenced Messages that need readback. Workspace is the Session's `Cwd`.
+
+```json
+{"events":[{"delivery_id":"dlv_worker","kind":"worker_started","issue":{"id":"mass-t1-i1","goal":"Verify the report.","goalRevision":1,"status":"active","materials":[{"messageId":"mass-m1"}]},"messages":[{"id":"mass-m1","text":"Verify the report.","actor":"sender-1"}]}]}
+```
+
+| Event | Additional fields |
+| --- | --- |
+| `route_request` | `refs` with `trigger_message`; eligible initial requests also carry `content`, `threadKey`, and `routing`. A return carries the original `internal_delivery` reference. |
+| `routed_message` | One `trigger_message` in `refs`, Markdown `content` when eligible, and `quotedReply` and `issue` for an eligible matched reply. |
+| `report_submitted` | `refs` with `report`; eligible notifications include `report` and `issue`. |
+| Historical Report `context_supplement` | `refs` with `report`. |
+| `worker_started` and `worker_update` | Eligible `issue` and short material `messages`. An update can include `content` and `body.materials`. |
+| Worker `context_supplement` | Provided `content`, `body.materials`, and eligible short material `messages`. |
+| `report_reminder`, `binding_recovered` | `delivery_id` and `kind`. |
+| Topic dependency `context_supplement` | `body.type`, `body.dependencyIssueId`, `body.dependentIssueIds`, `body.previousStatus`, and `body.status`. |
+| Terminal Topic recovery `context_supplement` | `body.recovery`. |
+| `outbox_failed` | `refs` with `outbox`. |
+
+Structured `content` uses the Outbox schemas, including Markdown prompts for
+`options`. If an event's content or body exceeds the event budget, Core sends
+`truncated: true`. Call `delivery_get` with the event's `delivery_id` to read
+its complete Agent view. Its stored record and Observer detail retain the
+original fields.
+
+New sessions use Agent prompt version 2. New Topic instructions include
+configured Worker template choices. `execution_template_query` returns the
+current choices when a Topic needs a refresh. Bindings with version 1 keep
+their original Agent view and instructions. Bindings with no prompt version
+keep their saved instructions, `schemaVersion: 4` wire format, and readback
+fields. Session reuse requires matching instructions and wire format.
+
+When a supported mutation responds to an event, pass its `delivery_id` as
+`triggerDeliveryId` so the operation continues the delivery's trace.
 
 All-`context_supplement` batches use `session.inject`. Any other kind selects
 `session.prompt` (StartOrSteer). Acceptance settles the rows as `sent`.
@@ -676,9 +742,10 @@ During normal Worker delivery, Core resumes the same Session and retries
 pending input. Sent deliveries stay settled. If massd records
 `session_recovery_missing` after verifying release of the original control
 and settling the failed resume, Core retires that Worker and starts a fresh
-Execution and Session when the Issue can continue. The new Worker uses `worker_started` and
-`issue_get_current` to recover the current goal, materials, and Report history
-in the same workspace. An opening or unreachable Session stays pending while
+Execution and Session when the Issue can continue. The new Worker receives
+`worker_started` in the same workspace. It uses the Issue and materials in the
+event when available and calls `issue_get_current` if it needs current Issue
+facts or Report history. An opening or unreachable Session stays pending while
 Core reconciles the original identity.
 
 `replace` requests a fresh Session after verified release. A current Worker

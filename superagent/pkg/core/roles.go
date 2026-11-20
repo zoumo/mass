@@ -77,11 +77,16 @@ func (s *Server) role(w http.ResponseWriter, r *http.Request, deferredTrace bool
 	switch tool {
 	case "binding_get":
 		var args struct{}
-		err = decodeStrict(raw, &args)
-		result = b
-		if b.Role == "worker" {
-			// The stdio handshake proves only startup identity, even for historical credentials.
-			result = Binding{ID: b.ID, Role: b.Role, OwnerID: b.OwnerID, TopicID: b.TopicID, IssueID: b.IssueID, Generation: b.Generation}
+		if err = decodeStrict(raw, &args); err == nil {
+			// The stdio handshake proves startup identity, including for historical Workers.
+			identity := map[string]any{"id": b.ID, "role": b.Role, "ownerId": b.OwnerID, "generation": b.Generation}
+			if b.TopicID != "" {
+				identity["topicId"] = b.TopicID
+			}
+			if b.IssueID != "" {
+				identity["issueId"] = b.IssueID
+			}
+			result = identity
 		}
 	case "execution_template_query":
 		if b.Role != "topic" {
@@ -155,7 +160,18 @@ func (s *Server) role(w http.ResponseWriter, r *http.Request, deferredTrace bool
 			err = problem("invalid_argument", "delivery_id is required")
 		}
 		if err == nil {
-			result, err = s.store.getInternalDelivery(r.Context(), b, args.ID)
+			var delivery internalDelivery
+			delivery, err = s.store.getInternalDelivery(r.Context(), b, args.ID)
+			if err == nil {
+				if b.AgentPromptVersion == 0 {
+					result = delivery
+				} else {
+					var raw []byte
+					delivery.promptVersion = b.AgentPromptVersion
+					raw, err = delivery.MarshalAgentPromptJSON()
+					result = json.RawMessage(raw)
+				}
+			}
 		}
 	case "source_query", "topic_query", "work_query":
 		var args QueryRequest
@@ -284,6 +300,19 @@ func projection(kind string, b *Binding) string {
 	case "outbox":
 		return outboxProjection
 	case "messages":
+		if b != nil && b.AgentPromptVersion != 0 {
+			if b.Role == "topic" {
+				return "json_patch(" + agentSourceMessageProjection + ",json_object('quotedReply',json(" + quotedReplyForTopic + ")))"
+			}
+			return `json_set(` + agentSourceMessageProjection + `,
+ '$.routing',json(CASE WHEN ` + routingState + ` IS NOT NULL
+ THEN json_object('round',` + routingRound + `,'state',` + routingState + `) END),
+ '$.relations',json((SELECT json_group_array(json(relation)) FROM (
+ SELECT json_patch(
+ json_object('topicId',topic_id,'action',body->>'$.action','deliveryId',body->>'$.deliveryId'),
+ json_object('reason',CASE WHEN body->>'$.action'='returned' THEN body->>'$.reason' END)) AS relation
+ FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))`
+		}
 		base := "json_set(body,'$.routing',json(CASE WHEN " + routingState + " IS NOT NULL THEN json_object('round'," + routingRound + ",'state'," + routingState + ") END))"
 		if b == nil || b.Role == "router" {
 			base = "json_set(" + base + ",'$.relations',json((SELECT json_group_array(json(body)) FROM (SELECT body FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))"
@@ -327,6 +356,20 @@ func projection(kind string, b *Binding) string {
 	}
 	return "body"
 }
+
+// Preserve the native JSON of selected source fields, including arrays and booleans.
+const agentSourceMessageProjection = `(SELECT json_group_object(field,json(value)) FROM (
+ SELECT key AS field,trigger_messages.body->fullkey AS value FROM json_each(trigger_messages.body)
+ WHERE key IN ('id','source','text','threadKey','actor','at','url')
+ UNION ALL
+ SELECT 'meta',json_group_object(key,json(trigger_messages.body->fullkey)) FROM json_each(trigger_messages.body,'$.meta')
+ WHERE (trigger_messages.source='` + timerSource + `' AND key IN ('type','taskId','topicId','taskRevision','dueAt','materials'))
+ OR ((trigger_messages.source='` + pullRequestSource + `' OR trigger_messages.body->>'$.threadRef.source'='` + pullRequestSource + `') AND key IN (
+ 'repository','observation','objectType','objectId','number','state','changes','draft','baseSha','baseRef','headSha',
+ 'headRepository','ci','path','line','commitSha','submittedAt','inReplyToId','inReplyToURL','reviewId'))
+ OR (trigger_messages.body->>'$.channel.type'='dws' AND key='forwardMessages')
+ HAVING count(*)>0
+ ))`
 
 // Capability comparison is explicit so startup-file identity cannot override the authenticated binding.
 func capabilityMatches(c capability, b Binding) bool {

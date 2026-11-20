@@ -120,6 +120,20 @@ type Message struct {
 	EventID    string       `json:"eventId,omitempty"`
 	Echo       *MessageEcho `json:"echo,omitempty"`
 }
+
+var _ AgentPromptView = Message{}
+
+func (m Message) MarshalAgentPromptJSON() ([]byte, error) {
+	view := map[string]string{"id": m.ID, "text": m.Text, "actor": m.Actor}
+	if m.At != "" {
+		view["at"] = m.At
+	}
+	if m.URL != "" {
+		view["url"] = m.URL
+	}
+	return json.Marshal(view)
+}
+
 type Thread struct {
 	Key           string    `json:"key"`
 	Ref           ThreadRef `json:"ref"`

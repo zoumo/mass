@@ -28,6 +28,28 @@ type Report struct {
 	Historical  bool     `json:"historical"`
 }
 
+var _ AgentPromptView = Report{}
+
+func (r Report) MarshalAgentPromptJSON() ([]byte, error) {
+	view := map[string]any{
+		"id": r.ID, "issueId": r.IssueID, "kind": r.Kind, "summary": r.Summary,
+		"executionId": r.ExecutionID, "historical": r.Historical,
+	}
+	if r.Revision != 0 {
+		view["goalRevision"] = r.Revision
+	}
+	if r.Details != "" {
+		view["details"] = r.Details
+	}
+	if len(r.Evidence) != 0 {
+		view["evidence"] = r.Evidence
+	}
+	if len(r.Questions) != 0 {
+		view["questions"] = r.Questions
+	}
+	return json.Marshal(view)
+}
+
 type ReportRequest struct {
 	OperationID  string   `json:"operationId"`
 	Kind         string   `json:"kind"`
@@ -35,7 +57,6 @@ type ReportRequest struct {
 	Details      string   `json:"details,omitempty"`
 	Evidence     []string `json:"evidence,omitempty"`
 	Questions    []string `json:"questions,omitempty"`
-	Revision     int      `json:"requirementsRevision,omitempty"`
 	GoalRevision int      `json:"goalRevision,omitempty"`
 }
 
@@ -112,9 +133,21 @@ func (s *Store) workerQuery(ctx context.Context, b Binding, tool string, raw []b
 	if !slices.ContainsFunc(issue.Materials, func(m Material) bool { return m.MessageID == query.MessageID }) {
 		return nil, problem("not_found", "Message is not a material of the bound Issue")
 	}
+	if b.AgentPromptVersion == 1 {
+		var message json.RawMessage
+		err = readJSON(ctx, tx, `SELECT json_patch(
+ json_object('id',id,'text',body->>'$.text','actor',body->>'$.actor'),
+ json_object('at',body->>'$.at','url',body->>'$.url'))
+ FROM trigger_messages WHERE id=?`, &message, query.MessageID)
+		return message, err
+	}
 	var message Message
 	err = readJSON(ctx, tx, "SELECT body FROM trigger_messages WHERE id=?", &message, query.MessageID)
-	return message, err
+	if err != nil || b.AgentPromptVersion == 0 {
+		return message, err
+	}
+	view, err := message.MarshalAgentPromptJSON()
+	return json.RawMessage(view), err
 }
 
 func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.RawMessage, error) {
@@ -130,12 +163,8 @@ func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.R
 	default:
 		return nil, problem("invalid_argument", "invalid Report kind")
 	}
-	revision := r.GoalRevision
-	if revision == 0 {
-		revision = r.Revision
-	}
-	if strings.TrimSpace(r.Summary) == "" || (r.Revision != 0 && r.Revision != revision) {
-		return nil, problem("invalid_argument", "Report summary and one positive goalRevision are required")
+	if strings.TrimSpace(r.Summary) == "" || r.GoalRevision < 1 {
+		return nil, problem("invalid_argument", "Report summary and a positive goalRevision are required")
 	}
 	return s.commitWork(ctx, b, "report_submit", r.OperationID, func(ctx context.Context, tx *sql.Tx, binding Binding) (any, error) {
 		x, err := workerExecution(ctx, tx, binding)
@@ -169,7 +198,7 @@ func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.R
 		if historical && x.RetiredGoalRevision != 0 {
 			upper = x.RetiredGoalRevision
 		}
-		if revision < 1 || revision < x.Revision || revision > upper {
+		if r.GoalRevision < x.Revision || r.GoalRevision > upper {
 			return nil, problem("invalid_argument", "goalRevision is outside the bound Execution's goal revisions")
 		}
 		var seq int64
@@ -178,7 +207,7 @@ func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.R
 		}
 		report := Report{
 			ID: issue.ID + "-r" + strconv.Itoa(len(issue.Reports)+1), TopicID: x.TopicID, IssueID: x.IssueID, ExecutionID: x.ID, BindingID: binding.ID,
-			Generation: x.Generation, Revision: revision, Sequence: seq, Kind: r.Kind, Summary: r.Summary, Details: r.Details,
+			Generation: x.Generation, Revision: r.GoalRevision, Sequence: seq, Kind: r.Kind, Summary: r.Summary, Details: r.Details,
 			Evidence: r.Evidence, Questions: r.Questions, CreatedAt: now(), EventID: newID("delivery"), Historical: historical,
 		}
 		issue.Reports = append(issue.Reports, report)
@@ -201,7 +230,7 @@ func (s *Store) workerReport(ctx context.Context, b Binding, raw []byte) (json.R
 			ID: report.EventID, Kind: kind,
 			Sender:    deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
 			Recipient: deliveryIdentity{Kind: "topic", TopicID: x.TopicID},
-			Refs:      []deliveryReference{{Kind: "report", ID: report.ID, IssueID: issue.ID, GoalRevision: revision}},
+			Refs:      []deliveryReference{{Kind: "report", ID: report.ID, IssueID: issue.ID, GoalRevision: r.GoalRevision}},
 		})
 		return report, err
 	})

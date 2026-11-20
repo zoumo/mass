@@ -33,14 +33,19 @@ func roleTools(role string) []mcpTool {
 	ids := map[string]any{"type": "array", "items": str, "minItems": 1, "uniqueItems": true}
 	query := objectSchema(map[string]any{"collection": map[string]any{"type": "string", "enum": []string{"messages", "threads", "outbox", "routing-deliveries"}}, "id": str, "threadKey": str, "messageId": str, "cursor": str, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}}, "collection")
 	tools := []mcpTool{
-		{Name: "delivery_get", Description: "Read the full content and references of an internal delivery directed to your role using its delivery_id.", InputSchema: objectSchema(map[string]any{"delivery_id": str}, "delivery_id")},
+		{Name: "delivery_get", Description: "Read a full delivery directed to your role using its delivery_id. Call this when an event has truncated=true to recover its stored content and event fields. Read current Messages, Issues and Reports through their scoped tools.", InputSchema: objectSchema(map[string]any{"delivery_id": str}, "delivery_id")},
 	}
 	if role == "worker" {
 		return withTriggerDelivery(append(tools, workerTools()...))
 	}
+	sourceDescription := "Read source Messages, Threads, routing-deliveries and your own Outbox replies. For Messages, use text and source facts. Filter routing deliveries or Outbox replies by messageId. Filter Outbox replies by threadKey. Lists use cursor/limit. Use id for one record."
+	if role == "router" {
+		sourceDescription += " When a route_request omits routing or a routing write conflicts, query the Message and read routing.round, routing.state and relations. Returns include the Topic and reason."
+	} else {
+		sourceDescription += " Read only associated Messages and subscribed Thread metadata. A Message may include quotedReply with the matched Outbox and blockerRef."
+	}
 	tools = append(tools,
-		mcpTool{Name: "binding_get", Description: "Read your startup-bound role, owner, generation, workspace and preparation state. No credentials or Session transcript.", InputSchema: objectSchema(nil)},
-		mcpTool{Name: "source_query", Description: "Read source Messages, Threads, routing-deliveries and your own Outbox replies. Filter routing deliveries by messageId. Router sees source history. Topic sees only associated Messages and subscribed Thread metadata. Filter Outbox by messageId or threadKey. A Topic Message can include quotedReply with the matched Outbox and blockerRef. Lists use cursor/limit; id selects one detail.", InputSchema: query},
+		mcpTool{Name: "source_query", Description: sourceDescription, InputSchema: query},
 		mcpTool{Name: "topic_query", Description: "Router reads Topic summaries only. Topic reads only its own Topic; an out-of-scope id is denied. No Issue, Report or Worker Session expansion.", InputSchema: objectSchema(map[string]any{"collection": map[string]any{"type": "string", "enum": []string{"topics"}}, "id": str, "cursor": str, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}}, "collection")},
 		mcpTool{Name: "message_content_schema_list", Description: "List structured message content types and their intended uses.", InputSchema: objectSchema(nil)},
 		mcpTool{Name: "message_content_schema_get", Description: "Read a structured message content type's data schema and a complete content example.", InputSchema: objectSchema(map[string]any{"type": str}, "type")},
@@ -60,7 +65,7 @@ func roleTools(role string) []mcpTool {
 	switch role {
 	case "router":
 		target := objectSchema(map[string]any{"topicId": str, "create": objectSchema(map[string]any{"title": str, "description": map[string]any{"type": "string"}, "goal": str, "workspace": str}, "title", "workspace"), "messageIds": ids}, "messageIds")
-		tools = append(tools, mcpTool{Name: "route_decide", Description: "Atomically route an explicit Message range at its current routing rounds, or ignore with a reason. Each target has topicId XOR create and explicit messageIds. New Topics automatically prepare Sessions and receive source input. Reuse operationId only with identical parameters. You can explicitly select a previously returning Topic again. Native subagents provide suggestions; Router submits the final scoped decision.", InputSchema: objectSchema(map[string]any{"operationId": str, "messageIds": ids, "rounds": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer", "minimum": 1}}, "kind": map[string]any{"type": "string", "enum": []string{"route", "ignore"}}, "reason": str, "targets": map[string]any{"type": "array", "items": target}}, "operationId", "messageIds", "rounds", "kind", "reason")})
+		tools = append(tools, mcpTool{Name: "route_decide", Description: "Atomically route an explicit Message range at its current routing rounds, or ignore with a reason. In rounds, map each Message ID to routing.round from the event or the current Message query. Each target has topicId XOR create and explicit messageIds. New Topics automatically prepare Sessions and receive source input. Reuse operationId only with identical parameters. You can explicitly select a previously returning Topic again. Native subagents provide suggestions; Router submits the final scoped decision.", InputSchema: objectSchema(map[string]any{"operationId": str, "messageIds": ids, "rounds": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer", "minimum": 1}}, "kind": map[string]any{"type": "string", "enum": []string{"route", "ignore"}}, "reason": str, "targets": map[string]any{"type": "array", "items": target}}, "operationId", "messageIds", "rounds", "kind", "reason")})
 	case "topic":
 		tools = append(tools, mcpTool{Name: "message_return", Description: "Return a routed_message addressed to your Topic using its delivery_id as deliveryId. Give a reason. A retry returns the same request. The Thread stays subscribed.", InputSchema: objectSchema(map[string]any{"deliveryId": str, "reason": str}, "deliveryId", "reason")})
 		tools = append(tools, topicWorkTools()...)
@@ -92,10 +97,10 @@ func topicWorkTools() []mcpTool {
 		"reason": str, "dependencyIssueId": str,
 	}, "kind", "reason")
 	return []mcpTool{
-		{Name: "execution_template_query", Description: "List Worker templates in configuration order. Choose a runtimeRef and model together based on the description. Core supplies the optional effort.", InputSchema: objectSchema(nil)},
+		{Name: "execution_template_query", Description: "Read the current Worker templates when startup context is missing or needs a refresh. Choose runtimeRef and model together based on the description. Core supplies the optional effort.", InputSchema: objectSchema(nil)},
 		{
-			Name: "issue_create", Description: "Create an Issue in your Topic with a goal that states the deliverable, constraints and acceptance criteria. Choose runtimeRef and model together using execution_template_query. Use an existing absolute workspace. Each material names one URI/path or one associated Message. Defaults to pending; start=true also schedules a Worker atomically.",
-			InputSchema: objectSchema(map[string]any{"operationId": str, "title": str, "goal": str, "requirements": str, "workspace": str, "runtimeRef": str, "model": str, "materials": map[string]any{"type": "array", "items": material}, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "workspace", "runtimeRef", "model"),
+			Name: "issue_create", Description: "Create an Issue in your Topic with a goal that states the deliverable, constraints and acceptance criteria. Choose runtimeRef and model together from the configured Worker templates in startup context or execution_template_query. The Issue uses the Topic workspace by default. Supply workspace to select a different existing absolute directory. Each material names one URI/path or one associated Message. Defaults to pending; start=true also schedules a Worker atomically.",
+			InputSchema: objectSchema(map[string]any{"operationId": str, "title": str, "goal": str, "workspace": map[string]any{"type": "string", "description": "Defaults to the Topic workspace when omitted or empty."}, "runtimeRef": str, "model": str, "materials": map[string]any{"type": "array", "items": material}, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "goal", "runtimeRef", "model"),
 		},
 		{
 			Name: "issue_start", Description: "Explicitly schedule the only current Execution for your Issue. Omit runtimeRef and model to keep the saved profile, or supply both to select a Worker template. Resolve each blocker with its ID and basis before starting, or provide all resolutions in the same call. Read execution preparation and startup evidence with work_query.",
@@ -103,7 +108,7 @@ func topicWorkTools() []mcpTool {
 		},
 		{
 			Name: "issue_update_requirements", Description: "Save your Issue goal using its current Issue revision. Set notifyWorker=true to continue its current active Execution in the same transaction.",
-			InputSchema: objectSchema(map[string]any{"operationId": str, "issueId": str, "expectedRevision": revision, "goal": str, "requirements": str, "notifyWorker": map[string]any{"type": "boolean"}}, "operationId", "issueId", "expectedRevision"),
+			InputSchema: objectSchema(map[string]any{"operationId": str, "issueId": str, "expectedRevision": revision, "goal": str, "notifyWorker": map[string]any{"type": "boolean"}}, "operationId", "issueId", "expectedRevision", "goal"),
 		},
 		{
 			Name: "issue_update_blockers", Description: "Add human blockers or same-Topic Issue dependencies. Resolve each blocker by ID with a reason and optional scoped Message. A Message with a matched quotedReply can serve as the basis only for its referenced blocker. On the final resolution, choose pending or active. Use notifyWorker=true to continue the current active Execution in the same operation.",
@@ -167,11 +172,11 @@ func workerTools() []mcpTool {
 	refs := map[string]any{"type": "array", "items": str}
 	return []mcpTool{
 		registerPRTool(false),
-		{Name: "issue_get_current", Description: "Read the startup-bound Issue goal and goalRevision, blockers, material references, workspace, execution profile and current Execution. Takes no identifiers.", InputSchema: objectSchema(nil)},
-		{Name: "issue_material_get", Description: "Read a source Message explicitly listed as material of your bound Issue.", InputSchema: objectSchema(map[string]any{"messageId": str}, "messageId")},
+		{Name: "issue_get_current", Description: "Read the startup-bound Issue goal and goalRevision, blockers, material references, workspace, execution profile and current Execution. Use this when worker_started or worker_update omits issue, or when you need to refresh current Issue facts. Takes no identifiers.", InputSchema: objectSchema(nil)},
+		{Name: "issue_material_get", Description: "Read a listed material Message that you need and that the event does not include in messages. Returns its full text and author, with timestamp and URL when available.", InputSchema: objectSchema(map[string]any{"messageId": str}, "messageId")},
 		{
 			Name: "report_submit", Description: "Append a Report for the startup-bound Execution and queue a Topic notification in the same transaction. Supply the goalRevision of the goal you worked from. Reuse the same operationId for an identical retry. A retired binding can append only a historical Report.",
-			InputSchema: objectSchema(map[string]any{"operationId": str, "kind": map[string]any{"type": "string", "enum": []string{"progress", "ready", "blocked", "failed"}}, "summary": str, "details": str, "evidence": refs, "questions": refs, "goalRevision": map[string]any{"type": "integer", "minimum": 1}, "requirementsRevision": map[string]any{"type": "integer", "minimum": 1}}, "operationId", "kind", "summary"),
+			InputSchema: objectSchema(map[string]any{"operationId": str, "kind": map[string]any{"type": "string", "enum": []string{"progress", "ready", "blocked", "failed"}}, "summary": str, "details": str, "evidence": refs, "questions": refs, "goalRevision": map[string]any{"type": "integer", "minimum": 1}}, "operationId", "kind", "summary", "goalRevision"),
 		},
 	}
 }

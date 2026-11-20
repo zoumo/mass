@@ -3,10 +3,12 @@ package core_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,8 +48,47 @@ func roleWork[T any](t *testing.T, p *process, token, name string, request any) 
 	return out
 }
 
+func checkRoleGoalInput(t *testing.T, p *process, client *stdioClient, token, tool, field, oldField string, args map[string]any) {
+	t.Helper()
+	var result struct {
+		Tools []struct {
+			Name        string
+			InputSchema struct {
+				Properties map[string]json.RawMessage
+				Required   []string
+			}
+		}
+	}
+	require.NoError(t, json.Unmarshal(client.call("tools/list", struct{}{})["result"], &result))
+	found := false
+	for _, item := range result.Tools {
+		if item.Name == tool {
+			found = true
+			require.Contains(t, item.InputSchema.Properties, field)
+			require.Contains(t, item.InputSchema.Required, field)
+			require.NotContains(t, item.InputSchema.Properties, oldField)
+		}
+	}
+	require.True(t, found, "tool %s should be advertised", tool)
+
+	args[oldField] = args[field]
+	for _, present := range []bool{true, false} {
+		if !present {
+			delete(args, field)
+		}
+		err := mcpWorkError(t, client, tool, "invalid_argument", args)
+		require.Equal(t, "invalid or unknown JSON fields", err.Message)
+		status, body := request(t, http.MethodPost, p.endpoint, "/v1/role/"+tool, token, args)
+		errorCode(t, status, body, http.StatusBadRequest, "invalid_argument")
+	}
+	delete(args, oldField)
+	mcpWorkError(t, client, tool, "invalid_argument", args)
+	status, body := request(t, http.MethodPost, p.endpoint, "/v1/role/"+tool, token, args)
+	errorCode(t, status, body, http.StatusBadRequest, "invalid_argument")
+}
+
 func issueInput(workspace, id string) core.CreateIssueRequest {
-	return core.CreateIssueRequest{OperationID: id, Title: "Validate sample output", Requirements: "Run the checks and record exact output.", Workspace: workspace, RuntimeRef: "agent", Model: "worker-model"}
+	return core.CreateIssueRequest{OperationID: id, Title: "Validate sample output", Goal: "Run the checks and record exact output.", Workspace: workspace, RuntimeRef: "agent", Model: "worker-model"}
 }
 
 func acceptance(op string, revision int, ref string) core.CompleteRequest {
@@ -120,10 +161,20 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	topic := startRoleMCP(t, f, mainBinding)
 	foreign := startRoleMCP(t, f, otherBinding)
 	token := roleToken(t, f, mainBinding)
+	long := input("long-worker-material")
+	long.Message.ThreadRef.ID, long.Message.Channel = "work-main", nil
+	long.Message.Text = strings.Repeat("界", 700)
+	longReceipt := submit(t, p, f, long)
+	longDelivery := peer.next(t, "turn/start")
+	require.Equal(t, mainBinding.SessionID, longDelivery.session)
+	decodeInternalBatch(t, longDelivery, longReceipt.EventID)
+	longDelivery.answer <- nativeDeliveryAnswer{complete: true}
 
-	create := issueInput(f.dir, "create")
-	create.Goal, create.Requirements = create.Requirements, ""
-	create.Materials = []core.Material{{Label: "Original request", MessageID: source.MessageID}, {URI: "notes/check.txt"}}
+	checkRoleGoalInput(t, p, topic, token, "issue_create", "goal", "requirements", map[string]any{
+		"operationId": "check-create-input", "title": "Input check", "runtimeRef": "agent", "model": "worker-model", "goal": "Verify the input contract",
+	})
+	create := issueInput("", "create")
+	create.Materials = []core.Material{{Label: "Original request", MessageID: source.MessageID}, {MessageID: longReceipt.MessageID}, {URI: "notes/check.txt"}}
 	pending := mcpWork[core.WorkReceipt](t, topic, "issue_create", create)
 	require.Equal(t, pending, mcpWork[core.WorkReceipt](t, topic, "issue_create", create))
 	require.Equal(t, "mass-t1-i1", pending.Issue.ID)
@@ -133,9 +184,12 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, "pending", pending.Issue.Status)
 	require.Equal(t, mainBinding.OwnerID, pending.Issue.TopicID)
 	require.Equal(t, create.Goal, pending.Issue.Requirements)
-	require.Equal(t, create.Workspace, pending.Issue.Workspace)
+	require.Equal(t, mainBinding.Workspace, pending.Issue.Workspace)
 	require.Equal(t, create.Materials, pending.Issue.Materials)
 	require.Nil(t, pending.Execution)
+	checkRoleGoalInput(t, p, topic, token, "issue_update_requirements", "goal", "requirements", map[string]any{
+		"operationId": "check-update-input", "issueId": pending.Issue.ID, "expectedRevision": pending.Issue.Revision, "goal": "Verify the update contract",
+	})
 	require.Empty(t, page(t, p, "executions").Items)
 	require.Empty(t, workDeliveries(t, p, "worker_started"))
 	require.Len(t, bindings(t, p), 3)
@@ -149,8 +203,11 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	mcpWorkError(t, foreign, "issue_start", "not_found", core.StartIssueRequest{OperationID: "foreign", IssueID: pending.Issue.ID, ExpectedRevision: 1})
 	mcpWorkError(t, topic, "topic_complete", "failed_precondition", acceptance("too-early", 1, "notes/check.txt"))
 	require.Len(t, page(t, p, "issues").Items, 1)
-	foreignIssue := mcpWork[core.WorkReceipt](t, foreign, "issue_create", issueInput(f.dir, "create"))
+	mcpWorkError(t, foreign, "issue_create", "invalid_argument", issueInput("relative", "invalid-workspace"))
+	explicitWorkspace := t.TempDir()
+	foreignIssue := mcpWork[core.WorkReceipt](t, foreign, "issue_create", issueInput(explicitWorkspace, "create"))
 	require.Equal(t, "mass-t2-i1", foreignIssue.Issue.ID)
+	require.Equal(t, explicitWorkspace, foreignIssue.Issue.Workspace)
 	t.Log("default create remained pending without a Worker binding or native input and cross-Topic material/start was rejected")
 
 	type response struct {
@@ -206,13 +263,17 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, mainBinding.OwnerID, workerBinding.TopicID)
 	start := peer.next(t, "turn/start")
 	require.Equal(t, workerBinding.SessionID, start.session)
-	decodeInternalBatch(t, start, x.StartEventID)
+	materials, err := json.Marshal(create.Materials)
+	require.NoError(t, err)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"worker_started","issue":{"id":%q,"goal":%q,"goalRevision":%d,"status":"active","materials":%s},"messages":[{"id":%q,"text":"Original input work-main","actor":"sender-1"}]}]}`, x.StartEventID, started.Issue.ID, create.Goal, started.Issue.RequirementsRevision, materials, source.MessageID), start.text)
+	var receivedIssue core.Issue
+	require.NoError(t, json.Unmarshal(decodeInternalBatch(t, start, x.StartEventID)[0].Issue, &receivedIssue))
 	start.accept()
 	waitWorkDelivery(t, p, x.StartEventID, "sent")
 	var session resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: workerBinding.SessionID}, &session))
 	require.Contains(t, session.Spec.SystemPrompt, "verify it")
-	require.Contains(t, session.Spec.SystemPrompt, "Deduplicate")
+	require.Contains(t, session.Spec.SystemPrompt, "deduplicate by delivery_id")
 	require.Contains(t, session.Spec.SystemPrompt, "never substitutes for a Report")
 	require.NotNil(t, session.Spec.MCPServers)
 	require.Contains(t, (*session.Spec.MCPServers)[0].Args, filepath.Join(f.data, "capabilities", workerBinding.ID+".json"))
@@ -226,13 +287,18 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.NotContains(t, listed, "issue_complete")
 	require.NotContains(t, listed, "source_query")
 	require.NotContains(t, listed, "outbox")
+	require.NotContains(t, listed, "binding_get")
+	mcpWorkError(t, worker, "binding_get", "forbidden", struct{}{})
 	current := mcpWork[core.WorkReceipt](t, worker, "issue_get_current", struct{}{})
 	require.NotNil(t, current.Execution.WorkObservation)
 	require.Equal(t, workerBinding.SessionID, current.Execution.WorkObservation.SessionID)
 	require.Equal(t, "turn-"+workerBinding.SessionID, current.Execution.WorkObservation.WorkID)
 	current.Execution.WorkObservation = nil
 	require.Equal(t, started, current)
-	require.Equal(t, source.MessageID, mcpWork[core.Message](t, worker, "issue_material_get", map[string]string{"messageId": source.MessageID}).ID)
+	material := mcpWork[json.RawMessage](t, worker, "issue_material_get", map[string]string{"messageId": source.MessageID})
+	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"text":"Original input work-main","actor":"sender-1"}`, source.MessageID), string(material))
+	longMaterial := mcpWork[json.RawMessage](t, worker, "issue_material_get", map[string]string{"messageId": longReceipt.MessageID})
+	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"text":%q,"actor":"sender-1"}`, longReceipt.MessageID, long.Message.Text), string(longMaterial))
 	mcpWorkError(t, worker, "issue_material_get", "not_found", map[string]string{"messageId": other.MessageID})
 	mcpWorkError(t, worker, "issue_get_current", "invalid_argument", map[string]string{"executionId": x.ID})
 	mcpWorkError(t, worker, "work_query", "forbidden", core.QueryRequest{Collection: "reports"})
@@ -243,11 +309,16 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	errorCode(t, status, data, http.StatusForbidden, "forbidden")
 	t.Log("Worker stdio and authenticated HTTP reject forged identity, foreign material and Topic management")
 
+	checkRoleGoalInput(t, p, worker, workerToken, "report_submit", "goalRevision", "requirementsRevision", map[string]any{
+		"operationId": "check-report-input", "kind": "progress", "summary": "Verify the Report input contract", "goalRevision": receivedIssue.RequirementsRevision,
+	})
+
 	var ready core.Report
+	var reviewedIssue core.Issue
 	for i, kind := range []string{"progress", "blocked", "failed", "ready"} {
 		r := core.ReportRequest{
 			OperationID: "report-" + kind, Kind: kind, Summary: "Worker " + kind,
-			Details: "Check output recorded in workspace.", Evidence: []string{"notes/check.txt"}, Questions: []string{"Inspect exit code?"}, Revision: started.Issue.RequirementsRevision,
+			Details: "Check output recorded in workspace.", Evidence: []string{"notes/check.txt"}, Questions: []string{"Inspect exit code?"}, GoalRevision: receivedIssue.RequirementsRevision,
 		}
 		report := mcpWork[core.Report](t, worker, "report_submit", r)
 		require.Equal(t, "mass-t1-i1-r"+strconv.Itoa(i+1), report.ID)
@@ -262,7 +333,10 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 		mcpWorkError(t, worker, "report_submit", "conflict", r)
 		notice := peer.next(t, "turn/start")
 		require.Equal(t, mainBinding.SessionID, notice.session)
-		decodeInternalBatch(t, notice, report.EventID)
+		view := decodeInternalBatch(t, notice, report.EventID)[0]
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"issueId":%q,"executionId":%q,"goalRevision":%d,"kind":%q,"summary":%q,"details":%q,"evidence":["notes/check.txt"],"questions":["Inspect exit code?"],"historical":false}`, report.ID, report.IssueID, report.ExecutionID, report.Revision, report.Kind, report.Summary, report.Details), string(view.Report))
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"goal":%q,"goalRevision":%d,"currentExecutionId":%q,"status":"active","revision":%d}`, started.Issue.ID, create.Goal, started.Issue.RequirementsRevision, x.ID, started.Issue.Revision), string(view.Issue))
+		require.NoError(t, json.Unmarshal(view.Issue, &reviewedIssue))
 		notice.answer <- nativeDeliveryAnswer{complete: true}
 		waitWorkDelivery(t, p, report.EventID, "sent")
 		ready = report
@@ -288,7 +362,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	bad.ExpectedRevision, bad.Evidence = started.Issue.Revision, nil
 	mcpWorkError(t, topic, "issue_complete", "invalid_argument", bad)
 
-	complete := core.CompleteIssueRequest{IssueID: started.Issue.ID, CompleteRequest: acceptance("accept", started.Issue.Revision, ready.ID)}
+	complete := core.CompleteIssueRequest{IssueID: reviewedIssue.ID, CompleteRequest: acceptance("accept", reviewedIssue.Revision, ready.ID)}
 	done := mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
 	mcpWorkError(t, topic, "issue_complete", "conflict", complete)
 	require.Equal(t, "completed", done.Issue.Status)
@@ -314,6 +388,9 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	t.Logf("native interrupt acknowledged; native outcome %s, observation gap %s", stopped.Stop.WorkState, stopped.Stop.ObservationGap)
 
 	historicalWorker := startRoleMCP(t, f, workerBinding)
+	identity := roleCall(t, p, workerToken, "binding_get", struct{}{})
+	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"role":"worker","ownerId":%q,"generation":%d,"topicId":%q,"issueId":%q}`,
+		workerBinding.ID, workerBinding.OwnerID, workerBinding.Generation, workerBinding.TopicID, workerBinding.IssueID), string(identity))
 	late := core.ReportRequest{OperationID: "late", Kind: "progress", Summary: "Late report from retired Worker", GoalRevision: x.Revision}
 	report := mcpWork[core.Report](t, historicalWorker, "report_submit", late)
 	require.Equal(t, "mass-t1-i1-r5", report.ID)
@@ -322,18 +399,22 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, report, mcpWork[core.Report](t, worker, "report_submit", late))
 	context := peer.next(t, "thread/inject_items")
 	require.Equal(t, mainBinding.SessionID, context.session)
-	require.Equal(t, "context_supplement", decodeInternalBatch(t, context, report.EventID)[0].Kind)
+	historical := decodeInternalBatch(t, context, report.EventID)[0]
+	require.Equal(t, "context_supplement", historical.Kind)
+	require.Empty(t, historical.Report)
+	require.JSONEq(t, fmt.Sprintf(`{"kind":"report","id":%q}`, report.ID), string(historical.Refs[0]))
 	context.accept()
 	waitWorkDelivery(t, p, report.EventID, "sent")
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+mainBinding.OwnerID).Status)
 
-	auto := issueInput(f.dir, "create-start")
+	auto := issueInput("", "create-start")
 	auto.Start = true
 	second := mcpWork[core.WorkReceipt](t, topic, "issue_create", auto)
 	require.Equal(t, second, mcpWork[core.WorkReceipt](t, topic, "issue_create", auto))
 	require.Equal(t, "mass-t1-i2", second.Issue.ID)
 	require.Equal(t, "mass-t1-i2-e1", second.Execution.ID)
 	secondBinding := waitBinding(t, p, "worker", second.Execution.ID, "ready")
+	require.Equal(t, mainBinding.Workspace, secondBinding.Workspace)
 	final := peer.next(t, "turn/start")
 	require.Equal(t, secondBinding.SessionID, final.session)
 	decodeInternalBatch(t, final, second.Execution.StartEventID)
@@ -460,7 +541,7 @@ func TestIssueCompleteFencesUnclaimedStart(t *testing.T) {
 	waitWorkGate(t, gate, "worker_before_claim")
 	updated := roleWork[core.WorkReceipt](t, p, token, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "update-before-claim", IssueID: work.Issue.ID, ExpectedRevision: work.Issue.Revision,
-		Requirements: "An update before the first Worker claim", NotifyWorker: true,
+		Goal: "An update before the first Worker claim", NotifyWorker: true,
 	})
 	complete := core.CompleteIssueRequest{IssueID: work.Issue.ID, CompleteRequest: acceptance("complete", updated.Issue.Revision, "already-verified.txt")}
 	done := roleWork[core.WorkReceipt](t, p, token, "issue_complete", complete)
