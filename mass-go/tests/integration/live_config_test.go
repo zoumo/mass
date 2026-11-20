@@ -20,6 +20,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -134,6 +135,7 @@ func (p *configNativePeer) serve(conn net.Conn) {
 		return map[string]any{"id": p.id, "sessionId": "native-session", "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": p.cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
 	}
 	scan := bufio.NewScanner(conn)
+	startupSettings := p.kind == "claude"
 	for scan.Scan() {
 		raw := append([]byte(nil), scan.Bytes()...)
 		p.mu.Lock()
@@ -198,7 +200,7 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			if p.kind == "codex" {
 				respond(map[string]any{"userAgent": "synthetic", "codexHome": "/synthetic", "platformFamily": "unix", "platformOs": "linux"})
 			} else {
-				respond(map[string]any{})
+				respond(map[string]any{"current_permission_mode": startup.ClaudePermissionMode})
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": p.id, "cwd": p.cwd, "claude_code_version": p.version})
 				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": p.id, "state": "idle"})
 			}
@@ -210,13 +212,18 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			respond(map[string]any{"status": "ok", "session_id": p.id, "cwd": cwd})
 		case "initialized":
 		case "thread/start", "thread/resume":
-			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": p.cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": p.cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
 			send(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": p.id, "status": map[string]any{"type": "idle"}}})
 		case "thread/read":
 			respond(map[string]any{"thread": thread()})
 		case "thread/unsubscribe":
 			respond(map[string]any{"status": "unsubscribed"})
 		case "thread/inject_items", "turn/start", "turn/steer", "thread/settings/update", "set_model", "get_settings", "apply_flag_settings":
+			if method == "get_settings" && startupSettings {
+				respond(startup.ClaudeSettings())
+				startupSettings = false
+				continue
+			}
 			select {
 			case p.calls <- configNativeCall{method: method, params: params, respond: respond, reject: reject, rejectCode: func(code int) {
 				send(map[string]any{"id": v["id"], "error": map[string]any{"code": code, "message": "SECRET native rejection"}})

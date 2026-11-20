@@ -36,6 +36,7 @@ func sessionResumeRequired(state events.SessionState) error {
 }
 
 type sessionWorkOptions struct {
+	operation string
 	input     bool
 	prompt    bool
 	canceling bool
@@ -70,8 +71,11 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	}
 	done := make(chan result, 1)
 	go func() {
-		value, err := dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
+		owner, span := s.telemetry.start(context.WithoutCancel(ctx), opts.operation)
+		span.SetAttributes(providerAttribute(run.provider))
+		value, err := dispatch(owner, run, r.Status.SessionID)
 		s.settleWork(run, l, opts, err)
+		finishOperation(span, err, "")
 		done <- result{value, err}
 	}()
 	select {
@@ -134,7 +138,7 @@ func (s *Service) Inject(ctx context.Context, ref resource.SessionRef, input run
 		receipt    runtime.InjectReceipt
 		dispatched bool
 	}
-	result, err := sessionWork(ctx, s, ref, sessionWorkOptions{input: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (dispatchResult, error) {
+	result, err := sessionWork(ctx, s, ref, sessionWorkOptions{operation: "mass.session.inject", input: true, rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (dispatchResult, error) {
 		driver, ok := run.driver.(runtime.InjectDriver)
 		if !ok {
 			return dispatchResult{notSent, true}, runtime.UnsupportedOption("inject_unsupported", "Driver does not support context injection")

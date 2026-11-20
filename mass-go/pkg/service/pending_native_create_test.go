@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -81,7 +82,7 @@ func TestPendingNativeCreatePeer(t *testing.T) {
 			if err := encoder.Encode(map[string]any{
 				"type": "control_response",
 				"response": map[string]any{
-					"subtype": "success", "request_id": frame.RequestID, "response": map[string]any{},
+					"subtype": "success", "request_id": frame.RequestID, "response": map[string]any{"current_permission_mode": startup.ClaudePermissionMode},
 				},
 			}); err != nil {
 				os.Exit(5)

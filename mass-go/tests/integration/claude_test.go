@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -349,12 +351,82 @@ func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string)
 		}
 	}
 	replace(scenario)
+	applySyntheticCodexPermissions(scenario)
+	applySyntheticClaudePermissions(scenario)
 	expandCodexIdentityReads(scenario)
 	data, err := json.Marshal(scenario)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "scenario.json")
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 	return path, work
+}
+
+func applySyntheticClaudePermissions(scenario map[string]any) {
+	frames, _ := scenario["frames"].([]any)
+	for _, value := range frames {
+		frame, _ := value.(map[string]any)
+		data, _ := frame["data"].(map[string]any)
+		request, _ := data["request"].(map[string]any)
+		if request["subtype"] == "get_settings" {
+			return
+		}
+	}
+	var initializeID any
+	for i, value := range frames {
+		frame, _ := value.(map[string]any)
+		data, _ := frame["data"].(map[string]any)
+		request, _ := data["request"].(map[string]any)
+		if request["subtype"] == "initialize" {
+			initializeID = data["request_id"]
+		}
+		response, _ := data["response"].(map[string]any)
+		if initializeID == nil || response["request_id"] != initializeID || response["subtype"] != "success" {
+			continue
+		}
+		body, ok := response["response"].(map[string]any)
+		if !ok {
+			continue
+		}
+		body["current_permission_mode"] = startup.ClaudePermissionMode
+		id := "synthetic-startup-settings"
+		requestFrame := scenarioFrame(0, "client", map[string]any{
+			"type": "control_request", "request_id": id, "request": map[string]any{"subtype": "get_settings"},
+		})
+		replyFrame := scenarioFrame(0, "server", map[string]any{
+			"type": "control_response", "response": map[string]any{
+				"subtype": "success", "request_id": id, "response": startup.ClaudeSettings(),
+			},
+		})
+		frames = slices.Insert(frames, i+1, any(requestFrame), any(replyFrame))
+		for i, value := range frames {
+			value.(map[string]any)["ordinal"] = i + 1
+		}
+		scenario["frames"] = frames
+		return
+	}
+}
+
+// The strict synthetic provider scenarios use the unified SDK's startup
+// defaults. Recorded material is replayed through a separate test harness.
+func applySyntheticCodexPermissions(scenario map[string]any) {
+	frames, _ := scenario["frames"].([]any)
+	openRequests := map[string]bool{}
+	for _, value := range frames {
+		frame, _ := value.(map[string]any)
+		wire, _ := frame["wire"].(map[string]any)
+		if id, ok := codexOpenRequestID(frame); ok {
+			params, _ := wire["params"].(map[string]any)
+			params["approvalPolicy"], params["approvalsReviewer"], params["sandbox"] = "on-request", "auto_review", "workspace-write"
+			openRequests[id] = true
+			continue
+		}
+		if id, ok := frameWireID(frame); ok && openRequests[id] {
+			delete(openRequests, id)
+			if result, ok := wire["result"].(map[string]any); ok {
+				result["approvalPolicy"], result["approvalsReviewer"], result["sandbox"] = "on-request", "auto_review", map[string]any{"type": "workspaceWrite"}
+			}
+		}
+	}
 }
 
 // MASS provider scenarios use the unified SDK, which emits a fresh UUID for

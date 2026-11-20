@@ -112,6 +112,7 @@ type flowCase struct {
 	project            string
 	initialInput       bool
 	legacyClaudeInput  bool
+	legacyPermissions  bool
 	ignoreStreamKinds  bool
 	expectPermission   bool
 	expectedPermission string
@@ -768,10 +769,20 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 		require.NoError(h.t, err)
 		adapter := filepath.Join(session, "claude-replay")
 		h.command("go", "build", "-o", adapter, "./internal/recordingtest/cmd/claudereplay")
-		launcher := quote(adapter) + " " + quote(capturedUUID) + " " +
+		launcher := quote(adapter)
+		if c.legacyPermissions {
+			launcher += " --legacy-permissions"
+		}
+		launcher += " " + quote(capturedUUID) + " " +
 			quote(filepath.Join(session, claudeReplayReceipt)) + " " + quote(prepared.Connections[0].Launcher)
 		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + quote(plan.CLIVersion) + "; exit 0; fi\nexec " + launcher + " \"$@\"\n"
 		require.NoError(h.t, os.WriteFile(executable, []byte(script), 0o700))
+	} else if c.legacyPermissions {
+		executable = filepath.Join(session, "codex-mock-launcher")
+		adapter := filepath.Join(session, "codex-replay")
+		h.command("go", "build", "-o", adapter, "./internal/recordingtest/cmd/codexreplay")
+		launcher := quote(adapter) + " " + quote(filepath.Join(session, codexReplayReceipt)) + " " + quote(prepared.Connections[0].Launcher)
+		require.NoError(h.t, os.WriteFile(executable, []byte("#!/bin/sh\nexec "+launcher+" \"$@\"\n"), 0o700))
 	}
 	actual := h.flow(prepared, executable, c)
 	if c.ignoreStreamKinds {
@@ -794,11 +805,13 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 		}
 	}
 	require.Equal(h.t, expectedForCompare, actual)
-	require.NoError(h.t, verifyExecution(session, material))
+	require.NoError(h.t, verifyExecution(session, material, c.legacyPermissions))
 	return session
 }
 
-func verifyExecution(session, material string) error {
+const codexReplayReceipt = "codex-replay-complete"
+
+func verifyExecution(session, material string, legacyPermissions bool) error {
 	canonicalSession, err := filepath.EvalSymlinks(session)
 	if err != nil {
 		return err
@@ -939,13 +952,19 @@ func verifyExecution(session, material string) error {
 	if plan.AgentType != fixture.AgentType || plan.DriverProfile != "consumer" {
 		return fmt.Errorf("plan agent/driver profile is %q/%q", plan.AgentType, plan.DriverProfile)
 	}
+	receiptName := ""
 	if plan.AgentType == "claude" {
-		receipt, err := os.ReadFile(filepath.Join(canonicalSession, claudeReplayReceipt))
+		receiptName = claudeReplayReceipt
+	} else if legacyPermissions {
+		receiptName = codexReplayReceipt
+	}
+	if receiptName != "" {
+		receipt, err := os.ReadFile(filepath.Join(canonicalSession, receiptName))
 		if err != nil {
-			return fmt.Errorf("claude replay adapter receipt: %w", err)
+			return fmt.Errorf("%s replay adapter receipt: %w", plan.AgentType, err)
 		}
 		if string(receipt) != "complete\n" {
-			return errors.New("claude replay adapter did not complete")
+			return fmt.Errorf("%s replay adapter did not complete", plan.AgentType)
 		}
 	}
 	return nil
@@ -1004,13 +1023,15 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	descriptor := filepath.Join(executionDir, "execution.json")
 	require.Equal(t, execution.DescriptorSHA256, hashFile(t, descriptor))
 	var desc struct {
-		SchemaVersion int    `json:"schemaVersion"`
-		ExecutionID   string `json:"executionId"`
-		FixtureID     string `json:"fixtureId"`
-		Command       string `json:"command"`
-		Executor      string `json:"executor"`
-		Target        string `json:"target"`
-		Provenance    string `json:"provenance"`
+		SchemaVersion int      `json:"schemaVersion"`
+		ExecutionID   string   `json:"executionId"`
+		FixtureID     string   `json:"fixtureId"`
+		Command       string   `json:"command"`
+		Executor      string   `json:"executor"`
+		Target        string   `json:"target"`
+		Provenance    string   `json:"provenance"`
+		Args          []string `json:"args"`
+		NativeArgs    []string `json:"nativeArgs"`
 		Source        struct {
 			Kind       string `json:"kind"`
 			Path       string `json:"path"`
@@ -1039,6 +1060,11 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	require.Equal(t, "external-sdk", desc.Executor)
 	require.Equal(t, "native-agent", desc.Target)
 	require.Equal(t, "consumer", desc.Provenance)
+	require.Empty(t, desc.NativeArgs)
+	require.Len(t, desc.Args, 3)
+	require.Equal(t, "--cmd", desc.Args[0])
+	require.True(t, filepath.IsAbs(desc.Args[1]), "recording command must be an absolute executable path")
+	require.Equal(t, "--", desc.Args[2])
 	require.Equal(t, "plan", desc.Source.Kind)
 	require.Equal(t, "source/plan.json", filepath.ToSlash(desc.Source.Path))
 	sourcePath := filepath.Join(session, filepath.FromSlash(desc.Source.Path))
@@ -1171,6 +1197,10 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 
 	materialFiles, err := hashTree(packageMaterial, "material.json")
 	require.NoError(t, err)
+	type nativeIdentity struct {
+		Version string   `json:"version"`
+		Args    []string `json:"args"`
+	}
 	var manifest struct {
 		SchemaVersion         int               `json:"schemaVersion"`
 		MaterialFormatVersion int               `json:"materialFormatVersion"`
@@ -1182,9 +1212,7 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		PlanSHA256            string            `json:"planSHA256"`
 		RunSHA256             string            `json:"runSHA256"`
 		Files                 map[string]string `json:"files"`
-		Native                struct {
-			Version string `json:"version"`
-		} `json:"native"`
+		Native                nativeIdentity    `json:"native"`
 	}
 	readJSON(t, filepath.Join(packageMaterial, "manifest.json"), &manifest)
 	require.Equal(t, 1, manifest.SchemaVersion)
@@ -1197,6 +1225,13 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	require.Equal(t, result.PlanSHA256, manifest.PlanSHA256)
 	require.Equal(t, manifest.RunSHA256, materialFiles["raw/transport.json"])
 	require.Equal(t, expectedVersion, manifest.Native.Version)
+	require.Empty(t, manifest.Native.Args)
+	var rawManifest struct {
+		Native nativeIdentity `json:"native"`
+	}
+	readJSON(t, filepath.Join(packageMaterial, "raw", "manifest.json"), &rawManifest)
+	require.Equal(t, expectedVersion, rawManifest.Native.Version)
+	require.Empty(t, rawManifest.Native.Args)
 	declaredFiles := maps.Clone(materialFiles)
 	delete(declaredFiles, "manifest.json")
 	require.Equal(t, declaredFiles, manifest.Files)
@@ -1249,7 +1284,7 @@ func loadCase(t *testing.T, root, provider, name, expectedProject, expectedPromp
 func RunCodexBasicReplay(t *testing.T) {
 	h := newHarness(t)
 	material, index := loadCase(t, h.root, "codex", "basic", project, prompt)
-	h.replay(material, index.Facts, flowCase{name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project})
+	h.replay(material, index.Facts, flowCase{name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project, legacyPermissions: true})
 }
 
 func RunCodexPermissionReplay(t *testing.T) {
@@ -1280,7 +1315,8 @@ func RunCodexPermissionReplay(t *testing.T) {
 	require.Equal(t, "agent.message", kinds[len(kinds)-1])
 	test := flowCase{
 		name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project,
-		expectPermission: true, expectedPermission: "Approve command execution",
+		legacyPermissions: true,
+		expectPermission:  true, expectedPermission: "Approve command execution",
 		permissionOptions: []events.PermissionOption{
 			{OptionID: "allow-once", Name: "Allow once", Kind: events.PermissionAllow, Scope: events.PermissionScopeOnce},
 			{OptionID: "native-decision-1", Name: `Allow command prefix ["/bin/zsh" "-lc" "printf mass-approved > permission-proof.txt"]`, Kind: events.PermissionAllow, Scope: events.PermissionScopeAlways},
@@ -1288,13 +1324,13 @@ func RunCodexPermissionReplay(t *testing.T) {
 		},
 	}
 	session := h.replay(material, index.Facts, test)
-	require.NoError(t, verifyExecution(session, material))
+	require.NoError(t, verifyExecution(session, material, test.legacyPermissions))
 	receipt := executionReceiptPath(t, session)
 	var value map[string]any
 	readJSON(t, receipt, &value)
 	delete(value, "fullConsumption")
 	writeJSON(t, receipt, value)
-	require.ErrorContains(t, verifyExecution(session, material), "fullConsumption")
+	require.ErrorContains(t, verifyExecution(session, material, test.legacyPermissions), "fullConsumption")
 	// Fresh capture callers provide the current public facts and no historical override.
 	captured := index.Facts
 	currentPermission := *captured.Permission

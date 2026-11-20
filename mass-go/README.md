@@ -116,6 +116,37 @@ failure exits nonzero. Select explicit `--local` trusted loopback mode or
 `--token-file`; direct remote access requires TLS. `/readyz` measures RPC
 admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
 
+### OpenTelemetry
+
+`massd` owns trace and metrics collection for its RPC, Service and Agent SDK
+operations. Each signal defaults to `none`. Set `OTEL_TRACES_EXPORTER=otlp` or
+`OTEL_METRICS_EXPORTER=otlp` to export that signal using OTLP HTTP/protobuf.
+
+```sh
+OTEL_TRACES_EXPORTER=otlp \
+OTEL_METRICS_EXPORTER=otlp \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+bin/massd --local --data /absolute/owned/data
+```
+
+The common endpoint appends `/v1/traces` and `/v1/metrics`. For per-signal
+endpoints use `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` with the full paths. The OTLP exporters
+also support the standard `OTEL_EXPORTER_OTLP_*` options for headers, TLS and
+timeouts. `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` govern trace
+sampling. Metrics recording runs independently.
+Daemon `OTEL_*` settings stay in `massd`. Set a Runtime's `env` explicitly
+when its native CLI needs separate OpenTelemetry export settings.
+
+In the trace backend, filter on `service.name=massd` and the RPC span name,
+such as `session.create` or `session.resume`. Open the trace to see the Service
+and SDK spans under the request. For `session.load`, the RPC span covers
+acceptance and the child `mass.session.load` span covers background settlement.
+Export errors appear in daemon diagnostics. After business shutdown, the two
+signals share a five-second deadline to flush.
+
+### JSON-RPC
+
 `/rpc` accepts JSON-RPC 2.0 over WebSocket on the same listener and authentication
 boundary; `/livez` and `/readyz` remain plain HTTP probes. The endpoint accepts
 the side-effect-free `initialize` method with MASS protocol version `"1"`, plus
@@ -355,10 +386,12 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261119055031-27b9a36509ba`,
-source commit `27b9a36509ba106ed9c438fa2fafce090ab598ff`, without a local replacement. The external
-`agent-sdk-testify` tool is pinned to `v0.2.2-0.20261119051234-1c7981ff332a` for consumer recording and
-replay and is not a production dependency.
+The runtime SDK is pinned to `v0.1.0`,
+source commit `c169f237a1a119712563082b359a836d8089c19d`, without a local
+replacement. Consumer recording and offline replay use `agent-sdk-testify`
+`v0.2.2`. Testify forwards the SDK's arguments after `--` to the native process
+during recording and ignores them during replay. Capture metadata stores the
+native version and omits those arguments.
 The active Claude fixtures retain SDK `09d4ddf1ff20` and testify `v0.2.1` as recording provenance. The
 current Codex suite and the historical `recordings/` exports retain their
 original recording versions; that provenance is intentionally not rewritten.

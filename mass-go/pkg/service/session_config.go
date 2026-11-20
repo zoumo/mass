@@ -50,7 +50,7 @@ func (s *Service) SetSessionConfig(ctx context.Context, ref resource.SessionRef,
 	if err := change.Validate(); err != nil {
 		return notSent, agentrelay.MapConfigError(notSent, err)
 	}
-	receipt, err := sessionWork(ctx, s, ref, sessionWorkOptions{rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (runtime.ConfigReceipt, error) {
+	receipt, err := sessionWork(ctx, s, ref, sessionWorkOptions{operation: "mass.session.set_config", rearmIdle: true}, func(owner context.Context, run *runBinding, id string) (runtime.ConfigReceipt, error) {
 		driver, ok := run.driver.(runtime.SessionConfigDriver)
 		if !ok {
 			return notSent, runtime.UnsupportedOption("session_config_unsupported", "Driver does not support Session configuration")

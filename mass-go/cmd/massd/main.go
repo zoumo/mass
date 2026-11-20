@@ -118,6 +118,11 @@ func run(parent context.Context, o options) (result error) {
 	if (o.Local && token != "") || (!o.Local && token == "") {
 		return errors.New("select local mode or token authentication")
 	}
+	telemetry, err := newTelemetry(parent)
+	if err != nil {
+		return &runtime.OperationError{Code: "invalid_argument", Reason: "invalid_telemetry_config", Message: err.Error()}
+	}
+	defer telemetry.shutdown()
 	dataDir, err := canonicalDataDir(o.Data)
 	if err != nil {
 		return err
@@ -136,9 +141,16 @@ func run(parent context.Context, o options) (result error) {
 	if o.Approve {
 		policy = prototype.AutoApprovePermissions
 	}
-	svc := service.NewWithOptions(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dataDir, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(dataDir, "private")}}), service.Options{
+	recoveryDir := filepath.Join(dataDir, "private")
+	registry := runtime.NewRegistry(map[string]runtime.Factory{
+		"codex":  codex.Factory{RecoveryDir: recoveryDir, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
+		"claude": claude.Factory{RecoveryDir: recoveryDir, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
+	})
+	svc := service.NewWithOptions(meta, history, registry, service.Options{
 		InteractionPolicy:  policy,
 		SessionIdleTimeout: o.SessionIdleTimeout,
+		TracerProvider:     telemetry.traces,
+		MeterProvider:      telemetry.metrics,
 	})
 	settled := false
 	defer func() {
@@ -159,7 +171,10 @@ func run(parent context.Context, o options) (result error) {
 	defer listener.Close()
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	handler, err := transport.New(svc, transport.Options{Token: token, LocalOnly: o.Local, AllowedOrigins: o.AllowedOrigins, WriteTimeout: o.WriteTimeout})
+	handler, err := transport.New(svc, transport.Options{
+		Token: token, LocalOnly: o.Local, AllowedOrigins: o.AllowedOrigins, WriteTimeout: o.WriteTimeout,
+		TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics,
+	})
 	if err != nil {
 		return err
 	}

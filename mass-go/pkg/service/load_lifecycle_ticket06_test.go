@@ -200,9 +200,9 @@ func ticket06FaultContext(t *testing.T) context.Context {
 	return ctx
 }
 
-func ticket06FaultService(t *testing.T, st *file.Store, history eventstore.EventStore) (*service.Service, *ticket06FaultDriver) {
+func ticket06FaultService(t *testing.T, st *file.Store, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
-	svc, d := ticket06FaultOwner(t, st, history)
+	svc, d := ticket06FaultOwner(t, st, history, configure...)
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fault-peer", Config: runtime.Config{}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ticket06FaultContext(t), "agent")
@@ -210,10 +210,14 @@ func ticket06FaultService(t *testing.T, st *file.Store, history eventstore.Event
 	return svc, d
 }
 
-func ticket06FaultOwner(t *testing.T, st *file.Store, history eventstore.EventStore) (*service.Service, *ticket06FaultDriver) {
+func ticket06FaultOwner(t *testing.T, st *file.Store, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
 	d := &ticket06FaultDriver{pipe: events.NewEventPipe(16), bindings: map[string]*ticket06FaultBinding{}, loading: make(chan *ticket06FaultBinding, 1)}
-	svc := service.New(st, history, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}))
+	options := service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout}
+	for _, apply := range configure {
+		apply(&options)
+	}
+	svc := service.NewWithOptions(st, history, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}), options)
 	t.Cleanup(func() {
 		// No OS resource is created by this peer. Even a red ownership assertion
 		// must end its public stream before Store teardown.

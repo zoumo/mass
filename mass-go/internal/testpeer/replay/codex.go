@@ -1,6 +1,15 @@
 package replay
 
-import "github.com/zoumo/mass/mass-go/internal/testpeer/rawjson"
+import (
+	"errors"
+	"strings"
+
+	"github.com/zoumo/agent-sdk-go/agent"
+
+	"github.com/zoumo/mass/mass-go/internal/testpeer/rawjson"
+)
+
+const GeneratedTraceparent = "$generated-sampled-traceparent"
 
 type codexAdapter struct {
 	requests
@@ -32,6 +41,18 @@ func (a *codexAdapter) client(expected, actual rawjson.Value) (bool, error) {
 				return false, err
 			}
 			reverseAnswer = true
+		}
+	}
+	if stringMember(member(expected, "trace"), "traceparent") == GeneratedTraceparent {
+		carrier := member(actual, "trace")
+		parent := stringMember(carrier, "traceparent")
+		if err := (agent.TraceContext{Traceparent: parent}).Validate(); err != nil || !strings.HasSuffix(parent, "-01") {
+			return false, errors.New("expected a generated sampled traceparent")
+		}
+		var err error
+		expected, err = expected.Replace([]string{"trace", "traceparent"}, member(carrier, "traceparent"))
+		if err != nil {
+			return false, err
 		}
 	}
 	return reverseAnswer, match(expected, actual)

@@ -47,6 +47,7 @@ type rpcSubscription struct {
 	sub      *service.Subscription
 	aborted  bool
 	shutdown error
+	counted  bool
 
 	stop chan rpcSubscriptionStop
 	done chan struct{}
@@ -96,6 +97,9 @@ func (c *rpcConnection) releaseSubscription(s *rpcSubscription) {
 	c.mu.Lock()
 	if c.subscription == s {
 		c.subscription = nil
+		if s.counted {
+			c.endpoint.telemetry.subscriptions.Add(context.Background(), -1)
+		}
 	}
 	c.mu.Unlock()
 	c.maybeDrained()
@@ -130,11 +134,9 @@ func (c *rpcConnection) dispatchSubscribe(
 	ctx context.Context,
 	conn *rpc2.Conn,
 	req *rpc2.Request,
-	key string,
 	ref resource.SessionRef,
 	s *rpcSubscription,
 ) {
-	defer c.end(key)
 	if c.api == nil {
 		c.failSubscription(s)
 		replyInternalError(ctx, conn, req.ID)
@@ -147,6 +149,7 @@ func (c *rpcConnection) dispatchSubscribe(
 		return
 	}
 	if !s.setSubscription(sub) {
+		observeRPCOutcome(ctx, "canceled")
 		c.releaseSubscription(s)
 		s.finish()
 		return
@@ -160,9 +163,13 @@ func (c *rpcConnection) dispatchSubscribe(
 	}
 	// This write completes before the forwarder is started, so no event for
 	// this subscription can overtake its successful response.
-	if err := conn.SendResponse(ctx, response); err != nil {
+	if err := sendRPCResponse(ctx, conn, response); err != nil {
 		c.failSubscription(s)
 		return
+	}
+	if c.endpoint != nil && c.endpoint.telemetry != nil {
+		c.endpoint.telemetry.subscriptions.Add(ctx, 1)
+		s.counted = true
 	}
 	s.readyOnce.Do(func() { close(s.ready) })
 	go s.forward()
@@ -178,9 +185,8 @@ func (c *rpcConnection) dispatchUnsubscribe(
 	ctx context.Context,
 	conn *rpc2.Conn,
 	req *rpc2.Request,
-	key, id string,
+	id string,
 ) {
-	defer c.end(key)
 	s := c.subscriptionByID(id)
 	if s == nil {
 		c.replyNull(ctx, conn, req.ID)
@@ -202,7 +208,7 @@ func (c *rpcConnection) replyNull(ctx context.Context, conn *rpc2.Conn, id rpc2.
 	if err := response.SetResult(nil); err != nil {
 		return
 	}
-	_ = conn.SendResponse(ctx, response)
+	_ = sendRPCResponse(ctx, conn, response)
 }
 
 func (s *rpcSubscription) forward() {

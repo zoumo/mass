@@ -75,7 +75,7 @@ func main() {
 					send(reply)
 					continue
 				}
-				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
+				send(clipeer.StartupReply(r["subtype"].(string), v["request_id"]))
 				if r["subtype"] == "initialize" {
 					send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd})
 					send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
@@ -104,7 +104,7 @@ func main() {
 				continue
 			case "thread/start":
 				cwd = v["params"].(map[string]any)["cwd"].(string)
-				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
 				notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 				continue
 			case "thread/read":

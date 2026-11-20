@@ -74,7 +74,7 @@ func TestRecordingDiagnosticPreflightStageTimeout(t *testing.T) {
 	require.Contains(t, string(stderr), "<REDACTED>")
 	require.NotContains(t, string(stderr), "ticket03-secret-value")
 
-	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 2.1.258; fi\nexit 0\n"), 0o700))
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 2.1.293; fi\nexit 0\n"), 0o700))
 	report, err = Diagnose(context.Background(), DiagnosticOptions{
 		Provider: "claude", Executable: executable, Output: filepath.Join(root, "missing-model"),
 	})

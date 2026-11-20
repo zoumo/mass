@@ -16,6 +16,8 @@ import (
 	agentclaude "github.com/zoumo/agent-sdk-go/agent/claude"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 	"github.com/zoumo/agent-sdk-go/mcp"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -39,7 +41,11 @@ func parse(c runtime.Config) (options, error) {
 	return o, nil
 }
 
-type Factory struct{ RecoveryDir string }
+type Factory struct {
+	RecoveryDir    string
+	TracerProvider trace.TracerProvider
+	MeterProvider  metric.MeterProvider
+}
 
 func (Factory) Validate(c runtime.Config) error { _, err := parse(c); return err }
 
@@ -50,9 +56,11 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	}
 	life, cancel := context.WithCancel(context.Background())
 	provider := agentclaude.New(agentclaude.Config{
-		CLIPath:   o.Executable,
-		Env:       o.Environment("claude"),
-		ConfigDir: o.Env["CLAUDE_CONFIG_DIR"],
+		CLIPath:        o.Executable,
+		Env:            o.Environment("claude"),
+		ConfigDir:      o.Env["CLAUDE_CONFIG_DIR"],
+		TracerProvider: f.TracerProvider,
+		MeterProvider:  f.MeterProvider,
 	})
 	return &Driver{
 		provider: provider,

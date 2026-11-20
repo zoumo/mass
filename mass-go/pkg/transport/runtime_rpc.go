@@ -142,8 +142,7 @@ func decodeRuntimeQuery(raw *json.RawMessage) (resource.RuntimeQuery, error) {
 	return query, nil
 }
 
-func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request, key string, call rpcCall) {
-	defer c.end(key)
+func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request, call rpcCall) {
 	if c.api == nil {
 		replyInternalError(ctx, conn, req.ID)
 		return
@@ -168,7 +167,7 @@ func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *
 		replyInternalError(ctx, conn, req.ID)
 		return
 	}
-	if err := conn.SendResponse(ctx, response); err != nil {
+	if err := sendRPCResponse(ctx, conn, response); err != nil {
 		replyInternalError(ctx, conn, req.ID)
 	}
 }
@@ -181,6 +180,7 @@ func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err err
 		replyInternalError(ctx, conn, id)
 		return
 	}
+	observeRPCOutcome(ctx, operationErrorType(public.Code))
 	var value any = public
 	if len(receipt) > 0 {
 		value = struct {
@@ -198,7 +198,7 @@ func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err err
 		return
 	}
 	raw := json.RawMessage(data)
-	if err := conn.SendResponse(ctx, &rpc2.Response{ID: id, Error: &rpc2.Error{
+	if err := sendRPCResponse(ctx, conn, &rpc2.Response{ID: id, Error: &rpc2.Error{
 		Code:    rpcwire.CodeServiceError,
 		Message: public.Message,
 		Data:    &raw,
@@ -208,7 +208,7 @@ func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err err
 }
 
 func replyInternalError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID) {
-	_ = conn.SendResponse(ctx, &rpc2.Response{ID: id, Error: &rpc2.Error{
+	_ = sendRPCResponse(ctx, conn, &rpc2.Response{ID: id, Error: &rpc2.Error{
 		Code:    rpc2.CodeInternalError,
 		Message: "Internal error",
 	}})

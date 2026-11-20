@@ -20,6 +20,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	peerstartup "github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -46,7 +47,11 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 		os.Exit(5)
 	}
 	enc := json.NewEncoder(os.Stdout)
-	if err := controlSuccess(enc, initialize.RequestID, map[string]any{}); err != nil {
+	mode := peerstartup.ClaudePermissionMode
+	if os.Getenv("MASS_FAILED_CREATE_CLEANUP_WAIT") == "mismatched-permission" {
+		mode = "default"
+	}
+	if err := controlSuccess(enc, initialize.RequestID, map[string]any{"current_permission_mode": mode}); err != nil {
 		os.Exit(6)
 	}
 	if !scanner.Scan() {
@@ -58,6 +63,9 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 	}
 	if err := claimSuccess(enc, claim, sessionID); err != nil {
 		os.Exit(6)
+	}
+	if !scanner.Scan() || !replyStartupSettings(enc, scanner.Bytes()) {
+		os.Exit(8)
 	}
 	if os.Getenv("MASS_FAILED_CREATE_CLEANUP_WAIT") == "1" {
 		for scanner.Scan() {
@@ -77,6 +85,23 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 		os.Exit(7)
 	}
 	os.Exit(0)
+}
+
+func TestOpenRejectsMismatchedPermission(t *testing.T) {
+	dir := t.TempDir()
+	driver, _ := assignedSessionDriver(t, dir, "mismatched-permission", "0")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, err := driver.Start(ctx)
+	require.NoError(t, err)
+	opened, err := driver.OpenSession(ctx, runtime.Address{Namespace: "default", SessionName: "mismatched-permission"}, runtime.SessionSpec{Cwd: dir})
+	var operation *runtime.OperationError
+	require.ErrorAs(t, err, &operation)
+	require.Equal(t, "unsupported", operation.Code)
+	require.Equal(t, "permission_mode_unconfirmed", operation.Reason)
+	require.ErrorIs(t, err, runtime.ErrResourcesReleased)
+	require.Empty(t, opened.SessionID)
+	requireProcessReaped(t, dir)
 }
 
 func TestOpenWithoutInputThenCloseReleasesNativeProcess(t *testing.T) {
