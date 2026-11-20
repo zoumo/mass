@@ -112,9 +112,14 @@ func Parse(data []byte, role Role) (Message, *ProfileError) {
 }
 
 func parseRequest(object map[string]json.RawMessage, role Role) (Message, *ProfileError) {
+	rawID, hasID := object["id"]
 	for field := range object {
 		switch field {
 		case "jsonrpc", "id", "method", "params":
+		case "meta":
+			if role != RoleServer || !hasID {
+				return Message{}, invalidRequest(object, role)
+			}
 		default:
 			return Message{}, invalidRequest(object, role)
 		}
@@ -124,7 +129,6 @@ func parseRequest(object map[string]json.RawMessage, role Role) (Message, *Profi
 	if !ok {
 		return Message{}, invalidRequest(object, role)
 	}
-	rawID, hasID := object["id"]
 	notification := !hasID
 	if role == RoleClient && hasID {
 		return Message{}, &ProfileError{Code: -32600, Message: "Invalid Request", Suppress: true}

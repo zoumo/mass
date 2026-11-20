@@ -178,7 +178,12 @@ func decodeWorkCommand[T any](ctx context.Context, s *Store, b Binding, kind str
 
 type workMutation func(context.Context, *sql.Tx, Binding) (any, error)
 
-func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID string, apply workMutation) (json.RawMessage, error) {
+func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID string, apply workMutation) (_ json.RawMessage, retErr error) {
+	if operation := workTraceOperation(kind); operation != "" {
+		var finish func(string)
+		ctx, finish = s.telemetry.startOperation(ctx, operation, b.Role)
+		defer func() { finish(operationOutcome(retErr, "committed")) }()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -210,6 +215,23 @@ func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID str
 		commitGate("lifecycle_after_commit")
 	}
 	return json.Marshal(result)
+}
+
+func workTraceOperation(tool string) string {
+	switch tool {
+	case "issue_create":
+		return "issue.create"
+	case "issue_start":
+		return "issue.start"
+	case "report_submit":
+		return "report.submit"
+	case "issue_complete":
+		return "issue.complete"
+	case "topic_complete":
+		return "topic.complete"
+	default:
+		return ""
+	}
 }
 
 func currentTopic(ctx context.Context, tx *sql.Tx, b Binding) (Topic, error) {
@@ -383,6 +405,9 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, send
 	issue.UpdatedAt, issue.CurrentExecutionID = at, x.ID
 	x.Revision = issue.RequirementsRevision
 	if err := putJSON(ctx, tx, "INSERT INTO executions(id,issue_id,binding_id,generation,created_at,body) VALUES(?,?,?,?,?,?)", x, x.ID, issue.ID, b.ID, x.Generation, at); err != nil {
+		return WorkReceipt{}, err
+	}
+	if err := executionCreate.save(ctx, tx, x.ID, 0); err != nil {
 		return WorkReceipt{}, err
 	}
 	if err := saveIssue(ctx, tx, issue); err != nil {

@@ -109,7 +109,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	peer := newNativeDeliveryPeer(t)
 	endpoint, massd := startDeliveryMassd(t, peer)
 	f, _ := deliveryFixture(t, endpoint)
-	p := f.start()
+	receiver, _ := coreOTLPReceiver(t, "")
+	p := f.start(traceTestEnv(receiver.URL)...)
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
 	mainBinding, source := nativeWorkTopic(t, f, p, peer, router, "work-main")
@@ -191,6 +192,11 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	x := *started.Execution
 	require.Equal(t, "mass-t1-i1-e1", x.ID)
 	require.Equal(t, x.ID, started.Issue.CurrentExecutionID)
+	startTrace := observedTraces(t, p, "executions", x.ID)
+	require.Len(t, startTrace, 1)
+	require.Equal(t, "creation", startTrace[0].Phase)
+	require.Equal(t, []observerTrace{{TraceID: startTrace[0].TraceID, Phase: "enqueue"}},
+		observedTraces(t, p, "internal-deliveries", x.StartEventID))
 	require.Len(t, page(t, p, "executions").Items, 1)
 	require.Len(t, workDeliveries(t, p, "worker_started"), 1)
 	workerBinding := waitBinding(t, p, "worker", x.ID, "ready")

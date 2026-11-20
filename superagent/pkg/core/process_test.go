@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -509,7 +511,8 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			f := fixtureAt(t)
 			gate := t.TempDir()
-			p := f.start("SUPERAGENT_TEST_GATE_STAGE="+stage, "SUPERAGENT_TEST_GATE_DIR="+gate)
+			p := f.start("SUPERAGENT_TEST_GATE_STAGE="+stage, "SUPERAGENT_TEST_GATE_DIR="+gate,
+				"OTEL_TRACES_EXPORTER=otlp", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:0")
 			r := input("crash")
 			outcome := make(chan error, 1)
 			go func() {
@@ -555,6 +558,12 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 					t.Fatalf("partial transaction after %s in %s", stage, kind)
 				}
 			}
+			db, err := sql.Open("sqlite", "file:"+filepath.Join(f.data, "core.sqlite")+"?mode=ro")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			var associations int
+			require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM trace_associations").Scan(&associations))
+			require.Equal(t, 2*count, associations, "Message and delivery associations commit with their objects")
 			receipt := submit(t, p, f, r)
 			if receipt.Status != "accepted" {
 				t.Fatal("recovery replay failed")
@@ -679,7 +688,8 @@ func TestObserverBrowserFixture(t *testing.T) {
 	}
 	config := strings.Replace(string(b), "127.0.0.1:0", "127.0.0.1:"+port, 1)
 	write(t, f.config, config+"    instanceId: browser-collector\n")
-	p := f.start()
+	receiver, _ := coreOTLPReceiver(t, "")
+	p := f.start(traceTestEnv(receiver.URL)...)
 	r := input("browser-one")
 	r.Message.Text = "Browser original body <script>window.attack=true</script>\n" + strings.Repeat("Long original text ", 1500)
 	receipt := submit(t, p, f, r)

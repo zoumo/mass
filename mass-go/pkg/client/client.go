@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	rpc2 "github.com/sourcegraph/jsonrpc2"
+	"go.opentelemetry.io/otel/propagation"
 
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -49,11 +50,28 @@ type Client struct {
 
 	mu           sync.Mutex
 	conn         *rpc2.Conn
-	stream       *rpcwire.Stream
+	stream       *rpcStream
 	cancel       context.CancelFunc
 	initialized  *rpc2.Conn
 	closed       bool
 	observations map[*Subscription]struct{}
+}
+
+type rpcStream struct {
+	*rpcwire.Stream
+	traceContext bool
+}
+
+func (s *rpcStream) callOptions(ctx context.Context) []rpc2.CallOption {
+	options := []rpc2.CallOption{rpc2.StringID()}
+	if s.traceContext {
+		carrier := propagation.MapCarrier{}
+		(propagation.TraceContext{}).Inject(ctx, carrier)
+		if parent := carrier.Get(rpcwire.TraceContextFormat); parent != "" {
+			options = append(options, rpc2.Meta(map[string]string{rpcwire.TraceContextFormat: parent}))
+		}
+	}
+	return options
 }
 
 // SetTLSClientConfig configures the WebSocket handshake transport before first
@@ -102,7 +120,7 @@ func (c *Client) Initialize(ctx context.Context, clientInfo *ClientInfo, out any
 func (c *Client) initializeConnection(
 	ctx context.Context,
 	conn *rpc2.Conn,
-	stream *rpcwire.Stream,
+	stream *rpcStream,
 	clientInfo *ClientInfo,
 	out any,
 	owned bool,
@@ -112,7 +130,7 @@ func (c *Client) initializeConnection(
 		params.ClientInfo = &rpcwire.PeerInfo{Name: clientInfo.Name, Version: clientInfo.Version}
 	}
 	var raw json.RawMessage
-	if err := conn.Call(ctx, "initialize", params, &raw, rpc2.StringID()); err != nil {
+	if err := conn.Call(ctx, "initialize", params, &raw, stream.callOptions(ctx)...); err != nil {
 		return c.callError(ctx, stream, err)
 	}
 
@@ -136,7 +154,7 @@ func (c *Client) initializeConnection(
 	return rpcwire.DecodeStrict(raw, out)
 }
 
-func (c *Client) ensureInitialized(ctx context.Context) (*rpc2.Conn, *rpcwire.Stream, error) {
+func (c *Client) ensureInitialized(ctx context.Context) (*rpc2.Conn, *rpcStream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -177,7 +195,7 @@ func (c *Client) callWith(ctx context.Context, method string, params, out any, w
 	if err != nil {
 		return err
 	}
-	waiter, err := conn.DispatchCall(ctx, method, params, rpc2.StringID())
+	waiter, err := conn.DispatchCall(ctx, method, params, stream.callOptions(ctx)...)
 	if err != nil {
 		if work {
 			return unconfirmedWork()
@@ -257,7 +275,7 @@ func (c *Client) Close() error {
 	return result
 }
 
-func (c *Client) connection(ctx context.Context) (*rpc2.Conn, *rpcwire.Stream, error) {
+func (c *Client) connection(ctx context.Context) (*rpc2.Conn, *rpcStream, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -283,7 +301,7 @@ func (c *Client) connection(ctx context.Context) (*rpc2.Conn, *rpcwire.Stream, e
 	return conn, stream, nil
 }
 
-func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *rpcwire.Stream, context.CancelFunc, error) {
+func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *rpcStream, context.CancelFunc, error) {
 	endpoint, err := websocketEndpoint(c.serverURL)
 	if err != nil {
 		return nil, nil, nil, err
@@ -315,10 +333,13 @@ func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *r
 	}
 	life, cancel := context.WithCancel(context.Background())
 	conn := rpc2.NewConn(life, stream, handler, rpc2.SetLogger(rpcLogger{}))
-	return conn, stream, cancel, nil
+	return conn, &rpcStream{
+		Stream:       stream,
+		traceContext: response != nil && response.Header.Get(rpcwire.TraceContextHeader) == rpcwire.TraceContextFormat,
+	}, cancel, nil
 }
 
-func (c *Client) callError(ctx context.Context, stream *rpcwire.Stream, err error) error {
+func (c *Client) callError(ctx context.Context, stream *rpcStream, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}

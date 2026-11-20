@@ -142,6 +142,10 @@ In the trace backend, filter on `service.name=massd` and the RPC span name,
 such as `session.create` or `session.resume`. Open the trace to see the Service
 and SDK spans under the request. For `session.load`, the RPC span covers
 acceptance and the child `mass.session.load` span covers background settlement.
+The Go client forwards the caller's W3C `traceparent` on each RPC when massd
+advertises `Mass-Trace-Context: traceparent` on the WebSocket Upgrade response.
+Preserve that response header when using a proxy. Requests without an incoming
+parent start independent traces.
 Export errors appear in daemon diagnostics. After business shutdown, the two
 signals share a five-second deadline to flush.
 

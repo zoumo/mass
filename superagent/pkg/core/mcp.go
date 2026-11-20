@@ -36,7 +36,7 @@ func roleTools(role string) []mcpTool {
 		{Name: "delivery_get", Description: "Read the full content and references of an internal delivery directed to your role using its delivery_id.", InputSchema: objectSchema(map[string]any{"delivery_id": str}, "delivery_id")},
 	}
 	if role == "worker" {
-		return append(tools, workerTools()...)
+		return withTriggerDelivery(append(tools, workerTools()...))
 	}
 	tools = append(tools,
 		mcpTool{Name: "binding_get", Description: "Read your startup-bound role, owner, generation, workspace and preparation state. No credentials or Session transcript.", InputSchema: objectSchema(nil)},
@@ -66,6 +66,17 @@ func roleTools(role string) []mcpTool {
 		tools = append(tools, topicWorkTools()...)
 		tools = append(tools, topicTimerTools()...)
 		tools = append(tools, registerPRTool(true))
+	}
+	return withTriggerDelivery(tools)
+}
+
+func withTriggerDelivery(tools []mcpTool) []mcpTool {
+	for i := range tools {
+		tool := &tools[i]
+		if traceRoleTool(tool.Name) {
+			props := tool.InputSchema["properties"].(map[string]any)
+			props[triggerDeliveryArg] = map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": triggerDeliveryDescription}
+		}
 	}
 	return tools
 }

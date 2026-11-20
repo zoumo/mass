@@ -1,9 +1,31 @@
+import { useState } from 'react'
+import { Button } from '../../components/ui/button'
 import ExecutionProfileFields from '../ExecutionProfileFields'
 import StructuredContent from '../StructuredContent'
 import { routingDeliveryLabel, stateLabel } from '../../workbench'
 import SessionEvidence from './SessionEvidence'
 import ChannelEvidence from './ChannelEvidence'
 import { followupLabel, identity, replyLabel, type RecordProps, type Kind } from './records'
+
+function TraceID({ traceId, phase }: { traceId: string; phase: string }) {
+  const [result, setResult] = useState('')
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(traceId)
+      setResult('已复制')
+    } catch {
+      setResult('复制失败')
+    }
+  }
+  return (
+    <li>
+      {phase} · <code>{traceId}</code>
+      <Button type="button" variant="ghost" size="sm" onClick={copy}>
+        <span aria-live="polite">{result || '复制 Trace ID'}</span>
+      </Button>
+    </li>
+  )
+}
 
 export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
   const showRecord = (view: Kind, id: string) => navigate(view, '', undefined, id)
@@ -37,6 +59,16 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
         {detail.receivedAt && <dt>接收时间</dt>}
         {detail.receivedAt && <dd>{detail.receivedAt}</dd>}
       </dl>
+      {!!detail.traceAssociations?.length && (
+        <section>
+          <h2>关联 Trace</h2>
+          <ul>
+            {detail.traceAssociations.map((association) => (
+              <TraceID key={association.phase + '/' + association.traceId} {...association} />
+            ))}
+          </ul>
+        </section>
+      )}
       {detail.observationGap && <p>观测中断 · {detail.observationGap}</p>}
       {detail.threadKey && (
         <button

@@ -146,7 +146,7 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   const params = new URLSearchParams({ limit: '50', preview: 'true' })
   if (scope && filter) params.set(scope, filter)
   const list = usePages<DiagnosticRow>(kind + '?' + params)
-  const detail = useRecord<DiagnosticRow>(id ? kind + '/' + encodeURIComponent(id) : '')
+  const detail = useRecord<DiagnosticRow>(id ? kind + '/' + encodeURIComponent(id) + '?trace=true' : '')
   const health = useRecord<Health>('health')
   const [draft, setDraft] = useState(filter)
   useEffect(() => setDraft(scope === 'threadKey' ? filter : ''), [scope, filter])

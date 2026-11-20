@@ -39,7 +39,7 @@ type unsubscribeParams struct {
 type Subscription struct {
 	client *Client
 	conn   *rpc2.Conn
-	stream *rpcwire.Stream
+	stream *rpcStream
 	cancel context.CancelFunc
 
 	idReady  chan struct{}
@@ -105,7 +105,7 @@ func (c *Client) Subscribe(ctx context.Context, ref resource.SessionRef) (_ *Sub
 	}
 
 	var raw json.RawMessage
-	if err := conn.Call(ctx, "session.subscribe", sessionRefParams{Session: ref}, &raw, rpc2.StringID()); err != nil {
+	if err := conn.Call(ctx, "session.subscribe", sessionRefParams{Session: ref}, &raw, stream.callOptions(ctx)...); err != nil {
 		err = c.callError(ctx, stream, err)
 		subscription.failSetup(err)
 		return nil, err
@@ -190,7 +190,7 @@ func (s *Subscription) Unsubscribe(ctx context.Context) error {
 		return s.setupErr
 	}
 	var raw json.RawMessage
-	err := s.conn.Call(ctx, "session.unsubscribe", unsubscribeParams{SubscriptionID: s.id}, &raw, rpc2.StringID())
+	err := s.conn.Call(ctx, "session.unsubscribe", unsubscribeParams{SubscriptionID: s.id}, &raw, s.stream.callOptions(ctx)...)
 	if err != nil {
 		err = s.client.callError(ctx, s.stream, err)
 		s.finish(err)

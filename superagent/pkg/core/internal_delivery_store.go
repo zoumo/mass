@@ -92,7 +92,7 @@ func enqueueInternalDelivery(ctx context.Context, tx *sql.Tx, d internalDelivery
 	if err != nil {
 		return storageError()
 	}
-	return nil
+	return internalEnqueue.save(ctx, tx, d.ID, 0)
 }
 
 func checkDeliveryIdentity(ctx context.Context, tx *sql.Tx, r deliveryIdentity, recipient bool) error {
@@ -150,6 +150,9 @@ func (s *Store) getInternalDelivery(ctx context.Context, b Binding, id string) (
 	}
 	if err != nil {
 		return d, storageError()
+	}
+	if s.telemetry.tracesEnabled {
+		addTraceLinks(ctx, internalEnqueue.links(ctx, tx, nil, d.ID, 0))
 	}
 	return d, nil
 }

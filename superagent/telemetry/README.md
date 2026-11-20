@@ -1,0 +1,113 @@
+# Run Superagent telemetry locally
+
+The local Docker Compose stack runs the OpenTelemetry Collector and OpenObserve.
+It publishes the OpenObserve UI and two OTLP/HTTP receivers on loopback. The
+Compose project name determines which test data volume to use.
+
+## Start the stack
+
+Set `ZO_ROOT_USER_EMAIL` and `ZO_ROOT_USER_PASSWORD` in your environment before
+the first start. Use credentials reserved for this local OpenObserve instance.
+Run these commands from the repository root.
+
+```sh
+export OPENOBSERVE_AUTHORIZATION="Basic $(printf '%s:%s' "$ZO_ROOT_USER_EMAIL" "$ZO_ROOT_USER_PASSWORD" | base64 | tr -d '\n')"
+docker compose -p superagent-telemetry -f superagent/telemetry/compose.yaml up -d
+```
+
+Open OpenObserve at `http://127.0.0.1:15080` and select the `default`
+organization. Change the host ports with `SUPERAGENT_OPENOBSERVE_PORT`,
+`SUPERAGENT_OTLP_PORT`, and `SUPERAGENT_OBSERVER_OTLP_PORT` if needed.
+
+## Enable Core telemetry
+
+Set the following environment variables when you run `superagent serve` or
+`superagent compose`. Each exporter is disabled by default. Set it to `none`
+to disable that signal explicitly. The Go exporters use OTLP/HTTP with Protobuf
+and honor the standard `OTEL_EXPORTER_OTLP_*` settings.
+
+```sh
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318
+bin/superagent serve --config /absolute/run/core.yaml
+```
+
+To start Core and massd together, use the same `OTEL_*` variables with
+`superagent compose`. massd inherits the variables from `superagent compose`.
+Set `SUPERAGENT_OBSERVER_OTLP_ENDPOINT` separately to enable browser telemetry.
+
+```sh
+SUPERAGENT_OBSERVER_OTLP_ENDPOINT=http://127.0.0.1:14320 \
+  bin/superagent compose --massd-bin ./bin/massd \
+    --massd-config /absolute/run/massd.yaml --core-config /absolute/run/core.yaml
+```
+
+The Core resource has `service.name=superagent-core`. Submit a Message or
+open Observer to generate requests. Use `OTEL_METRIC_EXPORT_INTERVAL=1000`
+to shorten the export interval for a smoke test.
+
+## Query Core telemetry
+
+In **Traces**, search by the Message's `trace_id` across services. A Message
+submission produces `POST /v1/channel/messages` and its `superagent.message.admit`
+child span. A single-source workflow continues through role input, routing, Issue
+creation, Worker Session preparation and the Report. To include massd's RPC,
+Service and SDK spans, run a matching massd build with traces enabled and send
+its OTLP data to the same Collector.
+
+Use these PromQL expressions in **Metrics**.
+
+```promql
+sum by (http_route) (http_server_request_duration_count{service_name="superagent-core"})
+sum by (superagent_outcome) (superagent_core_operation_duration_count{service_name="superagent-core",superagent_operation="message.admit"})
+```
+
+The first expression groups HTTP requests by route template. The second shows
+each admission outcome separately.
+
+## Enable Observer telemetry
+
+Set `SUPERAGENT_OBSERVER_OTLP_ENDPOINT=http://127.0.0.1:14320` when starting
+Core. Build Superagent with the embedded Observer using `make build-superagent`.
+This setting enables the Observer SDK at runtime. Use a loopback HTTP origin
+with an explicit port. Browser batches go through the same-origin
+`/v1/telemetry/traces` and `/v1/telemetry/metrics` gateway to the Collector's
+Observer receiver. The gateway strips incoming credentials and caps batch
+size, rate, and concurrency. The receiver applies a separate attribute
+allowlist. Expose the Core endpoint only to the trusted Observer audience.
+
+Open an Observer view and search **Traces** for `service_name = superagent-observer`.
+An `observer.http` client span and its Core server span share a trace ID. In
+**Metrics**, aggregate page instances by the attributes relevant to the query.
+The view histogram measures data loads, including refreshes, by view.
+
+```promql
+sum by (superagent_observer_api) (http_client_request_duration_count{service_name="superagent-observer"})
+sum by (superagent_observer_view) (superagent_observer_view_duration_count{service_name="superagent-observer"})
+```
+
+## Find a trace from a Core record
+
+Open a Message, Internal Delivery, Scheduled Task, Execution, or Outbox record
+in Observer Diagnostics. Copy its trace ID and search for that ID in OpenObserve.
+With Core tracing enabled, the database records W3C Trace Context in one
+`trace_associations` table. The association commits with the business record.
+Each dispatch has a span. A singleton dispatch inherits its source context.
+A batch uses Span Links for its sources. Role tools use `triggerDeliveryId` to
+continue from the validated input delivery. Legacy and proactive calls may omit it.
+Core can read existing associations when tracing is disabled. Sampling and
+OpenObserve retention determine whether a trace is still queryable.
+
+## Stop the stack
+
+```sh
+docker compose -p superagent-telemetry -f superagent/telemetry/compose.yaml down
+```
+
+Compose keeps the project volume. The `--volumes` flag also removes the local
+OpenObserve data for that project.
+
+See the [OpenTelemetry OTLP exporter configuration](https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/)
+and [OpenObserve Collector guide](https://openobserve.ai/opentelemetry/collector/)
+for the transport and authentication settings.

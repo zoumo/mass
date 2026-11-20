@@ -21,6 +21,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type ExecutionConfig struct {
@@ -286,7 +287,10 @@ func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous Bindin
 		return Binding{}, storageError()
 	}
 	token := newID("cap") + newID("key")
-	return b, putJSON(ctx, tx, "INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body) VALUES(?,?,?,?,?,?,?,?,?)", b, b.ID, b.Role, b.OwnerID, b.Generation, b.CreatedAt, token, spec, b.State)
+	if err := putJSON(ctx, tx, "INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body) VALUES(?,?,?,?,?,?,?,?,?)", b, b.ID, b.Role, b.OwnerID, b.Generation, b.CreatedAt, token, spec, b.State); err != nil {
+		return Binding{}, err
+	}
+	return b, bindingCreation.save(ctx, tx, b.ID, 0)
 }
 
 func makeSpec(c Config, b Binding) resource.SessionSpec {
@@ -299,6 +303,7 @@ func makeSpec(c Config, b Binding) resource.SessionSpec {
 	}
 	servers := []runtime.MCPServer{{Name: "superagent", Type: runtime.MCPTransportStdio, Command: c.Execution.MCPCommand, Args: []string{"mcp", "--capability-file", filepath.Join(c.DataDir, "capabilities", b.capabilityFileID()+".json")}, Cwd: b.MCPWorkingDirectory}}
 	prompt += internalDeliveryPrompt
+	prompt += " Whenever route_decide, issue_create, issue_start, report_submit, issue_complete, or topic_complete responds to an input event, always provide triggerDeliveryId. " + triggerDeliveryDescription
 	switch b.Role {
 	case "router":
 		prompt += routerRoutingPrompt
@@ -428,6 +433,24 @@ func (s *Store) updateBinding(ctx context.Context, b Binding) error {
 }
 
 func (s *Server) prepare(ctx, call context.Context, b Binding, token string, spec resource.SessionSpec) {
+	if s.store.telemetry.tracesEnabled {
+		parent := bindingCreation.context(ctx, s.store.db, b.ID, 0)
+		if !parent.IsValid() && b.Role == "worker" {
+			parent = executionCreate.context(ctx, s.store.db, b.OwnerID, 0)
+		}
+		if parent.IsValid() {
+			ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
+		}
+	}
+	ctx, finish := s.store.telemetry.startOperation(ctx, "execution.prepare", b.Role)
+	call = trace.ContextWithSpan(call, trace.SpanFromContext(ctx))
+	outcome := "failed"
+	defer func() { finish(outcome) }()
+	record := func() {
+		if s.store.updateBinding(ctx, b) == nil {
+			outcome = b.State
+		}
+	}
 	firstPreparation := !b.PreparationStarted
 	result, err := s.store.db.ExecContext(ctx, "UPDATE session_bindings SET body=json_set(body,'$.preparationStarted',json('true')) WHERE id=? AND state='pending'", b.ID)
 	if err != nil {
@@ -459,24 +482,24 @@ func (s *Server) prepare(ctx, call context.Context, b Binding, token string, spe
 			b.PreviousBindingID, b.SessionID, b.SessionUID).Scan(&released)
 		if queryErr == nil && released {
 			b.ReuseError = "session_missing"
-			s.useFreshSession(ctx, b)
+			outcome = operationOutcome(s.useFreshSession(ctx, b), "pending")
 			return
 		}
 	}
 	if b.CapabilityFileID != "" && err == nil && !bindingMatches(b, spec, found) {
 		b.State, b.LastError, b.NextAttemptAt = "blocked", "session_configuration_conflict", ""
-		_ = s.store.updateBinding(ctx, b)
+		record()
 		return
 	}
 	if b.CapabilityFileID != "" && firstPreparation && err == nil && found.Status.State != "offline" {
 		b.State, b.LastError, b.NextAttemptAt = "blocked", "session_reuse_offline_precondition", ""
-		_ = s.store.updateBinding(ctx, b)
+		record()
 		return
 	}
 	if err := s.capabilityFile(b, token); err != nil {
 		b.LastError = "capability_file_unavailable"
 		b.NextAttemptAt = after(2 * time.Second)
-		_ = s.store.updateBinding(ctx, b)
+		record()
 		return
 	}
 	if errorCode(err) == "not_found" {
@@ -485,7 +508,7 @@ func (s *Server) prepare(ctx, call context.Context, b Binding, token string, spe
 			if b.Role != "worker" {
 				b.State, b.NextAttemptAt = "blocked", ""
 			}
-			_ = s.store.updateBinding(ctx, b)
+			record()
 			return
 		}
 		err = c.CreateSession(call, resource.Session{Metadata: resource.Metadata{Namespace: b.Namespace, Name: b.Name}, Spec: spec}, &found)
@@ -501,7 +524,7 @@ func (s *Server) prepare(ctx, call context.Context, b Binding, token string, spe
 			b.State = "blocked"
 			b.LastError = "session_configuration_conflict"
 			b.NextAttemptAt = ""
-			_ = s.store.updateBinding(ctx, b)
+			record()
 			return
 		}
 		switch {
@@ -532,24 +555,27 @@ func (s *Server) prepare(ctx, call context.Context, b Binding, token string, spe
 		case ownershipUnconfirmed(found):
 			b.State, b.LastError, b.NextAttemptAt = "blocked", "session_native_owner_unknown", ""
 			b.SessionUID, b.SessionID = found.Metadata.UID, found.Status.SessionID
-			_ = s.store.updateBinding(ctx, b)
+			if s.store.updateBinding(ctx, b) == nil {
+				outcome = "unknown"
+			}
 			return
 		}
 	}
 	if err == nil && !bindingMatches(b, spec, found) {
 		b.State, b.LastError, b.NextAttemptAt = "blocked", "session_configuration_conflict", ""
-		_ = s.store.updateBinding(ctx, b)
+		record()
 		return
 	}
 	if err == nil && resumeRecoveryMissing(found) {
 		switch {
 		case b.Role == "worker" && b.SessionID != "" && !b.PreviousOwnerUnknown:
 			if s.store.replaceUnrecoverableWorker(ctx, b, found) == nil {
+				outcome = "pending"
 				return
 			}
 		case b.CapabilityFileID != "" && firstPreparation && !b.PreviousOwnerUnknown:
 			b.ReuseError = resource.SessionReasonRecoveryMissing
-			s.useFreshSession(ctx, b)
+			outcome = operationOutcome(s.useFreshSession(ctx, b), "pending")
 			return
 		}
 		err = &runtime.OperationError{Code: "conflict", Reason: resource.SessionReasonRecoveryMissing}
@@ -579,7 +605,7 @@ func (s *Server) prepare(ctx, call context.Context, b Binding, token string, spe
 			}
 		}
 	}
-	_ = s.store.updateBinding(ctx, b)
+	record()
 }
 
 func ownershipUnconfirmed(session resource.Session) bool {
@@ -601,19 +627,20 @@ func resumeRecoveryMissing(session resource.Session) bool {
 	return session.Status.State == "offline" && session.Status.Reason == resource.SessionReasonRecoveryMissing
 }
 
-func (s *Server) useFreshSession(ctx context.Context, b Binding) {
+func (s *Server) useFreshSession(ctx context.Context, b Binding) error {
 	// Persist an independent name and capability file before creating.
 	b.Name = b.Role + "-" + strings.ReplaceAll(b.ID, "_", "-")
 	b.PreparationStarted = false
 	b.SessionID, b.SessionUID, b.CapabilityFileID, b.LastError, b.NextAttemptAt = "", "", "", "session_reuse_failed", ""
 	raw, err := json.Marshal(b)
 	if err != nil {
-		return
+		return err
 	}
 	replacement, err := json.Marshal(makeSpec(s.config, b))
 	if err == nil {
-		_, _ = s.store.db.ExecContext(ctx, "UPDATE session_bindings SET spec=?,body=?,next_attempt_at='' WHERE id=? AND state='pending'", replacement, raw, b.ID)
+		_, err = s.store.db.ExecContext(ctx, "UPDATE session_bindings SET spec=?,body=?,next_attempt_at='' WHERE id=? AND state='pending'", replacement, raw, b.ID)
 	}
+	return err
 }
 
 func after(d time.Duration) string {

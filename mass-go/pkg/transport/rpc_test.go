@@ -3,6 +3,7 @@ package transport_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,8 +16,13 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/zoumo/mass/mass-go/pkg/client"
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
@@ -394,6 +400,96 @@ func TestRPCWriteDeadlineClosesConnection(t *testing.T) {
 	require.Equal(t, codes.Error, span.Status().Code)
 	require.Contains(t, span.Attributes(), attribute.String("outcome", "success"))
 	require.Contains(t, span.Attributes(), attribute.String("mass.rpc.response.outcome", "response_write_failed"))
+}
+
+type promptTraceAPI struct {
+	transport.API
+}
+
+func (promptTraceAPI) SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error) {
+	return runtime.InputReceipt{Submission: "accepted", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+}
+
+func TestRPCTraceContext(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.Background())) })
+	endpoint, err := transport.New(promptTraceAPI{}, transport.Options{
+		Token: "test-token", WriteTimeout: time.Second, TracerProvider: provider,
+	})
+	require.NoError(t, err)
+	httpServer := httptest.NewServer(endpoint)
+	t.Cleanup(httpServer.Close)
+	t.Cleanup(endpoint.Shutdown)
+	c, err := client.New(rpcURL(httpServer), "test-token", client.Options{
+		WriteTimeout: time.Second, SubscriptionQueueCapacity: 8,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, c.Initialize(ctx, nil, nil))
+
+	recordedPrompts := func() []sdktrace.ReadOnlySpan {
+		var spans []sdktrace.ReadOnlySpan
+		for _, span := range recorder.Ended() {
+			if span.Name() == "session.prompt" {
+				spans = append(spans, span)
+			}
+		}
+		return spans
+	}
+	call := func(ctx context.Context, count int) sdktrace.ReadOnlySpan {
+		t.Helper()
+		var receipt runtime.InputReceipt
+		require.NoError(t, c.SendPrompt(ctx, resource.SessionRef{SessionID: "native"},
+			runtime.Input{Content: []events.ContentBlock{events.Text("prompt")}}, &receipt))
+		require.Equal(t, "accepted", receipt.Submission)
+		require.Eventually(t, func() bool { return len(recordedPrompts()) == count }, time.Second, time.Millisecond)
+		return recordedPrompts()[count-1]
+	}
+	first, firstSpan := provider.Tracer("superagent.test").Start(ctx, "first")
+	defer firstSpan.End()
+	server := call(first, 1)
+	require.Equal(t, trace.SpanKindServer, server.SpanKind())
+	require.Equal(t, firstSpan.SpanContext().TraceID(), server.SpanContext().TraceID())
+	require.Equal(t, firstSpan.SpanContext().SpanID(), server.Parent().SpanID())
+	require.True(t, server.Parent().IsRemote())
+
+	plain := call(ctx, 2)
+	require.False(t, plain.Parent().IsValid())
+	require.NotEqual(t, firstSpan.SpanContext().TraceID(), plain.SpanContext().TraceID())
+
+	second, secondSpan := provider.Tracer("superagent.test").Start(ctx, "second")
+	defer secondSpan.End()
+	server = call(second, 3)
+	require.Equal(t, secondSpan.SpanContext().TraceID(), server.SpanContext().TraceID())
+	require.Equal(t, secondSpan.SpanContext().SpanID(), server.Parent().SpanID())
+
+	conn := dialRPC(t, httpServer, rpcHeaders("test-token"))
+	sendText(t, conn, initializeMessage(`"init"`, rpcwire.Version))
+	require.Nil(t, readRPC(t, conn).Error)
+	for i, meta := range []string{
+		`["not an object"]`,
+		`{"traceparent":123}`,
+		`{"traceparent":"invalid"}`,
+		`{"traceparent":"00-0af7651916cd43dd8448eb211c80319c-b9c7c989f97918e1-01","oversized":"` + strings.Repeat("x", 1024) + `"}`,
+		`{"traceparent":"00-0af7651916cd43dd8448eb211c80319c-b9c7c989f97918e1-01","tracestate":"vendor=untrusted","baggage":"ignored=value"}`,
+	} {
+		sendText(t, conn, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"session.prompt","params":{"session":{"sessionId":"native"},"input":{"content":[{"type":"text","text":"prompt"}]}},"meta":%s}`, i, meta))
+		require.Nil(t, readRPC(t, conn).Error)
+		count := 4 + i
+		require.Eventually(t, func() bool { return len(recordedPrompts()) == count }, time.Second, time.Millisecond)
+		parent := recordedPrompts()[count-1].Parent()
+		if i < 4 {
+			require.False(t, parent.IsValid(), "meta %s", meta)
+		} else {
+			require.True(t, parent.IsRemote())
+			require.Equal(t, "0af7651916cd43dd8448eb211c80319c", parent.TraceID().String())
+			require.Equal(t, "b9c7c989f97918e1", parent.SpanID().String())
+			require.Zero(t, parent.TraceState().Len())
+		}
+	}
 }
 
 func TestRPCLocalMode(t *testing.T) {

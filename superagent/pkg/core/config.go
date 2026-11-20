@@ -33,6 +33,8 @@ type Config struct {
 	Sources   []Source         `mapstructure:"sources"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
+	// ObserverOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
+	ObserverOTLPEndpoint string `mapstructure:"-"`
 }
 
 func LoadConfig(path string) (Config, error) {

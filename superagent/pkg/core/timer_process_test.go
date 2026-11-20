@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -111,7 +112,8 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	endpoint, _ := startDeliveryMassd(t, peer)
 	f, _ := deliveryFixture(t, endpoint)
 	clock, advanceClock := processClock(t, f, "SUPERAGENT_TEST_TIMER_CLOCK")
-	p := f.start(clock)
+	receiver, spans := coreOTLPReceiver(t, "")
+	p := f.start(append(traceTestEnv(receiver.URL), clock)...)
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
 	binding, source := nativeWorkTopic(t, f, p, peer, router, "timer-main")
@@ -146,6 +148,8 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	require.Equal(t, "2090-01-02T00:00:00.012000000Z", scheduled.DueAt)
 	require.Equal(t, r.Materials, scheduled.Materials)
 	require.Equal(t, scheduled, mcpWork[core.Timer](t, topic, "timer_set", r))
+	createdTrace := observedTraces(t, p, "timers", scheduled.ID)
+	require.Len(t, createdTrace, 1)
 	changedRequest := r
 	changedRequest.Content = "Different content under the same operation ID"
 	mcpWorkError(t, topic, "timer_set", "conflict", changedRequest)
@@ -169,6 +173,11 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	require.Equal(t, scheduled.ID, rescheduled.ID)
 	require.Equal(t, 2, rescheduled.Revision)
 	require.Equal(t, update.Content, rescheduled.Content)
+	revisions := observedTraces(t, p, "timers", scheduled.ID)
+	require.Len(t, revisions, 2)
+	require.Equal(t, createdTrace[0], revisions[1])
+	require.Equal(t, "revision", revisions[0].Phase)
+	require.NotEqual(t, revisions[1].TraceID, revisions[0].TraceID)
 	require.Equal(t, 2, mcpWorkError(t, topic, "timer_cancel", "conflict", cancelTimerInput("stale-cancel", scheduled)).CurrentRevision)
 	require.Never(t, func() bool {
 		return readRecord[timerRecord](t, p, "timers/"+scheduled.ID).Status == "fired"
@@ -202,7 +211,18 @@ func TestTimerNativeDeliveryAndAuthority(t *testing.T) {
 	require.Empty(t, page(t, p, "issues").Items)
 	require.Empty(t, page(t, p, "executions").Items)
 	require.Equal(t, 1, readRecord[core.Topic](t, p, "topics/"+binding.OwnerID).Revision)
+	firedTrace := observedTraces(t, p, "messages", fired.TriggerMessageID)
+	require.Len(t, firedTrace, 1)
 	p.stop(t, false)
+	var linked bool
+	for _, span := range spans() {
+		if span.GetName() == "superagent.timer.fire" && spanLinksTrace(span, revisions[0].TraceID) {
+			linked = true
+			require.Len(t, span.GetLinks(), 1)
+			require.Equal(t, firedTrace[0].TraceID, hex.EncodeToString(span.GetTraceId()))
+		}
+	}
+	require.True(t, linked, "timer firing links to the committed current revision")
 	p = f.start(clock)
 	restarted := readRecord[timerRecord](t, p, "timers/"+fired.ID)
 	require.Equal(t, fired.Timer, restarted.Timer)

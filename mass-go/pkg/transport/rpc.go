@@ -70,7 +70,9 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 		HandshakeTimeout: rpcHandshakeTimeout,
 		CheckOrigin:      func(*http.Request) bool { return true },
 	}
-	socket, err := upgrader.Upgrade(w, r, nil)
+	headers := http.Header{}
+	headers.Set(rpcwire.TraceContextHeader, rpcwire.TraceContextFormat)
+	socket, err := upgrader.Upgrade(w, r, headers)
 	if err != nil {
 		return
 	}
@@ -248,7 +250,7 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 	if c.endpoint != nil {
 		telemetry = c.endpoint.telemetry
 	}
-	ctx, finish := telemetry.start(ctx, req.Method)
+	ctx, finish := telemetry.start(ctx, req)
 	async := false
 	defer func() {
 		if !async {

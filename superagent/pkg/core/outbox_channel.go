@@ -159,8 +159,10 @@ func receiptValue(state OutboxState) OutboxReceipt {
 	return *state.Receipt
 }
 
-func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxCommand) (OutboxItem, error) {
-	var item OutboxItem
+func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxCommand) (item OutboxItem, retErr error) {
+	ctx, finish := s.telemetry.startOperation(ctx, "outbox.settle", "")
+	outcome := req.Outcome // The channel handler validates the finite outcome set.
+	defer func() { finish(operationOutcome(retErr, outcome)) }()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return item, storageError()
@@ -169,6 +171,9 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 	if err := readJSON(ctx, tx, "SELECT "+outboxProjection+" FROM outbox WHERE id=?"+channelOutboxScope,
 		&item, req.OutboxID, source.Source, source.AccountID); err != nil {
 		return item, err
+	}
+	if s.telemetry.tracesEnabled {
+		addTraceLinks(ctx, outboxEnqueue.links(ctx, tx, nil, item.ID, 0))
 	}
 	at := outboxNow()
 	current, expected := receiptValue(item.OutboxState), receiptValue(req.Expected)
@@ -182,6 +187,7 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 			currentForReplay.RetryAt = expectedResult.RetryAt
 		}
 		if item.Status == next.Status && currentForReplay == expectedResult {
+			outcome = "duplicate"
 			return item, nil
 		}
 		return item, problem("conflict", "Outbox receipt changed since the pull")
@@ -193,6 +199,7 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 		return item, problem("conflict", "result must refer to the recorded channel task")
 	}
 	if item.Status == next.Status && current == expectedResult {
+		outcome = "duplicate"
 		return item, nil
 	}
 	var rawReceipt any

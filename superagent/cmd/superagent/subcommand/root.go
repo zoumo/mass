@@ -148,7 +148,14 @@ func New() *cobra.Command {
 }
 
 func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoint string, daemon *massdProcess) (result error) {
-	server, err := core.Start(config)
+	config.ObserverOTLPEndpoint = os.Getenv("SUPERAGENT_OBSERVER_OTLP_ENDPOINT")
+	logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
+	telemetry, err := newTelemetryRuntime(ctx, logger)
+	if err != nil {
+		return err
+	}
+	defer telemetry.shutdown()
+	server, err := core.StartWithTelemetry(config, telemetry.options)
 	if err != nil {
 		return err
 	}
@@ -162,7 +169,6 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoi
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdown); err != nil {
-			logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
 			logger.Error("Core shutdown incomplete", "reason", "shutdown_failed")
 			result = errors.Join(result, err)
 		}
