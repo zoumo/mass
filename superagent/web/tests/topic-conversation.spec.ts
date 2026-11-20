@@ -19,8 +19,10 @@ test('reads distinct Router and Core ingress with their own Thread and source li
   const filters = timeline.getByRole('navigation')
   await filters.getByRole('link', { name: 'Router 路由入群' }).click()
   const router = timeline.getByRole('article').filter({ hasText: routed })
-  await expect(router.getByText('Router', { exact: true })).toBeVisible()
-  await expect(router.getByRole('link', { name: /^dws:/ })).toHaveAttribute('href', /view=threads/)
+  const routerAvatar = router.getByRole('group', { name: '投递方' }).getByRole('link', { name: /查看 Router/ })
+  await expect(routerAvatar).toHaveAttribute('href', /perspective=router&id=/)
+  await expect(router.getByRole('group', { name: '收件方' }).getByRole('link', { name: /查看 Topic/ })).toHaveAttribute('href', /perspective=topic&id=/)
+  await expect(router.getByRole('link', { name: /查看 Thread · dws:/ })).toHaveAttribute('href', /view=threads/)
   await expect(timeline.getByText(direct)).toHaveCount(0)
   await router.getByRole('link', { name: new RegExp(routed) }).click()
   const details = page.getByRole('complementary', { name: '消息详情' })
@@ -68,21 +70,26 @@ test('reads Issue creation and Worker dispatch separately, with real group recor
   const group = page.getByRole('complementary', { name: '群组信息' })
   await expect(group.getByRole('link', { name: /^dws:/ })).toBeVisible()
   await expect(group.getByRole('link', { name: /github\.com\/example\/alpha\/pull\/42/ })).toBeVisible()
-  await expect(group.getByRole('link', { name: /Verify sample build/ })).toBeVisible()
-  await expect(group.getByRole('link', { name: /Review blocked build/ })).toBeVisible()
+  await expect(group.getByRole('link', { name: '查看 Issue · Verify sample build' })).toHaveAttribute('href', /perspective=issue&id=/)
+  await expect(group.getByRole('link', { name: '查看 Issue · Review blocked build' })).toBeVisible()
 
   const filters = timeline.getByRole('navigation')
   await filters.getByRole('link', { name: '创建 Issue', exact: true }).click()
-  await expect(timeline.getByRole('article')).toHaveCount(0)
-  await timeline.getByRole('link', { name: /创建 Issue · Verify sample build/ }).click()
+  const created = timeline.getByRole('article').filter({ hasText: 'Verify sample build' })
+  await expect(created.locator('header')).toContainText('创建 Issue')
+  await expect(created.locator('header code')).toHaveText('mass-t1-i1')
+  await expect(created.getByRole('group', { name: '收件方' }).getByRole('link')).toHaveAttribute('href', /perspective=issue&id=mass-t1-i1/)
+  await created.getByRole('link', { name: /创建 Issue · Verify sample build/ }).click()
   const details = page.getByRole('complementary', { name: '消息详情' })
   await expect(details.getByRole('link', { name: '查看 Issue →' })).toHaveAttribute('href', /perspective=issue&id=/)
 
   await filters.getByRole('link', { name: '任务派发' }).click()
   await expect(timeline.getByText(direct)).toHaveCount(0)
   const startup = timeline.getByRole('article').filter({ hasText: 'Verify sample build' })
-  await expect(startup.getByText('Topic Session', { exact: true })).toBeVisible()
-  await expect(startup.getByText('Worker · Verify sample build · 第 1 次执行')).toBeVisible()
+  await expect(startup.getByRole('group', { name: '投递方' })).toHaveText('Topic')
+  await expect(startup.getByRole('group', { name: '收件方' })).toHaveText('Worker')
+  await expect(startup.locator('header code')).toHaveText('mass-t1-i1-e1')
+  await expect(startup.getByText('第 1 次', { exact: true })).toBeVisible()
   await startup.getByRole('link', { name: /启动 Execution/ }).click()
   await expect(details.getByText('Session 已受理', { exact: true })).toBeVisible()
   await expect(details.getByText('artifacts/build-notes.md', { exact: true })).toBeVisible()
@@ -160,13 +167,13 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   expect(Math.abs(await anchorOffset() - offset)).toBeLessThan(2)
   await expect(reading.getByRole('link', { name: /Conversation pipeline/ })).toHaveAttribute('aria-current', 'true')
 
-  const milestones = entries.filter({ hasText: /Original input conversation-routed|创建 Issue · Verify conversation build|启动 Execution|Original input conversation-direct|Conversation build verified/ })
+  const milestones = entries.filter({ hasText: /Original input conversation-routed|创建 Issue.*Verify conversation build|启动 Execution|Original input conversation-direct|Conversation build verified/ })
   await expect(milestones).toHaveText([
     /Router.+Original input conversation-routed/,
-    /Topic Session 创建 Issue · Verify conversation build/,
-    /Topic Session.*Worker · Verify conversation build.+启动 Execution/,
+    /Topic.*Issue.*创建 Issue.*Verify conversation build/,
+    /Topic.*Worker.*启动 Execution.*Verify conversation build/,
     /Core.+Original input conversation-direct/,
-    /Worker · Verify conversation build.+Topic Session.+Conversation build verified/,
+    /Worker.*Topic.*申请验收.*Conversation build verified/,
   ])
   await reading.getByRole('button', { name: /有新消息 · 跳到最新/ }).click()
   const report = timeline.getByRole('link', { name: /申请验收.+Conversation build verified/ })
