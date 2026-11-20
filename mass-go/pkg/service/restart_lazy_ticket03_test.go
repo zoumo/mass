@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -300,10 +301,13 @@ func TestTicket03PrepareReconcilesPersistedStateWithoutStartingAnything(t *testi
 }
 
 func TestTicket03CreateSessionStartsRuntimeOnDemandAndReusesIt(t *testing.T) {
+	telemetry := newServiceTelemetryFixture(t)
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	var options service.Options
+	telemetry.configure(&options)
+	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}), options)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -334,6 +338,13 @@ func TestTicket03CreateSessionStartsRuntimeOnDemandAndReusesIt(t *testing.T) {
 	require.EqualValues(t, 1, factory.created.Load())
 	require.EqualValues(t, 1, driver.starts.Load())
 	require.EqualValues(t, 2, driver.opens.Load())
+	_, err = svc.StartRuntime(t.Context(), "agent")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, driver.starts.Load())
+	spans := telemetry.spans("mass.runtime.start")
+	require.Len(t, spans, 2, "one cold start and one explicit request to reuse")
+	require.Contains(t, spans[0].Attributes(), attribute.String("outcome", "success"))
+	require.Contains(t, spans[1].Attributes(), attribute.String("outcome", "reused"))
 }
 
 func TestTicket03ConcurrentCreateAndExplicitStartShareOneRuntimeBinding(t *testing.T) {

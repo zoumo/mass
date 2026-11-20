@@ -16,6 +16,8 @@ import (
 	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -38,7 +40,11 @@ type codexReadClient interface {
 	ListThreadItems(context.Context, ct.ThreadItemsListParams) (ct.ThreadItemsListResponse, error)
 }
 
-type Factory struct{ RecoveryDir string }
+type Factory struct {
+	RecoveryDir    string
+	TracerProvider trace.TracerProvider
+	MeterProvider  metric.MeterProvider
+}
 
 func (Factory) Validate(c runtime.Config) error { _, err := parse(c); return err }
 
@@ -51,12 +57,16 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if args == nil {
 		args = []string{"app-server"}
 	}
-	provider := agentcodex.New(agentcodex.Config{Stdio: sdk.StdioOptions{
-		Executable: o.Executable,
-		Args:       args,
-		Env:        o.Environment("codex"),
-		Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}},
-	}})
+	provider := agentcodex.New(agentcodex.Config{
+		TracerProvider: f.TracerProvider,
+		MeterProvider:  f.MeterProvider,
+		Stdio: sdk.StdioOptions{
+			Executable: o.Executable,
+			Args:       args,
+			Env:        o.Environment("codex"),
+			Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}},
+		},
+	})
 	return newDriver(
 		recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.Executable},
 		o,

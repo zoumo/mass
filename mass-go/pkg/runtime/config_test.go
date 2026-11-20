@@ -38,11 +38,15 @@ func TestRuntimeConfigurationRejectsInvalidLaunchInputs(t *testing.T) {
 
 func TestRuntimeEnvironmentPolicyIsExplicit(t *testing.T) {
 	t.Setenv("MASS_CONFIG_INHERITED", "parent")
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "synthetic-daemon-header")
 	for _, policy := range []string{"inherit", "replace"} {
 		config, err := runtime.ParseProcessConfig(runtime.Config{"executable": "/agent", "envPolicy": policy, "env": map[string]string{"MASS_CONFIG_OVERRIDE": "configured"}})
 		require.NoError(t, err)
 		env := config.Environment("codex")
 		require.Contains(t, env, "MASS_CONFIG_OVERRIDE=configured")
+		require.NotContains(t, env, "OTEL_EXPORTER_OTLP_HEADERS=synthetic-daemon-header")
+		_, hasDaemonHeaders := config.LookupEnv("OTEL_EXPORTER_OTLP_HEADERS")
+		require.False(t, hasDaemonHeaders)
 		if policy == "inherit" {
 			require.Contains(t, env, "MASS_CONFIG_INHERITED=parent")
 			value, ok := config.LookupEnv("MASS_CONFIG_INHERITED")
@@ -60,4 +64,10 @@ func TestRuntimeEnvironmentPolicyIsExplicit(t *testing.T) {
 	config, err := runtime.ParseProcessConfig(runtime.Config{"executable": "/agent", "envPolicy": "replace"})
 	require.NoError(t, err)
 	require.NotNil(t, config.Environment("claude"), "nil would silently inherit the environment in the SDK")
+	config, err = runtime.ParseProcessConfig(runtime.Config{
+		"executable": "/agent",
+		"env":        map[string]string{"OTEL_EXPORTER_OTLP_HEADERS": "explicit-native-header"},
+	})
+	require.NoError(t, err)
+	require.Contains(t, config.Environment("claude"), "OTEL_EXPORTER_OTLP_HEADERS=explicit-native-header")
 }

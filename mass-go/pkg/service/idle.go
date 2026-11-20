@@ -4,6 +4,9 @@ import (
 	"context"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -30,6 +33,8 @@ type Options struct {
 	InteractionPolicy  InteractionPolicy
 	SessionIdleTimeout time.Duration
 	Clock              Clock
+	TracerProvider     trace.TracerProvider
+	MeterProvider      metric.MeterProvider
 }
 
 type promptIdleFence struct {
@@ -121,9 +126,12 @@ func (s *Service) expireIdle(run *runBinding, l *lane, version uint64) {
 	ref := resource.SessionRef{SessionID: l.session.Status.SessionID}
 	// A rejected guard means newer activity won the race. Close failures are
 	// recorded as closing by the shared close path and are never retried here.
-	_, _ = s.closeSessionWithGuard(context.Background(), ref, func(current resource.Session) bool {
+	ctx, span := s.telemetry.start(context.Background(), "mass.session.idle_close")
+	span.SetAttributes(providerAttribute(run.provider))
+	_, err := s.closeSessionWithGuard(ctx, ref, func(current resource.Session) bool {
 		return current.Status.State == events.Idle && s.idleCurrentLocked(run, l, version)
 	})
+	finishOperation(span, err, "")
 }
 
 func (s *Service) idleCurrentLocked(run *runBinding, l *lane, version uint64) bool {

@@ -87,7 +87,7 @@ type idleFixture struct {
 	ref    resource.SessionRef
 }
 
-func newIdleFixture(t *testing.T, timeout time.Duration) *idleFixture {
+func newIdleFixture(t *testing.T, timeout time.Duration, configure ...func(*service.Options)) *idleFixture {
 	t.Helper()
 	st, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
@@ -102,10 +102,11 @@ func newIdleFixture(t *testing.T, timeout time.Duration) *idleFixture {
 		closeEntered:  make(chan struct{}, 4),
 		closeRelease:  make(chan struct{}),
 	}
-	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}), service.Options{
-		SessionIdleTimeout: timeout,
-		Clock:              clock,
-	})
+	options := service.Options{SessionIdleTimeout: timeout, Clock: clock}
+	for _, apply := range configure {
+		apply(&options)
+	}
+	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}), options)
 	t.Cleanup(func() {
 		d.releasePrompt()
 		d.releaseResume()

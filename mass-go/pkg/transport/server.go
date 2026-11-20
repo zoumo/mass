@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/zoumo/mass/mass-go/pkg/service"
 )
 
@@ -26,6 +29,8 @@ type Options struct {
 	AllowedOrigins []string
 	WriteTimeout   time.Duration
 	ServerVersion  string
+	TracerProvider trace.TracerProvider
+	MeterProvider  metric.MeterProvider
 }
 type Server struct {
 	api     API

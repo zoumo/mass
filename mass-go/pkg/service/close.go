@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -30,7 +32,10 @@ func (s *Service) CloseSession(ctx context.Context, ref resource.SessionRef) (re
 }
 
 func (s *Service) closeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
-	return s.closeSessionWithGuard(ctx, ref, nil)
+	ctx, span := s.telemetry.start(ctx, "mass.session.close")
+	value, err := s.closeSessionWithGuard(ctx, ref, nil)
+	finishOperation(span, err, "")
+	return value, err
 }
 
 func (s *Service) closeSessionWithGuard(ctx context.Context, ref resource.SessionRef, guard func(resource.Session) bool) (resource.Session, error) {
@@ -64,6 +69,7 @@ func (s *Service) closeSessionWithGuard(ctx context.Context, ref resource.Sessio
 	if run == nil {
 		return s.closeWithoutHandle(ref, r, prior, false, false)
 	}
+	trace.SpanFromContext(ctx).SetAttributes(providerAttribute(run.provider))
 	run.admission.RLock()
 	defer run.admission.RUnlock()
 

@@ -11,6 +11,10 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
@@ -373,12 +377,23 @@ func TestRPCShutdownClosesConnectionsAndAdmission(t *testing.T) {
 }
 
 func TestRPCWriteDeadlineClosesConnection(t *testing.T) {
-	_, httpServer := newRPCServer(t, transport.Options{Token: "test-token", WriteTimeout: time.Nanosecond})
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.Background())) })
+	_, httpServer := newRPCServer(t, transport.Options{
+		Token: "test-token", WriteTimeout: time.Nanosecond, TracerProvider: provider,
+	})
 	conn := dialRPC(t, httpServer, rpcHeaders("test-token"))
 	sendText(t, conn, initializeMessage(`"init"`, rpcwire.Version))
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
 	_, _, err := conn.ReadMessage()
 	require.Error(t, err)
+	require.Eventually(t, func() bool { return len(recorder.Ended()) == 1 }, time.Second, time.Millisecond)
+	span := recorder.Ended()[0]
+	require.Equal(t, "initialize", span.Name())
+	require.Equal(t, codes.Error, span.Status().Code)
+	require.Contains(t, span.Attributes(), attribute.String("outcome", "success"))
+	require.Contains(t, span.Attributes(), attribute.String("mass.rpc.response.outcome", "response_write_failed"))
 }
 
 func TestRPCLocalMode(t *testing.T) {

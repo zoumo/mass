@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -16,6 +18,9 @@ import (
 )
 
 type historyLoad struct {
+	ctx               context.Context
+	span              trace.Span
+	started           time.Time
 	mu                sync.Mutex
 	id                string
 	status            resource.HistoryLoadStatus
@@ -99,8 +104,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	if len(page.Events) != 0 || page.Next != "" {
 		return resource.SessionLoadAccepted{}, store.ErrConflict
 	}
-	owner, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	load := &historyLoad{id: uuid.NewString(), cancel: cancel, done: make(chan struct{}), cleanupDone: make(chan struct{}), deliveryFailed: make(chan struct{})}
+	load := &historyLoad{id: uuid.NewString(), done: make(chan struct{}), cleanupDone: make(chan struct{}), deliveryFailed: make(chan struct{})}
 	load.status = resource.HistoryLoadStatus{LoadID: load.id, Phase: "accepted"}
 	initial := load.status
 	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Config: input.Config, Cwd: input.Cwd, Features: input.Features, MCPServers: input.MCPServers}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
@@ -110,11 +114,15 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 		// Adopt only the exact durable reservation created by this operation.
 		saved, readErr := s.meta.GetSession(resource.SessionRef{SessionID: input.SessionID})
 		if readErr != nil || saved.Status.HistoryLoad == nil || saved.Status.HistoryLoad.LoadID != load.id || saved.Metadata.Namespace != m.Namespace || saved.Metadata.Name != m.Name || saved.Spec.RuntimeRef != input.RuntimeRef || saved.Spec.Cwd != input.Cwd || !sameSessionOverrides(saved.Spec.SessionSpec, r.Spec.SessionSpec) {
-			cancel()
 			return resource.SessionLoadAccepted{}, err
 		}
 		r = saved
 	}
+	load.started = time.Now()
+	load.ctx, load.span = s.telemetry.start(context.WithoutCancel(ctx), "mass.session.load")
+	load.span.SetAttributes(providerAttribute(run.provider))
+	owner, cancel := context.WithCancel(load.ctx)
+	load.cancel = cancel
 	l := &lane{session: r, load: load, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	s.mu.Lock()
 	run.lanes[input.SessionID] = l
@@ -187,7 +195,7 @@ func (s *Service) failLoad(run *runBinding, l *lane, phase string, cause error) 
 			// The producer must finish registration before cancellation targets it.
 			// This also covers cancellation immediately after durable acceptance.
 			<-h.done
-			err := run.driver.CancelHistoryLoad(context.Background(), l.session.Status.SessionID, h.id)
+			err := run.driver.CancelHistoryLoad(h.ctx, l.session.Status.SessionID, h.id)
 			var deliveryErr error
 			if err == nil {
 				deliveryErr = s.drainLane(context.Background(), l)
@@ -202,6 +210,11 @@ func (s *Service) failLoad(run *runBinding, l *lane, phase string, cause error) 
 			}
 			h.cleanupErr = err
 			h.cleanupStatusErr = s.writeLoad(l)
+			outcome := h.status.Phase
+			if errors.Join(err, deliveryErr, h.cleanupStatusErr) != nil || !settled {
+				outcome = "outcome_unknown"
+			}
+			s.telemetry.finishLoad(h, run.provider, h.status.Error, outcome)
 			close(h.cleanupDone)
 		}()
 	}
@@ -302,6 +315,7 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 		}
 		if err == nil && h.status.Phase == "completed" {
 			h.complete.Store(true)
+			s.telemetry.finishLoad(h, run.provider, nil, "completed")
 		}
 	}
 	failed := h.status.Error != nil

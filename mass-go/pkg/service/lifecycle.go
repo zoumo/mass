@@ -181,7 +181,10 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		run.stop = attempt
 		run.stopping = true
 		go func() {
-			attempt.value, attempt.err = s.stopRuntime(context.WithoutCancel(ctx), name, run)
+			owner, span := s.telemetry.start(context.WithoutCancel(ctx), "mass.runtime.stop")
+			span.SetAttributes(providerAttribute(run.provider))
+			attempt.value, attempt.err = s.stopRuntime(owner, name, run)
+			finishOperation(span, attempt.err, "")
 			close(attempt.done)
 		}()
 	}
@@ -375,7 +378,9 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	return r, nil
 }
 
-func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, initial *runtime.Input) (resource.SessionResumed, error) {
+func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, initial *runtime.Input) (_ resource.SessionResumed, resultErr error) {
+	ctx, span := s.telemetry.start(ctx, "mass.session.resume")
+	defer func() { finishOperation(span, resultErr, "") }()
 	r, err := s.GetSession(ref)
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
@@ -430,6 +435,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if run == nil {
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("start original runtime before resume")
 	}
+	span.SetAttributes(providerAttribute(run.provider))
 	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec)
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
@@ -491,7 +497,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		// A failed input dispatch can still return a verified native connection.
 		// Retain its source and settle only that original connection's resources.
 		if native.SessionID != "" {
-			cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+			cleanup := run.driver.CloseSession(context.WithoutCancel(ctx), native.SessionID)
 			s.mu.Lock()
 			op.native = native
 			s.mu.Unlock()
@@ -527,7 +533,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		if initial != nil {
 			identityErr = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_unverified", Message: "New input may have been submitted without verified original identity; do not resend"}, identityErr)
 		}
-		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+		cleanup := run.driver.CloseSession(context.WithoutCancel(ctx), native.SessionID)
 		s.mu.Lock()
 		op.released = cleanup == nil
 		s.mu.Unlock()
@@ -550,7 +556,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities, EffectiveFeatures: &native.EffectiveFeatures}
 	})
 	if err != nil {
-		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+		cleanup := run.driver.CloseSession(context.WithoutCancel(ctx), native.SessionID)
 		s.mu.Lock()
 		op.released = cleanup == nil
 		s.mu.Unlock()

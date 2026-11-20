@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
 	"github.com/zoumo/mass/mass-go/tests/integration/testdata/clipeer"
@@ -47,8 +48,9 @@ func runReplay() error {
 	}
 	defer f.Close()
 	var scenario struct {
-		AnswerGate string
-		Frames     []struct {
+		AnswerGate        string
+		ExpectPromptTrace bool
+		Frames            []struct {
 			Direction string
 			Data      map[string]any
 		}
@@ -115,6 +117,15 @@ func runReplay() error {
 				}
 			}
 			if data["type"] == "user" {
+				if scenario.ExpectPromptTrace {
+					if err := acknowledgePromptTrace(actual, output); err != nil {
+						return err
+					}
+					actual, err = readActual()
+					if err != nil {
+						return err
+					}
+				}
 				link, _ = actual["uuid"].(string)
 				if data["uuid"] == replay.GeneratedClaudeUserUUID {
 					if !replay.ValidClaudeUserUUID(link) {
@@ -179,6 +190,29 @@ func runReplay() error {
 		return err
 	}
 	return nil
+}
+
+func acknowledgePromptTrace(frame map[string]any, output *json.Encoder) error {
+	request, _ := frame["request"].(map[string]any)
+	settings, _ := request["settings"].(map[string]any)
+	env, _ := settings["env"].(map[string]any)
+	parent, _ := env["TRACEPARENT"].(string)
+	id, _ := frame["request_id"].(string)
+	want := map[string]any{
+		"type": "control_request", "request_id": id,
+		"request": map[string]any{
+			"subtype": "apply_flag_settings",
+			"settings": map[string]any{"env": map[string]any{"TRACEPARENT": parent, "TRACESTATE": ""}},
+		},
+	}
+	if id == "" || !reflect.DeepEqual(frame, want) ||
+		(agent.TraceContext{Traceparent: parent}).Validate() != nil || !strings.HasSuffix(parent, "-01") {
+		return errors.New("expected sampled prompt trace settings")
+	}
+	return output.Encode(map[string]any{
+		"type": "control_response",
+		"response": map[string]any{"request_id": id, "subtype": "success", "response": map[string]any{}},
+	})
 }
 
 func replaceSessionID(value any, recorded, assigned string) {
