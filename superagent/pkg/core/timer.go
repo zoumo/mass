@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -106,7 +108,7 @@ func setTimer(r SetTimerRequest) workMutation {
  VALUES(?,?,?,'{}',?,?) RETURNING id`, t.TopicID, number, at, key, digest).Scan(&t.ID); err != nil {
 			return nil, storageError()
 		}
-		return t, saveTimer(ctx, tx, t)
+		return t, saveTimerRevision(ctx, tx, t)
 	}
 }
 
@@ -139,12 +141,15 @@ func changeTimer(r CancelTimerRequest, update *UpdateTimerRequest) workMutation 
 		}
 		t.Revision++
 		t.UpdatedAt = now()
-		return t, saveTimer(ctx, tx, t)
+		return t, saveTimerRevision(ctx, tx, t)
 	}
 }
 
-func saveTimer(ctx context.Context, tx *sql.Tx, t Timer) error {
-	return putJSON(ctx, tx, "UPDATE scheduled_tasks SET body=?2 WHERE id=?1", t, t.ID)
+func saveTimerRevision(ctx context.Context, tx *sql.Tx, t Timer) error {
+	if err := putJSON(ctx, tx, "UPDATE scheduled_tasks SET body=?2 WHERE id=?1", t, t.ID); err != nil {
+		return err
+	}
+	return timerRevision.save(ctx, tx, t.ID, t.Revision)
 }
 
 func invalidateTimers(ctx context.Context, tx *sql.Tx, topicID, at string) error {
@@ -207,7 +212,7 @@ func (s *Store) fireDueTimers(ctx context.Context, cutoff string) error {
 	return nil
 }
 
-func (s *Store) fireTimer(ctx context.Context, id string, revision int, cutoff string) error {
+func (s *Store) fireTimer(ctx context.Context, id string, revision int, cutoff string) (retErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -233,6 +238,12 @@ func (s *Store) fireTimer(ctx context.Context, id string, revision int, cutoff s
 	if t.DueAt > at {
 		return nil
 	}
+	var links []trace.Link
+	if s.telemetry.tracesEnabled {
+		links = timerRevision.links(ctx, tx, nil, t.ID, t.Revision)
+	}
+	ctx, finish := s.telemetry.startOperation(ctx, "timer.fire", "", trace.WithLinks(links...))
+	defer func() { finish(operationOutcome(retErr, "fired")) }()
 	t.Status, t.FiredAt, t.UpdatedAt = "fired", at, at
 	receipt, err := admitTimerMessage(ctx, tx, t)
 	if err != nil {

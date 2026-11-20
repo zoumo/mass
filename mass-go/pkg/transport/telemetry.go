@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -10,9 +11,12 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.opentelemetry.io/otel/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
+
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 )
 
 type rpcTelemetry struct {
@@ -71,15 +75,18 @@ func operationErrorType(code string) string {
 	}
 }
 
-func (t *rpcTelemetry) start(ctx context.Context, method string) (context.Context, func()) {
+func (t *rpcTelemetry) start(ctx context.Context, request *rpc2.Request) (context.Context, func()) {
 	if t == nil {
 		return ctx, func() {}
 	}
 	started := time.Now()
-	method = rpcMethod(method)
+	method := rpcMethod(request.Method)
 	methodAttr := semconv.RPCMethod(method)
 	attrs := []attribute.KeyValue{semconv.RPCSystemNameJSONRPC, methodAttr}
-	ctx, span := t.tracer.Start(ctx, method, trace.WithNewRoot(), trace.WithSpanKind(trace.SpanKindServer),
+	// Each RPC has its own remote parent. Clear any span inherited from the connection.
+	ctx = trace.ContextWithSpanContext(ctx, trace.SpanContext{})
+	ctx = extractRPCTraceContext(ctx, request.Meta)
+	ctx, span := t.tracer.Start(ctx, method, trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithTimestamp(started), trace.WithAttributes(attrs...))
 	t.inflight.Add(ctx, 1, metric.WithAttributes(methodAttr))
 	o := &rpcObservation{}
@@ -115,6 +122,22 @@ func (t *rpcTelemetry) start(ctx context.Context, method string) (context.Contex
 		t.inflight.Add(ctx, -1, metric.WithAttributes(methodAttr))
 		span.End(trace.WithTimestamp(ended))
 	}
+}
+
+func extractRPCTraceContext(ctx context.Context, raw *json.RawMessage) context.Context {
+	// Bound telemetry parsing and accept only traceparent from the remote peer.
+	if raw == nil || len(*raw) > 1024 {
+		return ctx
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(*raw, &metadata); err != nil {
+		return ctx
+	}
+	var parent string
+	if err := json.Unmarshal(metadata[rpcwire.TraceContextFormat], &parent); err != nil || parent == "" {
+		return ctx
+	}
+	return (propagation.TraceContext{}).Extract(ctx, propagation.MapCarrier{rpcwire.TraceContextFormat: parent})
 }
 
 func observeRPCOutcome(ctx context.Context, outcome string) {

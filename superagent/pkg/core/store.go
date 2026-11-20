@@ -19,6 +19,9 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -27,13 +30,19 @@ const (
 )
 
 type Store struct {
-	config Config
-	db     *sql.DB
-	lock   *os.File
-	mu     sync.Mutex
+	config            Config
+	db                *sql.DB
+	lock              *os.File
+	mu                sync.Mutex
+	telemetry         *coreTelemetry
+	queueRegistration metric.Registration
 }
 
-func Open(c Config) (_ *Store, retErr error) {
+func Open(c Config) (*Store, error) {
+	return openStore(c, TelemetryOptions{})
+}
+
+func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// Refuse foreign/old data before creating even a lock file in that directory.
@@ -73,7 +82,7 @@ func Open(c Config) (_ *Store, retErr error) {
 		_ = f.Close()
 		return nil, problem("conflict", "data directory is already owned by another Core")
 	}
-	s := &Store{lock: f, config: c}
+	s := &Store{lock: f, config: c, telemetry: newCoreTelemetry(options)}
 	defer func() {
 		if retErr != nil {
 			_ = s.Close()
@@ -116,6 +125,11 @@ func Open(c Config) (_ *Store, retErr error) {
 			return nil, storageError()
 		}
 	}
+	if s.telemetry.tracesEnabled {
+		if _, err = tx.ExecContext(ctx, traceAssociationSchema); err != nil {
+			return nil, storageError()
+		}
+	}
 	if err := initializeRouter(ctx, tx, c); err != nil {
 		return nil, err
 	}
@@ -145,6 +159,7 @@ func Open(c Config) (_ *Store, retErr error) {
 	if _, err = s.db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		return nil, storageError()
 	}
+	s.queueRegistration = s.telemetry.registerQueueDepth(options.Metrics, s)
 	return s, nil
 }
 
@@ -180,6 +195,9 @@ func checkDatabaseHeader(path string) error {
 
 func (s *Store) Close() error {
 	var err error
+	if s.queueRegistration != nil {
+		_ = s.queueRegistration.Unregister()
+	}
 	if s.db != nil {
 		err = s.db.Close()
 	}
@@ -190,8 +208,15 @@ func (s *Store) Close() error {
 	return err
 }
 
-func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (Receipt, error) {
-	var result Receipt
+func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (result Receipt, retErr error) {
+	ctx, finish := s.telemetry.startOperation(ctx, "message.admit", "")
+	defer func() {
+		outcome := "accepted"
+		if result.Duplicate {
+			outcome = "duplicate"
+		}
+		finish(operationOutcome(retErr, outcome))
+	}()
 	if strings.TrimSpace(r.OperationID) == "" {
 		return result, problem("invalid_argument", "operationId is required")
 	}
@@ -218,6 +243,9 @@ func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (Rec
 		return Receipt{}, storageError()
 	}
 	commitGate("after_commit")
+	if s.telemetry.tracesEnabled {
+		trace.SpanFromContext(ctx).SetAttributes(messageIDAttribute(result.MessageID))
+	}
 	return result, nil
 }
 
@@ -260,6 +288,9 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r Submi
 		return Receipt{}, storageError()
 	}
 	if err := putJSON(ctx, tx, "UPDATE trigger_messages SET body=?2 WHERE id=?1", m, m.ID); err != nil {
+		return Receipt{}, err
+	}
+	if err := messageAdmission.save(ctx, tx, m.ID, 0); err != nil {
 		return Receipt{}, err
 	}
 	if m.Echo == nil {
@@ -496,6 +527,10 @@ func (s *Store) Get(ctx context.Context, kind, id string) (json.RawMessage, erro
 }
 
 func (s *Store) getScoped(ctx context.Context, kind, id string, binding *Binding, source *Source) (json.RawMessage, error) {
+	return s.getRecord(ctx, kind, id, binding, source, false)
+}
+
+func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Binding, source *Source, observerTrace bool) (json.RawMessage, error) {
 	scope, args, err := scopeSQL(kind, binding)
 	if err != nil {
 		return nil, err
@@ -548,6 +583,9 @@ func (s *Store) getScoped(ctx context.Context, kind, id string, binding *Binding
 	}
 	if err != nil {
 		return nil, storageError()
+	}
+	if observerTrace && binding == nil && source == nil {
+		return observeTraceAssociations(ctx, tx, kind, id, body), nil
 	}
 	return body, nil
 }

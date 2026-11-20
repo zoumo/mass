@@ -14,7 +14,7 @@ import (
 //go:embed ui/*
 var observerFiles embed.FS
 
-func serveObserver(w http.ResponseWriter, r *http.Request) {
+func serveObserver(w http.ResponseWriter, r *http.Request, telemetry bool) {
 	path := strings.TrimPrefix(r.URL.Path, "/observer/")
 	if path == "" || path == r.URL.Path || !strings.Contains(path, ".") {
 		path = "index.html"
@@ -33,7 +33,12 @@ func serveObserver(w http.ResponseWriter, r *http.Request) {
 		nonce := observerNonce()
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self' 'nonce-"+nonce+"'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(strings.ReplaceAll(string(b), "__CSP_NONCE__", nonce)))
+		enabled := "off"
+		if telemetry {
+			enabled = "on"
+		}
+		index := strings.NewReplacer("__CSP_NONCE__", nonce, "__OBSERVER_TELEMETRY__", enabled)
+		_, _ = index.WriteString(w, string(b))
 		return
 	}
 	clone := r.Clone(r.Context())

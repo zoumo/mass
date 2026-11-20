@@ -2,6 +2,7 @@ import { stateLabel, routingDeliveryLabel, type WorkbenchRow } from '../../workb
 import type { StructuredBody } from '../StructuredContent'
 
 export type DiagnosticRow = WorkbenchRow & {
+  traceAssociations?: { traceId: string; phase: string }[]
   type?: string
   canonicalUrl?: string
   lastMessageAt?: string

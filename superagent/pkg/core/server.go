@@ -27,6 +27,7 @@ type Server struct {
 	outboxCancel            context.CancelFunc
 	outboxDone              chan struct{}
 	observerLife            context.Context
+	observerTelemetry       *observerTelemetryGateway
 	store                   *Store
 	config                  Config
 	http                    *http.Server
@@ -34,7 +35,16 @@ type Server struct {
 }
 
 func Start(c Config) (*Server, error) {
-	store, err := Open(c)
+	return StartWithTelemetry(c, TelemetryOptions{})
+}
+
+// StartWithTelemetry starts Core with optional process-owned OTel providers.
+func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
+	gateway, err := newObserverTelemetryGateway(c.ObserverOTLPEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	store, err := openStore(c, options)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +53,7 @@ func Start(c Config) (*Server, error) {
 		_ = store.Close()
 		return nil, problem("unavailable", "cannot bind listen address")
 	}
-	s := &Server{store: store, config: c, listener: l}
+	s := &Server{store: store, config: c, listener: l, observerTelemetry: gateway}
 	if c.Execution != nil {
 		if _, err = store.db.ExecContext(context.Background(), `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
  WHERE state='ready'`); err != nil {
@@ -76,6 +86,9 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.observerTelemetry != nil {
+		defer s.observerTelemetry.client.CloseIdleConnections()
+	}
 	// Shutdown closes admission before waiting for active requests. A timeout never
 	// closes SQLite underneath an active transaction; the process exits without a false receipt.
 	if s.executionCancel != nil {
@@ -123,6 +136,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, problem("forbidden", "cross-site requests are not allowed"))
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/telemetry/") {
+		s.observerTelemetry.serve(w, r)
+		return
+	}
+	deferredRoleTrace := s.store.telemetry.tracesEnabled && r.Method == http.MethodPost &&
+		strings.HasPrefix(r.URL.Path, "/v1/role/") && traceRoleTool(strings.TrimPrefix(r.URL.Path, "/v1/role/"))
+	if s.store.telemetry.enabled && !deferredRoleTrace {
+		observed, request := s.store.telemetry.startHTTP(w, r)
+		defer observed.finishRequest()
+		w, r = observed, request
+	}
 	switch {
 	case r.URL.Path == "/v1/channel/messages":
 		if r.Method != http.MethodPost {
@@ -159,7 +183,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/channel/outbox" || strings.HasPrefix(r.URL.Path, "/v1/channel/outbox/"):
 		s.channelOutbox(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/role/"):
-		s.role(w, r)
+		s.role(w, r, deferredRoleTrace)
 	case r.URL.Path == "/v1/operator/input-recovery":
 		s.recoverInput(w, r)
 	case r.URL.Path == "/v1/operator/echo-release":
@@ -175,7 +199,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		if !readOnly(w, r) {
 			return
 		}
-		serveObserver(w, r)
+		serveObserver(w, r, s.observerTelemetry != nil)
 	default:
 		if !s.testDispatch(w, r) {
 			s.fail(w, problem("not_found", "route not found"))
@@ -240,7 +264,7 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if detail {
 		var raw json.RawMessage
-		raw, err = s.store.Get(r.Context(), kind, id)
+		raw, err = s.store.getRecord(r.Context(), kind, id, nil, nil, r.URL.Query().Get("trace") == "true")
 		result = raw
 		if err == nil && kind == "issues" && r.Method == http.MethodGet {
 			result = s.observeIssue(r.Context(), raw)

@@ -69,7 +69,7 @@ export default function App() {
     navigate(url.pathname + url.search)
   }
   return (
-    <RefreshContext.Provider value={{ revision, online }}>
+    <RefreshContext.Provider value={{ revision, online, view: diagnostics ? 'diagnostics' : view }}>
       <div className="observer" onClick={follow}>
         <header className="topbar">
           <div className="shell top-inner">

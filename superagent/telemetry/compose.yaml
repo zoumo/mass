@@ -1,0 +1,27 @@
+services:
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:v1.1.1
+    environment:
+      ZO_ROOT_USER_EMAIL: ${ZO_ROOT_USER_EMAIL:?set ZO_ROOT_USER_EMAIL}
+      ZO_ROOT_USER_PASSWORD: ${ZO_ROOT_USER_PASSWORD:?set ZO_ROOT_USER_PASSWORD}
+      ZO_DATA_DIR: /data
+      ZO_TELEMETRY: "false"
+    ports:
+      - "127.0.0.1:${SUPERAGENT_OPENOBSERVE_PORT:-15080}:5080"
+    volumes:
+      - openobserve:/data
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/otelcol/superagent.yaml"]
+    environment:
+      OPENOBSERVE_AUTHORIZATION: ${OPENOBSERVE_AUTHORIZATION:?set OPENOBSERVE_AUTHORIZATION}
+    depends_on: [openobserve]
+    ports:
+      - "127.0.0.1:${SUPERAGENT_OTLP_PORT:-14318}:4318"
+      - "127.0.0.1:${SUPERAGENT_OBSERVER_OTLP_PORT:-14320}:4320"
+    volumes:
+      - ./collector.yaml:/etc/otelcol/superagent.yaml:ro
+
+volumes:
+  openobserve:

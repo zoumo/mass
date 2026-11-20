@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { readObserver } from '../observer'
+import { liveConnected, liveEnded, measureView, observerRequest } from '../telemetry'
 
 type Item = { id: string; at: string; type: string; text?: string; truncated?: boolean; replayed?: boolean }
 type HistoryPage = { events: Item[]; nextCursor?: string; observedAt: string }
@@ -47,16 +48,19 @@ export default function SessionPreview({ bindingId }: { bindingId: string }) {
       setBusy(true)
       try {
         let at = ''
-        for (let i = 0; i < (append ? 1 : pageCount); i++) {
-          const page = await readObserver<HistoryPage>(
-            path + '/history?' + new URLSearchParams(cursor ? { cursor } : {}),
-            signal,
-          )
-          rows.push(...page.events)
-          cursor = page.nextCursor || ''
-          at = page.observedAt
-          if (!cursor) break
-        }
+        await measureView('diagnostics', signal, async parent => {
+          for (let i = 0; i < (append ? 1 : pageCount); i++) {
+            const page = await readObserver<HistoryPage>(
+              path + '/history?' + new URLSearchParams(cursor ? { cursor } : {}),
+              signal,
+              parent,
+            )
+            rows.push(...page.events)
+            cursor = page.nextCursor || ''
+            at = page.observedAt
+            if (!cursor) break
+          }
+        })
         if (signal.aborted) return
         setHistory((previous) => (append ? [...previous, ...rows] : rows))
         if (append) pageCount++
@@ -100,10 +104,14 @@ export default function SessionPreview({ bindingId }: { bindingId: string }) {
       stream = new AbortController()
       const { signal } = stream
       setConnection('正在连接')
+      let connected = false, failed = false
       try {
-        const response = await fetch('/v1/observer/' + path + '/live', { signal, credentials: 'omit' })
-        if (!response.ok || !response.body) throw new Error('实时观测不可用')
-        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+        const reader = await observerRequest(path + '/live', signal, response => {
+          if (!response.ok || !response.body) throw new Error('实时观测不可用')
+          return response.body.pipeThrough(new TextDecoderStream()).getReader()
+        })
+        connected = true
+        liveConnected()
         try {
           let partial = ''
           while (!signal.aborted) {
@@ -118,8 +126,10 @@ export default function SessionPreview({ bindingId }: { bindingId: string }) {
           reader.releaseLock()
         }
       } catch {
+        failed = true
         /* Reconnection rereads the saved history. */
       } finally {
+        liveEnded(connected, signal.aborted ? 'canceled' : failed ? 'error' : 'ok')
         if (!stopped && !signal.aborted) {
           disconnect()
           if (navigator.onLine) retry = setTimeout(connect, 2000)

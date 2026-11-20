@@ -50,6 +50,20 @@ test('read-only API, source isolation, cursor validation and HEAD', async ({ req
  expect(event.kind).toBe('route_request')
 })
 
+test('copies the persisted trace ID from a selected record', async ({ page, context, request, baseURL }) => {
+ await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL })
+ const records = await (await request.get('/v1/observer/messages?limit=1')).json()
+ const id = records.items[0].id
+ const detail = await (await request.get(`/v1/observer/messages/${id}?trace=true`)).json()
+ expect(detail.traceAssociations).toEqual([{ phase: 'admission', traceId: expect.stringMatching(/^[0-9a-f]{32}$/) }])
+ await page.goto(`/observer/?view=messages&mode=records&id=${id}`)
+ const dialog = page.getByRole('dialog')
+ await expect(dialog.getByRole('heading', { name: '关联 Trace' })).toBeVisible()
+ await dialog.getByRole('button', { name: '复制 Trace ID' }).click()
+ await expect(dialog.getByRole('button', { name: '已复制' })).toBeVisible()
+ expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(detail.traceAssociations[0].traceId)
+})
+
 test('retired collections are absent from Observer', async ({ page, request }) => {
  await page.goto('/observer/')
  await page.getByText('诊断', { exact: true }).click()

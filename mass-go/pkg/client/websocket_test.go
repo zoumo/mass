@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
@@ -70,6 +72,27 @@ func TestClientInitialize(t *testing.T) {
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, rpcwire.CodeProtocolState, rpcErr.Code)
 	require.Equal(t, "already_initialized", rpcErr.Reason())
+}
+
+func TestClientTraceContextWithLegacyPeer(t *testing.T) {
+	requests := make(chan map[string]json.RawMessage, 1)
+	httpServer := newFakeWebSocketServer(t, func(conn *websocket.Conn) {
+		var request map[string]json.RawMessage
+		if err := conn.ReadJSON(&request); err != nil {
+			return
+		}
+		requests <- request
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"jsonrpc":"2.0","id":"0","result":{"protocolVersion":"1","serverInfo":{"name":"mass","version":"legacy"}}}`))
+	})
+	c := newTestClient(t, websocketURL(httpServer), "")
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	ctx = (propagation.TraceContext{}).Extract(ctx, propagation.MapCarrier{
+		"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b9c7c989f97918e1-01",
+	})
+	require.NoError(t, c.Initialize(ctx, nil, nil))
+	require.NotContains(t, <-requests, "meta")
 }
 
 func TestClientRequiresAssemblyOptions(t *testing.T) {

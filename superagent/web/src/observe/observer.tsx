@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { Context } from '@opentelemetry/api'
 import type { WorkbenchRow, Page } from '../workbench'
+import { measureView, observerRequest } from './telemetry'
 
 export type Perspective = 'message' | 'router' | 'topic' | 'issue' | 'topic-conversation'
 export const defaultPerspective = 'topic-conversation'
@@ -37,13 +39,18 @@ export function useQuery() {
   return new URLSearchParams(useSyncExternalStore(listenLocation, () => location.search))
 }
 
-export const RefreshContext = createContext({ revision: 0, online: true })
+export const RefreshContext = createContext({
+  revision: 0,
+  online: true,
+  view: defaultPerspective as Perspective | 'diagnostics',
+})
 export const useRefresh = () => useContext(RefreshContext)
 
-export async function readObserver<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch('/v1/observer/' + path, { method: 'GET', credentials: 'omit', signal })
-  if (!response.ok) throw new Error(response.status === 404 ? '记录缺失（404）' : `读取失败（HTTP ${response.status}）`)
-  return response.json() as Promise<T>
+export async function readObserver<T>(path: string, signal: AbortSignal, parent?: Context): Promise<T> {
+  return observerRequest(path, signal, response => {
+    if (!response.ok) throw new Error(response.status === 404 ? '记录缺失（404）' : `读取失败（HTTP ${response.status}）`)
+    return response.json() as Promise<T>
+  }, parent)
 }
 
 function errorText(reason: unknown) {
@@ -65,7 +72,7 @@ function useReadScope(path: string, online: boolean) {
 
 type ReadState<T> = { path: string, data?: T, loading: boolean, error?: string }
 export function useRecord<T>(path: string) {
-  const { revision, online } = useRefresh()
+  const { revision, online, view } = useRefresh()
   const [state, set] = useState<ReadState<T>>({ path, loading: true })
   const scope = useReadScope(path, online)
   useEffect(() => {
@@ -73,12 +80,12 @@ export function useRecord<T>(path: string) {
     if (!request || request.busy) return
     request.busy = true
     set(old => old.path === path ? { ...old, loading: true } : { path, loading: true })
-    readObserver<T>(path, request.signal).then(data => {
+    measureView(view, request.signal, parent => readObserver<T>(path, request.signal, parent)).then(data => {
       if (!request.signal.aborted) set({ path, data, loading: false })
     }).catch(reason => {
       if (!request.signal.aborted) set(old => ({ ...old, loading: false, error: errorText(reason) }))
     }).finally(() => { request.busy = false })
-  }, [path, revision, online, scope])
+  }, [path, revision, online, scope, view])
   return state.path === path ? state : { path, loading: true, data: undefined, error: undefined }
 }
 
@@ -88,13 +95,13 @@ function savedCount(path: string): number {
 }
 
 export function usePages<T>(path: string) {
-  const { revision, online } = useRefresh()
+  const { revision, online, view } = useRefresh()
   const [state, set] = useState<Pages<T>>({ path, loading: true, count: 0 })
   const scope = useReadScope(path, online)
-  function readPage(cursor: string, signal: AbortSignal) {
+  function readPage(cursor: string, signal: AbortSignal, parent?: Context) {
     const url = new URL(path, location.origin + '/')
     if (cursor) url.searchParams.set('cursor', cursor)
-    return readObserver<Page<T>>(url.pathname.slice(1) + url.search, signal)
+    return readObserver<Page<T>>(url.pathname.slice(1) + url.search, signal, parent)
   }
   useEffect(() => {
     const request = scope.current
@@ -102,30 +109,30 @@ export function usePages<T>(path: string) {
     request.busy = true
     const { signal } = request
     set(old => old.path === path ? { ...old, loading: true } : { path, loading: true, count: 0 })
-    async function reload() {
+    measureView(view, signal, async parent => {
       const items: T[] = []
       let next = '', count = 0
       const desired = savedCount(path)
       do {
-        const page = await readPage(next, signal)
+        const page = await readPage(next, signal, parent)
         items.push(...page.items)
         next = page.nextCursor || ''
         count++
       } while (next && count < desired)
       if (!signal.aborted) set({ path, data: items, next, count, loading: false })
-    }
-    reload().catch(reason => {
+    }).catch(reason => {
       if (!signal.aborted) set(old => ({ ...old, loading: false, error: errorText(reason) }))
     }).finally(() => { request.busy = false })
-  }, [path, revision, online, scope])
+  }, [path, revision, online, scope, view])
   async function more() {
     const request = scope.current
-    if (!online || !state.next || !request || request.signal.aborted || state.loading || request.busy) return
+    const cursor = state.next
+    if (!online || !cursor || !request || request.signal.aborted || state.loading || request.busy) return
     request.busy = true
     const { signal } = request
     set(old => ({ ...old, loading: true }))
     try {
-      const page = await readPage(state.next, signal)
+      const page = await measureView(view, signal, parent => readPage(cursor, signal, parent))
       if (signal.aborted) return
       const count = state.count + 1
       history.replaceState({ ...history.state, observerPages: { ...history.state?.observerPages, [path]: count } }, '')

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type inputBatch struct {
@@ -17,9 +19,11 @@ type inputBatch struct {
 }
 
 type internalDeliveryBatch struct {
-	wire   []byte
-	items  []internalDelivery
-	method string
+	wire     []byte
+	items    []internalDelivery
+	queuedAt time.Time
+	method   string
+	links    []trace.Link
 }
 
 // businessDeliveryCurrent is evaluated in both the selection and final admission
@@ -159,6 +163,9 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 			break
 		}
 		batch.wire = wire
+		if len(batch.items) == 0 {
+			batch.queuedAt = created
+		}
 		batch.items = append(batch.items, q.item)
 		if q.item.Kind != contextSupplement {
 			batch.method = "start_or_steer"
@@ -166,6 +173,11 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	}
 	if len(batch.items) == 0 || !full && len(batch.items) < batchLimit && at.Before(deadline) {
 		batch = internalDeliveryBatch{}
+	}
+	if s.telemetry.tracesEnabled {
+		for _, item := range batch.items {
+			batch.links = internalEnqueue.links(ctx, tx, batch.links, item.ID, 0)
+		}
 	}
 	return batch, tx.Commit()
 }
@@ -204,6 +216,9 @@ func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch interna
 		}
 		if n, err := res.RowsAffected(); err != nil || n != 1 {
 			return false, problem("stale_binding", "internal delivery was settled or superseded")
+		}
+		if err := internalDispatch.save(ctx, tx, item.ID, b.Generation); err != nil {
+			return false, err
 		}
 	}
 	var armed bool
@@ -254,6 +269,19 @@ func (s *Server) coordinateInternalDelivery(life, call context.Context, b Bindin
 	if err != nil || len(batch.items) == 0 || life.Err() != nil {
 		return false
 	}
+	if len(batch.items) == 1 && len(batch.links) == 1 {
+		call = trace.ContextWithRemoteSpanContext(call, batch.links[0].SpanContext)
+		batch.links = nil
+	}
+	call, finish := s.store.telemetry.startOperation(call, "internal_delivery.dispatch", b.Role, trace.WithSpanKind(trace.SpanKindConsumer), trace.WithLinks(batch.links...))
+	s.store.telemetry.recordQueueDuration(call, "internal_delivery", batch.queuedAt)
+	trace.SpanFromContext(call).SetAttributes(
+		attribute.Int("superagent.delivery.batch.size", len(batch.items)),
+		attribute.String("superagent.delivery.method", batch.method),
+	)
+	if len(batch.items) == 1 {
+		trace.SpanFromContext(call).SetAttributes(attribute.String("superagent.delivery.id", batch.items[0].ID))
+	}
 	a := Attempt{ID: newID("attempt")}
 	admitted := false
 	a, watch := s.dispatchSessionInput(call, b, spec, a, batch.method, batch.wire, func(watch *workerWatch) (bool, error) {
@@ -261,11 +289,21 @@ func (s *Server) coordinateInternalDelivery(life, call context.Context, b Bindin
 		admitted = err == nil
 		return armed, err
 	})
+	outcome := a.Status
+	switch outcome {
+	case "blocked_unknown", "transport_unknown":
+		outcome = "unknown"
+	case "blocked":
+		outcome = "failed"
+	}
 	if admitted {
 		commitGate("internal_delivery_before_settlement")
 		settled := persistInputSettlement(life, batch.items[0].ID, func(ctx context.Context) error {
-			return s.store.finishInternalBatch(ctx, batch, a, watch)
+			return s.store.finishInternalBatch(trace.ContextWithSpan(ctx, trace.SpanFromContext(call)), batch, a, watch)
 		})
+		if !settled {
+			outcome = "unknown"
+		}
 		if watch != nil {
 			s.startWorkerWatch(life, b, watch, settled)
 		}
@@ -274,5 +312,6 @@ func (s *Server) coordinateInternalDelivery(life, call context.Context, b Bindin
 		s.internalDeliveryRetries.Store(b.ID, time.Now().Add(time.Second))
 	}
 	s.updateBindingAfterDelivery(life, b, a)
+	finish(outcome)
 	return true
 }

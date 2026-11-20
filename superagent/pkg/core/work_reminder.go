@@ -12,6 +12,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // WorkObservation ties the latest observed Worker input to a particular
@@ -219,7 +220,7 @@ func inWorkerDispatchWindow(at, dispatchedAt time.Time) bool {
 	return !at.Before(dispatchedAt)
 }
 
-func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence WorkObservation) error {
+func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence WorkObservation) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -246,11 +247,15 @@ func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence
 		evidence.loseContinuity("worker_session_changed")
 	}
 	x.WorkObservation = &evidence
-	if evidence.End != nil && x.ReminderEventID == "" {
-		if !issueHasExecutionReport(issue, x.ID) {
-			if err := enqueueReportReminder(ctx, tx, &x, issue); err != nil {
-				return err
-			}
+	if evidence.End != nil && x.ReminderEventID == "" && !issueHasExecutionReport(issue, x.ID) {
+		var links []trace.Link
+		if s.telemetry.tracesEnabled {
+			links = executionCreate.links(ctx, tx, nil, x.ID, 0)
+		}
+		enqueueCtx, finish := s.telemetry.startOperation(ctx, "report.reminder", b.Role, trace.WithLinks(links...))
+		defer func() { finish(operationOutcome(retErr, "queued")) }()
+		if err := enqueueReportReminder(enqueueCtx, tx, &x, issue); err != nil {
+			return err
 		}
 	}
 	if err := saveExecution(ctx, tx, x); err != nil {

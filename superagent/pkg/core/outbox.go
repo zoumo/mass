@@ -61,10 +61,13 @@ type OutboxReceipt struct {
 	Uncertain      bool   `json:"uncertain,omitempty"`
 }
 
-func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (json.RawMessage, error) {
+func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (_ json.RawMessage, retErr error) {
 	if b.Role != "router" && b.Role != "topic" {
 		return nil, problem("forbidden", "only Router and Topic can reply")
 	}
+	ctx, finish := s.telemetry.startOperation(ctx, "outbox.enqueue", b.Role)
+	outcome := "queued"
+	defer func() { finish(operationOutcome(retErr, outcome)) }()
 	if err := req.Content.normalize(); err != nil {
 		return nil, err
 	}
@@ -99,6 +102,7 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (json.Ra
 	if existing, err := existingCreation(ctx, tx, "outbox", key, id); err != nil {
 		return nil, err
 	} else if existing {
+		outcome = "duplicate"
 		var item OutboxItem
 		if err := readJSON(ctx, tx, "SELECT "+outboxProjection+" FROM outbox WHERE id=?", &item, id); err != nil {
 			return nil, err
@@ -120,6 +124,9 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (json.Ra
 	if !s.config.hasOutboxConsumer(message.Source, message.AccountID) {
 		return nil, problem("failed_precondition", "no Outbox consumer is configured for the Message account")
 	}
+	if s.telemetry.tracesEnabled {
+		addTraceLinks(ctx, messageAdmission.links(ctx, tx, nil, message.ID, 0))
+	}
 	item := OutboxItem{
 		ID: id, MessageID: message.ID, Content: req.Content, BlockerRef: req.BlockerRef,
 		OutboxState: OutboxState{Status: "pending"},
@@ -139,6 +146,9 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (json.Ra
 	if _, err := tx.ExecContext(ctx, "INSERT INTO outbox(id,message_id,content,status,blocker_ref) VALUES(?,?,?,?,?)",
 		item.ID, item.MessageID, string(content), item.Status, blocker); err != nil {
 		return nil, storageError()
+	}
+	if err := outboxEnqueue.save(ctx, tx, item.ID, 0); err != nil {
+		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, storageError()

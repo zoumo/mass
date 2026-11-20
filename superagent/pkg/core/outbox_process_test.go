@@ -247,20 +247,26 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	configureOutboxSource(t, f)
 	f.execution(boundary)
 	env, advance := outboxClock(t, f)
-	p := f.start(env)
+	receiver, spans := coreOTLPReceiver(t, "")
+	telemetryEnv := append(traceTestEnv(receiver.URL), env)
+	p := f.start(telemetryEnv...)
 	router := waitBinding(t, p, "router", "", "ready")
 	token := roleToken(t, f, router)
 	message := submit(t, p, f, input("durable-reply"))
 	item := roleWork[core.OutboxItem](t, p, token, "outbox_message_reply_structured", core.ReplyRequest{
 		OperationID: "reply", MessageID: message.MessageID, Content: markdownReply("Reply in progress"),
 	})
+	enqueued := observedTraces(t, p, "outbox", item.ID)
+	require.Len(t, enqueued, 1)
+	require.Equal(t, "enqueue", enqueued[0].Phase)
 	record := outboxResult(item, "pending", "", "")
 	record.TaskID = "durable-task"
 	saved := resultOutbox(t, p, f.token, record)
 	require.Equal(t, "pending", saved.Status)
 	require.Equal(t, record.TaskID, saved.Receipt.TaskID)
 	p.stop(t, true)
-	p = f.start(env)
+	p = f.start(telemetryEnv...)
+	require.Equal(t, enqueued, observedTraces(t, p, "outbox", item.ID))
 	require.Equal(t, saved, readOutbox(t, p, item.ID))
 	require.Equal(t, saved, resultOutbox(t, p, f.token, record))
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 1)
@@ -304,6 +310,15 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	var brokenKeys int
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM pragma_foreign_key_check").Scan(&brokenKeys))
 	require.Zero(t, brokenKeys)
+	p.stop(t, false)
+	var settlements int
+	for _, span := range spans() {
+		if span.GetName() == "superagent.outbox.settle" {
+			require.True(t, spanLinksTrace(span, enqueued[0].TraceID))
+			settlements++
+		}
+	}
+	require.GreaterOrEqual(t, settlements, 3)
 }
 
 func TestOutboxStructuredContentDiscoveryAndValidation(t *testing.T) {

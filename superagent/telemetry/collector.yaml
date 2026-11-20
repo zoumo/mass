@@ -1,0 +1,68 @@
+receivers:
+  otlp/core:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  otlp/observer:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4320
+        max_request_body_size: 1048576
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 192
+    spike_limit_mib: 48
+  batch:
+    timeout: 1s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+  filter/observer:
+    error_mode: propagate
+    trace_conditions:
+      - 'not IsMatch(span.name, "^observer\\.(document|view|http)$")'
+      - 'spanevent.name != nil'
+    metric_conditions:
+      - 'not IsMatch(metric.name, "^(http\\.client\\.request\\.duration|superagent\\.observer\\.(view\\.duration|live\\.(active|ended)))$")'
+  transform/observer:
+    error_mode: propagate
+    trace_statements:
+      - keep_keys(resource.attributes, ["service.instance.id"])
+      - set(resource.attributes["service.name"], "superagent-observer")
+      - keep_keys(span.attributes, ["http.request.method", "http.response.status_code", "superagent.observer.api", "superagent.observer.view", "superagent.outcome"])
+      - set(span.status.message, "")
+    metric_statements:
+      - keep_keys(resource.attributes, ["service.instance.id"])
+      - set(resource.attributes["service.name"], "superagent-observer")
+      - keep_keys(datapoint.attributes, ["http.request.method", "http.response.status_code", "superagent.observer.api", "superagent.observer.view", "superagent.outcome"])
+
+exporters:
+  otlp_http/openobserve:
+    endpoint: http://openobserve:5080/api/default
+    headers:
+      Authorization: ${env:OPENOBSERVE_AUTHORIZATION}
+    timeout: 5s
+    sending_queue:
+      queue_size: 64
+    retry_on_failure:
+      max_elapsed_time: 30s
+
+service:
+  pipelines:
+    traces/core:
+      receivers: [otlp/core]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/openobserve]
+    metrics/core:
+      receivers: [otlp/core]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/openobserve]
+    traces/observer:
+      receivers: [otlp/observer]
+      processors: [memory_limiter, filter/observer, transform/observer, batch]
+      exporters: [otlp_http/openobserve]
+    metrics/observer:
+      receivers: [otlp/observer]
+      processors: [memory_limiter, filter/observer, transform/observer, batch]
+      exporters: [otlp_http/openobserve]

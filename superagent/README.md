@@ -41,6 +41,9 @@ The transitive Agent SDK Go version matches the pin in `mass-go/go.mod`.
 
 ## Configuration
 
+See [Run Superagent telemetry locally](telemetry/README.md) for the optional
+OpenTelemetry exporters and the local OpenObserve stack.
+
 Copy `config.example.yaml` into an isolated run directory and provide your own
 private token file (at least 32 non-whitespace bytes; mode 0600). Tokens and
 DWS credentials are never embedded in startup output or browser configuration.

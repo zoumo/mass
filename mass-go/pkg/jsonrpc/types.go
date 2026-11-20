@@ -4,6 +4,13 @@ package jsonrpc
 import "encoding/json"
 
 const (
+	// TraceContextHeader advertises support for per-request traceparent in meta.
+	TraceContextHeader = "Mass-Trace-Context"
+
+	// TraceContextFormat is the supported header value and the only propagated
+	// field in JSON-RPC request meta.
+	TraceContextFormat = "traceparent"
+
 	// Version is the MASS method-set version.
 	Version = "1"
 

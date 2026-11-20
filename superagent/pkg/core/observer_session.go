@@ -133,17 +133,32 @@ func (s *Server) streamSessionPreview(ctx context.Context, w http.ResponseWriter
 	if !send(sessionPreviewFrame{Kind: "connected"}) {
 		return
 	}
+	if observed, ok := w.(*telemetryResponse); ok {
+		observed.finishRequest()
+	}
+	closePreview := s.store.telemetry.preview(ctx)
+	outcome := "closed"
+	defer func() {
+		if ctx.Err() != nil {
+			outcome = "canceled"
+		}
+		closePreview(outcome)
+	}()
 	for ctx.Err() == nil {
 		wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 		event, err := sub.Next(wait)
 		cancel()
 		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
 			if !send(sessionPreviewFrame{Kind: "heartbeat"}) {
+				outcome = "write_failed"
 				return
 			}
 			continue
 		}
 		if err != nil || !previewEventMatches(event, b) {
+			if !errors.Is(err, io.EOF) {
+				outcome = "interrupted"
+			}
 			return
 		}
 		frame := sessionPreviewFrame{Kind: "history_changed"}
@@ -153,6 +168,7 @@ func (s *Server) streamSessionPreview(ctx context.Context, w http.ResponseWriter
 			frame.Event = &record
 		}
 		if !send(frame) {
+			outcome = "write_failed"
 			return
 		}
 	}

@@ -11,6 +11,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func decodeStrict(data []byte, v any) error {
@@ -43,30 +47,33 @@ func (s *Store) authenticateRole(ctx context.Context, header string) (Binding, e
 	return b, nil
 }
 
-func (s *Server) role(w http.ResponseWriter, r *http.Request) {
+func (s *Server) role(w http.ResponseWriter, r *http.Request, deferredTrace bool) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	b, err := s.store.authenticateRole(r.Context(), r.Header.Get("Authorization"))
+	start := time.Now()
+	tool := strings.TrimPrefix(r.URL.Path, "/v1/role/")
+	b, raw, err := s.roleInput(r, tool)
+	var parent trace.SpanContext
+	if err == nil && traceRoleTool(tool) {
+		raw, parent, err = s.store.roleTraceInput(r.Context(), b, raw, tool)
+	}
+	if deferredTrace {
+		observed, request := s.store.telemetry.startHTTPWithParent(w, r, start, parent)
+		defer observed.finishRequest()
+		w, r = observed, request
+		trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("superagent.tool", tool))
+		if b.Role != "" {
+			trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("superagent.role", b.Role))
+		}
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	var raw []byte
-	raw, err = io.ReadAll(r.Body)
-	if err != nil {
-		s.fail(w, problem("invalid_argument", "cannot read tool request"))
-		return
-	}
 	var result any
-	tool := strings.TrimPrefix(r.URL.Path, "/v1/role/")
-	historicalWorker := b.Role == "worker" && (tool == "report_submit" || tool == "binding_get")
-	if b.State == "revoked" && !historicalWorker {
-		s.fail(w, problem("stale_binding", "binding was revoked"))
-		return
-	}
 	switch tool {
 	case "binding_get":
 		var args struct{}
@@ -178,6 +185,22 @@ func (s *Server) role(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.write(w, http.StatusOK, map[string]any{"result": result})
+}
+
+func (s *Server) roleInput(r *http.Request, tool string) (Binding, []byte, error) {
+	b, err := s.store.authenticateRole(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		return b, nil, err
+	}
+	historicalWorker := b.Role == "worker" && (tool == "report_submit" || tool == "binding_get")
+	if b.State == "revoked" && !historicalWorker {
+		return b, nil, problem("stale_binding", "binding was revoked")
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return b, nil, problem("invalid_argument", "cannot read tool request")
+	}
+	return b, raw, nil
 }
 
 type QueryRequest struct {

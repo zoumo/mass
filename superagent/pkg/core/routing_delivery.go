@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -147,7 +149,10 @@ type routeMessage struct {
 	key, state string
 }
 
-func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (json.RawMessage, error) {
+func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (_ json.RawMessage, retErr error) {
+	ctx, finish := s.telemetry.startOperation(ctx, "routing.decide", "router")
+	outcome := "routed"
+	defer func() { finish(operationOutcome(retErr, outcome)) }()
 	if b.Role != "router" {
 		return nil, problem("forbidden", "only Router can decide routing")
 	}
@@ -182,9 +187,17 @@ func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (json.RawM
 		}
 		messages[id] = m
 	}
+	if s.telemetry.tracesEnabled {
+		var links []trace.Link
+		for _, id := range r.MessageIDs[:min(len(r.MessageIDs), traceAssociationLimit)] {
+			links = messageAdmission.links(ctx, tx, links, id, 0)
+		}
+		addTraceLinks(ctx, links)
+	}
 
 	result := RouteDecision{ID: creationID(creationKey("route", b.ID, r.OperationID), r), RouteRequest: r, CreatedAt: now()}
 	if r.Kind == "ignore" {
+		outcome = "ignored"
 		for _, id := range r.MessageIDs {
 			if err := ignoreMessage(ctx, tx, id); err != nil {
 				return nil, err
@@ -271,7 +284,10 @@ func ignoreMessage(ctx context.Context, tx *sql.Tx, messageID string) error {
 	return setRoutingState(ctx, tx, messageID, "ignored")
 }
 
-func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (json.RawMessage, error) {
+func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (_ json.RawMessage, retErr error) {
+	ctx, finish := s.telemetry.startOperation(ctx, "routing.return", "topic")
+	outcome := "returned"
+	defer func() { finish(operationOutcome(retErr, outcome)) }()
 	if b.Role != "topic" {
 		return nil, problem("forbidden", "only a Topic can return its own delivery")
 	}
@@ -298,10 +314,15 @@ func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (json.Ra
 	if err != nil {
 		return nil, storageError()
 	}
+	if s.telemetry.tracesEnabled {
+		links := internalEnqueue.links(ctx, tx, nil, r.DeliveryID, 0)
+		addTraceLinks(ctx, messageAdmission.links(ctx, tx, links, messageID, 0))
+	}
 	var result []byte
 	err = tx.QueryRowContext(ctx, `SELECT json_remove(rr.body,'$.status') FROM routing_deliveries d JOIN routing_relations rr ON rr.id=d.id
  WHERE d.kind='route_request' AND d.returned_id=?`, r.DeliveryID).Scan(&result)
 	if err == nil {
+		outcome = "duplicate"
 		return result, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
