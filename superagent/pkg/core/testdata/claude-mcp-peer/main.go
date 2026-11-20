@@ -33,9 +33,13 @@ func main() {
 			Args    []string
 		} `json:"mcpServers"`
 	}
+	questionsDisabled := false
 	for _, arg := range args {
 		if raw, ok := strings.CutPrefix(arg, "--mcp-config="); ok {
 			check(json.Unmarshal([]byte(raw), &config))
+		}
+		if tools, ok := strings.CutPrefix(arg, "--disallowedTools="); ok {
+			questionsDisabled = slices.Contains(strings.Split(tools, ","), "AskUserQuestion")
 		}
 	}
 	server := config.Servers["superagent"]
@@ -65,7 +69,7 @@ func main() {
 	check(err)
 	check(native.Start())
 	log := json.NewEncoder(record)
-	check(log.Encode(map[string]any{"method": "opened", "nativePid": native.Process.Pid, "mcpPid": mcp.Process.Pid}))
+	check(log.Encode(map[string]any{"method": "opened", "nativePid": native.Process.Pid, "mcpPid": mcp.Process.Pid, "questionsDisabled": questionsDisabled}))
 	nativeErr := native.Wait()
 	check(in.Close())
 	check(mcp.Wait())

@@ -43,6 +43,8 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 	s.call("runtime.update", workflowParams{Name: "agent", Spec: &spec}, nil)
 	var before resource.Session
 	s.call("session.get", workflowParams{Session: ref}, &before)
+	s.Equal(events.SessionState("offline"), before.Status.State)
+	s.Equal(resource.SessionReasonOwnerReleased, before.Status.Reason)
 	s.call("runtime.get", workflowParams{Name: "agent"}, &runtimeBefore)
 	history := s.history(ref)
 	s.Require().NotEmpty(history.Events)
@@ -72,8 +74,6 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 			var after resource.Session
 			s.call("session.get", workflowParams{Session: named}, &after)
 			expected := before
-			expected.Status.State = "offline"
-			expected.Status.Reason = ""
 			originalVersion := expected.Metadata.ResourceVersion
 			expected.Metadata.ResourceVersion = ""
 			reconciledVersion := after.Metadata.ResourceVersion

@@ -37,10 +37,9 @@ type ExecutionConfig struct {
 }
 
 type ExecutionProfile struct {
-	RuntimeRef       string                 `mapstructure:"runtimeRef" json:"runtimeRef"`
-	Model            string                 `mapstructure:"model" json:"model"`
-	Effort           string                 `mapstructure:"effort" json:"effort,omitempty"`
-	PermissionPreset agent.PermissionPreset `mapstructure:"permissionPreset" json:"permissionPreset,omitempty"`
+	RuntimeRef string `mapstructure:"runtimeRef" json:"runtimeRef"`
+	Model      string `mapstructure:"model" json:"model"`
+	Effort     string `mapstructure:"effort" json:"effort,omitempty"`
 }
 
 type ExecutionRoles struct {
@@ -56,11 +55,7 @@ type WorkerTemplate struct {
 var runtimeNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
 
 func (p ExecutionProfile) sessionConfig() *runtime.InitialSessionConfig {
-	preset := p.PermissionPreset
-	if preset == "" {
-		preset = agent.PermissionPresetFullAccess
-	}
-	return &runtime.InitialSessionConfig{Model: p.Model, Effort: p.Effort, PermissionPreset: preset}
+	return &runtime.InitialSessionConfig{Model: p.Model, Effort: p.Effort, PermissionPreset: agent.PermissionPresetFullAccess}
 }
 
 func (p ExecutionProfile) sameModel(other ExecutionProfile) bool {
@@ -96,7 +91,7 @@ func (c *ExecutionConfig) validate(resolve func(string) string) error {
 		return problem("invalid_argument", "execution namespace must be a DNS label of at most 24 bytes")
 	}
 	if !c.Roles.Router.valid() || !c.Roles.Topic.valid() {
-		return problem("invalid_argument", "execution.roles.router and execution.roles.topic each require a valid runtimeRef and model, with optional effort and permissionPreset")
+		return problem("invalid_argument", "execution.roles.router and execution.roles.topic each require a valid runtimeRef and model, with optional effort")
 	}
 	if len(c.WorkerTemplates) == 0 {
 		return problem("invalid_argument", "execution.workerTemplates requires at least one template")
@@ -104,7 +99,7 @@ func (c *ExecutionConfig) validate(resolve func(string) string) error {
 	seen := make(map[[2]string]bool, len(c.WorkerTemplates))
 	for _, template := range c.WorkerTemplates {
 		if !template.valid() || strings.TrimSpace(template.Description) == "" {
-			return problem("invalid_argument", "each Worker template requires a valid runtimeRef, model and nonblank description, with optional effort and permissionPreset")
+			return problem("invalid_argument", "each Worker template requires a valid runtimeRef, model and nonblank description, with optional effort")
 		}
 		pair := [2]string{template.RuntimeRef, template.Model}
 		if seen[pair] {
@@ -202,12 +197,10 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 			return problem("failed_precondition", "execution configuration differs from persisted Router binding")
 		}
 		expected := makeSpec(c, b)
+		// Existing Sessions keep their persisted permission and feature requests.
+		expected.Features = spec.Features
 		if spec.Config != nil {
-			// Existing Sessions keep their persisted permission request.
 			expected.Config.PermissionPreset = spec.Config.PermissionPreset
-			if configured.PermissionPreset != "" && spec.Config.PermissionPreset != "" && configured.PermissionPreset != spec.Config.PermissionPreset {
-				return problem("failed_precondition", "execution configuration differs from persisted Router binding")
-			}
 		}
 		if !reflect.DeepEqual(spec, expected) {
 			return problem("failed_precondition", "execution configuration differs from persisted Router binding")
@@ -256,31 +249,20 @@ func createWorkerBinding(ctx context.Context, tx *sql.Tx, c Config, x Execution,
 	return insertBinding(ctx, tx, c, b, previous)
 }
 
-func usePreviousSession(ctx context.Context, tx *sql.Tx, next *Binding, previous Binding) (agent.PermissionPreset, error) {
+func usePreviousSession(ctx context.Context, tx *sql.Tx, next *Binding, previous Binding) (*resource.SessionSpec, error) {
 	next.PreviousBindingID = previous.ID
 	if previous.Close != nil && previous.Close.Reusable && next.Workspace == previous.Workspace &&
 		next.ExecutionProfile.sameModel(previous.ExecutionProfile) && next.Namespace == previous.Namespace && previous.SessionID != "" {
 		var spec resource.SessionSpec
 		if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, previous.ID); err != nil {
-			return "", err
-		}
-		var saved agent.PermissionPreset
-		if spec.Config != nil {
-			saved = spec.Config.PermissionPreset
-		}
-		effective := saved
-		if effective == "" {
-			effective = agent.PermissionPresetAutoReview
-		}
-		if requested := next.PermissionPreset; requested != "" && requested != effective {
-			return "", nil
+			return nil, err
 		}
 		next.SessionID, next.SessionUID, next.Name = previous.SessionID, previous.SessionUID, previous.Name
 		next.CapabilityFileID = previous.capabilityFileID()
 		next.MCPWorkingDirectory = previous.MCPWorkingDirectory
-		return saved, nil
+		return &spec, nil
 	}
-	return "", nil
+	return nil, nil
 }
 
 func (b Binding) capabilityFileID() string {
@@ -291,13 +273,13 @@ func (b Binding) capabilityFileID() string {
 }
 
 func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous Binding) (Binding, error) {
-	savedPreset, err := usePreviousSession(ctx, tx, &b, previous)
+	request, err := usePreviousSession(ctx, tx, &b, previous)
 	if err != nil {
 		return Binding{}, err
 	}
-	request := makeSpec(c, b)
-	if b.SessionID != "" {
-		request.Config.PermissionPreset = savedPreset
+	if request == nil {
+		fresh := makeSpec(c, b)
+		request = &fresh
 	}
 	spec, err := json.Marshal(request)
 	if err != nil {
@@ -323,7 +305,10 @@ func makeSpec(c Config, b Binding) resource.SessionSpec {
 	case "topic":
 		prompt += topicRoutingPrompt
 	}
-	return resource.SessionSpec{RuntimeRef: b.RuntimeRef, SessionSpec: runtime.SessionSpec{Config: b.sessionConfig(), Cwd: b.Workspace, SystemPrompt: prompt, MCPServers: &servers}}
+	return resource.SessionSpec{RuntimeRef: b.RuntimeRef, SessionSpec: runtime.SessionSpec{
+		Config: b.sessionConfig(), Cwd: b.Workspace, SystemPrompt: prompt, MCPServers: &servers,
+		Features: &runtime.SessionFeatures{AgentQuestions: new(false)},
+	}}
 }
 
 func (s *Store) newTopic(ctx context.Context, tx *sql.Tx, key, digest string, n NewTopic, at string) (string, error) {
@@ -442,7 +427,7 @@ func (s *Store) updateBinding(ctx context.Context, b Binding) error {
 	return err
 }
 
-func (s *Server) prepare(ctx context.Context, b Binding, token string, spec resource.SessionSpec) {
+func (s *Server) prepare(ctx, call context.Context, b Binding, token string, spec resource.SessionSpec) {
 	firstPreparation := !b.PreparationStarted
 	result, err := s.store.db.ExecContext(ctx, "UPDATE session_bindings SET body=json_set(body,'$.preparationStarted',json('true')) WHERE id=? AND state='pending'", b.ID)
 	if err != nil {
@@ -457,13 +442,26 @@ func (s *Server) prepare(ctx context.Context, b Binding, token string, spec reso
 		return
 	}
 	defer func() { _ = c.Close() }()
+	readBack := func(ref resource.SessionRef, found *resource.Session) error {
+		reconcile, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		return c.GetSession(reconcile, ref, found)
+	}
 	ref := bindingSessionRef(b)
 	var found resource.Session
-	err = c.GetSession(ctx, ref, &found)
-	if b.CapabilityFileID != "" && firstPreparation && errorCode(err) == "not_found" {
-		b.ReuseError = "session_missing"
-		s.useFreshSession(ctx, b)
-		return
+	err = c.GetSession(call, ref, &found)
+	if b.CapabilityFileID != "" && firstPreparation && !b.PreviousOwnerUnknown &&
+		b.SessionID != "" && b.SessionUID != "" && errorCode(err) == "not_found" {
+		var released bool
+		queryErr := s.store.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM session_bindings
+ WHERE id=? AND state='revoked' AND json_extract(body,'$.close.reusable')=1
+ AND json_extract(body,'$.sessionId')=? AND json_extract(body,'$.sessionUid')=?)`,
+			b.PreviousBindingID, b.SessionID, b.SessionUID).Scan(&released)
+		if queryErr == nil && released {
+			b.ReuseError = "session_missing"
+			s.useFreshSession(ctx, b)
+			return
+		}
 	}
 	if b.CapabilityFileID != "" && err == nil && !bindingMatches(b, spec, found) {
 		b.State, b.LastError, b.NextAttemptAt = "blocked", "session_configuration_conflict", ""
@@ -483,14 +481,17 @@ func (s *Server) prepare(ctx context.Context, b Binding, token string, spec reso
 	}
 	if errorCode(err) == "not_found" {
 		if b.SessionID != "" {
-			b.State, b.LastError, b.NextAttemptAt = "blocked", "session_missing", ""
+			b.LastError, b.NextAttemptAt = "session_missing", after(2*time.Second)
+			if b.Role != "worker" {
+				b.State, b.NextAttemptAt = "blocked", ""
+			}
 			_ = s.store.updateBinding(ctx, b)
 			return
 		}
-		err = c.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: b.Namespace, Name: b.Name}, Spec: spec}, &found)
+		err = c.CreateSession(call, resource.Session{Metadata: resource.Metadata{Namespace: b.Namespace, Name: b.Name}, Spec: spec}, &found)
 		if err != nil {
 			// A missing create response is reconciled against the same persisted name, never a new Session.
-			if c.GetSession(ctx, ref, &found) == nil {
+			if readBack(ref, &found) == nil {
 				err = nil
 			}
 		}
@@ -503,28 +504,58 @@ func (s *Server) prepare(ctx context.Context, b Binding, token string, spec reso
 			_ = s.store.updateBinding(ctx, b)
 			return
 		}
-		switch found.Status.State {
-		case "offline":
-			err = c.ResumeSession(ctx, ref, &found)
-			if err != nil && b.CapabilityFileID != "" && firstPreparation {
-				s.recordReuseFailure(ctx, c, b, spec, ref, err)
-				return
+		switch {
+		case resumeRecoveryMissing(found):
+		case found.Status.State == "offline" || b.Role == "worker" && ownershipUnconfirmed(found):
+			if b.Role == "worker" && !b.PreviousOwnerUnknown && found.Status.Reason != resource.SessionReasonOwnerReleased {
+				// Resume can reattach this authority without proving the release of an earlier owner.
+				affected, writeErr := s.store.db.ExecContext(ctx, `UPDATE session_bindings
+ SET body=json_set(body,'$.previousOwnerUnknown',json('true')) WHERE id=? AND state='pending'`, b.ID)
+				if writeErr != nil {
+					return
+				}
+				if count, countErr := affected.RowsAffected(); countErr != nil || count != 1 {
+					return
+				}
+				b.PreviousOwnerUnknown = true
 			}
-		case "closing":
-			err = problem("unavailable", "Session close has not settled")
-		case "unknown":
-			if ownershipUnconfirmed(found) {
-				b.State, b.LastError, b.NextAttemptAt = "blocked", "session_native_owner_unknown", ""
-				b.SessionUID, b.SessionID = found.Metadata.UID, found.Status.SessionID
-				_ = s.store.updateBinding(ctx, b)
-				return
+			original, uid := resource.SessionRef{SessionID: found.Status.SessionID}, found.Metadata.UID
+			err = c.ResumeSession(call, original, &found)
+			if err != nil {
+				var observed resource.Session
+				if readBack(original, &observed) == nil && bindingMatches(b, spec, observed) &&
+					observed.Status.SessionID == original.SessionID && observed.Metadata.UID == uid &&
+					(sessionPrepared(observed) || resumeRecoveryMissing(observed)) {
+					found, err = observed, nil
+				}
 			}
+		case ownershipUnconfirmed(found):
+			b.State, b.LastError, b.NextAttemptAt = "blocked", "session_native_owner_unknown", ""
+			b.SessionUID, b.SessionID = found.Metadata.UID, found.Status.SessionID
+			_ = s.store.updateBinding(ctx, b)
+			return
 		}
 	}
 	if err == nil && !bindingMatches(b, spec, found) {
 		b.State, b.LastError, b.NextAttemptAt = "blocked", "session_configuration_conflict", ""
 		_ = s.store.updateBinding(ctx, b)
 		return
+	}
+	if err == nil && resumeRecoveryMissing(found) {
+		switch {
+		case b.Role == "worker" && b.SessionID != "" && !b.PreviousOwnerUnknown:
+			if s.store.replaceUnrecoverableWorker(ctx, b, found) == nil {
+				return
+			}
+		case b.CapabilityFileID != "" && firstPreparation && !b.PreviousOwnerUnknown:
+			b.ReuseError = resource.SessionReasonRecoveryMissing
+			s.useFreshSession(ctx, b)
+			return
+		}
+		err = &runtime.OperationError{Code: "conflict", Reason: resource.SessionReasonRecoveryMissing}
+	}
+	if err == nil && !sessionPrepared(found) {
+		err = problem("unavailable", "Session preparation remains unsettled")
 	}
 	if err != nil {
 		b.State = "pending"
@@ -541,7 +572,7 @@ func (s *Server) prepare(ctx context.Context, b Binding, token string, spec reso
 		b.SessionUID = found.Metadata.UID
 		b.SessionID = found.Status.SessionID
 		var rt resource.Runtime
-		if c.GetRuntime(ctx, b.RuntimeRef, &rt) == nil {
+		if c.GetRuntime(call, b.RuntimeRef, &rt) == nil {
 			b.RuntimeType = rt.Spec.Type
 			if rt.Status.State == "running" {
 				b.RuntimeUID, b.RuntimeVersion = rt.Metadata.UID, rt.Metadata.ResourceVersion
@@ -553,23 +584,25 @@ func (s *Server) prepare(ctx context.Context, b Binding, token string, spec reso
 
 func ownershipUnconfirmed(session resource.Session) bool {
 	return session.Status.State == "unknown" &&
-		(session.Status.AppliedGeneration == 0 || session.Status.Reason == "state_unconfirmed_after_restart")
+		(session.Status.AppliedGeneration == 0 || session.Status.Reason == "state_unconfirmed_after_restart" ||
+			session.Status.Reason == "session_observation_lost")
 }
 
-func (s *Server) recordReuseFailure(ctx context.Context, c *client.Client, b Binding, spec resource.SessionSpec, ref resource.SessionRef, cause error) {
-	var found resource.Session
-	b.ReuseError = errorCode(cause)
-	if c.GetSession(ctx, ref, &found) != nil || !bindingMatches(b, spec, found) || found.Status.State != "offline" {
-		b.State, b.LastError, b.NextAttemptAt = "blocked", "session_reuse_unconfirmed", ""
-		_ = s.store.updateBinding(ctx, b)
-		return
+func sessionPrepared(session resource.Session) bool {
+	switch session.Status.State {
+	case "idle", "running", "requires_action", "unknown":
+		return session.Status.AppliedGeneration != 0 && !ownershipUnconfirmed(session)
+	default:
+		return false
 	}
-	s.useFreshSession(ctx, b)
+}
+
+func resumeRecoveryMissing(session resource.Session) bool {
+	return session.Status.State == "offline" && session.Status.Reason == resource.SessionReasonRecoveryMissing
 }
 
 func (s *Server) useFreshSession(ctx context.Context, b Binding) {
-	// The prior Session is absent before resume or the failed resume settled
-	// offline. Persist an independent name and capability file before creating.
+	// Persist an independent name and capability file before creating.
 	b.Name = b.Role + "-" + strings.ReplaceAll(b.ID, "_", "-")
 	b.PreparationStarted = false
 	b.SessionID, b.SessionUID, b.CapabilityFileID, b.LastError, b.NextAttemptAt = "", "", "", "session_reuse_failed", ""
@@ -709,7 +742,7 @@ func (s *Server) coordinateBinding(ctx context.Context, id string) {
 		s.stopBinding(ctx, call, b, spec)
 	case "pending":
 		if b.NextAttemptAt <= now() && ctx.Err() == nil {
-			s.prepare(call, b, token, spec)
+			s.prepare(ctx, call, b, token, spec)
 		}
 	case "ready":
 		// Serialize input to the same native Session across bindings.

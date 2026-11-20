@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -75,8 +76,10 @@ func settleWorkerObservation(ctx context.Context, tx *sql.Tx, observation WorkOb
 }
 
 type workerWatch struct {
-	evidence WorkObservation
-	sub      *client.Subscription
+	evidence     WorkObservation
+	sub          *client.Subscription
+	dispatchedAt time.Time
+	steered      bool
 }
 
 func (s *Server) prepareWorkerWatch(ctx context.Context, b Binding, a Attempt) *workerWatch {
@@ -85,10 +88,7 @@ func (s *Server) prepareWorkerWatch(ctx context.Context, b Binding, a Attempt) *
 		SessionID: b.SessionID, SessionUID: b.SessionUID, AttemptID: a.ID,
 		State: "awaiting_receipt", ObservedAt: now(), Provider: b.RuntimeType,
 	}}
-	if b.RuntimeType != "codex" {
-		return w
-	}
-	// Watch first. A native turn can complete before its prompt call returns.
+	// The Session can become idle before its prompt call returns.
 	setup, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	c, err := s.massClient()
@@ -101,24 +101,21 @@ func (s *Server) prepareWorkerWatch(ctx context.Context, b Binding, a Attempt) *
 	return w
 }
 
-func (w *workerWatch) recordReceipt(a Attempt, submission string) {
+func (w *workerWatch) recordReceipt(a Attempt, result agent.InputResult, submission string) {
 	o := &w.evidence
 	if a.Status != "delivered" {
 		o.loseContinuity("input_work_unconfirmed")
 		return
 	}
 	o.State, o.ObservedAt = a.Status, now()
-	// Only Codex exposes a submission ID that can match a live root turn.
-	if o.Provider != "codex" {
-		return
+	// Keep the Codex work reference for diagnostics. Observation uses Session state.
+	if o.Provider == "codex" {
+		o.WorkID = submission
 	}
-	o.WorkID = submission
-	switch {
-	case submission == "":
-		o.ObservationGap = "native_work_identity_unavailable"
-	case w.sub == nil:
+	if w.sub == nil {
 		o.ObservationGap = "live_subscription_unavailable"
-	default:
+	} else {
+		w.steered = result == agent.InputAppliedCurrentWork
 		o.State, o.Continuous = "observing", true
 	}
 }
@@ -165,10 +162,11 @@ func (s *Server) startWorkerWatch(life context.Context, b Binding, w *workerWatc
 
 func (w *workerWatch) consume(ctx context.Context, b Binding) {
 	o := &w.evidence
+	active := w.steered
 	for {
 		event, err := w.sub.Next(ctx)
 		switch {
-		case err != nil:
+		case err != nil || w.sub.Err() != nil:
 			o.loseContinuity("live_subscription_interrupted")
 			return
 		case event.SessionID != o.SessionID || event.Namespace != b.Namespace || event.SessionName != b.Name:
@@ -179,10 +177,12 @@ func (w *workerWatch) consume(ctx context.Context, b Binding) {
 		case event.Type() == "session.history_replay":
 			o.loseContinuity("session_history_reload")
 			return
+		case !inWorkerDispatchWindow(event.Time, w.dispatchedAt):
+			continue
 		}
 		if problem, ok := event.Payload().(events.SessionError); ok {
 			switch problem.Reason {
-			case "unsupported_native_item", "session_delivery_overloaded":
+			case "unsupported_native_item", "session_delivery_overloaded", "session_state_missing", "session_state_unsupported":
 				o.loseContinuity("native_observation_interrupted")
 				return
 			}
@@ -195,29 +195,28 @@ func (w *workerWatch) consume(ctx context.Context, b Binding) {
 			o.loseContinuity("native_session_state_unknown")
 			return
 		}
-		if end := codexWorkEnd(event, state, o.WorkID); end != nil {
-			o.State, o.ObservedAt, o.End = "ended", now(), end
-			return
+		switch *state.State {
+		case events.Running, events.RequiresAction:
+			active = true
+		case events.Idle:
+			// For a new or best-effort submission, an idle from the work
+			// that preceded it can arrive while the submission is in flight.
+			if active && state.PreviousState != nil && *state.PreviousState != events.Idle {
+				o.State, o.ObservedAt = "ended", now()
+				o.End = &WorkEnd{EventID: event.EventID, At: event.Time.Format(time.RFC3339Nano), Reason: "idle"}
+				return
+			}
 		}
 	}
 }
 
-// Codex's SDK preserves these native fields in the public event metadata.
-// A thread/status/changed, interaction update or child turn cannot qualify.
-func codexWorkEnd(event events.SessionEvent, state events.StateUpdate, workID string) *WorkEnd {
-	meta, _ := event.Meta["codex"].(map[string]any)
-	method, _ := meta["method"].(string)
-	turnID, _ := meta["turnId"].(string)
-	_, child := meta["sourceThreadId"]
-	if method != "turn/completed" || child || turnID == "" || turnID != workID {
-		return nil
+func inWorkerDispatchWindow(at, dispatchedAt time.Time) bool {
+	// Some providers supply whole-second event timestamps. The live, ordered
+	// subscription and activity transition still gate those events.
+	if at.Nanosecond() == 0 {
+		dispatchedAt = dispatchedAt.Truncate(time.Second)
 	}
-	switch state.StopReason {
-	case "completed", "interrupted", "failed":
-		return &WorkEnd{EventID: event.EventID, At: event.Time.Format(time.RFC3339Nano), Reason: state.StopReason}
-	default:
-		return nil
-	}
+	return !at.Before(dispatchedAt)
 }
 
 func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence WorkObservation) error {
@@ -264,7 +263,7 @@ func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *Execution, issue 
 	payload, err := json.Marshal(struct {
 		ExecutionID string   `json:"executionId"`
 		IssueID     string   `json:"issueId"`
-		WorkID      string   `json:"workId"`
+		WorkID      string   `json:"workId,omitempty"`
 		End         *WorkEnd `json:"end"`
 		Instruction string   `json:"instruction"`
 	}{

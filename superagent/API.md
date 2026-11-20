@@ -254,7 +254,6 @@ execution:
       runtimeRef: codex-fast
       model: gpt-6.2-sol
       effort: low
-      # permissionPreset: fullAccess
     topic:
       runtimeRef: codex-standard
       model: gpt-6.2-sol
@@ -278,12 +277,15 @@ may use the same Runtime with different models. Effort is optional, and model
 and effort are passed literally to massd. A configured pair permits a
 Topic to select it. Core checks Runtime availability during Session preparation.
 
-Both roles and each Worker template can set `permissionPreset` to
-`fullAccess`, `manualReview`, or `autoReview`. New Sessions default to
-`fullAccess`. Existing Sessions resume with their saved preset. An existing
-Session whose spec omits the preset uses the SDK default, `autoReview`.
-An explicit preset change for a Worker requires a new Session when the
-previous Session used a different preset.
+New Router, Topic and Worker Sessions use `config.permissionPreset: fullAccess`
+and `features.agentQuestions: false`. This applies to replacement Sessions and
+overrides the Runtime default for native questions. Remove `permissionPreset`
+from Superagent role profiles and Worker templates when upgrading. An existing
+Session keeps its saved spec when resumed or reused.
+
+Router and Topic use the Outbox to request clarification and receive answers
+through incoming Messages. Workers submit a `blocked` Report when they need
+information from the user, and Topic follows up through the Outbox.
 
 Namespace is a DNS label of at most 24 bytes. The Router is unique per Core
 store, in `<namespace>-router/router-g1`. Each Topic has a stable namespace derived from its ID and Session `topic-g1`.
@@ -540,31 +542,22 @@ still read by Report ID. Topic owns acceptance, regardless of Report kind.
 
 ### Worker work observation and report reminder
 
-Core opens a live observation before dispatching an eligible Codex Worker
-StartOrSteer and binds that observation to its input attempt. For Codex, the
-public prompt receipt supplies a native turn ID in `submission` when
-`nativeAccepted` is true and the result is `applied_new_work` or
-`applied_current_work`. The pinned SDK forwards a root `turn/completed` as a
-live `session.state_update` with `_meta.codex.method` and
-`_meta.codex.turnId`. The Session ID, namespace, name, root turn ID and
-terminal reason must agree with the input and its Worker binding. A terminal
-event can arrive before its receipt. A newer admitted prompt fences the
-older attempt; a later completion of the earlier turn cannot settle the newer
-attempt. Child-thread notifications and standalone idle updates cannot
-qualify. This proves the end of the referenced root turn. Codex provides no
-aggregate completion guarantee for work delegated outside that root turn.
+Core opens a live Session subscription before dispatching a Worker
+StartOrSteer. Both Codex and Claude use the unified `session.state_update`
+event. A transition to `idle` after activity in the dispatch window qualifies
+once the input receipt confirms delivery. A receipt for steering existing
+work can use that work's subsequent transition to `idle`. Events that arrive
+before the receipt stay buffered. Subscription replay and initial or stale
+idle observations do not qualify. A newer admitted prompt supersedes the
+prior observation.
 
-Core records a successful Claude write (`applied_best_effort`, `sent=true`)
-as `workObservation.state=delivered`. Its end stays unconfirmed, so this
-receipt alone cannot schedule a reminder. A delivered Codex input without a
-turn ID or live subscription also stays `delivered` with an observation gap.
-An interruption during live observation changes the state to `unknown`.
-Core does not resubscribe the original attempt. Core restart marks unfinished
-observation as `core_observation_interrupted`. A newly accepted input can
-establish fresh observation. Core does not reconstruct terminal facts from history, idle,
-final text, control acknowledgment or EOF.
+Core settles the input as `sent` from the receipt. Without a live subscription,
+`workObservation` records `delivered` and an observation gap. An interruption
+during live observation changes the state to `unknown`. Core restart marks
+unfinished observation as `core_observation_interrupted`. A newly accepted
+input can establish fresh observation.
 
-When the current Execution has no Report, a correlated end and one
+When the current Execution has no Report, the observed `idle` and one
 `report_reminder` commit together. It targets the same Worker Execution and
 asks for a Report about existing work. The Worker can use the delivery ID
 as its Report operation ID. The marker stays set after delivery, supersession
@@ -573,8 +566,8 @@ reminder in the same transaction. Core rechecks that Execution and its
 Reports before dispatch. A retry preserves the delivery ID.
 
 Execution reads project `workObservation` with the binding and Session
-identities, attempt ID, work reference if known, continuity, the observed end
-or the observation gap. They also project `reminderScheduled`,
+identities, attempt ID, optional diagnostic work reference, continuity, and
+the observed idle under `end` or the observation gap. They also project `reminderScheduled`,
 `reminderEligibility` and `reminder` with its delivery status when scheduled.
 Observer links to the delivery and separately shows Issue, Topic and stop status.
 
@@ -676,9 +669,17 @@ next owner so queued source Messages can reach it. Core prefers reusing an
 identity-checked local Claude Session on macOS/Linux after its online native
 process has closed and massd verifies the same resource offline. A new MCP
 process loads a new generation credential. The previous MCP process retains
-its startup identity. If a failed resume leaves the same resource verifiably
-offline, preparation switches to a fresh Session. An unknown resume leaves
-the binding blocked and exposes the error.
+its startup identity. Preparation retries ambiguous resume outcomes against
+the original Session.
+
+During normal Worker delivery, Core resumes the same Session and retries
+pending input. Sent deliveries stay settled. If massd records
+`session_recovery_missing` after verifying release of the original control
+and settling the failed resume, Core retires that Worker and starts a fresh
+Execution and Session when the Issue can continue. The new Worker uses `worker_started` and
+`issue_get_current` to recover the current goal, materials, and Report history
+in the same workspace. An opening or unreachable Session stays pending while
+Core reconciles the original identity.
 
 `replace` requests a fresh Session after verified release. A current Worker
 replacement retires the old Execution and explicitly schedules its successor.

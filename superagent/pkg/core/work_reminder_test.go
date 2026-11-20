@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -28,26 +29,20 @@ func TestWorkerSubmissionReceipt(t *testing.T) {
 			attempt := classifyAttempt(Attempt{}, tc.acceptance, tc.result, true, tc.err)
 			require.Equal(t, tc.attempt, attempt.Status)
 			watch := workerWatch{evidence: WorkObservation{Provider: "claude", State: "awaiting_receipt"}}
-			watch.recordReceipt(attempt, "")
+			watch.recordReceipt(attempt, agent.InputResult(tc.result), "")
 			require.Equal(t, tc.state, watch.evidence.State)
 			require.Nil(t, watch.evidence.End)
 		})
 	}
 }
 
-func TestCodexDeliveredWithoutLiveObservation(t *testing.T) {
-	for _, tc := range []struct {
-		submission string
-		gap        string
-	}{
-		{"", "native_work_identity_unavailable"},
-		{"turn-1", "live_subscription_unavailable"},
-	} {
-		t.Run(tc.gap, func(t *testing.T) {
-			watch := workerWatch{evidence: WorkObservation{Provider: "codex", State: "awaiting_receipt"}}
-			watch.recordReceipt(Attempt{Status: "delivered"}, tc.submission)
+func TestWorkerDeliveredWithoutLiveObservation(t *testing.T) {
+	for _, provider := range []string{"codex", "claude"} {
+		t.Run(provider, func(t *testing.T) {
+			watch := workerWatch{evidence: WorkObservation{Provider: provider, State: "awaiting_receipt"}}
+			watch.recordReceipt(Attempt{Status: "delivered"}, agent.InputAppliedNewWork, "")
 			require.Equal(t, "delivered", watch.evidence.State)
-			require.Equal(t, tc.gap, watch.evidence.ObservationGap)
+			require.Equal(t, "live_subscription_unavailable", watch.evidence.ObservationGap)
 			require.False(t, watch.evidence.Continuous)
 			require.Nil(t, watch.evidence.End)
 		})

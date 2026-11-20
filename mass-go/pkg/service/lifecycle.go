@@ -350,7 +350,10 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		if err := s.drainLane(ctx, l); err != nil {
 			return r, err
 		}
-		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { offlineStatus(r) }); err != nil {
+		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) {
+			offlineStatus(r)
+			r.Status.Reason = resource.SessionReasonOwnerReleased
+		}); err != nil {
 			return r, err
 		}
 	}
@@ -376,6 +379,14 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		<-l.done
 	}
 	return r, nil
+}
+
+func sessionRecoveryMissing() error {
+	return &runtime.OperationError{
+		Code:    "conflict",
+		Reason:  resource.SessionReasonRecoveryMissing,
+		Message: "Session recovery material is missing and its previous control is released",
+	}
 }
 
 func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, initial *runtime.Input) (_ resource.SessionResumed, resultErr error) {
@@ -473,6 +484,11 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	nativeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	op := &opening{address: a, done: make(chan struct{}), requested: r, restoring: true, buffering: true, cancel: cancel}
+	if op.requested.Status.Reason == resource.SessionReasonRecoveryMissing {
+		// A caller may have restored the missing material. Keep the release
+		// evidence and classify recoverability from this attempt.
+		op.requested.Status.Reason = resource.SessionReasonOwnerReleased
+	}
 	defer op.finish()
 	s.mu.Lock()
 	if s.closing || run.stopping || run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
@@ -481,7 +497,10 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	}
 	run.pending[k] = op
 	s.mu.Unlock()
-	if _, err = s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "opening" }); err != nil {
+	if _, err = s.sessionStatus(ref, func(r *resource.Session) {
+		r.Status.State = "opening"
+		r.Status.Reason = ""
+	}); err != nil {
 		s.mu.Lock()
 		delete(run.pending, k)
 		s.mu.Unlock()
@@ -519,6 +538,17 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		var deliveryErr error
 		if errors.Is(err, runtime.ErrResourcesReleased) && statusErr == nil {
 			deliveryErr = s.settleFailedRestore(ctx, run, op, k)
+			if deliveryErr == nil && native.SessionID == "" && op.requested.Status.State == "offline" &&
+				op.requested.Status.Reason == resource.SessionReasonOwnerReleased &&
+				errors.Is(err, runtime.ErrRecoveryMaterialMissing) {
+				var failed resource.Session
+				failed, statusErr = s.sessionStatus(ref, func(r *resource.Session) {
+					r.Status.Reason = resource.SessionReasonRecoveryMissing
+				})
+				if statusErr == nil {
+					return resource.SessionResumed{Session: failed}, sessionRecoveryMissing()
+				}
+			}
 		}
 		return resource.SessionResumed{Session: r}, errors.Join(err, statusErr, deliveryErr)
 	}

@@ -248,7 +248,13 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 		require.NoError(t, os.Rename(p, p+".saved"))
 	}
 	_, err = cold.ResumeSession(ctx(t), ref)
-	require.Error(t, err)
+	var missing *runtime.OperationError
+	require.ErrorAs(t, err, &missing)
+	require.Equal(t, "conflict", missing.Code)
+	require.Equal(t, resource.SessionReasonRecoveryMissing, missing.Reason)
+	recorded, err := cold.GetSession(ref)
+	require.NoError(t, err)
+	require.Equal(t, resource.SessionReasonRecoveryMissing, recorded.Status.Reason)
 	for _, p := range files {
 		require.NoError(t, os.Rename(p+".saved", p))
 	}

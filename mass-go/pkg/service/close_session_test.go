@@ -366,7 +366,7 @@ func TestCloseWaitsForAcceptedDispatchThenCallsSDKOnce(t *testing.T) {
 	require.Zero(t, f.driver.cancels.Load())
 	current := mustSession(t, f.svc, f.ref)
 	require.Equal(t, events.SessionState("offline"), current.Status.State)
-	require.Empty(t, current.Status.Reason)
+	require.Equal(t, resource.SessionReasonOwnerReleased, current.Status.Reason)
 }
 
 func TestCloseAcceptanceRejectsWorkBeforeLaneIsMarked(t *testing.T) {
@@ -427,12 +427,13 @@ func TestCloseFailureFencesThenExplicitRetrySucceeds(t *testing.T) {
 	closed, err := f.svc.CloseSession(context.Background(), f.ref)
 	require.NoError(t, err)
 	require.Equal(t, events.SessionState("offline"), closed.Status.State)
-	require.Empty(t, closed.Status.Reason)
+	require.Equal(t, resource.SessionReasonOwnerReleased, closed.Status.Reason)
 	require.EqualValues(t, 2, f.driver.closes.Load())
 
 	again, err := f.svc.CloseSession(context.Background(), f.ref)
 	require.NoError(t, err)
 	require.Equal(t, events.SessionState("offline"), again.Status.State)
+	require.Equal(t, resource.SessionReasonOwnerReleased, again.Status.Reason)
 	require.EqualValues(t, 2, f.driver.closes.Load(), "offline close must not call the SDK again")
 	runtimeResource, err := f.svc.GetRuntime("agent")
 	require.NoError(t, err)
@@ -619,7 +620,7 @@ func TestCloseWaitsForResumeHandleThenClosesIt(t *testing.T) {
 	require.NoError(t, <-closed)
 	current = mustSession(t, f.svc, f.ref)
 	require.Equal(t, events.SessionState("offline"), current.Status.State)
-	require.Empty(t, current.Status.Reason)
+	require.Equal(t, resource.SessionReasonOwnerReleased, current.Status.Reason)
 	require.EqualValues(t, 2, f.driver.closes.Load())
 }
 

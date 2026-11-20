@@ -160,6 +160,12 @@ named params and return the same resource values and `OperationError` data as th
 Service. Session references are explicit `{sessionId}` or `{namespace,name}`
 unions; list queries retain the nested `page` object. Create and resume preserve
 an explicitly supplied one-use initial input receipt without persisting it.
+After a verified native close or Runtime stop, the offline Session has the
+reason `session_owner_released`. If resume then definitively finds the original
+recovery material missing and settles its own reservation, it returns `conflict`
+with reason `session_recovery_missing`. The same reason persists on the original
+offline Session and can be read through `session.get` after a lost response.
+An explicit resume can retry after the recovery material is restored.
 Slow Runtime and Session calls dispatch asynchronously, so a query on the same
 connection can complete while another call is still settling. `session.load`
 returns acceptance only; query the Session to follow native replay. Requests
