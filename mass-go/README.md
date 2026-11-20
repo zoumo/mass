@@ -386,8 +386,8 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261120082659-c4e0d6e5c8be`,
-source commit `c4e0d6e5c8bede03292e33c557f12aa594b2990a`, without a local
+The runtime SDK is pinned to `v0.1.0`,
+source commit `c169f237a1a119712563082b359a836d8089c19d`, without a local
 replacement. Consumer recording and offline replay use `agent-sdk-testify`
 `v0.2.2`. Testify forwards the SDK's arguments after `--` to the native process
 during recording and ignores them during replay. Capture metadata stores the
