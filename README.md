@@ -9,13 +9,13 @@
  ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝
 ```
 
-### Multi-Agent Supervision System
+### Multi-Agent Session Service
 
-*A runtime for managing AI agents beyond a terminal session.*
+*Run and supervise AI agent sessions through a daemon, CLI, and API.*
 
 [![Go](https://img.shields.io/badge/Go-1.26.9+-00ADD8?style=flat-square&logo=go&logoColor=white)](#build)
 [![API](https://img.shields.io/badge/API-WebSocket_JSON--RPC-6366F1?style=flat-square)](harness/bindings/jsonrpc.md)
-[![Status](https://img.shields.io/badge/v2-Prototype-F59E0B?style=flat-square)](#current-status)
+[![Status](https://img.shields.io/badge/Superagent-Experimental-F59E0B?style=flat-square)](#current-status)
 [![License](https://img.shields.io/badge/License-Apache_2.0-22C55E?style=flat-square)](LICENSE)
 
 **Create** · **Supervise** · **Interact** · **Observe**
@@ -26,22 +26,19 @@
 
 ---
 
-MASS gives applications a common way to start agent runtimes, create sessions,
-send work, observe progress, and retrieve results. The goal is to make agents
-manageable as services, with explicit lifecycles and a history you can return to.
+MASS runs Codex and Claude sessions as a service. Use `massctl` or the API to
+send work, answer interaction requests, watch live progress, and read saved
+session history.
 
 ## What is MASS?
 
-Running an agent once is straightforward. Building a service around agents means
-keeping track of which sessions exist, what they are doing, what they need from
-you, and what happened while you were away.
+`massd` is the mature runtime at the core of MASS. It manages Runtime and
+Session lifecycles and exposes JSON-RPC 2.0 over WebSocket. Its drivers use the
+Codex and Claude adapters in Agent SDK Go.
 
-MASS brings those concerns together behind a CLI and a WebSocket JSON-RPC API. It draws
-inspiration from container runtimes: give different execution backends a common
-management interface, while leaving agent-specific behavior to their drivers.
-
-Use it as the execution layer beneath an orchestrator, an automation service,
-or your own agent interface.
+Connect an orchestrator, automation service, or agent interface directly to
+`massd`. The repository also includes the experimental Superagent application
+for coordinating work across sessions.
 
 ## What you get
 
@@ -53,15 +50,12 @@ or your own agent interface.
 | 🤝 | **Interactive agents** | Permission requests and questions exposed to the calling application. |
 | ⚡ | **CLI + JSON-RPC API** | Use `massctl` at the terminal or connect your own application through JSON-RPC 2.0 over WebSocket. |
 
-These are the core responsibilities of v2. The implementation is still a
-prototype; see [current status](#current-status) for its present limits.
+See [current status](#current-status) for driver and client limits.
 
 ## From v1 to v2
 
-v1 became too complicated. It accumulated too many concepts, layers, and features
-that did not help enough with the core job of managing agents. v2 simplifies the
-project and removes much of that unnecessary functionality, including the old
-workspace-management, compose, and interactive TUI surface.
+v1 included workspace management, compose, and an interactive TUI. v2
+focuses the runtime on the daemon, CLI, and API.
 
 > 🎯 **Same goal, simpler system.** Make AI agents manageable as services through
 > a common interface for their lifecycles, sessions, interactions, and history.
@@ -74,43 +68,58 @@ workspace-management, compose, and interactive TUI surface.
 
 ## Architecture
 
-![MASS v2 architecture](docs/assets/mass-v2-architecture.svg)
+![massd architecture](docs/assets/mass-v2-architecture.svg)
 
-`massctl` and API clients run outside `massd` and connect over WebSocket JSON-RPC.
-Inside `massd`, the RPC transport calls Service, which coordinates Store and Runtime. Store
-saves resources and history; Runtime uses agent drivers and SDKs to launch and
-communicate with external Agent processes, such as Codex and Claude.
+`massctl` and API clients connect to `massd` over WebSocket JSON-RPC. The
+transport calls Service, which coordinates session operations and dispatches
+work to the Runtime drivers. MetaStore saves Runtime and Session resources in
+SQLite by default, with a file backend available. EventStore appends Session
+events to files and maintains a rebuildable SQLite query database.
 
-Two concepts carry most of the user-facing model:
+Runtime and Session are the two main resources.
 
 | Concept | Meaning |
 |---|---|
 | 🔌 **Runtime** | A named agent backend and its configuration, such as a Codex or Claude driver. |
 | 💬 **Session** | A conversation owned by a Runtime, with a working directory, state, and event history. |
 
-Live observation and saved history serve different purposes. Subscriptions show
-new events; history queries retrieve committed events. Closing a watch does not
-cancel agent work.
+Subscriptions deliver new events on separate WebSocket connections. History
+queries return committed events. You can end a subscription while work continues.
+See the [interactive massd diagram](docs/assets/mass-v2-architecture.html) and the
+[architecture contract](harness/architecture.md).
 
-The [interactive diagram](docs/assets/mass-v2-architecture.html)
-includes source references. The [architecture contract](harness/architecture.md)
-describes the intended design in detail.
+![Superagent architecture](docs/assets/superagent-architecture.svg)
 
-The checked-in architecture diagram still shows the retired HTTP/SSE binding;
-current transport is WebSocket JSON-RPC.
+Superagent accepts messages from channel adapters. Its Router directs messages
+to Topics, and Topics coordinate Issues and Worker Reports. The read-only
+Observer queries the business state that Superagent persists in its own SQLite
+database. See the [interactive Superagent diagram](docs/assets/superagent-architecture.html).
+
+![Combined MASS and Superagent architecture](docs/assets/mass-superagent-architecture.svg)
+
+When execution is enabled, Superagent uses the public Go client to prepare
+and drive Router, Topic, and Worker Sessions in `massd`. Other API clients can
+connect to the same daemon directly. See the
+[interactive combined diagram](docs/assets/mass-superagent-architecture.html).
 
 ## Superagent business Core
 
-The [superagent](superagent/README.md) business entrypoint accepts durable
-messages, routes them to Topics, and coordinates Worker Sessions through massd.
-Its read-only React Observer follows Messages through the Router, Topics and
-Issues, with diagnostics for internal delivery, Sessions and Outbox state. Build it with `make build-superagent`. Root `make check`
-covers its Go module and browser suite. Schema 20 starts in a new data
-directory and preserves earlier SQLite and JSON v4 state directories.
+Superagent is an experimental application for routing messages and coordinating
+agent work. You can run it for message intake with execution disabled. Enable
+execution to run Workers through `massd`. Open `/observer/` to inspect message
+routing and Issue progress.
+
+Most of Superagent's design and core concepts were inspired by the
+[DeepSeek Harness `dsh-superagent` prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
+
+Build it with `make build-superagent`. For setup and data-directory
+compatibility, see the [Superagent guide](superagent/README.md).
 
 ## Build
 
-Requires **Go 1.26.9 or later**.
+Build `massd` and `massctl` with `make build-go` and **Go 1.26.9 or later**.
+The full build also builds Superagent and its Observer. It requires Node.js
+20.19 or later in the 20.x series, or 22.12 or later, and a populated npm cache.
 
 ```sh
 make build
@@ -119,12 +128,13 @@ make build
 
 | Binary | Role |
 |---|---|
-| `bin/massd` | 🛠️ Daemon — serves the WebSocket JSON-RPC API and health probes. |
-| `bin/massctl` | ⌨️ CLI — talks to the daemon over WebSocket JSON-RPC. |
+| `bin/massd` | 🛠️ Daemon for the WebSocket JSON-RPC API and health probes. |
+| `bin/massctl` | ⌨️ CLI for managing Runtimes and Sessions. |
+| `bin/superagent` | Experimental message routing and work coordination service with a read-only Observer. |
 
 ## Quick start
 
-To explore the current prototype, run the isolated synthetic demonstration:
+Run the isolated `massd` demonstration.
 
 ```sh
 make prototype-go
@@ -136,13 +146,13 @@ actual MASS CLI and JSON-RPC service. It uses temporary data and working directo
 and does not call a model or require an agent account. Its pinned dependencies
 must already be cached.
 
-To start the local service separately:
+Start the local daemon.
 
 ```sh
 bin/massd --local
 ```
 
-In another terminal:
+Inspect the available commands in another terminal.
 
 ```sh
 bin/massctl runtime list
@@ -154,7 +164,7 @@ bin/massctl session --help
 |---|---|
 | 🌐 Service address | `ws://127.0.0.1:24368/rpc` |
 | 📂 Data directory | `~/.mass` |
-| ⚙️ Configuration | `~/.mass/config.yaml`, when present; flags override file values |
+| ⚙️ Configuration | `~/.mass/config.yaml` when present. Flags override file values. |
 
 `--local` selects trusted single-user loopback access.
 See the [Go implementation guide](mass-go/README.md) for configuration and API
@@ -162,15 +172,17 @@ usage, subject to the driver limits below.
 
 ## Current status
 
-v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
+`massd` and `massctl` are implemented in Go under [`mass-go/`](mass-go/README.md).
+Superagent is experimental.
 
 | Area | Available today | Current limit |
 |---|---|---|
-| 🛠️ Service | WebSocket JSON-RPC API, CLI, and file-backed resource/history storage | Prototype implementation |
-| 🧩 Agent drivers | Codex and Claude SDK adapters | An absolute executable is required; live authentication and model behavior remain separately verified |
-| 🧪 Demonstration | Isolated CLI → JSON-RPC → Service → Store / Runtime scenarios | Uses mock CLIs; does not establish real model execution, native recovery, or production readiness |
-| 💬 Claude input | Text input, close, and resume | One input per running connection |
-| 🤝 Permissions & questions | JSON-RPC `session.answer` | No CLI answer command yet |
+| 🛠️ Service | WebSocket JSON-RPC API, CLI, and persistent resources and history | Direct remote access requires TLS and a token file. |
+| 🧩 Agent drivers | Codex and Claude SDK adapters | Each Runtime needs an absolute path to its agent executable. |
+| 🧪 Demonstration | Isolated end-to-end runtime scenarios | Uses mock CLIs. Real-agent checks run separately. |
+| 💬 Claude input | Text input, close, and resume | Each input uses one text block. Resume requires an absolute `CLAUDE_CONFIG_DIR`. |
+| 🤝 Permissions & questions | JSON-RPC `session.answer` | Answer through the API. |
+| Superagent | Message routing, Worker coordination, and a read-only Observer | Experimental. Execution requires explicit configuration. |
 
 ## Development
 
@@ -178,13 +190,13 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 |---|---|
 | `make fmt` | Format Go code |
 | `make lint` | Run Go lint |
-| `make test` | Run unit, integration, and simulation layers offline with the race detector |
+| `make test` | Run offline Go tests with the race detector and run Observer browser tests |
 | `make test-unit-go` | Run package-local tests only |
 | `make test-integration-go` | Run constructed multi-module scenarios and SDK probes |
 | `make test-simulation-go` | Replay recorded Agent material through `agent-sdk-testify` |
-| `make test-e2e-go` | Explicitly run real Codex/Claude E2E; never part of `make test` |
-| `make build` | Build the daemon and CLI |
-| `make check` | Run lint, tests, build, and formatting checks |
+| `make test-e2e-go` | Run the separate end-to-end suite with real Codex and Claude CLIs |
+| `make build` | Build the daemon, CLI, and Superagent with its Observer |
+| `make check` | Check the Go modules and Observer with lint, tests, builds, and formatting checks |
 | `make prototype-go` | Run the isolated synthetic end-to-end demonstration |
 
 ## Documentation
@@ -194,11 +206,12 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 | 📘 [Go implementation](mass-go/README.md) | Configuration, commands, and implementation limits |
 | 🧭 [Project harness](harness/index.md) | Authoritative design, principles, and API contracts |
 | 🌐 [API contract](harness/bindings/jsonrpc.md) | JSON-RPC 2.0 methods, subscription events, and transport rules |
+| [Superagent guide](superagent/README.md) | Configuration, execution, and the Observer |
 | 📡 [Historical HTTP implementation](mass-go/docs/http-service-v1.md) | Superseded REST/SSE binding; retained for migration history only |
 | 🧪 [Historical HTTP acceptance](mass-go/docs/http-v1-acceptance.md) | Superseded HTTP v1 validation and its scope |
 
-The current endpoint accepts only `/rpc`, `/livez`, and `/readyz`; retired
-`/apis/v1` routes return `404` without aliases or redirects.
+`massd` exposes `/rpc`, `/livez`, and `/readyz`. The retired `/apis/v1` routes
+return `404`.
 
 ## License
 
