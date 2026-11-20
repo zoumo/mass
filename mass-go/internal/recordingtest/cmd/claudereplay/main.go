@@ -3,20 +3,19 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strconv"
+	"sync"
 	"sync/atomic"
 
+	"github.com/zoumo/mass/mass-go/internal/recordingtest/replaybridge"
 	"github.com/zoumo/mass/mass-go/internal/testpeer/rawjson"
 	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 )
 
 func main() {
@@ -27,6 +26,10 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	legacyPermissions := len(args) > 0 && args[0] == "--legacy-permissions"
+	if legacyPermissions {
+		args = args[1:]
+	}
 	if len(args) < 3 {
 		return errors.New("expected captured UUID, receipt path and Testify launcher")
 	}
@@ -35,67 +38,68 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return errors.New("capture requires a canonical v4 UUID")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, args[2], args[3:]...)
-	cmd.Stderr = stderr
-	input, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-	output, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	forwarded := make(chan error, 1)
-	go func() {
-		forwarded <- binding.forwardInput(stdin, input)
-		_ = input.Close()
-	}()
-	outputErr := binding.forwardOutput(output, stdout)
-	if outputErr != nil {
-		cancel()
-	}
-	waitErr := cmd.Wait()
-	select {
-	case err := <-forwarded:
-		if err := errors.Join(err, outputErr, waitErr); err != nil {
+	launcher := args[2:]
+	if legacyPermissions {
+		if err := startup.ValidateClaudePermissionArgs(launcher[1:]); err != nil {
 			return err
 		}
-	default:
-		return errors.Join(outputErr, waitErr, errors.New("mock launcher exited before reaching client EOF"))
+		client := &serializedWriter{destination: stdout}
+		stdout = client
+		binding.settings = json.NewEncoder(client)
 	}
+	return replaybridge.Relay(launcher, args[1], stderr,
+		func(destination io.Writer) error { return binding.forwardInput(stdin, destination) },
+		func(source io.Reader) error { return binding.forwardOutput(source, stdout) },
+	)
+}
 
-	// Testify can see an ordinary EOF when this adapter rejects a client frame.
-	// Write separate success evidence only after both directions and the child complete.
-	receipt, err := os.OpenFile(args[1], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := receipt.WriteString("complete\n")
-	return errors.Join(writeErr, receipt.Close())
+type serializedWriter struct {
+	mu          sync.Mutex
+	destination io.Writer
+}
+
+func (w *serializedWriter) Write(line []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.destination.Write(line)
 }
 
 type submissionBinding struct {
 	captured string
 	live     atomic.Pointer[rawjson.Value]
+	settings *json.Encoder
 }
 
 func (b *submissionBinding) forwardInput(source io.Reader, destination io.Writer) error {
-	input := protocolLines(source)
+	input := replaybridge.ProtocolLines(source)
+	settingsPending := b.settings != nil
 	for input.Scan() {
 		frame, err := parseFrame(input.Bytes())
 		if err != nil {
 			return err
 		}
 		line := input.Bytes()
+		if memberString(frame, "type") == "control_request" {
+			request, _ := frame.Member("request")
+			if b.settings != nil && memberString(request, "subtype") == "get_settings" {
+				id := memberString(frame, "request_id")
+				if !settingsPending || id == "" || len(frame.Keys()) != 3 || len(request.Keys()) != 1 {
+					return errors.New("expected one legacy Claude startup settings request")
+				}
+				if err := b.settings.Encode(map[string]any{
+					"type":     "control_response",
+					"response": map[string]any{"subtype": "success", "request_id": id, "response": startup.ClaudeSettings()},
+				}); err != nil {
+					return err
+				}
+				settingsPending = false
+				continue
+			}
+		}
 		if memberString(frame, "type") == "user" {
+			if settingsPending {
+				return errors.New("missing Claude startup settings request before user input")
+			}
 			if b.live.Load() != nil {
 				return errors.New("consumer recording expects one user input")
 			}
@@ -157,26 +161,28 @@ func withoutUUID(frame rawjson.Value) ([]byte, error) {
 }
 
 func (b *submissionBinding) forwardOutput(source io.Reader, destination io.Writer) error {
-	if b.captured == "" {
+	if b.captured == "" && b.settings == nil {
 		_, err := io.Copy(destination, source)
 		return err
 	}
-	output := protocolLines(source)
+	output := replaybridge.ProtocolLines(source)
 	for output.Scan() {
 		frame, err := parseFrame(output.Bytes())
 		if err != nil {
 			return err
 		}
-		frame, err = b.mapServerUUID(frame, "user_message_uuid")
-		if err != nil {
-			return err
-		}
-		// Claude may echo the submitted user message with the same envelope UUID.
-		// Assistant and result envelope UUIDs identify their own native events.
-		if memberString(frame, "type") == "user" {
-			frame, err = b.mapServerUUID(frame, "uuid")
+		if b.captured != "" {
+			frame, err = b.mapServerUUID(frame, "user_message_uuid")
 			if err != nil {
 				return err
+			}
+			// Claude may echo the submitted user message with the same envelope UUID.
+			// Assistant and result envelope UUIDs identify their own native events.
+			if memberString(frame, "type") == "user" {
+				frame, err = b.mapServerUUID(frame, "uuid")
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if _, err := fmt.Fprintf(destination, "%s\n", frame.Raw()); err != nil {
@@ -209,19 +215,4 @@ func parseFrame(line []byte) (rawjson.Value, error) {
 		return rawjson.Value{}, errors.New("expected a Claude JSON object")
 	}
 	return frame, nil
-}
-
-func protocolLines(source io.Reader) *bufio.Scanner {
-	scanner := bufio.NewScanner(source)
-	scanner.Buffer(make([]byte, 4096), 16<<20)
-	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		if index := bytes.IndexByte(data, '\n'); index >= 0 {
-			return index + 1, data[:index], nil
-		}
-		if atEOF && len(data) != 0 {
-			return 0, nil, io.ErrUnexpectedEOF
-		}
-		return 0, nil, nil
-	})
-	return scanner
 }

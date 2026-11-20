@@ -67,7 +67,7 @@ func main() {
 				id = "damaged"
 			}
 			threadCwds[id] = v.Params["cwd"]
-			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": v.Params["cwd"], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": v.Params["cwd"], "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": v.Params["cwd"], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": v.Params["cwd"], "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
 			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			id := v.Params["threadId"].(string)
@@ -218,7 +218,7 @@ func claude(send func(any)) {
 				continue
 			}
 		}
-		send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v.ID, "response": map[string]any{}}})
+		send(clipeer.StartupReply(v.Request.Subtype, v.ID))
 		if v.Request.Subtype == "initialize" {
 			cwd, err := os.Getwd()
 			if err != nil {

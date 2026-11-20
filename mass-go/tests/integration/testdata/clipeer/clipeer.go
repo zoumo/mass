@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"github.com/zoumo/agent-sdk-go/claude"
+
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 )
 
 // VersionNumber is the stable native version these peers advertise.
@@ -58,6 +60,20 @@ func ClaimReply(frame map[string]any, sessionID string) (map[string]any, bool) {
 			},
 		},
 	}, true
+}
+
+func StartupReply(subtype string, id any) map[string]any {
+	body := map[string]any{}
+	switch subtype {
+	case "initialize":
+		body["current_permission_mode"] = startup.ClaudePermissionMode
+	case "get_settings":
+		body = startup.ClaudeSettings()
+	}
+	return map[string]any{
+		"type": "control_response",
+		"response": map[string]any{"subtype": "success", "request_id": id, "response": body},
+	}
 }
 
 // StatusReply reports the peer's own bound identity for the SDK's read-only

@@ -104,7 +104,7 @@ func main() {
 					}
 					continue
 				}
-				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
+				send(clipeer.StartupReply(r["subtype"].(string), v["request_id"]))
 				if r["subtype"] == "initialize" && !(resumed && mode == "hold-init") {
 					init()
 				}
@@ -158,7 +158,7 @@ func main() {
 			if method == "thread/resume" && p["threadId"] != sessionID {
 				panic("replacement thread")
 			}
-			reply(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			reply(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
 			notify("thread/status/changed", map[string]any{"threadId": sessionID, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			reply(map[string]any{"thread": thread()})

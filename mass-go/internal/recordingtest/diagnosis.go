@@ -12,10 +12,11 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/zoumo/agent-sdk-go/claude"
 )
 
 type DiagnosticOptions struct {
@@ -403,15 +404,8 @@ func (d *diagnostic) preflight(ctx context.Context, options DiagnosticOptions) e
 		}
 	}
 	if options.Provider == "claude" {
-		parts := regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`).FindStringSubmatch(d.report.Version)
-		if len(parts) != 4 {
-			return errors.New("claude version could not be parsed")
-		}
-		major, _ := strconv.Atoi(parts[1])
-		minor, _ := strconv.Atoi(parts[2])
-		patch, _ := strconv.Atoi(parts[3])
-		if major < 2 || major == 2 && (minor < 1 || minor == 1 && patch < 258) {
-			return errors.New("claude CLI 2.1.258 or later required for current SDK resume gate")
+		if err := claude.ValidateCLIVersion(d.report.Version); err != nil {
+			return err
 		}
 	}
 	helpArgs, authArgs := []string{"app-server", "--help"}, []string{"login", "status"}

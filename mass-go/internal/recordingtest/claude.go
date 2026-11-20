@@ -189,7 +189,10 @@ func RunClaudeBasicReplay(t *testing.T) {
 	require.NotEmpty(t, kinds)
 	require.Equal(t, "agent.message", kinds[len(kinds)-1])
 	requireSubsequence(t, index.Facts.StreamKinds, eventKinds(index.Facts.Events))
-	h.replay(material, index.Facts, flowCase{name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project, initialInput: true, legacyClaudeInput: true, ignoreStreamKinds: true})
+	h.replay(material, index.Facts, flowCase{
+		name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project,
+		initialInput: true, legacyClaudeInput: true, legacyPermissions: true, ignoreStreamKinds: true,
+	})
 }
 
 // RunClaudeCapturedUUIDReplay uses a temporary UUID-bearing copy of the
@@ -203,7 +206,7 @@ func RunClaudeCapturedUUIDReplay(t *testing.T) {
 
 	h.replay(material, index.Facts, flowCase{
 		name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project,
-		initialInput: true, ignoreStreamKinds: true,
+		initialInput: true, legacyPermissions: true, ignoreStreamKinds: true,
 	})
 }
 
@@ -296,7 +299,7 @@ func RunClaudePermissionReplay(t *testing.T) {
 	requireSubsequence(t, index.Facts.StreamKinds, eventKinds(index.Facts.Events))
 	session := h.replay(material, index.Facts, flowCase{
 		name: "permission", provider: "claude", prompt: index.Prompt, project: index.Project,
-		initialInput: true, legacyClaudeInput: true, ignoreStreamKinds: true, expectPermission: true,
+		initialInput: true, legacyClaudeInput: true, legacyPermissions: true, ignoreStreamKinds: true, expectPermission: true,
 		expectedPermission: "Bash", expectedToolOutput: "mass-claude-approved",
 		permissionOptions: []events.PermissionOption{
 			{OptionID: "allow-once", Name: "Allow once", Kind: events.PermissionAllow, Scope: events.PermissionScopeOnce},
@@ -306,16 +309,16 @@ func RunClaudePermissionReplay(t *testing.T) {
 	})
 	adapterReceipt := filepath.Join(session, claudeReplayReceipt)
 	require.NoError(t, os.Remove(adapterReceipt))
-	require.ErrorContains(t, verifyExecution(session, material), "claude replay adapter receipt")
+	require.ErrorContains(t, verifyExecution(session, material, true), "claude replay adapter receipt")
 	require.NoError(t, os.WriteFile(adapterReceipt, []byte("incomplete\n"), 0o600))
-	require.ErrorContains(t, verifyExecution(session, material), "claude replay adapter did not complete")
+	require.ErrorContains(t, verifyExecution(session, material, true), "claude replay adapter did not complete")
 	require.NoError(t, os.WriteFile(adapterReceipt, []byte("complete\n"), 0o600))
 	receipt := executionReceiptPath(t, session)
 	var value map[string]any
 	readJSON(t, receipt, &value)
 	delete(value, "clientEOF")
 	writeJSON(t, receipt, value)
-	require.ErrorContains(t, verifyExecution(session, material), "clientEOF")
+	require.ErrorContains(t, verifyExecution(session, material, true), "clientEOF")
 }
 
 func toolCallText(facts []factEvent) string {
