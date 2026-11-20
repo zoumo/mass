@@ -138,6 +138,12 @@ sampling. Metrics recording runs independently.
 Daemon `OTEL_*` settings stay in `massd`. Set a Runtime's `env` explicitly
 when its native CLI needs separate OpenTelemetry export settings.
 
+With metrics enabled, massd reports CPU time, resident memory, file
+descriptors, uptime, and Go runtime metrics while idle and under load. Each
+massd process uses a distinct `service.instance.id` on both signals. See the
+[process and Go runtime metric reference](../superagent/telemetry/README.md#query-process-and-go-runtime-metrics)
+for the metric names and example queries.
+
 In the trace backend, filter on `service.name=massd` and the RPC span name,
 such as `session.create` or `session.resume`. Open the trace to see the Service
 and SDK spans under the request. For `session.load`, the RPC span covers

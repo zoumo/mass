@@ -66,6 +66,40 @@ sum by (superagent_outcome) (superagent_core_operation_duration_count{service_na
 The first expression groups HTTP requests by route template. The second shows
 each admission outcome separately.
 
+## Query process and Go runtime metrics
+
+With `OTEL_METRICS_EXPORTER=otlp`, `massd`, `superagent serve`, and
+`superagent compose` report measurements even when idle. Use
+`service_name="massd"` or `service_name="superagent-core"` to select a service.
+Filter by `service_instance_id` to select a process. In Compose, massd and Core
+report separate sets of measurements. Each restart creates a new instance ID.
+
+| OTLP metric | What it measures |
+| --- | --- |
+| `process.cpu.time` | Cumulative CPU seconds of the service process in `cpu.mode=user` and `cpu.mode=system`. Sum the per-mode rates for each instance to obtain CPU cores used. |
+| `process.memory.usage` | Resident memory in bytes. |
+| `process.unix.file_descriptor.count` | Open file descriptors. |
+| `mass.process.unix.file_descriptor.limit` | The finite soft limit for open file descriptors. Compare it with the open count to track remaining capacity. |
+| `process.uptime` | Time since the OS started the process, in seconds. |
+| `go.memory.used`, `go.memory.allocated`, `go.memory.gc.goal` | Go runtime memory use by category, cumulative heap allocation, and the GC heap target, in bytes. |
+| `go.goroutine.count` | Live goroutines. |
+| `go.memory.gc.cycles` | Cumulative number of completed GC cycles. |
+| `go.schedule.duration`, `go.memory.gc.pause.duration` | Cumulative histograms of scheduler wait and GC stop-the-world pause durations in seconds. Use buckets for percentiles. The sums estimate lower bounds. |
+
+In OpenObserve, use a rate window that spans multiple export intervals.
+
+```promql
+sum by (service_name, service_instance_id) (
+  rate(process_cpu_time{service_name=~"massd|superagent-core"}[5m])
+)
+process_memory_usage{service_name=~"massd|superagent-core"}
+go_goroutine_count{service_name=~"massd|superagent-core"}
+```
+
+These measurements cover the service processes on Linux and macOS. Use the
+deployment's monitoring for host, container, filesystem, and Agent subprocess
+metrics. A missing OS sample produces a gap for that measurement.
+
 ## Enable Observer telemetry
 
 Set `SUPERAGENT_OBSERVER_OTLP_ENDPOINT=http://127.0.0.1:14320` when starting
