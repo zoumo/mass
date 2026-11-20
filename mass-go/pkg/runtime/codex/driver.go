@@ -267,7 +267,8 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		d.mu.Unlock()
 	}()
 
-	if err := (agent.OpenOptions{Config: spec.Config.SDKConfig(), Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
+	openOptions := spec.SDKOpenOptions()
+	if err := openOptions.Validate(); err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, agentrelay.MapError(err))
 	}
 	if err := d.vault.Check(); err != nil {
@@ -304,13 +305,8 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if err := ctx.Err(); err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
-	openOptions := agent.OpenOptions{
-		Cwd:                    spec.Cwd,
-		AdditionalSystemPrompt: spec.SystemPrompt,
-		Config:                 spec.Config.SDKConfig(),
-		Features:               agentFeatures(spec.Features),
-		MCPServers:             mcpServers,
-	}
+	openOptions.Features = agentFeatures(spec.Features)
+	openOptions.MCPServers = mcpServers
 	dispatchCtx := context.WithoutCancel(ctx)
 	var native agent.Session
 	if resume != "" {

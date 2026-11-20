@@ -24,6 +24,7 @@ func TestInitialSessionConfigurationRPCRejectsInvalidBeforeEffects(t *testing.T)
 	require.Nil(t, readRPC(t, conn).Error)
 
 	cases := []string{`null`, `1`, `"model"`, `[]`, `{"model":null}`, `{"effort":null}`, `{"model":true}`, `{"effort":42}`, `{"model":"x\u0000y"}`, `{"effort":"\ud800"}`, `{"model":"\udc00"}`, `{"future":"x"}`}
+	cases = append(cases, `{"permissionPreset":null}`, `{"permissionPreset":true}`, `{"permissionPreset":"FullAccess"}`)
 	for _, action := range []string{"create", "load"} {
 		for index, config := range cases {
 			t.Run(fmt.Sprintf("%s/%d", action, index), func(t *testing.T) {

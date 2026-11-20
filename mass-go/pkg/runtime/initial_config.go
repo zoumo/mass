@@ -11,11 +11,22 @@ import (
 // InitialSessionConfig is the durable, literal request for the main Session.
 // It is not an observation of the current native configuration.
 type InitialSessionConfig struct {
-	Model  string `json:"model,omitempty"`
-	Effort string `json:"effort,omitempty"`
+	Model            string                 `json:"model,omitempty"`
+	Effort           string                 `json:"effort,omitempty"`
+	PermissionPreset agent.PermissionPreset `json:"permissionPreset,omitempty"`
 }
 
-// SDKConfig maps directly to the SDK. Empty fields mean omission, never reset.
+// SDKOpenOptions maps the common Session options to the SDK.
+func (s SessionSpec) SDKOpenOptions() agent.OpenOptions {
+	options := agent.OpenOptions{Cwd: s.Cwd, AdditionalSystemPrompt: s.SystemPrompt}
+	if c := s.Config; c != nil {
+		options.Config = c.SDKConfig()
+		options.PermissionPreset = c.PermissionPreset
+	}
+	return options
+}
+
+// SDKConfig maps model and effort directly to the SDK.
 func (c *InitialSessionConfig) SDKConfig() agent.SessionConfig {
 	if c == nil {
 		return agent.SessionConfig{}
@@ -24,6 +35,14 @@ func (c *InitialSessionConfig) SDKConfig() agent.SessionConfig {
 }
 
 func (c *InitialSessionConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	switch c.PermissionPreset {
+	case "", agent.PermissionPresetManualReview, agent.PermissionPresetAutoReview, agent.PermissionPresetFullAccess:
+	default:
+		return InvalidArgument("unknown session permission preset")
+	}
 	if err := c.SDKConfig().Validate(); err != nil {
 		return InvalidArgument("invalid initial session config: " + err.Error())
 	}
@@ -40,7 +59,7 @@ func (c *InitialSessionConfig) UnmarshalJSON(raw []byte) error {
 		return InvalidArgument("config must be an object")
 	}
 	for key, value := range fields {
-		if key != "model" && key != "effort" {
+		if key != "model" && key != "effort" && key != "permissionPreset" {
 			return InvalidArgument("unknown config field")
 		}
 		if len(value) == 0 || value[0] != '"' || !ValidConfigStringJSON(value) {

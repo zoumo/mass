@@ -13,6 +13,7 @@ storageMaxPages: 0
 
 # Optional: enabling execution allows Core to start Sessions through massd.
 # Choose the Router workspace, fixed role profiles and available Worker profiles.
+# New Sessions default to fullAccess. Each role and Worker template can set permissionPreset.
 # execution:
 #   massdEndpoint: ws://127.0.0.1:24368/rpc
 #   routerWorkspace: /absolute/workspace
@@ -25,6 +26,7 @@ storageMaxPages: 0
 #       runtimeRef: codex-fast
 #       model: gpt-6.2-sol
 #       effort: low
+#       permissionPreset: fullAccess
 #     topic:
 #       runtimeRef: codex-standard
 #       model: gpt-6.2-sol

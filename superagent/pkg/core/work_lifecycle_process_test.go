@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 
@@ -342,7 +343,7 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 		Type: "claude",
 		Config: runtime.Config{"executable": launcher, "envPolicy": "replace", "env": map[string]any{
 			"PEER_KIND": "claude", "PEER_DIR": native, "WORK_DIR": workspace, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project,
-			"CLAUDE_WIRE_PEER": peer,
+			"CLAUDE_WIRE_PEER": peer, "PEER_CLAUDE_FULL_ACCESS": "1",
 		}},
 	})
 	f, operatorFile := deliveryFixture(t, endpoint)
@@ -433,6 +434,8 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.Equal(t, old.SessionUID, fresh.SessionUID)
 	require.Equal(t, old.ID, fresh.CapabilityFileID)
 	require.Equal(t, old.Generation+1, fresh.Generation)
+	require.Contains(t, readTrace(), `"method":"full_access","params":{"resumed":false,"sessionId":"`+old.SessionID+`"}`)
+	require.Contains(t, readTrace(), `"method":"full_access","params":{"resumed":true,"sessionId":"`+old.SessionID+`"}`)
 	require.NotEqual(t, oldCredential, roleToken(t, f, fresh))
 	current := startRoleMCP(t, f, fresh)
 	require.Equal(t, next.Execution.ID, mcpWork[core.WorkReceipt](t, current, "issue_get_current", struct{}{}).Execution.ID)
@@ -469,7 +472,7 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.Equal(t, reviewModel, review.Issue.ExecutionProfile)
 	var reviewSession resource.Session
 	require.NoError(t, c.GetSession(t.Context(), resource.SessionRef{SessionID: reviewBinding.SessionID}, &reviewSession))
-	require.Equal(t, &runtime.InitialSessionConfig{Model: reviewModel.Model}, reviewSession.Spec.Config)
+	require.Equal(t, &runtime.InitialSessionConfig{Model: reviewModel.Model, PermissionPreset: agent.PermissionPresetFullAccess}, reviewSession.Spec.Config)
 	historical := mcpWork[struct{ Preparation core.Binding }](t, topic, "work_query", core.QueryRequest{
 		Collection: "executions", ID: next.Execution.ID,
 	})

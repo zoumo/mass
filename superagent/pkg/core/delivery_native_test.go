@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -74,6 +75,7 @@ type nativeDeliveryPeer struct {
 	threadIDs      atomic.Int64
 	workspaces     sync.Map
 	initialConfigs sync.Map
+	resumeConfigs  sync.Map
 }
 
 func newNativeDeliveryPeer(t *testing.T) *nativeDeliveryPeer {
@@ -123,11 +125,14 @@ type nativeDeliveryRequest struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
 	Params struct {
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
-		Cwd      string `json:"cwd"`
-		Model    string `json:"model"`
-		Config   struct {
+		ThreadID          string `json:"threadId"`
+		TurnID            string `json:"turnId"`
+		Cwd               string `json:"cwd"`
+		Model             string `json:"model"`
+		ApprovalPolicy    string `json:"approvalPolicy"`
+		ApprovalsReviewer string `json:"approvalsReviewer"`
+		Sandbox           string `json:"sandbox"`
+		Config            struct {
 			Effort string `json:"model_reasoning_effort"`
 		} `json:"config"`
 		Input []struct {
@@ -183,14 +188,33 @@ func (p *nativeDeliveryPeer) serve(conn net.Conn) {
 		case "initialize":
 			respond(map[string]string{"userAgent": "synthetic", "codexHome": "/synthetic", "platformFamily": "unix", "platformOs": "linux"})
 		case "thread/start", "thread/resume":
+			config := runtime.InitialSessionConfig{Model: req.Params.Model, Effort: req.Params.Config.Effort}
+			reviewer := req.Params.ApprovalsReviewer
+			var sandbox string
+			switch {
+			case req.Params.ApprovalPolicy == "never" && reviewer == "" && req.Params.Sandbox == "danger-full-access":
+				reviewer, sandbox = "user", "dangerFullAccess"
+				config.PermissionPreset = agent.PermissionPresetFullAccess
+			case req.Params.ApprovalPolicy == "on-request" && reviewer == "user" && req.Params.Sandbox == "workspace-write":
+				sandbox = "workspaceWrite"
+				config.PermissionPreset = agent.PermissionPresetManualReview
+			case req.Params.ApprovalPolicy == "on-request" && reviewer == "auto_review" && req.Params.Sandbox == "workspace-write":
+				sandbox = "workspaceWrite"
+				config.PermissionPreset = agent.PermissionPresetAutoReview
+			default:
+				send(map[string]any{"id": req.ID, "error": map[string]any{"code": -32602, "message": "unexpected synthetic permission preset"}})
+				continue
+			}
 			if req.Method == "thread/start" {
 				session = "native-delivery-" + strconv.FormatInt(p.threadIDs.Add(1), 10)
 				p.workspaces.Store(session, req.Params.Cwd)
-				p.initialConfigs.Store(session, runtime.InitialSessionConfig{Model: req.Params.Model, Effort: req.Params.Config.Effort})
+				p.initialConfigs.Store(session, config)
+			} else {
+				p.resumeConfigs.Store(session, config)
 			}
 			respond(map[string]any{
-				"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": workspace(),
-				"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]string{"type": "readOnly"},
+				"thread": thread(), "approvalPolicy": req.Params.ApprovalPolicy, "approvalsReviewer": reviewer, "cwd": workspace(),
+				"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]string{"type": sandbox},
 			})
 			notify("thread/status/changed", map[string]any{"threadId": session, "status": idle})
 		case "thread/read":

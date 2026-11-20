@@ -41,10 +41,11 @@ model ConfigOptionGroup {
   options: ConfigOptionValue[];
 }
 
-/** 主 Session 初始期望值；空字符串省略，非空原样传入 SDK，不翻译别名。 */
+/** 主 Session 初始期望值；空字符串省略。 */
 model InitialSessionConfig {
   `model`?: string;
   effort?: string;
+  permissionPreset?: "manualReview" | "autoReview" | "fullAccess" | "";
 }
 
 /** 单项瞬态更新；value 非空、有效 UTF-8 且无 NUL。 */

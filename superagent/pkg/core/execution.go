@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -36,9 +37,10 @@ type ExecutionConfig struct {
 }
 
 type ExecutionProfile struct {
-	RuntimeRef string `mapstructure:"runtimeRef" json:"runtimeRef"`
-	Model      string `mapstructure:"model" json:"model"`
-	Effort     string `mapstructure:"effort" json:"effort,omitempty"`
+	RuntimeRef       string                 `mapstructure:"runtimeRef" json:"runtimeRef"`
+	Model            string                 `mapstructure:"model" json:"model"`
+	Effort           string                 `mapstructure:"effort" json:"effort,omitempty"`
+	PermissionPreset agent.PermissionPreset `mapstructure:"permissionPreset" json:"permissionPreset,omitempty"`
 }
 
 type ExecutionRoles struct {
@@ -54,7 +56,15 @@ type WorkerTemplate struct {
 var runtimeNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
 
 func (p ExecutionProfile) sessionConfig() *runtime.InitialSessionConfig {
-	return &runtime.InitialSessionConfig{Model: p.Model, Effort: p.Effort}
+	preset := p.PermissionPreset
+	if preset == "" {
+		preset = agent.PermissionPresetFullAccess
+	}
+	return &runtime.InitialSessionConfig{Model: p.Model, Effort: p.Effort, PermissionPreset: preset}
+}
+
+func (p ExecutionProfile) sameModel(other ExecutionProfile) bool {
+	return p.RuntimeRef == other.RuntimeRef && p.Model == other.Model && p.Effort == other.Effort
 }
 
 func (p ExecutionProfile) valid() bool {
@@ -86,7 +96,7 @@ func (c *ExecutionConfig) validate(resolve func(string) string) error {
 		return problem("invalid_argument", "execution namespace must be a DNS label of at most 24 bytes")
 	}
 	if !c.Roles.Router.valid() || !c.Roles.Topic.valid() {
-		return problem("invalid_argument", "execution.roles.router and execution.roles.topic each require a valid runtimeRef and model, with optional effort")
+		return problem("invalid_argument", "execution.roles.router and execution.roles.topic each require a valid runtimeRef and model, with optional effort and permissionPreset")
 	}
 	if len(c.WorkerTemplates) == 0 {
 		return problem("invalid_argument", "execution.workerTemplates requires at least one template")
@@ -94,7 +104,7 @@ func (c *ExecutionConfig) validate(resolve func(string) string) error {
 	seen := make(map[[2]string]bool, len(c.WorkerTemplates))
 	for _, template := range c.WorkerTemplates {
 		if !template.valid() || strings.TrimSpace(template.Description) == "" {
-			return problem("invalid_argument", "each Worker template requires a valid runtimeRef, model and nonblank description, with optional effort")
+			return problem("invalid_argument", "each Worker template requires a valid runtimeRef, model and nonblank description, with optional effort and permissionPreset")
 		}
 		pair := [2]string{template.RuntimeRef, template.Model}
 		if seen[pair] {
@@ -187,10 +197,18 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 		if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, b.ID); err != nil {
 			return err
 		}
-		if b.ExecutionProfile != c.Execution.Roles.Router || b.Workspace != c.Execution.RouterWorkspace || b.Namespace != c.Execution.Namespace+"-router" {
+		configured := c.Execution.Roles.Router
+		if !b.ExecutionProfile.sameModel(configured) || b.Workspace != c.Execution.RouterWorkspace || b.Namespace != c.Execution.Namespace+"-router" {
 			return problem("failed_precondition", "execution configuration differs from persisted Router binding")
 		}
 		expected := makeSpec(c, b)
+		if spec.Config != nil {
+			// Existing Sessions keep their persisted permission request.
+			expected.Config.PermissionPreset = spec.Config.PermissionPreset
+			if configured.PermissionPreset != "" && spec.Config.PermissionPreset != "" && configured.PermissionPreset != spec.Config.PermissionPreset {
+				return problem("failed_precondition", "execution configuration differs from persisted Router binding")
+			}
+		}
 		if !reflect.DeepEqual(spec, expected) {
 			return problem("failed_precondition", "execution configuration differs from persisted Router binding")
 		}
@@ -218,8 +236,7 @@ func createRoleBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, w
 		b.Namespace = topicNamespace(c, owner)
 	}
 	b.Name = role + "-g" + strconv.Itoa(b.Generation)
-	usePreviousSession(&b, previous)
-	return b, insertBinding(ctx, tx, c, b)
+	return insertBinding(ctx, tx, c, b, previous)
 }
 
 func topicNamespace(c Config, topicID string) string {
@@ -236,18 +253,34 @@ func createWorkerBinding(ctx context.Context, tx *sql.Tx, c Config, x Execution,
 		State: "pending", Namespace: topicNamespace(c, x.TopicID),
 		Name: "worker-" + strings.ReplaceAll(x.ID, "_", "-") + "-g" + strconv.Itoa(x.Generation),
 	}
-	usePreviousSession(&b, previous)
-	return b, insertBinding(ctx, tx, c, b)
+	return insertBinding(ctx, tx, c, b, previous)
 }
 
-func usePreviousSession(next *Binding, previous Binding) {
+func usePreviousSession(ctx context.Context, tx *sql.Tx, next *Binding, previous Binding) (agent.PermissionPreset, error) {
 	next.PreviousBindingID = previous.ID
 	if previous.Close != nil && previous.Close.Reusable && next.Workspace == previous.Workspace &&
-		next.ExecutionProfile == previous.ExecutionProfile && next.Namespace == previous.Namespace && previous.SessionID != "" {
+		next.ExecutionProfile.sameModel(previous.ExecutionProfile) && next.Namespace == previous.Namespace && previous.SessionID != "" {
+		var spec resource.SessionSpec
+		if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, previous.ID); err != nil {
+			return "", err
+		}
+		var saved agent.PermissionPreset
+		if spec.Config != nil {
+			saved = spec.Config.PermissionPreset
+		}
+		effective := saved
+		if effective == "" {
+			effective = agent.PermissionPresetAutoReview
+		}
+		if requested := next.PermissionPreset; requested != "" && requested != effective {
+			return "", nil
+		}
 		next.SessionID, next.SessionUID, next.Name = previous.SessionID, previous.SessionUID, previous.Name
 		next.CapabilityFileID = previous.capabilityFileID()
 		next.MCPWorkingDirectory = previous.MCPWorkingDirectory
+		return saved, nil
 	}
+	return "", nil
 }
 
 func (b Binding) capabilityFileID() string {
@@ -257,13 +290,21 @@ func (b Binding) capabilityFileID() string {
 	return b.ID
 }
 
-func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b Binding) error {
-	spec, err := json.Marshal(makeSpec(c, b))
+func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous Binding) (Binding, error) {
+	savedPreset, err := usePreviousSession(ctx, tx, &b, previous)
 	if err != nil {
-		return storageError()
+		return Binding{}, err
+	}
+	request := makeSpec(c, b)
+	if b.SessionID != "" {
+		request.Config.PermissionPreset = savedPreset
+	}
+	spec, err := json.Marshal(request)
+	if err != nil {
+		return Binding{}, storageError()
 	}
 	token := newID("cap") + newID("key")
-	return putJSON(ctx, tx, "INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body) VALUES(?,?,?,?,?,?,?,?,?)", b, b.ID, b.Role, b.OwnerID, b.Generation, b.CreatedAt, token, spec, b.State)
+	return b, putJSON(ctx, tx, "INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body) VALUES(?,?,?,?,?,?,?,?,?)", b, b.ID, b.Role, b.OwnerID, b.Generation, b.CreatedAt, token, spec, b.State)
 }
 
 func makeSpec(c Config, b Binding) resource.SessionSpec {

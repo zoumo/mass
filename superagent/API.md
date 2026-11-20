@@ -254,6 +254,7 @@ execution:
       runtimeRef: codex-fast
       model: gpt-6.2-sol
       effort: low
+      # permissionPreset: fullAccess
     topic:
       runtimeRef: codex-standard
       model: gpt-6.2-sol
@@ -276,6 +277,13 @@ A Worker template also requires a nonblank description. Each
 may use the same Runtime with different models. Effort is optional, and model
 and effort are passed literally to massd. A configured pair permits a
 Topic to select it. Core checks Runtime availability during Session preparation.
+
+Both roles and each Worker template can set `permissionPreset` to
+`fullAccess`, `manualReview`, or `autoReview`. New Sessions default to
+`fullAccess`. Existing Sessions resume with their saved preset. An existing
+Session whose spec omits the preset uses the SDK default, `autoReview`.
+An explicit preset change for a Worker requires a new Session when the
+previous Session used a different preset.
 
 Namespace is a DNS label of at most 24 bytes. The Router is unique per Core
 store, in `<namespace>-router/router-g1`. Each Topic has a stable namespace derived from its ID and Session `topic-g1`.

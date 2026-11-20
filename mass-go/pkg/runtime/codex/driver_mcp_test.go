@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
@@ -56,6 +57,11 @@ func TestCodexDriverTestPeer(t *testing.T) {
 				"thread":         codexPeerThread(cwd),
 				"approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": cwd,
 				"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"},
+			}
+			if envelope.Params["sandbox"] == "danger-full-access" {
+				result["approvalPolicy"] = "never"
+				result["approvalsReviewer"] = "user"
+				result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
 			}
 			if err := enc.Encode(map[string]any{"id": envelope.ID, "result": result}); err != nil {
 				os.Exit(5)
@@ -106,6 +112,9 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 			driver, cwd, trace, openedID := newCodexMCPDriverTestPeer(t)
 			address := runtime.Address{Namespace: "one", SessionName: "mcp"}
 			spec := runtime.SessionSpec{Cwd: cwd, MCPServers: servers}
+			if name == "empty" {
+				spec.Config = &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetFullAccess}
+			}
 			opened, err := driver.OpenSession(t.Context(), address, spec)
 			*openedID = opened.SessionID
 			require.NoError(t, err)
@@ -138,6 +147,15 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 					continue
 				}
 				methods = append(methods, record.Method)
+				if spec.Config == nil {
+					require.Equal(t, "on-request", record.Params["approvalPolicy"])
+					require.Equal(t, "auto_review", record.Params["approvalsReviewer"])
+					require.Equal(t, "workspace-write", record.Params["sandbox"])
+				} else {
+					require.Equal(t, "never", record.Params["approvalPolicy"])
+					require.NotContains(t, record.Params, "approvalsReviewer")
+					require.Equal(t, "danger-full-access", record.Params["sandbox"])
+				}
 				if servers == nil || len(*servers) == 0 {
 					require.NotContains(t, record.Params, "config", "omitted/empty lists do not disable native ambient servers")
 					continue

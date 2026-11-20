@@ -82,7 +82,8 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := readCtx.Err(); err != nil {
 		return err
 	}
-	if err := (agent.OpenOptions{Config: spec.Config.SDKConfig(), Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
+	openOptions := spec.SDKOpenOptions()
+	if err := openOptions.Validate(); err != nil {
 		return agentrelay.MapError(err)
 	}
 	if err := d.vault.Check(); err != nil {
@@ -113,15 +114,12 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	}
 	// Once dispatched, a missing resume response cannot prove native release.
 	h.resumeUnknown = true
+	openOptions.Cwd = cwd
+	openOptions.Features = agentFeatures(spec.Features)
+	openOptions.MCPServers = mcpServers
 	native, err := provider.Resume(readCtx, agent.ResumeOptions{
-		SessionID: id,
-		OpenOptions: agent.OpenOptions{
-			Cwd:                    cwd,
-			AdditionalSystemPrompt: spec.SystemPrompt,
-			Config:                 spec.Config.SDKConfig(),
-			Features:               agentFeatures(spec.Features),
-			MCPServers:             mcpServers,
-		},
+		SessionID:   id,
+		OpenOptions: openOptions,
 	})
 	if err != nil {
 		h.resumeUnknown = resumeOutcomeUnknown(err)
