@@ -36,6 +36,15 @@ type Config struct {
 }
 
 func LoadConfig(path string) (Config, error) {
+	return loadConfig(path, "")
+}
+
+// LoadComposedConfig uses the RPC endpoint of the newly started massd for execution.
+func LoadComposedConfig(path, massdEndpoint string) (Config, error) {
+	return loadConfig(path, massdEndpoint)
+}
+
+func loadConfig(path, massdEndpoint string) (Config, error) {
 	var c Config
 	v := viper.New()
 	v.SetConfigFile(path)
@@ -67,6 +76,9 @@ func LoadConfig(path string) (Config, error) {
 			d.DecodeHook = nil
 		}); err != nil {
 			return c, problem("invalid_argument", "execution configuration contains unknown or invalid fields")
+		}
+		if massdEndpoint != "" {
+			execution.MassdEndpoint = massdEndpoint
 		}
 		c.Execution = &execution
 		if err := c.Execution.validate(resolve); err != nil {

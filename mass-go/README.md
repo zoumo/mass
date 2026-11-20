@@ -69,8 +69,11 @@ listen: 127.0.0.1:24368
 local: true
 ```
 
-Then run `bin/massd` without flags. Optional fields are `data` (an absolute
-owned directory), `tokenFile`, `tlsCert`, `tlsKey`, `allowedOrigins`,
+Then run `bin/massd` without flags. Use `dataDir` to choose the owned data
+directory. A relative `dataDir` is resolved next to the YAML file. The legacy
+`data` field and the `--data` override take absolute paths. Specify at most one
+of `dataDir` and `data` in the YAML.
+Other optional fields include `tokenFile`, `tlsCert`, `tlsKey`, `allowedOrigins`,
 `prototypeAutoApprovePermissions`, `sessionIdleTimeout`, and `writeTimeout`.
 Automatic permission approval is off by default.
 `sessionIdleTimeout` accepts Go duration syntax such as `5s` or `10m`; its
@@ -85,21 +88,18 @@ YAML field uses the `--write-timeout` default, and the flag overrides the file.
 Existing data is not moved into the default directory. Legacy `state.json` snapshots
 are explicitly rejected; there is no automatic migration.
 
-Runtime metadata lives in `~/.mass/runtime.jsonl`. Each Session uses
-`~/.mass/sessions/<namespace>/<name>/state.json` for its resource and
-`events.jsonl` for its append-only events, one complete event per line. Event
-bodies are read on demand; Store keeps only event identity/offset/digest indexes
-in memory. Recovery records contain only metadata or the current new event batch,
-never full history. The original names are directory
-components, never hashes; unsafe path components and symlink entries are rejected.
-Driver-private recovery remains under `~/.mass/private/`, separate from public
-Session metadata/history. `--data` or the YAML `data` field overrides the root,
-placing `runtime.jsonl`, `session_index.jsonl`, `sessions/` and `private/` directly inside it.
-`session_index.jsonl` contains only namespace, name, sessionId and runtimeRef;
-Session status changes and history appends do not rewrite it.
-it is rebuilt from Session resources on writable open. Read-only open never repairs
-an index. `.store.json` keeps the format marker and cursor signing key, separate
-from Runtime records.
+The default MetaStore backend saves Runtime and Session resources in
+`metadata-authority.sqlite`. With `metaStore.backend: file`, Runtime resources
+use `runtime.jsonl` and Session resources use `sessions/<namespace>/<name>/state.json`.
+The file backend maintains `session_index.jsonl` for Session lookups and
+`.store.json` for the format marker and cursor signing key.
+
+Both backends store append-only Session history in
+`sessions/<namespace>/<name>/eventlogs/<encoded-session-id>/events.jsonl`.
+The `history.sqlite` query database can be rebuilt from these logs.
+Codex and Claude drivers store their private recovery records under `private/`.
+All these paths are relative to the data directory selected by `dataDir`,
+`--data`, or the default `~/.mass`.
 
 ```sh
 make build-go

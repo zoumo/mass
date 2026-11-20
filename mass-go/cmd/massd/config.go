@@ -4,13 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+var errConflictingDataFields = errors.New("choose only one of dataDir or data")
 
 func readOptions(cmd *cobra.Command, path string) (options, error) {
 	config := viper.New()
@@ -24,6 +28,10 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 	}
 	if err := validateSessionIdleTimeoutType(config); err != nil {
 		return options{}, err
+	}
+	keys := config.AllKeys()
+	if slices.Contains(keys, "data") && slices.Contains(keys, "datadir") {
+		return options{}, errConflictingDataFields
 	}
 	// Validate the file before flags can hide invalid field values.
 	if _, err := decodeOptions(config); err != nil {
@@ -45,7 +53,20 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 			return options{}, fmt.Errorf("cannot bind configuration flag: %w", err)
 		}
 	}
-	return decodeOptions(config)
+	configured, err := decodeOptions(config)
+	if err != nil {
+		return options{}, err
+	}
+	if configured.DataDir != nil && !cmd.Flags().Changed("data") {
+		configured.Data = *configured.DataDir
+		if configured.Data != "" && !filepath.IsAbs(configured.Data) {
+			configured.Data, err = filepath.Abs(filepath.Join(filepath.Dir(path), configured.Data))
+			if err != nil {
+				return options{}, err
+			}
+		}
+	}
+	return configured, nil
 }
 
 func validateSessionIdleTimeoutType(config *viper.Viper) error {

@@ -175,3 +175,42 @@ func (s *commandSuite) TestMetadataConfiguration() {
 		s.Require().Error(err, value)
 	}
 }
+
+func (s *commandSuite) TestDataDirConfiguration() {
+	home := s.T().TempDir()
+	s.T().Setenv("HOME", home)
+	s.T().Chdir(home)
+	configDir := filepath.Join(home, "run")
+	s.Require().NoError(os.Mkdir(configDir, 0o700))
+	path := filepath.Join("run", "massd.yaml")
+	absolute := filepath.Join(home, "explicit")
+	for _, tc := range []struct {
+		name, yaml, flag, data, errorMessage string
+	}{
+		{name: "relative", yaml: "dataDir: ./massd", data: filepath.Join(configDir, "massd")},
+		{name: "absolute", yaml: "dataDir: " + absolute, data: absolute},
+		{name: "default", yaml: "local: true", data: filepath.Join(home, ".mass")},
+		{name: "legacy", yaml: "data: " + absolute, data: absolute},
+		{name: "legacy relative remains unresolved", yaml: "data: ./massd", data: "./massd"},
+		{name: "explicit flag", yaml: "dataDir: ./massd", flag: absolute, data: absolute},
+		{name: "conflicting fields", yaml: "dataDir: ./massd\ndata: " + absolute, flag: absolute, errorMessage: "choose only one of dataDir or data"},
+		{name: "null legacy field still conflicts", yaml: "dataDir: ./massd\ndata: null", errorMessage: "choose only one of dataDir or data"},
+		{name: "null dataDir still conflicts", yaml: "dataDir: null\ndata: " + absolute, errorMessage: "choose only one of dataDir or data"},
+		{name: "invalid type even with flag", yaml: "dataDir: 72", flag: absolute, errorMessage: "known fields with valid types"},
+	} {
+		s.Run(tc.name, func() {
+			s.Require().NoError(os.WriteFile(path, []byte(tc.yaml+"\n"), 0o600))
+			cmd := newCommand()
+			if tc.flag != "" {
+				s.Require().NoError(cmd.Flags().Set("data", tc.flag))
+			}
+			got, err := readOptions(cmd, path)
+			if tc.errorMessage != "" {
+				s.Require().ErrorContains(err, tc.errorMessage)
+				return
+			}
+			s.Require().NoError(err)
+			s.Equal(tc.data, got.Data)
+		})
+	}
+}

@@ -45,35 +45,13 @@ func New() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		server, err := core.Start(c)
-		if err != nil {
-			return err
-		}
-		logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
 		signals, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		done := make(chan error, 1)
-		go func() { done <- server.Serve() }()
-		if encodeErr := json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{"endpoint": server.Endpoint(), "observerEndpoint": server.Endpoint() + "/observer/", "status": "ready"}); encodeErr != nil {
-			_ = server.Shutdown(context.Background())
-			return encodeErr
-		}
-		select {
-		case err = <-done:
-		case <-signals.Done():
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		closeErr := server.Shutdown(ctx)
-		if closeErr != nil {
-			logger.Error("Core shutdown incomplete", "reason", "shutdown_failed")
-			return closeErr
-		}
-		return err
+		return runCore(signals, cmd, c, "", nil)
 	}}
 	serve.Flags().StringVar(&config, "config", "", "YAML configuration file")
 	_ = serve.MarkFlagRequired("config")
-	root.AddCommand(serve)
+	root.AddCommand(serve, newCompose())
 	var endpoint, cursor, thread, topic, issue, message, activityFilter string
 	var limit int
 	var newest bool
@@ -167,4 +145,58 @@ func New() *cobra.Command {
 	root.AddCommand(mcp)
 	root.AddCommand(newRecoverInput(), newInspectBinding(), newReleaseEcho())
 	return root
+}
+
+func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoint string, daemon *massdProcess) (result error) {
+	server, err := core.Start(config)
+	if err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	var serveErr error
+	go func() {
+		defer close(done)
+		serveErr = server.Serve()
+	}()
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdown); err != nil {
+			logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
+			logger.Error("Core shutdown incomplete", "reason", "shutdown_failed")
+			result = errors.Join(result, err)
+		}
+		<-done
+	}()
+
+	var massdDone <-chan struct{}
+	addresses := map[string]string{"endpoint": server.Endpoint(), "observerEndpoint": server.Endpoint() + "/observer/", "status": "ready"}
+	if daemon != nil {
+		massdDone = daemon.done
+		addresses["massdEndpoint"] = endpoint
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-massdDone:
+		return daemon.unexpectedExit()
+	default:
+	}
+	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(addresses); err != nil {
+		return err
+	}
+	select {
+	case <-done:
+		if serveErr == nil && daemon != nil {
+			return errors.New("core exited unexpectedly")
+		}
+		return serveErr
+	case <-ctx.Done():
+		return nil
+	case <-massdDone:
+		if ctx.Err() != nil {
+			return nil
+		}
+		return daemon.unexpectedExit()
+	}
 }

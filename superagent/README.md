@@ -110,6 +110,44 @@ Optional `storageMaxPages` bounds main database growth in 4096-byte SQLite pages
 budget returns unavailable without an accepted receipt. Schema initialization
 also has to fit. It is an operational storage budget, not a message limit.
 
+## Running massd and Core together
+
+For an installation under `~/.mass`, put `massd.yaml` and `core.yaml` in
+that directory. Put the following settings in `massd.yaml`.
+
+```yaml
+dataDir: ./massd
+listen: 127.0.0.1:0
+local: true
+```
+
+Use `config.example.yaml` as the starting point for `core.yaml`. Set
+`dataDir: ./superagent` and configure a source and its private token file.
+Add the `execution` block to enable agent execution. Compose fills in
+`execution.massdEndpoint` using the actual RPC address of its massd process.
+Keep the Core listen port fixed when execution is enabled. To use massd
+authentication, configure its `tokenFile` and the matching Core
+`execution.tokenFile` in place of massd local mode. Use an absolute path
+for the massd `tokenFile` when starting from outside the configuration
+directory.
+
+Build the binaries from the repository root and start both services.
+
+```sh
+make build-go build-superagent
+bin/superagent compose \
+  --massd-bin ./bin/massd \
+  --massd-config "$HOME/.mass/massd.yaml" \
+  --core-config "$HOME/.mass/core.yaml"
+```
+
+When both services are ready, the command prints one JSON record with
+`massdEndpoint`, `endpoint`, `observerEndpoint`, and `status`. Open the
+`observerEndpoint` URL to view the Observer. Compose looks for `massd` on
+`PATH` when `--massd-bin` is omitted. Press Ctrl-C to stop both services.
+Use a new temporary run directory with the same layout for development,
+Observer previews, and automated tests.
+
 ## Ingress and queries
 
 See [API.md](API.md) for exact payloads, errors, retry and cursor semantics.
