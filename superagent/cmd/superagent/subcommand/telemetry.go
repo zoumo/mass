@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
+	"github.com/zoumo/mass/mass-go/pkg/processmetrics"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -66,8 +67,9 @@ func newTelemetryRuntime(ctx context.Context, logger *slog.Logger) (*telemetryRu
 			t.shutdown()
 			return nil, errors.New("cannot initialize OTLP metric exporter")
 		}
-		reader := sdkmetric.NewPeriodicReader(exporter)
+		reader := sdkmetric.NewPeriodicReader(exporter, processmetrics.WithRuntimeHistograms(logger))
 		provider := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(reader))
+		processmetrics.Register(provider, logger)
 		t.options.Metrics = provider
 		t.shutdowns = append(t.shutdowns, provider.Shutdown)
 	}

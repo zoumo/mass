@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -22,6 +23,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/zoumo/mass/mass-go/pkg/processmetrics"
 )
 
 type daemonTelemetry struct {
@@ -60,7 +63,10 @@ func newTelemetry(ctx context.Context) (*daemonTelemetry, error) {
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		slog.Warn("OpenTelemetry operation failed")
 	}))
-	res := resource.NewSchemaless(attribute.String("service.name", "massd"))
+	res := resource.NewSchemaless(
+		attribute.String("service.name", "massd"),
+		attribute.String("service.instance.id", uuid.NewString()),
+	)
 	if traces {
 		exporter, err := otlptracehttp.New(ctx)
 		if err != nil {
@@ -76,7 +82,9 @@ func newTelemetry(ctx context.Context) (*daemonTelemetry, error) {
 			t.shutdown()
 			return nil, errors.New("cannot initialize OTLP metric exporter")
 		}
-		provider := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)))
+		reader := sdkmetric.NewPeriodicReader(exporter, processmetrics.WithRuntimeHistograms(slog.Default()))
+		provider := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(reader))
+		processmetrics.Register(provider, slog.Default())
 		t.metrics = provider
 		t.shutdowns = append(t.shutdowns, provider.Shutdown)
 	}
