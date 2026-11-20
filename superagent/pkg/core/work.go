@@ -45,6 +45,32 @@ type Issue struct {
 	Completion                *Completion       `json:"completion,omitempty"`
 	Cancellation              *LifecycleChange  `json:"cancellation,omitempty"`
 	Reopening                 *LifecycleChange  `json:"reopening,omitempty"`
+	promptEventKind           string            // Set only on the copy used for dispatch.
+}
+
+var _ AgentPromptView = Issue{}
+
+func (i Issue) MarshalAgentPromptJSON() ([]byte, error) {
+	view := map[string]any{"id": i.ID, "status": i.Status}
+	switch i.promptEventKind {
+	case routedMessageKind:
+		view["revision"] = i.Revision
+	case reportSubmittedKind:
+		view["revision"] = i.Revision
+		if i.CurrentExecutionID != "" {
+			view["currentExecutionId"] = i.CurrentExecutionID
+		}
+	}
+	if i.promptEventKind != routedMessageKind {
+		view["goal"], view["goalRevision"] = i.Requirements, i.RequirementsRevision
+	}
+	if i.promptEventKind != reportSubmittedKind && len(i.Blockers) != 0 {
+		view["blockers"] = i.Blockers
+	}
+	if i.promptEventKind != routedMessageKind && i.promptEventKind != reportSubmittedKind && len(i.Materials) != 0 {
+		view["materials"] = i.Materials
+	}
+	return json.Marshal(view)
 }
 
 type Execution struct {
@@ -66,15 +92,14 @@ type Execution struct {
 }
 
 type CreateIssueRequest struct {
-	OperationID  string     `json:"operationId"`
-	Title        string     `json:"title"`
-	Requirements string     `json:"requirements,omitempty"`
-	Goal         string     `json:"goal,omitempty"`
-	Workspace    string     `json:"workspace"`
-	RuntimeRef   string     `json:"runtimeRef"`
-	Model        string     `json:"model"`
-	Materials    []Material `json:"materials,omitempty"`
-	Start        bool       `json:"start,omitempty"`
+	OperationID string     `json:"operationId"`
+	Title       string     `json:"title"`
+	Goal        string     `json:"goal,omitempty"`
+	Workspace   string     `json:"workspace,omitempty"`
+	RuntimeRef  string     `json:"runtimeRef"`
+	Model       string     `json:"model"`
+	Materials   []Material `json:"materials,omitempty"`
+	Start       bool       `json:"start,omitempty"`
 }
 
 type StartIssueRequest struct {
@@ -305,12 +330,18 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		if err != nil {
 			return nil, err
 		}
-		goal, err := issueGoal(r.Goal, r.Requirements)
-		if err != nil {
+		if err := validateGoal(r.Goal); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(r.Title) == "" || !filepath.IsAbs(r.Workspace) {
-			return nil, problem("invalid_argument", "title and an absolute workspace are required")
+		workspace := r.Workspace
+		if workspace == "" {
+			workspace = t.Workspace
+		}
+		if strings.TrimSpace(r.Title) == "" {
+			return nil, problem("invalid_argument", "title is required")
+		}
+		if !filepath.IsAbs(workspace) {
+			return nil, problem("invalid_argument", "workspace must be an absolute path")
 		}
 		profile, err := s.config.Execution.workerProfile(r.RuntimeRef, r.Model)
 		if err != nil {
@@ -321,7 +352,7 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		}
 		at := now()
 		issue := Issue{
-			TopicID: t.ID, Title: r.Title, Requirements: goal, Workspace: filepath.Clean(r.Workspace),
+			TopicID: t.ID, Title: r.Title, Requirements: r.Goal, Workspace: filepath.Clean(workspace),
 			ExecutionProfile: profile, Materials: r.Materials, Status: "pending", Revision: 1, RequirementsRevision: 1, CreatedAt: at, UpdatedAt: at,
 		}
 		if err := checkWorkspace(issue.Workspace); err != nil {

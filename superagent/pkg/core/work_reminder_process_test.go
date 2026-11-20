@@ -89,9 +89,9 @@ func checkReminderCall(t *testing.T, peer *nativeDeliveryPeer, b core.Binding, o
 	require.Equal(t, b.SessionID, call.session)
 	ev := decodeInternalBatch(t, call, observed.ReminderEventID)[0]
 	require.Equal(t, reportReminder, ev.Kind)
-	require.Equal(t, b.OwnerID, ev.Recipient.ExecutionID)
-	require.Contains(t, string(ev.Body), `"executionId":"`+b.OwnerID+`"`)
-	require.Contains(t, string(ev.Body), "Do not run the Issue again")
+	require.JSONEq(t, `{"events":[{"delivery_id":"`+observed.ReminderEventID+`","kind":"report_reminder"}]}`, call.text)
+	require.Empty(t, ev.Body)
+	require.Empty(t, ev.Refs)
 	return call
 }
 
@@ -99,7 +99,7 @@ func updateReminderWork(t *testing.T, topic *stdioClient, work core.WorkReceipt)
 	t.Helper()
 	return mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "update", IssueID: work.Issue.ID, ExpectedRevision: work.Issue.Revision,
-		Requirements: "Also verify the amended sample.", NotifyWorker: true,
+		Goal: "Also verify the amended sample.", NotifyWorker: true,
 	})
 }
 

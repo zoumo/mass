@@ -60,6 +60,110 @@ type internalDelivery struct {
 	Content   *StructuredContent  `json:"content,omitempty"`
 	Body      json.RawMessage     `json:"body,omitempty"`
 	Refs      []deliveryReference `json:"refs,omitempty"`
+	// Optional facts on the copy used for dispatch.
+	truncated     bool
+	promptVersion int
+	threadKey     string
+	routing       json.RawMessage
+	quotedReply   json.RawMessage
+	issue         *Issue
+	report        *Report
+	messages      []json.RawMessage
+}
+
+// AgentPromptView encodes the fields an agent needs to act on the source record.
+type AgentPromptView interface {
+	MarshalAgentPromptJSON() ([]byte, error)
+}
+
+var _ AgentPromptView = internalDelivery{}
+
+func (d internalDelivery) MarshalAgentPromptJSON() ([]byte, error) {
+	event := map[string]any{"delivery_id": d.ID, "kind": d.Kind}
+	var refKind string
+	var bodyKeys []string
+	switch d.Kind {
+	case routeRequestKind, routedMessageKind:
+		refKind = messageRefKind
+	case reportSubmittedKind:
+		refKind = "report"
+	case "outbox_failed":
+		refKind = "outbox"
+	case workerUpdateKind:
+		bodyKeys = []string{"materials"}
+	case contextSupplement:
+		switch d.Recipient.Kind {
+		case "worker":
+			bodyKeys = []string{"materials"}
+		case "topic":
+			refKind = "report"
+			bodyKeys = []string{"type", "dependencyIssueId", "dependentIssueIds", "recovery"}
+			if d.promptVersion >= agentPromptVersion {
+				bodyKeys = append(bodyKeys, "previousStatus", "status")
+			}
+		}
+	}
+	if refKind != "" {
+		var refs []deliveryReference
+		for _, ref := range d.Refs {
+			if ref.Kind == refKind || d.Kind == routeRequestKind && ref.Kind == returnedRefKind {
+				refs = append(refs, deliveryReference{Kind: ref.Kind, ID: ref.ID})
+			}
+		}
+		if len(refs) != 0 {
+			event["refs"] = refs
+		}
+	}
+	if d.truncated {
+		event["truncated"] = true
+		return json.Marshal(event)
+	}
+	if d.Content != nil && (d.Kind == routedMessageKind || d.Kind == workerUpdateKind || d.Kind == contextSupplement ||
+		d.Kind == routeRequestKind && d.promptVersion >= agentPromptVersion) {
+		event["content"] = d.Content
+	}
+	if d.Kind == routeRequestKind && len(d.routing) != 0 {
+		event["threadKey"] = d.threadKey
+		event["routing"] = d.routing
+	}
+	if len(d.quotedReply) != 0 {
+		event["quotedReply"] = d.quotedReply
+	}
+	if d.issue != nil {
+		issue := *d.issue
+		issue.promptEventKind = d.Kind
+		raw, err := issue.MarshalAgentPromptJSON()
+		if err != nil {
+			return nil, err
+		}
+		event["issue"] = json.RawMessage(raw)
+	}
+	if d.report != nil {
+		raw, err := d.report.MarshalAgentPromptJSON()
+		if err != nil {
+			return nil, err
+		}
+		event["report"] = json.RawMessage(raw)
+	}
+	if len(d.messages) != 0 {
+		event["messages"] = d.messages
+	}
+	if len(bodyKeys) != 0 && len(d.Body) != 0 {
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(d.Body, &body); err != nil {
+			return nil, err
+		}
+		selected := make(map[string]json.RawMessage, len(bodyKeys))
+		for _, key := range bodyKeys {
+			if value, ok := body[key]; ok {
+				selected[key] = value
+			}
+		}
+		if len(selected) != 0 {
+			event["body"] = selected
+		}
+	}
+	return json.Marshal(event)
 }
 
 // enqueueInternalDelivery writes a pending item in the producer's transaction.

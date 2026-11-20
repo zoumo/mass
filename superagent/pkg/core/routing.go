@@ -36,6 +36,7 @@ type Binding struct {
 	Namespace  string `json:"namespace"`
 	Name       string `json:"name"`
 	ExecutionProfile
+	AgentPromptVersion   int           `json:"agentPromptVersion,omitempty"`
 	RuntimeType          string        `json:"runtimeType,omitempty"`
 	RuntimeUID           string        `json:"runtimeUid,omitempty"`
 	RuntimeVersion       string        `json:"runtimeResourceVersion,omitempty"`

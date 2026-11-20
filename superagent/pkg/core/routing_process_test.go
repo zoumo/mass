@@ -479,7 +479,7 @@ func TestRoutingPublicProcess(t *testing.T) {
 	p.stop(t, true)
 	p = f.start()
 	require.Equal(t, router.ID, waitBinding(t, p, "router", "", "ready").ID)
-	require.Empty(t, liveMCP.call("tools/call", map[string]any{"name": "binding_get", "arguments": map[string]any{}})["error"])
+	require.Empty(t, liveMCP.call("tools/call", map[string]any{"name": "topic_query", "arguments": core.QueryRequest{Collection: "topics", ID: topicID}})["error"])
 	require.Len(t, bindings(t, p), len(before))
 	require.Equal(t, decision.ID, decide(t, p, token, r).ID)
 	_, data = request(t, http.MethodGet, p.endpoint, "/v1/observer/subscriptions", "", nil)
@@ -550,11 +550,20 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Binding
 	require.Empty(t, listed["error"], "MCP client metadata must not prevent scoped tool discovery")
 	require.Contains(t, string(listed["result"]), "route_decide")
 	require.NotContains(t, string(listed["result"]), "message_return")
+	require.NotContains(t, string(listed["result"]), "binding_get")
 	invalidList := r.call("tools/list", map[string]any{"role": "topic"})
 	require.Contains(t, string(invalidList["error"]), "Invalid params")
 	listed = s.call("tools/list", map[string]any{})
 	require.Contains(t, string(listed["result"]), "message_return")
 	require.NotContains(t, string(listed["result"]), "route_decide")
+	require.NotContains(t, string(listed["result"]), "binding_get")
+	mcpWorkError(t, r, "binding_get", "forbidden", struct{}{})
+	mcpWorkError(t, s, "binding_get", "forbidden", struct{}{})
+	for _, binding := range []core.Binding{router, topic} {
+		identity := roleCall(t, p, roleToken(t, f, binding), "binding_get", struct{}{})
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"role":%q,"ownerId":%q,"generation":%d}`,
+			binding.ID, binding.Role, binding.OwnerID, binding.Generation), string(identity))
+	}
 	got := r.call("tools/call", map[string]any{"name": "topic_query", "arguments": map[string]any{"collection": "topics", "id": topicID}})
 	require.Empty(t, got["error"])
 	require.NotContains(t, string(got["result"]), "bindingId")
@@ -760,7 +769,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	waitTimerDelivery(t, p, firedTimer.Followup.ID, "sent")
 	create := issueInput(f.dir, "observer-issue")
 	create.Title = "Verify sample build"
-	create.Requirements = "Run the sample build and inspect its exit code."
+	create.Goal = "Run the sample build and inspect its exit code."
 	create.Materials = []core.Material{{Label: "Build notes", URI: "artifacts/build-notes.md"}}
 	create.Start = true
 	work := roleWork[core.WorkReceipt](t, p, topicToken, "issue_create", create)
@@ -795,7 +804,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	})
 	updated := roleWork[core.WorkReceipt](t, p, topicToken, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "observer-update-requirements", IssueID: blocked.Issue.ID, ExpectedRevision: blocked.Issue.Revision,
-		Requirements: "Inspect the archived build output.", NotifyWorker: true,
+		Goal: "Inspect the archived build output.", NotifyWorker: true,
 	})
 	waitWorkDelivery(t, p, updated.NotificationEventID, "sent")
 	markdown := core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"### Archive review checklist\n\nThe **current build** is ready for review.\n\n- Check the build log\n- Compare the manifest with the previous build\n\nRun ` + "`" + `make verify` + "`" + ` before approving."}`)}
@@ -1056,6 +1065,117 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	t.Log("intake delivery resumed with its original ID; massd endpoint came from startup configuration and the existing binding identity was retained")
 }
 
+func TestRoutedMessageAgentPromptView(t *testing.T) {
+	t.Parallel()
+	peer := newNativeDeliveryPeer(t)
+	endpoint, massd := startDeliveryMassd(t, peer)
+	f, _ := deliveryFixture(t, endpoint)
+	configureOutboxSource(t, f)
+	p := f.start()
+	routerBinding := waitBinding(t, p, "router", "", "ready")
+	router := startRoleMCP(t, f, routerBinding)
+	var routerSession resource.Session
+	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: routerBinding.SessionID}, &routerSession))
+	require.Contains(t, routerSession.Spec.SystemPrompt, "deduplicate by delivery_id")
+	require.Contains(t, routerSession.Spec.SystemPrompt, "routing.round")
+	require.Contains(t, routerSession.Spec.SystemPrompt, "content.data.text")
+	require.NotContains(t, routerSession.Spec.SystemPrompt, "eventId")
+
+	short := input("short")
+	msg := submit(t, p, f, short)
+	route := peer.next(t, "turn/start")
+	require.Equal(t, routerBinding.SessionID, route.session)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":%q}},"threadKey":%q,"routing":{"round":1,"state":"pending"}}]}`, msg.EventID, msg.MessageID, short.Message.Text, msg.ThreadKey), route.text)
+	var payload struct {
+		Events []struct {
+			Refs    []struct{ ID string }
+			Routing struct{ Round int }
+		}
+	}
+	require.NoError(t, json.Unmarshal([]byte(route.text), &payload))
+	messageID := payload.Events[0].Refs[0].ID
+	route.answer <- nativeDeliveryAnswer{complete: true}
+	req := newRoute("short-topic", []string{messageID}, f.dir)
+	req.Rounds[messageID] = payload.Events[0].Routing.Round
+	decision := mcpWork[core.RouteDecision](t, router, "route_decide", req)
+	target := decision.Targets[0]
+	binding := waitBinding(t, p, "topic", target.TopicID, "ready")
+	topic := startRoleMCP(t, f, binding)
+	var topicSession resource.Session
+	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: binding.SessionID}, &topicSession))
+	require.Contains(t, topicSession.Spec.SystemPrompt, "content.data.text")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "source_query")
+	delivered := peer.next(t, "turn/start")
+	require.Equal(t, binding.SessionID, delivered.session)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":%q}}}]}`, target.DeliveryIDs[msg.MessageID], msg.MessageID, short.Message.Text), delivered.text)
+	delivered.answer <- nativeDeliveryAnswer{complete: true}
+
+	for _, req := range []core.SubmitRequest{input("long"), input("quoted")} {
+		if req.Message.SourceMessageID == "long" {
+			req.Message.Text = strings.Repeat("界", 700)
+		} else {
+			req.Message.QuotedMessage = json.RawMessage(`{"message_id":"native-question"}`)
+		}
+		receipt := submit(t, p, f, req)
+		call := peer.next(t, "turn/start")
+		require.Equal(t, binding.SessionID, call.session)
+		require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}]}]}`, receipt.EventID, receipt.MessageID), call.text)
+		call.answer <- nativeDeliveryAnswer{complete: true}
+
+		lookup := core.QueryRequest{Collection: "messages", ID: receipt.MessageID}
+		item := mcpWork[json.RawMessage](t, topic, "source_query", lookup)
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"source":"dws","text":%q,"threadKey":%q,"actor":"sender-1"}`, receipt.MessageID, req.Message.Text, receipt.ThreadKey), string(item))
+		items := mcpWork[core.Page](t, topic, "source_query", core.QueryRequest{Collection: "messages", ThreadKey: receipt.ThreadKey})
+		require.JSONEq(t, string(item), string(items.Items[len(items.Items)-1]))
+		original := readRecord[core.Message](t, p, "messages/"+receipt.MessageID)
+		require.Equal(t, req.Message.SourceMessageID, original.SourceMessageID)
+		require.Equal(t, req.Message.Channel, original.Channel)
+	}
+
+	issue := mcpWork[core.WorkReceipt](t, topic, "issue_create", issueInput(f.dir, "quoted-work")).Issue
+	issue = blockers(t, topic, issue, "wait-for-date", human("Confirm the release date"))
+	blocker := core.BlockerRef{IssueID: issue.ID, BlockerID: issue.Blockers[0].ID}
+	question := mcpWork[core.OutboxItem](t, topic, "outbox_message_reply_structured", core.ReplyRequest{
+		OperationID: "ask-date", MessageID: msg.MessageID, Content: markdownReply("Which date?"), BlockerRef: &blocker,
+	})
+	sent := outboxResult(question, "sent", "", "native-release-date")
+	sent.ConversationID = short.Message.Channel.ConversationID
+	resultOutbox(t, p, f.token, sent)
+
+	reply := input("matched-quote")
+	reply.Message.Text = "Tuesday UTC"
+	reply.Message.QuotedMessage = json.RawMessage(`{"message_id":"native-release-date"}`)
+	answer := submit(t, p, f, reply)
+	call := peer.next(t, "turn/start")
+	require.Equal(t, binding.SessionID, call.session)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":"Tuesday UTC"}},"quotedReply":{"outboxId":%q,"blockerRef":{"issueId":%q,"blockerId":%q}},"issue":{"id":%q,"revision":%d,"status":"blocked","blockers":[{"id":%q,"kind":"human","reason":"Confirm the release date"}]}}]}`, answer.EventID, answer.MessageID, question.ID, issue.ID, blocker.BlockerID, issue.ID, issue.Revision, blocker.BlockerID), call.text)
+	view := decodeInternalBatch(t, call, answer.EventID)[0]
+	var quotedIssue core.Issue
+	require.NoError(t, json.Unmarshal(view.Issue, &quotedIssue))
+	call.answer <- nativeDeliveryAnswer{complete: true}
+	resolved := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", core.UpdateBlockersRequest{
+		OperationID: "resolve-date", IssueID: quotedIssue.ID, ExpectedRevision: quotedIssue.Revision, UnblockedStatus: "pending",
+		Resolve: []core.BlockerResolution{{BlockerID: quotedIssue.Blockers[0].ID, Reason: reply.Message.Text, MessageID: answer.MessageID}},
+	})
+	require.Empty(t, resolved.Issue.Blockers)
+
+	long := input("long-router")
+	long.Message.ThreadRef.ID, long.Message.Channel = "unsubscribed", nil
+	long.Message.Text = strings.Repeat("界", 700)
+	longReceipt := submit(t, p, f, long)
+	longInput := peer.next(t, "turn/start")
+	require.Equal(t, routerBinding.SessionID, longInput.session)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}]}]}`, longReceipt.EventID, longReceipt.MessageID), longInput.text)
+	longInput.answer <- nativeDeliveryAnswer{complete: true}
+	type messageReadback struct {
+		Text    string
+		Routing struct{ Round int }
+	}
+	longReadback := mcpWork[messageReadback](t, router, "source_query", core.QueryRequest{Collection: "messages", ID: longReceipt.MessageID})
+	require.Equal(t, long.Message.Text, longReadback.Text)
+	require.Equal(t, 1, longReadback.Routing.Round)
+}
+
 func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	t.Parallel()
 	peer := newNativeDeliveryPeer(t)
@@ -1098,6 +1218,7 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	replayed := peer.next(t, "turn/start")
 	require.Equal(t, b.SessionID, replayed.session)
 	decodeInternalBatch(t, replayed, bID)
+	require.JSONEq(t, unconfirmed.text, replayed.text)
 	waitRouteStatus(t, p, bID, "dispatching")
 	aToken, bToken := roleToken(t, f, a), roleToken(t, f, b)
 	ret := core.ReturnRequest{DeliveryID: bID, Reason: "The second scope needs Router review"}
@@ -1112,9 +1233,25 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	require.Equal(t, router.SessionID, routerInput.session)
 	event := decodeInternalBatch(t, routerInput, returnID)[0]
 	require.Equal(t, "route_request", event.Kind)
-	require.Equal(t, b.OwnerID, event.Sender.TopicID)
+	require.Nil(t, event.Content)
 	require.JSONEq(t, fmt.Sprintf(`{"kind":"trigger_message","id":%q}`, m.MessageID), string(event.Refs[0]))
 	require.JSONEq(t, fmt.Sprintf(`{"kind":"internal_delivery","id":%q}`, bID), string(event.Refs[1]))
+	lookup := core.QueryRequest{Collection: "messages", ID: m.MessageID}
+	value := roleCall(t, p, routerToken, "source_query", lookup)
+	var detail struct {
+		Routing   struct{ Round int }
+		Relations []struct{ Reason string }
+	}
+	require.NoError(t, json.Unmarshal(value, &detail))
+	require.Equal(t, 2, detail.Routing.Round)
+	require.Condition(t, func() bool {
+		for _, relation := range detail.Relations {
+			if relation.Reason == ret.Reason {
+				return true
+			}
+		}
+		return false
+	})
 	routerInput.accept()
 	waitRouteStatus(t, p, returnID, "sent")
 	require.True(t, waitRouteStatus(t, p, bID, "superseded").Returned)

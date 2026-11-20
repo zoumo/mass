@@ -135,6 +135,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.Empty(t, empty.LastMessageAt)
 	require.Empty(t, page(t, p, "messages?threadKey="+url.QueryEscape(secondPR)).Items)
 	merged := prMessage("merged", secondPR+"#pullrequestreview-987", "Pull request merged")
+	merged.Message.Meta = map[string]any{"state": "merged", "changes": []string{"merged"}, "draft": false, "observationVersion": 5}
 	accepted := acceptPRMessage(t, p, token, merged)
 	require.Equal(t, workerPR.ThreadKey, accepted.ThreadKey)
 	direct := waitRouteStatus(t, p, accepted.EventID, "sent")
@@ -143,6 +144,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.Equal(t, first.OwnerID, direct.Recipient.TopicID)
 	delivered := mcpWork[core.Message](t, primary, "source_query", core.QueryRequest{Collection: "messages", ID: accepted.MessageID})
 	require.Equal(t, merged.Message.Text, delivered.Text)
+	require.Equal(t, map[string]any{"state": "merged", "changes": []any{"merged"}, "draft": false}, delivered.Meta)
 	after := readPRThread(t, p, secondPR)
 	require.Equal(t, empty.CreatedAt, after.CreatedAt)
 	require.Equal(t, accepted.AcceptedAt, after.LastMessageAt)
