@@ -87,13 +87,13 @@ func runCodex(send func(any)) {
 				id = "healthy"
 			}
 			cwds[id] = v.Params["cwd"]
-			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
 			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			reply(map[string]any{"thread": thread(v.Params["threadId"].(string))})
 		case "thread/resume":
 			id := v.Params["threadId"].(string)
-			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
 			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/turns/list":
 			reply(map[string]any{"data": []any{map[string]any{"id": "saved-turn", "status": "completed", "items": []any{}, "itemsView": "full"}}, "nextCursor": nil})
@@ -173,7 +173,7 @@ func runClaude(send func(any), cwd string) {
 				send(reply)
 				continue
 			}
-			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
+			send(clipeer.StartupReply(r["subtype"].(string), v["request_id"]))
 			if r["subtype"] == "initialize" {
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd, "tools": []any{}})
 				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})

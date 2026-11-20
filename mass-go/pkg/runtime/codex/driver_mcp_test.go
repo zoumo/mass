@@ -54,8 +54,8 @@ func TestCodexDriverTestPeer(t *testing.T) {
 			}
 			result := map[string]any{
 				"thread":         codexPeerThread(cwd),
-				"approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd,
-				"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"},
+				"approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": cwd,
+				"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"},
 			}
 			if err := enc.Encode(map[string]any{"id": envelope.ID, "result": result}); err != nil {
 				os.Exit(5)

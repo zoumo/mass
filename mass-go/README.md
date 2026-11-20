@@ -355,10 +355,12 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261119055031-27b9a36509ba`,
-source commit `27b9a36509ba106ed9c438fa2fafce090ab598ff`, without a local replacement. The external
-`agent-sdk-testify` tool is pinned to `v0.2.2-0.20261119051234-1c7981ff332a` for consumer recording and
-replay and is not a production dependency.
+The runtime SDK is pinned to `v0.0.0-20261120052249-0149c64e2e65`,
+source commit `0149c64e2e65f6ade8a213c243ef35a61238a3e2`, without a local
+replacement. Consumer recording and offline replay use `agent-sdk-testify`
+`v0.2.2`. Testify forwards the SDK's arguments after `--` to the native process
+during recording and ignores them during replay. Capture metadata stores the
+native version and omits those arguments.
 The active Claude fixtures retain SDK `09d4ddf1ff20` and testify `v0.2.1` as recording provenance. The
 current Codex suite and the historical `recordings/` exports retain their
 original recording versions; that provenance is intentionally not rewritten.

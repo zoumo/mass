@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -38,7 +39,7 @@ func TestClaudeDriverTestPeer(t *testing.T) {
 		os.Exit(3)
 	}
 	enc := json.NewEncoder(os.Stdout)
-	if err := controlSuccess(enc, initialize.RequestID, map[string]any{}); err != nil {
+	if err := controlSuccess(enc, initialize.RequestID, map[string]any{"current_permission_mode": startup.ClaudePermissionMode}); err != nil {
 		os.Exit(6)
 	}
 	line, err = reader.ReadBytes('\n')
@@ -53,6 +54,10 @@ func TestClaudeDriverTestPeer(t *testing.T) {
 	if err := claimSuccess(enc, claim, sessionID); err != nil {
 		os.Exit(6)
 	}
+	line, err = reader.ReadBytes('\n')
+	if err != nil || !replyStartupSettings(enc, line) {
+		os.Exit(8)
+	}
 	if err := enc.Encode(map[string]any{
 		"type": "system", "subtype": "init", "session_id": sessionID,
 		"cwd": claim.Request.CWD, "model": "synthetic", "tools": []any{},
@@ -61,6 +66,13 @@ func TestClaudeDriverTestPeer(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, reader)
 	os.Exit(0)
+}
+
+func replyStartupSettings(enc *json.Encoder, line []byte) bool {
+	var settings controlFrame
+	return json.Unmarshal(line, &settings) == nil &&
+		settings.Type == "control_request" && settings.Request.Subtype == "get_settings" &&
+		settings.RequestID != "" && controlSuccess(enc, settings.RequestID, startup.ClaudeSettings()) == nil
 }
 
 func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {

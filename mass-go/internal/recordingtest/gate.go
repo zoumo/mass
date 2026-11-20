@@ -325,7 +325,10 @@ func auditRecordingCase(root string, spec artifactCase) (string, caseIndex, erro
 		}
 	}
 	if spec.suite == claudeRecordingSuite {
-		if err := auditClaudeCapture(material, "auto/deepseek-v4.1-flash-1017", index.Facts.SessionID, spec.flow.project); err != nil {
+		if err := auditLegacyClaudeArgs(manifest.Native.Args, plan.Model); err != nil {
+			return "", caseIndex{}, err
+		}
+		if err := auditClaudeCapture(material, plan.Model, index.Facts.SessionID, spec.flow.project); err != nil {
 			return "", caseIndex{}, err
 		}
 	}
@@ -1072,7 +1075,7 @@ func RunAuditRejectsSensitiveMaterial(t *testing.T) {
 func RunRejectsIncompleteExecution(t *testing.T) {
 	h := newHarness(t)
 	material, index := loadCase(t, h.root, "codex", "basic", project, prompt)
-	session := h.replay(material, index.Facts, flowCase{name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project})
+	session := h.replay(material, index.Facts, flowCase{name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project, legacyPermissions: true})
 	t.Logf("validated active Codex baseline before execution mutations: %s", index.ExportPath)
 	pristine := filepath.Join(t.TempDir(), "session")
 	restoreDirectory(t, session, pristine)
@@ -1190,7 +1193,7 @@ func RunRejectsIncompleteExecution(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			restoreDirectory(t, pristine, session)
 			test.mutate(t, session)
-			require.ErrorContains(t, verifyExecution(session, material), test.want)
+			require.ErrorContains(t, verifyExecution(session, material, true), test.want)
 		})
 	}
 }

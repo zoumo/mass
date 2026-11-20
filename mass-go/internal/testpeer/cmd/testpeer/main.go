@@ -19,6 +19,7 @@ import (
 
 	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
 	"github.com/zoumo/mass/mass-go/internal/testpeer/scenario"
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 )
 
 const (
@@ -86,6 +87,12 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "mass-testpeer:", err)
 		return exitConfiguration
 	}
+	if *provider == "claude" && expectsStartupSettings(document) {
+		if err := startup.ValidateClaudePermissionArgs(native); err != nil {
+			fmt.Fprintln(os.Stderr, "mass-testpeer:", err)
+			return exitConfiguration
+		}
+	}
 	if *receipt != "" {
 		if _, err = os.Lstat(*receipt); err == nil {
 			fmt.Fprintln(os.Stderr, "mass-testpeer: receipt already exists")
@@ -140,6 +147,21 @@ func run(args []string) int {
 	default:
 		return exitFailure
 	}
+}
+
+func expectsStartupSettings(document *scenario.Document) bool {
+	for _, frame := range document.Frames {
+		if frame.Direction != scenario.ClientToServer {
+			continue
+		}
+		request, _ := frame.Wire.Member("request")
+		subtype, _ := request.Member("subtype")
+		name, _ := subtype.String()
+		if name == "get_settings" {
+			return true
+		}
+	}
+	return false
 }
 
 func readScenario(path, provider string, limits scenario.Limits) (*scenario.Document, error) {

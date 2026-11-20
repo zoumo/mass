@@ -12,17 +12,9 @@ import (
 	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
 )
 
-func auditClaudeCapture(material, model, sessionID, project string) error {
-	var manifest struct {
-		Native struct {
-			Args []string `json:"args"`
-		} `json:"native"`
-	}
-	if err := readJSONFile(filepath.Join(material, "manifest.json"), &manifest); err != nil {
-		return err
-	}
+func auditLegacyClaudeArgs(args []string, model string) error {
 	awaitClaim, modelFlag := false, false
-	for _, argument := range manifest.Native.Args {
+	for _, argument := range args {
 		switch {
 		case argument == "--await-claim":
 			awaitClaim = true
@@ -38,7 +30,12 @@ func auditClaudeCapture(material, model, sessionID, project string) error {
 	if !awaitClaim || !modelFlag {
 		return errors.New("claude capture is missing the explicit claim or model argument")
 	}
+	return nil
+}
 
+// auditClaudeCapture uses the protocol as evidence for consumer captures.
+// The native launcher arguments may be absent from the recording metadata.
+func auditClaudeCapture(material, model, sessionID, project string) error {
 	file, err := os.Open(filepath.Join(material, "raw", "raw.jsonl"))
 	if err != nil {
 		return err
@@ -47,7 +44,7 @@ func auditClaudeCapture(material, model, sessionID, project string) error {
 	decoder := json.NewDecoder(file)
 	requests := map[string]string{}
 	hooks := map[string]bool{}
-	initializeRequested, initializeAccepted := false, false
+	initializeRequested, initializeAccepted, claimRequested := false, false, false
 	claimed, input, identity, assistant, completed := false, false, false, false, false
 	for {
 		var frame struct {
@@ -69,16 +66,17 @@ func auditClaudeCapture(material, model, sessionID, project string) error {
 				Outcome   string `json:"outcome"`
 				RequestID string `json:"request_id"`
 				Request   struct {
-					Subtype   string `json:"subtype"`
-					CWD       string `json:"cwd"`
-					SessionID string `json:"session_id"`
+					Subtype   string          `json:"subtype"`
+					CWD       string          `json:"cwd"`
+					SessionID json.RawMessage `json:"session_id"`
 				} `json:"request"`
 				Response struct {
 					Subtype   string `json:"subtype"`
 					RequestID string `json:"request_id"`
 					Result    struct {
-						Status string `json:"status"`
-						CWD    string `json:"cwd"`
+						Status    string `json:"status"`
+						SessionID string `json:"session_id"`
+						CWD       string `json:"cwd"`
 					} `json:"response"`
 				} `json:"response"`
 				Message struct {
@@ -96,21 +94,23 @@ func auditClaudeCapture(material, model, sessionID, project string) error {
 		if frame.Direction == "c2s" {
 			switch wire.Type {
 			case "control_request":
+				if wire.RequestID == "" || requests[wire.RequestID] != "" {
+					return errors.New("claude control request has a missing or repeated identity")
+				}
 				switch wire.Request.Subtype {
 				case "initialize":
 					if initializeRequested || claimed || input || identity {
 						return errors.New("claude initialize request is out of order")
 					}
 					initializeRequested = true
-					requests[wire.RequestID] = wire.Request.Subtype
 				case "claim_session":
-					if !initializeRequested || claimed || wire.Request.SessionID != "" || !sameNativePath(wire.Request.CWD, project) {
+					if !initializeAccepted || claimRequested || wire.SessionID != "" ||
+						len(wire.Request.SessionID) != 0 || !sameNativePath(wire.Request.CWD, project) {
 						return errors.New("claude claim_session request is out of order or carries a session identity")
 					}
-					requests[wire.RequestID] = wire.Request.Subtype
-				default:
-					requests[wire.RequestID] = wire.Request.Subtype
+					claimRequested = true
 				}
+				requests[wire.RequestID] = wire.Request.Subtype
 			case "user":
 				if !initializeAccepted || !claimed {
 					return errors.New("claude input precedes the initialize/claim handshake")
@@ -130,8 +130,10 @@ func auditClaudeCapture(material, model, sessionID, project string) error {
 			case "initialize":
 				initializeAccepted = true
 			case "claim_session":
-				if claimed || wire.Response.Result.Status != "ok" || !sameNativePath(wire.Response.Result.CWD, project) {
-					return errors.New("claude claim_session did not succeed for the captured project")
+				if claimed || wire.Response.Result.Status != "ok" ||
+					wire.Response.Result.SessionID == "" || wire.Response.Result.SessionID != sessionID ||
+					!sameNativePath(wire.Response.Result.CWD, project) {
+					return errors.New("claude claim_session did not confirm the captured session and project")
 				}
 				claimed = true
 			}
@@ -175,7 +177,7 @@ func auditClaudeCapture(material, model, sessionID, project string) error {
 			}
 		}
 		if wire.Type == "result" {
-			if wire.SessionID != sessionID || wire.Subtype != "success" || wire.IsError {
+			if !identity || !assistant || wire.SessionID != sessionID || wire.Subtype != "success" || wire.IsError {
 				return errors.New("native Claude result did not succeed for the captured session")
 			}
 			completed = true

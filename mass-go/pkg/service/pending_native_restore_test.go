@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -90,6 +91,12 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			os.Exit(2)
 		}
 	}
+	reply := func(id, body any) {
+		send(map[string]any{
+			"type":     "control_response",
+			"response": map[string]any{"subtype": "success", "request_id": id, "response": body},
+		})
+	}
 	cwd, err := os.Getwd()
 	must(err)
 	init := func() {
@@ -123,7 +130,7 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			r := v["request"].(map[string]any)
 			switch r["subtype"] {
 			case "initialize":
-				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
+				reply(v["request_id"], map[string]any{"current_permission_mode": startup.ClaudePermissionMode})
 				mark("ack", "initialize acknowledged")
 				if resumed {
 					go func() {
@@ -145,6 +152,9 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 					mark("unexpected", "create did not await claim")
 					os.Exit(11)
 				}
+				continue
+			case "get_settings":
+				reply(v["request_id"], startup.ClaudeSettings())
 				continue
 			case "get_status":
 				identityMu.Lock()

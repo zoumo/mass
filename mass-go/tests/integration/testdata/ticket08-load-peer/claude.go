@@ -76,7 +76,7 @@ func claude() {
 				send(reply)
 				continue
 			}
-			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
+			send(clipeer.StartupReply(r["subtype"].(string), v["request_id"]))
 			switch r["subtype"] {
 			case "initialize":
 				cwd, _ := os.Getwd()

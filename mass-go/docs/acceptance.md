@@ -2,11 +2,11 @@
 
 This is the current Go implementation acceptance map, not a change to the
 [harness contracts](../../harness/index.md). The runtime SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.0.0-20261119055031-27b9a36509ba`, source
-`27b9a36509ba`, with no local `replace`. The
-external `agent-sdk-testify` tool is pinned to
-`v0.2.2-0.20261119051234-1c7981ff332a`; it is a test-only recording and replay
-dependency. Exact consumer case hashes and the current gate result are in
+`github.com/zoumo/agent-sdk-go v0.0.0-20261120052249-0149c64e2e65`, source
+`0149c64e2e65`, with no local `replace`. The test-only recording and replay tool
+`github.com/zoumo/agent-sdk-testify` is pinned to `v0.2.2`, source
+`d5e8a481450572b6147aa4dd218f56460363017e`. Exact consumer case hashes and gate
+results are in
 [consumer recording acceptance](recording-acceptance.md).
 
 Current T06 validation is recorded in [SDK upgrade acceptance](sdk-latest-sync.md).
@@ -164,15 +164,31 @@ requires the replay receipt to prove complete consumption, client EOF, cleanup,
 matching plan/raw hashes and `nativeLaunched=false`. It also treats missing,
 extra, altered, incompletely consumed or secret-bearing material as failure.
 
-All four active consumer replays pass at SDK `09d4ddf1ff20` and testify
-`v0.2.1`. The Claude cases were freshly recorded with CLI `2.1.293`; MASS opens
-with `--await-claim`, never assigns `--session-id`, and adopts the ID returned by
-`claim_session`. The historical captures were recorded with SDK `5edf8b62` and
-are no longer replayed. Live MASS product E2E and native persistence or
-recovery behavior remain unverified. Official verification does not apply to
-consumer recordings. Hashes and recording commands are in
+The active captures predate the SDK's unified `autoReview` startup exchange.
+The test launchers verify the new native permissions before replaying the
+original startup exchange through Testify. The Codex adapter supplies the
+reviewer and workspace sandbox in the correlated `thread/start` response.
+The Claude adapter supplies the `get_settings` sandbox response and replays
+the recorded `auto` permission mode. These startup responses are synthetic
+where supplied by the adapters. Testify checks the original capture, and
+the gate checks that both the adapter and strict replay completed.
+
+The active Claude cases were recorded with CLI `2.1.293`. MASS opens with
+`--await-claim` and adopts the `claim_session` ID. Live MASS product E2E and
+native persistence or recovery behavior remain unverified. Official
+verification does not apply to consumer recordings. Hashes and recording commands are in
 [current-pin recording acceptance](codex-current-pin-recording.md); the older
 snapshot is in [historical consumer recording acceptance](recording-acceptance.md).
+
+Testify `v0.2.2` passes the SDK's `--permission-mode=auto` and inline
+`--settings` sandbox options to Claude after `--`. The generated mock launcher
+ignores the arguments after `--` and compares the protocol frames. Fresh
+consumer captures retain the native version and protocol bytes. Testify omits
+the native arguments from the manifest and execution metadata. The Claude
+publication audit checks the observed `initialize` and `claim_session` exchange,
+the native `init` model and session identity, and successful completion.
+The offline simulation replays the existing captures. Fresh recording with a
+real model remains unverified.
 
 ## Current T05 Gate
 
