@@ -4,6 +4,7 @@ import { Button } from '../components/ui/button'
 import { formatTime, routingDeliveryLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import CopyLink from './CopyLink'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
+import { ObjectAvatar, PrototypeCard, type Participant } from './TopicCardsPrototype'
 import { navigate, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
 import './conversation.css'
 
@@ -63,6 +64,8 @@ export default function TopicConversation({ query }: ViewProps) {
 }
 
 function TopicWorkspace({ query, search }: ViewProps & { search: string }) {
+  const prototype = import.meta.env.DEV && query.get('variant') === 'A'
+  const variant = prototype ? 'A' : ''
   const requestedTopicId = query.get('id') || ''
   const [automaticTopicId, setAutomaticTopicId] = useState('')
   const topics = usePages<Topic>(activity({ search, limit: '20' }))
@@ -76,7 +79,7 @@ function TopicWorkspace({ query, search }: ViewProps & { search: string }) {
   const eventId = query.get('event') || ''
   const { online } = useRefresh()
   function href(id: string, nextFilter = 'all', event = '') {
-    return viewHref(view, id, { search, filter: nextFilter === 'all' ? '' : nextFilter, event })
+    return viewHref(view, id, { search, filter: nextFilter === 'all' ? '' : nextFilter, event, variant })
   }
   return <div className="conversation-workspace">
     <aside className="panel conversation-sidebar" aria-label="Topics">
@@ -85,7 +88,7 @@ function TopicWorkspace({ query, search }: ViewProps & { search: string }) {
         <form className="conversation-search" onSubmit={event => {
           event.preventDefault()
           const search = String(new FormData(event.currentTarget).get('search') || '').trim()
-          navigate(viewHref(view, '', { search }))
+          navigate(viewHref(view, '', { search, variant }))
         }}>
           <input type="search" name="search" aria-label="搜索 Topic" placeholder="搜索 Topic 名称或 ID" defaultValue={search}/>
           <Button type="submit" variant="outline" size="sm" disabled={!online}>搜索</Button>
@@ -110,16 +113,16 @@ function TopicWorkspace({ query, search }: ViewProps & { search: string }) {
       {topics.data?.length === 0 && <p className="empty">{search ? '没有匹配的 Topic' : '暂无 Topic'}</p>}
       {topics.next && <div className="conversation-footer"><Button size="sm" variant="outline" disabled={topics.loading || !online} onClick={() => void topics.more()}>加载更多 Topic</Button></div>}
     </aside>
-    {topicId && <Conversation key={topicId} topicId={topicId} filter={filter} eventId={eventId} href={href}/>}
+    {topicId && <Conversation key={topicId} topicId={topicId} filter={filter} eventId={eventId} href={href} prototype={prototype}/>}
   </div>
 }
 
 type ConversationProps = {
-  topicId: string; filter: Filter; eventId: string
+  topicId: string; filter: Filter; eventId: string; prototype: boolean
   href: (id: string, filter?: Filter, event?: string) => string
 }
 
-function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
+function Conversation({ topicId, filter, eventId, href, prototype }: ConversationProps) {
   const topic = useRecord<Topic>('topics/' + encodeURIComponent(topicId))
   const timeline = usePages<ConversationEvent>(activity({ topicId, filter, limit: '20' }))
   const selected = timeline.data?.find(event => event.id === eventId)
@@ -135,7 +138,8 @@ function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
   return <>
     <section className="panel conversation-feed" aria-label="群聊时间线">
       <header className="conversation-group">
-        <span className="conversation-avatar" data-actor="topic"><Hash size={23}/></span>
+        {prototype ? <ObjectAvatar {...topicParticipant(topicId)}/>
+          : <span className="conversation-avatar" data-actor="topic"><Hash size={23}/></span>}
         <div><h2>{topic.data?.title || topicId}</h2><code>{topicId}</code></div>
         {topic.data?.status && <span className="conversation-status">{stateLabel(topic.data.status)}</span>}
       </header>
@@ -145,7 +149,7 @@ function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
       </nav>
       {topic.error && <ReadError error={topic.error} stale={!!topic.data}/>}
       {timeline.error && <ReadError error={timeline.error} stale={!!timeline.data}/>}
-      <Timeline key={filter} timeline={timeline} eventId={eventId} eventHref={id => href(topicId, filter, id)}/>
+      <Timeline key={filter} timeline={timeline} eventId={eventId} eventHref={id => href(topicId, filter, id)} prototype={prototype}/>
     </section>
     <aside ref={context} className="panel conversation-context" aria-label={eventId ? '消息详情' : '群组信息'} tabIndex={-1}>
       <header className="conversation-aside-heading">
@@ -154,15 +158,15 @@ function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
       </header>
       {eventId ? <>
         {event.error && <ReadError error={event.error} stale={!!event.data}/>}
-        {focused ? <EventDetails key={focused.id} event={focused}/>
+        {focused ? <EventDetails key={focused.id} event={focused} previewOptions={prototype}/>
           : !event.error && <p className="empty">正在读取消息…</p>}
-      </> : <GroupInfo topicId={topicId}/>}
+      </> : <GroupInfo topicId={topicId} avatars={prototype}/>}
     </aside>
   </>
 }
 
-function Timeline({ timeline, eventId, eventHref }: {
-  timeline: ReturnType<typeof usePages<ConversationEvent>>; eventId: string; eventHref: (id: string) => string
+function Timeline({ timeline, eventId, eventHref, prototype }: {
+  timeline: ReturnType<typeof usePages<ConversationEvent>>; eventId: string; eventHref: (id: string) => string; prototype: boolean
 }) {
   const { online } = useRefresh()
   const viewport = useRef<HTMLDivElement>(null)
@@ -193,7 +197,7 @@ function Timeline({ timeline, eventId, eventHref }: {
       if (previousNewest.current && previousNewest.current !== newest) setHasNew(true)
     }
     previousNewest.current = newest
-  }, [rows])
+  }, [rows, prototype])
 
   function jumpToLatest() {
     const node = viewport.current
@@ -221,7 +225,9 @@ function Timeline({ timeline, eventId, eventHref }: {
         date = eventDay
         return <section className="conversation-event" key={event.id} data-event-id={event.id} data-kind={event.kind}>
           {separator && <div className="conversation-day">{eventDay}</div>}
-          <EventCard event={event} href={eventHref(event.id)} selected={eventId === event.id}/>
+          {prototype
+            ? <ConversationCardPreview event={event} href={eventHref(event.id)} selected={eventId === event.id}/>
+            : <EventCard event={event} href={eventHref(event.id)} selected={eventId === event.id}/>}
         </section>
       })}
     </div>
@@ -230,6 +236,50 @@ function Timeline({ timeline, eventId, eventHref }: {
       {rows.length > 0 && <Button variant="ghost" size="sm" onClick={jumpToLatest}><ArrowDown/>{hasNew ? '有新消息 · 跳到最新' : '跳到最新'}</Button>}
     </footer>}
   </>
+}
+
+function topicParticipant(id: string): Participant {
+  return { kind: 'topic', label: 'Topic', href: viewHref('topic', id), title: '查看 Topic · ' + id }
+}
+
+function issueParticipant(id: string, title: string): Participant {
+  return { kind: 'issue', label: 'Issue', href: viewHref('issue', id), title: '查看 Issue · ' + title }
+}
+
+function ConversationCardPreview({ event, href, selected }: { event: ConversationEvent; href: string; selected: boolean }) {
+  const topic = topicParticipant(event.topicId)
+  const common = { href, selected, at: event.at, time: clock.format(new Date(event.at)) }
+  if (event.kind === 'issue_created') {
+    return <PrototypeCard {...common} kind={labels.issue_created} recordId={event.issueId} preview={event.title}
+      sender={topic} recipient={issueParticipant(event.issueId, event.title)} facts={[]}/>
+  }
+  if (event.kind === 'worker_dispatch' || event.kind === 'report') {
+    const worker: Participant = { kind: 'worker', label: 'Worker' }
+    const dispatch = event.kind === 'worker_dispatch'
+    const content = dispatch ? event.content : undefined
+    const facts: { label: string; value: ReactNode }[] = [
+      { label: 'Issue', value: <span className="prototype-card-issue">
+        <ObjectAvatar {...issueParticipant(event.issueId, event.title)}/>{event.title}
+      </span> },
+      { label: 'Execution', value: `第 ${event.generation} 次` },
+    ]
+    if (dispatch) facts.push({ label: '投递', value: routingDeliveryLabel(event.status) })
+    return <PrototypeCard {...common}
+      kind={dispatch ? dispatchLabels[event.dispatchKind] : `Worker Report · ${reportLabels[event.reportKind]}`}
+      recordId={dispatch ? event.executionId : event.reportId}
+      preview={event.summary || event.title} content={content}
+      sender={dispatch ? topic : worker} recipient={dispatch ? worker : topic} facts={facts}/>
+  }
+  const sender: Participant = event.kind === 'router_routed'
+    ? { kind: 'router', label: 'Router', href: viewHref('router', event.messageId), title: '查看 Router · ' + event.messageId }
+    : { kind: 'core', label: 'Core' }
+  const facts: { label: string; value: ReactNode }[] = [{ label: '投递', value: routingDeliveryLabel(event.status) }]
+  if (event.threadKey) facts.push({
+    label: '来源',
+    value: <a href={recordHref('threads', event.threadKey)} title={event.threadKey}>查看 Thread</a>,
+  })
+  return <PrototypeCard {...common} kind={labels[event.kind]} recordId={event.messageId} preview={event.summary || '暂无消息摘要'}
+    sender={sender} recipient={topic} facts={facts}/>
 }
 
 function EventCard({ event, href, selected }: { event: ConversationEvent; href: string; selected: boolean }) {
@@ -274,9 +324,9 @@ function ThreadLink({ threadKey }: { threadKey: string }) {
   return <a className="conversation-thread" href={recordHref('threads', threadKey)}><Hash size={12}/><code>{threadKey}</code></a>
 }
 
-function EventDetails({ event }: { event: ConversationEvent }) {
+function EventDetails({ event, previewOptions }: { event: ConversationEvent; previewOptions: boolean }) {
   if (event.kind === 'issue_created') return <IssueCreatedDetails event={event}/>
-  if (event.kind === 'worker_dispatch') return <DispatchDetails event={event}/>
+  if (event.kind === 'worker_dispatch') return <DispatchDetails event={event} previewOptions={previewOptions}/>
   if (event.kind === 'report') return <ReportDetails event={event}/>
   return <IngressDetails event={event}/>
 }
@@ -316,7 +366,7 @@ function IssueCreatedDetails({ event }: { event: IssueCreated }) {
   </section>
 }
 
-function DispatchDetails({ event }: { event: WorkerDispatch }) {
+function DispatchDetails({ event, previewOptions }: { event: WorkerDispatch; previewOptions: boolean }) {
   const delivery = useRecord<WorkerDelivery>('internal-deliveries/' + encodeURIComponent(event.deliveryId))
   const content = delivery.data?.content
   const body = delivery.data?.body
@@ -330,7 +380,7 @@ function DispatchDetails({ event }: { event: WorkerDispatch }) {
     <section className="conversation-section">
       <h3>{dispatchLabels[event.dispatchKind]}</h3>
       <p>{event.title}</p>
-      {content ? <StructuredContent content={content}/>
+      {content ? <StructuredContent content={content} previewOptions={previewOptions}/>
         : (body?.instruction || event.summary) && <p className="conversation-original">{body?.instruction || event.summary}</p>}
     </section>
     <section className="conversation-section">
@@ -406,7 +456,7 @@ function DetailList({ title, items }: { title: string; items?: string[] }) {
   </section>
 }
 
-function GroupInfo({ topicId }: { topicId: string }) {
+function GroupInfo({ topicId, avatars }: { topicId: string; avatars: boolean }) {
   const { online } = useRefresh()
   const params = new URLSearchParams({ topicId, preview: 'true', order: 'newest', limit: '10' })
   const subscriptions = usePages<Subscription>('subscriptions?' + params)
@@ -427,7 +477,8 @@ function GroupInfo({ topicId }: { topicId: string }) {
       {issues.error && <ReadError error={issues.error} stale={!!issues.data}/>}
       {issues.data?.length === 0 && <p className="conversation-muted">暂无 Issue</p>}
       <ul className="conversation-references conversation-issues">
-        {issues.data?.map(issue => <li key={issue.id}>
+        {issues.data?.map(issue => <li key={issue.id} className={avatars ? 'prototype-group-issue' : undefined}>
+          {avatars && <ObjectAvatar {...issueParticipant(issue.id, issue.title)}/>}
           <a href={viewHref('issue', issue.id)}><strong>{issue.title}</strong><small>{stateLabel(issue.status)}</small></a>
         </li>)}
       </ul>
