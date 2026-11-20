@@ -54,6 +54,9 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 	if err := v.ReadInConfig(); err != nil {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
 	}
+	if hasRemovedPermissionPreset(v) {
+		return c, problem("invalid_argument", "remove permissionPreset from Superagent execution roles and Worker templates; new Sessions use fullAccess")
+	}
 	if err := v.UnmarshalExact(&c); err != nil {
 		return c, problem("invalid_argument", "configuration contains unknown or invalid fields")
 	}
@@ -152,6 +155,22 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 		seenToken[s.tokenHash] = true
 	}
 	return c, nil
+}
+
+func hasRemovedPermissionPreset(v *viper.Viper) bool {
+	for _, role := range []string{"router", "topic"} {
+		if _, present := v.GetStringMap("execution.roles." + role)["permissionpreset"]; present {
+			return true
+		}
+	}
+	templates, _ := v.Get("execution.workerTemplates").([]any)
+	for _, template := range templates {
+		fields, _ := template.(map[string]any)
+		if _, present := fields["permissionpreset"]; present {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Config) String() string {

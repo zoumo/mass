@@ -81,7 +81,7 @@ export default function SessionEvidence({ kind, detail, navigate }: RecordProps)
           )}
           {detail.workObservation?.end && (
             <>
-              <dt>原生任务结束</dt>
+              <dt>{detail.workObservation.end.reason === 'idle' ? 'Session 空闲' : '原生任务结束'}</dt>
               <dd>
                 {detail.workObservation.end.reason} · {detail.workObservation.end.at} ·{' '}
                 {detail.workObservation.end.eventId}

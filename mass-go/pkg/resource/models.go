@@ -37,6 +37,12 @@ type SessionSpec struct {
 	runtime.SessionSpec
 	RuntimeRef string `json:"runtimeRef"`
 }
+
+const (
+	SessionReasonOwnerReleased   = "session_owner_released"
+	SessionReasonRecoveryMissing = "session_recovery_missing"
+)
+
 type SessionStatus struct {
 	HistoryLoad       *HistoryLoadStatus       `json:"historyLoad,omitempty"`
 	SessionID         string                   `json:"sessionId"`

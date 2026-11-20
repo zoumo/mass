@@ -1,9 +1,11 @@
 package core_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +50,7 @@ func TestExecutionTemplateConfig(t *testing.T) {
 		{"numeric permission preset", "model: router-model", "model: router-model\n      permissionPreset: 2"},
 		{"boolean permission preset", "model: topic-model", "model: topic-model\n      permissionPreset: true"},
 		{"invalid permission preset", "model: worker-model", "model: worker-model\n      permissionPreset: fullaccess"},
+		{"null permission preset", "model: review-model", "model: review-model\n      permissionPreset: null"},
 		{"legacy field", "  workerTemplates:", "  runtimeRef: agent\n  workerTemplates:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,6 +60,9 @@ func TestExecutionTemplateConfig(t *testing.T) {
 			var configErr *core.Error
 			require.ErrorAs(t, err, &configErr)
 			require.Equal(t, "invalid_argument", configErr.Code)
+			if strings.Contains(tc.to, "permissionPreset") {
+				require.ErrorContains(t, err, "remove permissionPreset")
+			}
 		})
 	}
 	f.fails("invalid_argument")
@@ -76,15 +82,16 @@ func assertSessionProfile(t *testing.T, massd *client.Client, peer *nativeDelive
 	require.Equal(t, binding.Workspace, session.Spec.Cwd)
 	require.Equal(t, binding.Namespace, session.Metadata.Namespace)
 	require.Equal(t, binding.SessionUID, session.Metadata.UID)
-	preset := want.PermissionPreset
-	if preset == "" {
-		preset = agent.PermissionPresetFullAccess
-	}
-	config := runtime.InitialSessionConfig{Model: want.Model, Effort: want.Effort, PermissionPreset: preset}
+	config := runtime.InitialSessionConfig{Model: want.Model, Effort: want.Effort, PermissionPreset: agent.PermissionPresetFullAccess}
 	require.Equal(t, &config, session.Spec.Config)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, session.Spec.Features)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, session.Status.EffectiveFeatures)
 	native, ok := peer.initialConfigs.Load(binding.SessionID)
 	require.True(t, ok)
 	require.Equal(t, config, native)
+	questions, ok := peer.nativeQuestions.Load(binding.SessionID)
+	require.True(t, ok)
+	require.Equal(t, new(false), questions)
 }
 
 func assertTemplateAccess(t *testing.T, p *process, binding core.Binding, f *fixture, mcp *stdioClient, permitted bool) {
@@ -112,6 +119,55 @@ func assertTemplateAccess(t *testing.T, p *process, binding core.Binding, f *fix
 func queryTemplates(t *testing.T, topic *stdioClient) []core.WorkerTemplate {
 	t.Helper()
 	return mcpWork[struct{ Items []core.WorkerTemplate }](t, topic, "execution_template_query", struct{}{}).Items
+}
+
+func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
+	peer := newNativeDeliveryPeer(t)
+	endpoint, massd := startDeliveryMassd(t, peer)
+	f, _ := deliveryFixture(t, endpoint)
+	raw, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	write(t, f.config, string(raw)+"  mcpCommand: "+build(t)+"\n")
+	config, err := core.LoadConfig(f.config)
+	require.NoError(t, err)
+	store, err := core.Open(config)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite"))
+	require.NoError(t, err)
+	defer db.Close()
+	var body, saved []byte
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT body,spec FROM session_bindings WHERE role='router'").Scan(&body, &saved))
+	var binding core.Binding
+	require.NoError(t, json.Unmarshal(body, &binding))
+	var spec resource.SessionSpec
+	require.NoError(t, json.Unmarshal(saved, &spec))
+	spec.Config.PermissionPreset = agent.PermissionPresetManualReview
+	spec.Features = nil
+	saved, err = json.Marshal(spec)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), "UPDATE session_bindings SET spec=? WHERE id=?", saved, binding.ID)
+	require.NoError(t, err)
+
+	var original resource.Session
+	require.NoError(t, massd.CreateSession(t.Context(), resource.Session{
+		Metadata: resource.Metadata{Namespace: binding.Namespace, Name: binding.Name}, Spec: spec,
+	}, &original))
+	ref := resource.SessionRef{SessionID: original.Status.SessionID}
+	require.NoError(t, massd.CloseSession(t.Context(), ref, nil))
+
+	p := f.start()
+	ready := waitBinding(t, p, "router", "", "ready")
+	require.Equal(t, original.Status.SessionID, ready.SessionID)
+	require.Equal(t, original.Metadata.UID, ready.SessionUID)
+	var resumed resource.Session
+	require.NoError(t, massd.GetSession(t.Context(), ref, &resumed))
+	require.Equal(t, spec, resumed.Spec)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(true)}, resumed.Status.EffectiveFeatures)
+	native, ok := peer.resumeConfigs.Load(ready.SessionID)
+	require.True(t, ok)
+	require.Equal(t, *spec.Config, native)
 }
 
 func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
@@ -206,9 +262,6 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	p.stop(t, false)
 	updated := strings.Replace(config, "    - runtimeRef: agent\n      model: worker-model\n      effort: medium\n      description: Implement changes\n", "", 1)
 	updated = strings.Replace(updated, "description: Review results", "description: Review results with new guidance", 1)
-	updated = strings.Replace(updated, "model: review-model", "model: review-model\n      permissionPreset: manualReview", 1)
-	explicitReview := reviewModel
-	explicitReview.PermissionPreset = agent.PermissionPresetManualReview
 	write(t, f.config, strings.Replace(updated, "effort: low", "effort: high", 1)+missingTemplate)
 	f.fails("failed_precondition")
 	write(t, f.config, updated+missingTemplate)
@@ -226,7 +279,7 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	require.Equal(t, work.Execution.BindingID, retry.Execution.BindingID)
 	require.Equal(t, keep, readRecord[core.Issue](t, p, "issues/"+keep.ID))
 	require.Equal(t, []core.WorkerTemplate{
-		{ExecutionProfile: explicitReview, Description: "Review results with new guidance"},
+		{ExecutionProfile: reviewModel, Description: "Review results with new guidance"},
 		{ExecutionProfile: missing, Description: "Missing Runtime fixture"},
 	}, queryTemplates(t, topic))
 
@@ -239,8 +292,8 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	override.Resolve = []core.BlockerResolution{{BlockerID: switchIssue.Blockers[0].ID, Reason: "Verified evidence"}}
 	replacement := mcpWork[core.WorkReceipt](t, topic, "issue_start", override)
 	require.Empty(t, replacement.Issue.Blockers)
-	require.Equal(t, explicitReview, replacement.Issue.ExecutionProfile)
-	verifyTemplateWorker(t, p, massd, peer, replacement, explicitReview)
+	require.Equal(t, reviewModel, replacement.Issue.ExecutionProfile)
+	verifyTemplateWorker(t, p, massd, peer, replacement, reviewModel)
 
 	badRuntime := issueInput(f.dir, "missing-runtime")
 	badRuntime.RuntimeRef, badRuntime.Model, badRuntime.Start = missing.RuntimeRef, missing.Model, true

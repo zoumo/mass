@@ -2,7 +2,9 @@ package core_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -77,6 +79,128 @@ func waitObservedStop(t *testing.T, p *process, collection, id string) core.Stop
 		return result.Stop != nil && result.Stop.Status == "observed"
 	}, 8*time.Second, 25*time.Millisecond)
 	return *result.Stop
+}
+
+func TestWorkerSessionRecoveryThroughMassd(t *testing.T) {
+	peer := newNativeDeliveryPeer(t)
+	endpoint, massd, data := startDeliveryMassdWithData(t, peer)
+	f, _ := deliveryFixture(t, endpoint)
+	p := f.start()
+	routerBinding := waitBinding(t, p, "router", "", "ready")
+	router := startRoleMCP(t, f, routerBinding)
+	topicBinding, source := nativeWorkTopic(t, f, p, peer, router, "worker-recovery")
+	topic := startRoleMCP(t, f, topicBinding)
+	create := issueInput(f.dir, "recoverable-worker")
+	create.Start = true
+	create.Materials = []core.Material{{Label: "Recovery request", MessageID: source.MessageID}}
+	work := mcpWork[core.WorkReceipt](t, topic, "issue_create", create)
+	old := waitBinding(t, p, "worker", work.Execution.ID, "ready")
+	worker := startRoleMCP(t, f, old)
+	first := peer.next(t, "turn/start")
+	decodeInternalBatch(t, first, work.Execution.StartEventID)
+	first.accept()
+	sent := waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
+	history := mcpWork[core.Report](t, worker, "report_submit", core.ReportRequest{
+		OperationID: "retain-progress", Kind: "progress", Summary: "Output from the original Worker", GoalRevision: work.Execution.Revision,
+	})
+	report := peer.next(t, "turn/start")
+	decodeInternalBatch(t, report, history.EventID)
+	report.answer <- nativeDeliveryAnswer{complete: true}
+	waitWorkDelivery(t, p, history.EventID, "sent")
+	issue := mcpWork[core.WorkReceipt](t, worker, "issue_get_current", struct{}{}).Issue
+	ref := resource.SessionRef{SessionID: old.SessionID}
+	var original resource.Session
+	require.NoError(t, massd.GetSession(t.Context(), ref, &original))
+	var closed resource.Session
+	require.NoError(t, massd.CloseSession(t.Context(), ref, &closed))
+	require.Equal(t, resource.SessionReasonOwnerReleased, closed.Status.Reason)
+	gate := &nativeOpenGate{entered: make(chan struct{}), release: make(chan struct{})}
+	peer.resumeGates.Store(old.SessionID, gate)
+	continued := mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
+		OperationID: "resume-worker", IssueID: issue.ID, ExpectedRevision: issue.Revision,
+		Requirements: "Resume the same Worker using the saved workspace.", NotifyWorker: true,
+	})
+	select {
+	case <-gate.entered:
+	case <-time.After(8 * time.Second):
+		t.Fatal("Core did not resume the original Session")
+	}
+	var opening resource.Session
+	require.NoError(t, massd.GetSession(t.Context(), ref, &opening))
+	require.Equal(t, "opening", string(opening.Status.State))
+	unrelated := submit(t, p, f, input("unrelated-during-resume"))
+	routerInput := peer.next(t, "turn/start")
+	require.Equal(t, routerBinding.SessionID, routerInput.session)
+	decodeInternalBatch(t, routerInput, unrelated.EventID)
+	routerInput.accept()
+	waitRouteStatus(t, p, unrelated.EventID, "sent")
+	require.Eventually(t, func() bool {
+		binding := readRecord[core.Binding](t, p, "bindings/"+old.ID)
+		return binding.State == "pending" && strings.HasPrefix(binding.LastError, "session_prepare_")
+	}, 10*time.Second, 25*time.Millisecond, "Core should record its resume timeout before the late response")
+	require.Len(t, page(t, p, "executions").Items, 1)
+	close(gate.release)
+	update := peer.next(t, "turn/start")
+	require.Equal(t, original.Status.SessionID, update.session)
+	decodeInternalBatch(t, update, continued.NotificationEventID)
+	update.accept()
+	waitWorkDelivery(t, p, continued.NotificationEventID, "sent")
+	resumed := waitBinding(t, p, "worker", work.Execution.ID, "ready")
+	require.Equal(t, old.SessionID, resumed.SessionID)
+	require.Equal(t, old.SessionUID, resumed.SessionUID)
+	var applied resource.Session
+	require.NoError(t, massd.GetSession(t.Context(), ref, &applied))
+	require.Equal(t, original.Spec, applied.Spec)
+	require.Equal(t, sent, waitWorkDelivery(t, p, work.Execution.StartEventID, "sent"))
+
+	require.NoError(t, massd.CloseSession(t.Context(), ref, &closed))
+	vault := filepath.Join(data, "private", "codex", fmt.Sprintf("%x", sha256.Sum256([]byte("agent"))))
+	require.NoError(t, os.Remove(filepath.Join(vault, fmt.Sprintf("%x.json", sha256.Sum256([]byte(old.SessionID))))))
+	newSession := &nativeOpenGate{entered: make(chan struct{}), release: make(chan struct{})}
+	peer.nextStartGate.Store(newSession)
+	nextGoal := mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
+		OperationID: "replace-unrecoverable", IssueID: issue.ID, ExpectedRevision: continued.Issue.Revision,
+		Requirements: "Carry on with the new goal and the original Report.", NotifyWorker: true,
+	})
+	select {
+	case <-newSession.entered:
+	case <-time.After(8 * time.Second):
+		t.Fatal("Core did not start the replacement Session")
+	}
+	p.stop(t, true)
+	close(newSession.release)
+	p = f.start()
+	started := peer.next(t, "turn/start")
+	events := decodeInternalBatch(t, started)
+	require.Len(t, events, 1)
+	require.Equal(t, "worker_started", events[0].Kind)
+	next := events[0].Recipient.ExecutionID
+	require.NotEqual(t, work.Execution.ID, next)
+	successor := waitBinding(t, p, "worker", next, "ready")
+	require.Equal(t, started.session, successor.SessionID)
+	require.NotEqual(t, old.SessionID, successor.SessionID)
+	require.NotEqual(t, old.SessionUID, successor.SessionUID)
+	require.Equal(t, old.Workspace, successor.Workspace)
+	assertSessionProfile(t, massd, peer, successor, workerModel)
+	started.accept()
+	waitWorkDelivery(t, p, events[0].ID, "sent")
+	waitWorkDelivery(t, p, nextGoal.NotificationEventID, "superseded")
+	current := startRoleMCP(t, f, successor)
+	continuation := mcpWork[core.WorkReceipt](t, current, "issue_get_current", struct{}{})
+	require.Equal(t, next, continuation.Execution.ID)
+	require.Equal(t, issue.ID, continuation.Issue.ID)
+	require.Equal(t, nextGoal.Issue.Requirements, continuation.Issue.Requirements)
+	require.Equal(t, nextGoal.Issue.RequirementsRevision, continuation.Issue.RequirementsRevision)
+	require.Equal(t, create.Materials, continuation.Issue.Materials)
+	require.Equal(t, issue.Blockers, continuation.Issue.Blockers)
+	require.Equal(t, []core.Report{history}, continuation.Issue.Reports)
+	require.Equal(t, "historical", readRecord[core.Execution](t, p, "executions/"+work.Execution.ID).Authority)
+	mcpWorkError(t, worker, "issue_get_current", "stale_binding", struct{}{})
+	require.Len(t, page(t, p, "executions").Items, 2)
+	require.EqualValues(t, 4, peer.threadIDs.Load())
+	require.NoError(t, massd.GetSession(t.Context(), ref, &closed))
+	require.Equal(t, resource.SessionReasonRecoveryMissing, closed.Status.Reason)
+	require.Equal(t, sent, waitWorkDelivery(t, p, work.Execution.StartEventID, "sent"))
 }
 
 func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
@@ -339,8 +463,9 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.NoError(t, err)
 	project := filepath.Join(config, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(workspace, "-"))
 	require.NoError(t, os.MkdirAll(project, 0o700))
-	endpoint, c := startNativeMassd(t, massd, resource.RuntimeSpec{
-		Type: "claude",
+	endpoint, c, _ := startNativeMassd(t, massd, resource.RuntimeSpec{
+		Type:     "claude",
+		Features: &runtime.SessionFeatures{AgentQuestions: new(true)},
 		Config: runtime.Config{"executable": launcher, "envPolicy": "replace", "env": map[string]any{
 			"PEER_KIND": "claude", "PEER_DIR": native, "WORK_DIR": workspace, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project,
 			"CLAUDE_WIRE_PEER": peer, "PEER_CLAUDE_FULL_ACCESS": "1",
@@ -361,13 +486,15 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	oldProcess := startRoleMCP(t, f, old)
 	oldCredential := roleToken(t, f, old)
 	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
-	delivered := waitWorkerObservation(t, p, work.Execution, "delivered")
-	require.Equal(t, "claude", delivered.WorkObservation.Provider)
-	require.Empty(t, delivered.WorkObservation.WorkID)
-	require.Nil(t, delivered.WorkObservation.End)
-	require.False(t, delivered.WorkObservation.Continuous)
-	require.Equal(t, "end_unconfirmed", delivered.ReminderEligibility)
-	require.False(t, delivered.ReminderScheduled)
+	observed := waitWorkerObservation(t, p, work.Execution, "ended")
+	require.Equal(t, "claude", observed.WorkObservation.Provider)
+	require.Empty(t, observed.WorkObservation.WorkID)
+	require.Equal(t, "idle", observed.WorkObservation.End.Reason)
+	require.True(t, observed.WorkObservation.Continuous)
+	require.Equal(t, "already_scheduled", observed.ReminderEligibility)
+	require.True(t, observed.ReminderScheduled)
+	waitWorkDelivery(t, p, observed.ReminderEventID, "sent")
+	require.Len(t, workDeliveries(t, p, reportReminder), 1)
 	readTrace := func() string {
 		raw, _ := os.ReadFile(filepath.Join(native, "wire.jsonl"))
 		return string(raw)
@@ -396,11 +523,15 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 		}
 		for line := range strings.SplitSeq(string(raw), "\n") {
 			var row struct {
-				Method    string
-				NativePID int
-				MCPPID    int
+				Method            string
+				NativePID         int
+				MCPPID            int
+				QuestionsDisabled bool
 			}
 			if json.Unmarshal([]byte(line), &row) == nil && row.NativePID == nativePID && row.Method == want {
+				if want == "opened" {
+					require.True(t, row.QuestionsDisabled, "Claude launch must disallow AskUserQuestion")
+				}
 				nativeMCP = row.MCPPID
 				return true
 			}
@@ -473,12 +604,48 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	var reviewSession resource.Session
 	require.NoError(t, c.GetSession(t.Context(), resource.SessionRef{SessionID: reviewBinding.SessionID}, &reviewSession))
 	require.Equal(t, &runtime.InitialSessionConfig{Model: reviewModel.Model, PermissionPreset: agent.PermissionPresetFullAccess}, reviewSession.Spec.Config)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, reviewSession.Spec.Features)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, reviewSession.Status.EffectiveFeatures)
 	historical := mcpWork[struct{ Preparation core.Binding }](t, topic, "work_query", core.QueryRequest{
 		Collection: "executions", ID: next.Execution.ID,
 	})
 	require.Equal(t, fresh.SessionID, historical.Preparation.SessionID)
 	require.Equal(t, workerModel, historical.Preparation.ExecutionProfile)
 	t.Logf("Claude native PID %d and its MCP PID %d released before offline readback. Matching parameters resumed the same Session with a fresh token, and a new profile created a separate Session.", nativePID, nativeMCP)
+
+	reviewStart := waitWorkDelivery(t, p, review.Execution.StartEventID, "sent")
+	reviewRef := resource.SessionRef{SessionID: reviewBinding.SessionID}
+	require.NoError(t, c.CloseSession(t.Context(), reviewRef, &released))
+	require.Equal(t, resource.SessionReasonOwnerReleased, released.Status.Reason)
+	reviewUpdate := mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
+		OperationID: "claude-normal-resume", IssueID: review.Issue.ID, ExpectedRevision: review.Issue.Revision,
+		Requirements: "Continue reviewing after closing the Session.", NotifyWorker: true,
+	})
+	waitWorkDelivery(t, p, reviewUpdate.NotificationEventID, "sent")
+	reattached := waitBinding(t, p, "worker", review.Execution.ID, "ready")
+	require.Equal(t, reviewBinding.SessionID, reattached.SessionID)
+	require.Equal(t, reviewBinding.SessionUID, reattached.SessionUID)
+	require.Contains(t, readTrace(), `"method":"full_access","params":{"resumed":true,"sessionId":"`+reattached.SessionID+`"}`)
+	require.Equal(t, reviewStart, waitWorkDelivery(t, p, review.Execution.StartEventID, "sent"))
+
+	require.NoError(t, c.CloseSession(t.Context(), reviewRef, &released))
+	require.NoError(t, os.Remove(filepath.Join(project, reviewBinding.SessionID+".jsonl")))
+	lostReview := mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
+		OperationID: "claude-replace-missing-transcript", IssueID: review.Issue.ID, ExpectedRevision: reviewUpdate.Issue.Revision,
+		Requirements: "Continue the review with the latest goal.", NotifyWorker: true,
+	})
+	var successor core.Issue
+	require.Eventually(t, func() bool {
+		successor = readRecord[core.Issue](t, p, "issues/"+review.Issue.ID)
+		return successor.CurrentExecutionID != "" && successor.CurrentExecutionID != review.Execution.ID
+	}, 8*time.Second, 25*time.Millisecond)
+	replacement := waitBinding(t, p, "worker", successor.CurrentExecutionID, "ready")
+	require.NotEqual(t, reattached.SessionID, replacement.SessionID)
+	require.NotEqual(t, reattached.SessionUID, replacement.SessionUID)
+	require.Equal(t, lostReview.Issue.Requirements, successor.Requirements)
+	require.Equal(t, reviewUpdate.Issue.Reports, successor.Reports)
+	require.NoError(t, c.GetSession(t.Context(), reviewRef, &released))
+	require.Equal(t, resource.SessionReasonRecoveryMissing, released.Status.Reason)
 }
 
 func TestLifecycleDependencyCrashConsistency(t *testing.T) {

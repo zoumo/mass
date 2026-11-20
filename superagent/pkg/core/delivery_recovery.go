@@ -464,6 +464,33 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 	})
 }
 
+func (s *Store) replaceUnrecoverableWorker(ctx context.Context, b Binding, session resource.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return storageError()
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current Binding
+	if err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE id=? AND state='pending'`, &current, b.ID); err != nil {
+		return err
+	}
+	if current.Role != "worker" || current.Generation != b.Generation || current.PreviousOwnerUnknown ||
+		current.SessionID != session.Status.SessionID || current.SessionUID != session.Metadata.UID ||
+		!resumeRecoveryMissing(session) {
+		return problem("stale_binding", "Worker recovery evidence no longer matches the binding")
+	}
+	settlement := BindingClose{At: now(), ResourceVersion: session.Metadata.ResourceVersion, Method: resource.SessionReasonRecoveryMissing}
+	if err := putJSON(ctx, tx, "UPDATE session_bindings SET body=json_set(body,'$.close',json(?2)) WHERE id=?1", settlement, current.ID); err != nil {
+		return err
+	}
+	if err := s.replaceWorker(ctx, tx, current, &Recovery{}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) replaceWorker(ctx context.Context, tx *sql.Tx, b Binding, r *Recovery) error {
 	issue, x, err := currentWorkerIssue(ctx, tx, b)
 	if err != nil {

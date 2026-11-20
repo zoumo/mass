@@ -66,16 +66,24 @@ type nativeDeliveryAnswer struct {
 }
 
 type nativeDeliveryPeer struct {
-	listener       net.Listener
-	calls          chan nativeDeliveryCall
-	trace          chan string
-	active         sync.Map
-	done           chan struct{}
-	released       chan struct{}
-	threadIDs      atomic.Int64
-	workspaces     sync.Map
-	initialConfigs sync.Map
-	resumeConfigs  sync.Map
+	listener        net.Listener
+	calls           chan nativeDeliveryCall
+	trace           chan string
+	active          sync.Map
+	done            chan struct{}
+	released        chan struct{}
+	threadIDs       atomic.Int64
+	workspaces      sync.Map
+	initialConfigs  sync.Map
+	resumeConfigs   sync.Map
+	nativeQuestions sync.Map
+	resumeGates     sync.Map
+	nextStartGate   atomic.Pointer[nativeOpenGate]
+}
+
+type nativeOpenGate struct {
+	entered chan struct{}
+	release chan struct{}
 }
 
 func newNativeDeliveryPeer(t *testing.T) *nativeDeliveryPeer {
@@ -133,7 +141,8 @@ type nativeDeliveryRequest struct {
 		ApprovalsReviewer string `json:"approvalsReviewer"`
 		Sandbox           string `json:"sandbox"`
 		Config            struct {
-			Effort string `json:"model_reasoning_effort"`
+			Effort    string `json:"model_reasoning_effort"`
+			Questions *bool  `json:"tools.experimental_request_user_input.enabled"`
 		} `json:"config"`
 		Input []struct {
 			Text string `json:"text"`
@@ -212,11 +221,32 @@ func (p *nativeDeliveryPeer) serve(conn net.Conn) {
 			} else {
 				p.resumeConfigs.Store(session, config)
 			}
-			respond(map[string]any{
-				"thread": thread(), "approvalPolicy": req.Params.ApprovalPolicy, "approvalsReviewer": reviewer, "cwd": workspace(),
-				"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]string{"type": sandbox},
-			})
-			notify("thread/status/changed", map[string]any{"threadId": session, "status": idle})
+			p.nativeQuestions.Store(session, req.Params.Config.Questions)
+			opened := func() {
+				respond(map[string]any{
+					"thread": thread(), "approvalPolicy": req.Params.ApprovalPolicy, "approvalsReviewer": reviewer, "cwd": workspace(),
+					"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]string{"type": sandbox},
+				})
+				notify("thread/status/changed", map[string]any{"threadId": session, "status": idle})
+			}
+			var gate *nativeOpenGate
+			if req.Method == "thread/start" {
+				gate = p.nextStartGate.Swap(nil)
+			} else if value, found := p.resumeGates.LoadAndDelete(session); found {
+				gate = value.(*nativeOpenGate)
+			}
+			if gate == nil {
+				opened()
+				continue
+			}
+			go func() {
+				close(gate.entered)
+				select {
+				case <-gate.release:
+					opened()
+				case <-p.done:
+				}
+			}()
 		case "thread/read":
 			respond(map[string]any{"thread": thread()})
 		case "thread/unsubscribe":
@@ -325,19 +355,27 @@ func (call nativeDeliveryCall) idle() {
 
 func startDeliveryMassd(t *testing.T, peer *nativeDeliveryPeer) (string, *client.Client) {
 	t.Helper()
+	endpoint, c, _ := startDeliveryMassdWithData(t, peer)
+	return endpoint, c
+}
+
+func startDeliveryMassdWithData(t *testing.T, peer *nativeDeliveryPeer) (string, *client.Client, string) {
+	t.Helper()
 	massd, relay := deliveryBinaries(t)
 	return startNativeMassd(t, massd, resource.RuntimeSpec{
-		Type:   "codex",
-		Config: runtime.Config{"executable": relay, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": peer.listener.Addr().String()}},
+		Type:     "codex",
+		Config:   runtime.Config{"executable": relay, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": peer.listener.Addr().String()}},
+		Features: &runtime.SessionFeatures{AgentQuestions: new(true)},
 	})
 }
 
-func startNativeMassd(t *testing.T, massd string, spec resource.RuntimeSpec) (string, *client.Client) {
+func startNativeMassd(t *testing.T, massd string, spec resource.RuntimeSpec) (string, *client.Client, string) {
 	t.Helper()
 	dir := t.TempDir()
 	config := filepath.Join(dir, "massd.yaml")
 	write(t, config, "{}")
-	cmd := exec.CommandContext(context.Background(), massd, "--local", "--listen", "127.0.0.1:0", "--config", config, "--data", filepath.Join(dir, "massd"), "--session-idle-timeout", "0")
+	data := filepath.Join(dir, "massd")
+	cmd := exec.CommandContext(context.Background(), massd, "--local", "--listen", "127.0.0.1:0", "--config", config, "--data", data, "--session-idle-timeout", "0")
 	cmd.Env = []string{"HOME=" + dir, "PATH=" + dir}
 	log, err := os.Create(filepath.Join(dir, "massd.log"))
 	require.NoError(t, err)
@@ -382,5 +420,5 @@ func startNativeMassd(t *testing.T, massd string, spec resource.RuntimeSpec) (st
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec}
 	require.NoError(t, c.CreateRuntime(t.Context(), r, nil))
-	return startup.URL, c
+	return startup.URL, c, data
 }

@@ -103,7 +103,7 @@ func updateReminderWork(t *testing.T, topic *stdioClient, work core.WorkReceipt)
 	})
 }
 
-func TestReportReminderNativeCorrelation(t *testing.T) {
+func TestReportReminderWorkerIdle(t *testing.T) {
 	t.Parallel()
 	peer := newNativeDeliveryPeer(t)
 	endpoint, massd := startDeliveryMassd(t, peer)
@@ -112,15 +112,14 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	topic, topicBinding := startReminderTopic(t, f, p, peer)
 	work, b, first := startReminderWorker(t, f, p, peer, topic)
 	sub := watchNative(t, massd, b)
+	first.idle()
+	nextNativeMethod(t, sub, "thread/status/changed")
 	first.answer <- nativeDeliveryAnswer{workID: "work-one"}
 	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
 	initial := waitWorkerObservation(t, p, work.Execution, "observing")
 	require.Equal(t, "work-one", initial.WorkObservation.WorkID)
 	require.True(t, initial.WorkObservation.Continuous)
 	nextNativeMethod(t, sub, "turn/started")
-	first.idle()
-	ev := nextNativeMethod(t, sub, "thread/status/changed")
-	require.Equal(t, events.Idle, *ev.Payload().(events.StateUpdate).State)
 	require.Equal(t, "awaiting_correlated_end", readRecord[reminderExecution](t, p, "executions/"+work.Execution.ID).ReminderEligibility)
 	peer.quiet(t, 300*time.Millisecond)
 
@@ -131,7 +130,7 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	// The older turn can still produce a real, eligible-shaped terminal fact
 	// while the new native submit is waiting for its response.
 	first.end("work-one")
-	ev = nextNativeMethod(t, sub, "turn/completed")
+	ev := nextNativeMethod(t, sub, "turn/completed")
 	require.Equal(t, "completed", ev.Payload().(events.StateUpdate).StopReason)
 	require.Equal(t, "work-one", ev.Meta["codex"].(map[string]any)["turnId"])
 	require.Empty(t, workDeliveries(t, p, reportReminder))
@@ -156,11 +155,12 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	peer.quiet(t, 300*time.Millisecond)
 	require.Empty(t, workDeliveries(t, p, reportReminder))
 
-	second.end("work-two")
-	ev = nextNativeMethod(t, sub, "turn/completed")
+	second.idle()
+	ev = nextNativeMethod(t, sub, "thread/status/changed")
+	require.Equal(t, events.Idle, *ev.Payload().(events.StateUpdate).State)
 	ended := waitWorkerObservation(t, p, work.Execution, "ended")
 	require.Equal(t, ev.EventID, ended.WorkObservation.End.EventID)
-	require.Equal(t, "completed", ended.WorkObservation.End.Reason)
+	require.Equal(t, "idle", ended.WorkObservation.End.Reason)
 	require.Equal(t, b.ID, ended.WorkObservation.BindingID)
 	require.Equal(t, b.Generation, ended.WorkObservation.Generation)
 	require.Equal(t, b.SessionUID, ended.WorkObservation.SessionUID)
@@ -184,7 +184,7 @@ func TestReportReminderNativeCorrelation(t *testing.T) {
 	}
 	require.Equal(t, update.Issue, readRecord[core.Issue](t, p, "issues/"+work.Issue.ID))
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+topicBinding.OwnerID).Status)
-	t.Log("Idle, child completion and a stale earlier turn did not qualify; matching root work scheduled one reminder and the reminder's own completion did not schedule another.")
+	t.Log("Initial idle, child completion and stale earlier work did not qualify. Current Session idle scheduled one reminder.")
 }
 
 func TestReportReminderAfterCrashAndDuplicate(t *testing.T) {
@@ -226,7 +226,7 @@ func TestReportReminderAfterCrashAndDuplicate(t *testing.T) {
 	require.NotEmpty(t, waitWorkDelivery(t, p, ended.ReminderEventID, "sent").SentAt)
 	peer.quiet(t, 350*time.Millisecond)
 	require.Len(t, workDeliveries(t, p, reportReminder), 1)
-	t.Log("The CLI sent terminal notification before its prompt response. SIGKILL after scheduling preserved the pending Event; SIGKILL after native reminder acceptance retained the same Event and wire batch on retry.")
+	t.Log("The CLI sent idle before its prompt response. SIGKILL after scheduling preserved the pending Event. SIGKILL after native reminder acceptance retained the same Event and wire batch on retry.")
 }
 
 func TestReportReminderObservationGaps(t *testing.T) {

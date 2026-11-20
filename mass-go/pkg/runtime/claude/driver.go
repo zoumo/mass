@@ -265,6 +265,9 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if failedNativeCleanup(err) {
 			return runtime.DriverSession{}, cause
 		}
+		if resume != "" && claudeRecoveryMissing(err, resume) {
+			cause = errors.Join(runtime.ErrRecoveryMaterialMissing, cause)
+		}
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, cause)
 	}
 	id := native.ID()
@@ -613,6 +616,25 @@ func inputMayBeUnknown(err error) bool {
 	switch agent.CodeOf(err) {
 	case agent.ErrorOutcomeUnknown, agent.ErrorUnavailable:
 		return true
+	default:
+		return false
+	}
+}
+
+func claudeRecoveryMissing(err error, id string) bool {
+	var nativeError *agent.Error
+	if !errors.As(err, &nativeError) {
+		return false
+	}
+	switch nativeError.Reason {
+	case agentclaude.ErrorReasonResumePreflightMissing:
+		return true
+	case agentclaude.ErrorReasonResumePreflightQueryFailed:
+		// The SDK may wrap an absent transcript as a query failure. Require
+		// the typed missing error for the transcript itself, not its parent.
+		var query *nativeclaude.SessionQueryError
+		return errors.As(nativeError.Cause, &query) && query.Kind == "missing" &&
+			filepath.Base(query.Path) == id+".jsonl"
 	default:
 		return false
 	}

@@ -27,17 +27,14 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 	_, err = insertBinding(t.Context(), tx, config, previous, Binding{})
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name             string
-		saved, requested agent.PermissionPreset
-		modify           func(*Binding)
-		reuse            bool
+		name     string
+		saved    agent.PermissionPreset
+		features *runtime.SessionFeatures
+		modify   func(*Binding)
+		reuse    bool
 	}{
 		{name: "legacy keeps omission", reuse: true},
-		{name: "implicit keeps full access", saved: agent.PermissionPresetFullAccess, reuse: true},
-		{name: "explicit same as saved", saved: agent.PermissionPresetManualReview, requested: agent.PermissionPresetManualReview, reuse: true},
-		{name: "explicit SDK default matches omission", requested: agent.PermissionPresetAutoReview, reuse: true},
-		{name: "explicit different from saved", saved: agent.PermissionPresetFullAccess, requested: agent.PermissionPresetManualReview},
-		{name: "explicit different from SDK default", requested: agent.PermissionPresetFullAccess},
+		{name: "legacy manual review and disabled questions", saved: agent.PermissionPresetManualReview, features: &runtime.SessionFeatures{AgentQuestions: new(false)}, reuse: true},
 		{name: "runtime", modify: func(b *Binding) { b.RuntimeRef = "other" }},
 		{name: "model", modify: func(b *Binding) { b.Model = "other" }},
 		{name: "effort", modify: func(b *Binding) { b.Effort = "" }},
@@ -47,9 +44,9 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := makeSpec(config, previous)
 			spec.Config.PermissionPreset = tc.saved
+			spec.Features = tc.features
 			require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET spec=?2 WHERE id=?1", spec, previous.ID))
 			next := Binding{ExecutionProfile: previous.ExecutionProfile, Workspace: previous.Workspace, Namespace: previous.Namespace, Name: "new"}
-			next.PermissionPreset = tc.requested
 			if tc.modify != nil {
 				tc.modify(&next)
 			}
@@ -57,12 +54,13 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, previous.ID, next.PreviousBindingID)
 			if tc.reuse {
-				require.Equal(t, tc.saved, saved)
+				require.Equal(t, &spec, saved)
 				require.Equal(t, previous.SessionID, next.SessionID)
 				require.Equal(t, previous.SessionUID, next.SessionUID)
 				require.Equal(t, previous.Name, next.Name)
 				require.Equal(t, previous.ID, next.CapabilityFileID)
 			} else {
+				require.Nil(t, saved)
 				require.Empty(t, next.SessionID)
 				require.Empty(t, next.SessionUID)
 				require.Empty(t, next.CapabilityFileID)
@@ -86,7 +84,9 @@ func TestRouterInitializationKeepsLegacySessionSpec(t *testing.T) {
 	var spec resource.SessionSpec
 	require.NoError(t, readJSON(t.Context(), tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, binding.ID))
 	require.Equal(t, agent.PermissionPresetFullAccess, spec.Config.PermissionPreset)
-	spec.Config.PermissionPreset = ""
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, spec.Features)
+	spec.Config.PermissionPreset = agent.PermissionPresetManualReview
+	spec.Features = nil
 	require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET spec=?2 WHERE id=?1", spec, binding.ID))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, store.Close())
@@ -99,5 +99,5 @@ func TestRouterInitializationKeepsLegacySessionSpec(t *testing.T) {
 	defer tx.Rollback()
 	var saved resource.SessionSpec
 	require.NoError(t, readJSON(t.Context(), tx, "SELECT spec FROM session_bindings WHERE id=?", &saved, binding.ID))
-	require.Equal(t, &runtime.InitialSessionConfig{Model: "model"}, saved.Config)
+	require.Equal(t, spec, saved)
 }

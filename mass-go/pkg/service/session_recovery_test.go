@@ -275,6 +275,46 @@ func (s *RecoverySuite) TestResumePublishesOpeningAndRestoresReleasedFailure() {
 	s.Equal(original.Metadata.UID, r.Metadata.UID)
 }
 
+func (s *RecoverySuite) TestRecoveryMissingRequiresConfirmedOwnerRelease() {
+	ctx := s.T().Context()
+	detached, err := s.meta.CreateSession(resource.Session{
+		Metadata: resource.Metadata{Namespace: "one", Name: "detached"},
+		Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}},
+		Status:   resource.SessionStatus{SessionID: "detached", State: events.Unknown},
+	})
+	s.Require().NoError(err)
+	s.d.onResume = func() error {
+		return errors.Join(runtime.ErrRecoveryMaterialMissing, runtime.ErrResourcesReleased)
+	}
+	for _, test := range []struct {
+		id, closeReason, failureReason string
+	}{
+		{id: detached.Status.SessionID},
+		{id: "fast", closeReason: resource.SessionReasonOwnerReleased, failureReason: resource.SessionReasonRecoveryMissing},
+	} {
+		s.Run(test.id, func() {
+			ref := resource.SessionRef{SessionID: test.id}
+			released, err := s.svc.CloseSession(ctx, ref)
+			s.Require().NoError(err)
+			s.Equal(events.SessionState("offline"), released.Status.State)
+			s.Equal(test.closeReason, released.Status.Reason)
+			_, err = s.svc.ResumeSession(ctx, ref)
+			s.Require().Error(err)
+			if test.failureReason != "" {
+				var public *runtime.OperationError
+				s.Require().ErrorAs(err, &public)
+				s.Equal("conflict", public.Code)
+				s.Equal(test.failureReason, public.Reason)
+			}
+			current, err := s.svc.GetSession(ref)
+			s.Require().NoError(err)
+			s.Equal(released.Metadata.UID, current.Metadata.UID)
+			s.Equal(events.SessionState("offline"), current.Status.State)
+			s.Equal(test.failureReason, current.Status.Reason)
+		})
+	}
+}
+
 func (s *RecoverySuite) TestUnknownCloseRetainsOwnershipAndPreventsRestore() {
 	ref := resource.SessionRef{SessionID: "fast"}
 	s.d.closeErr = errors.New("release unconfirmed")

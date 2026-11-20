@@ -119,23 +119,27 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resou
 	var session resource.Session
 	err = c.GetSession(ctx, ref, &session)
 	switch {
+	case b.Role == "worker" && errorCode(err) == "not_found":
+		a.Status, a.ErrorCode, a.ErrorReason = "pending", "not_found", "session_resume_required"
+		return a, nil
 	case errorCode(err) == "not_found" || err == nil && !bindingMatches(b, spec, session):
 		a.Status, a.ErrorCode = "blocked", "session_configuration_conflict"
 		return a, nil
 	case err != nil:
 		a.Status, a.ErrorCode = "pending", "massd_session_read_unavailable"
 		return a, nil
-	case session.Status.State == "offline" || session.Status.State == "closing":
+	case session.Status.State == "offline" || session.Status.State == "closing" || session.Status.State == "opening" ||
+		(b.Role == "worker" && ownershipUnconfirmed(session)):
 		a.Status, a.ErrorCode, a.ErrorReason = "pending", "conflict", "session_resume_required"
 		return a, nil
 	}
 	var watch *workerWatch
 	switch b.Role {
 	case "worker":
+		commitGate("worker_before_rpc")
 		if method == "start_or_steer" {
 			watch = s.prepareWorkerWatch(ctx, b, a)
 		}
-		commitGate("worker_before_rpc")
 	case "topic":
 		commitGate("topic_before_rpc")
 	}
@@ -160,10 +164,13 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resou
 		return classifyAttempt(a, receipt.Acceptance, "", false, err), nil
 	}
 	var receipt runtime.InputReceipt
+	if watch != nil {
+		watch.dispatchedAt = time.Now()
+	}
 	err = c.SendPrompt(ctx, ref, input, &receipt)
 	a = classifyAttempt(a, receipt.Acceptance, string(receipt.Result), true, err)
 	if watch != nil {
-		watch.recordReceipt(a, receipt.Submission)
+		watch.recordReceipt(a, receipt.Result, receipt.Submission)
 	}
 	return a, watch
 }

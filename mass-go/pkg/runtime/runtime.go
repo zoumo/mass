@@ -15,6 +15,8 @@ import (
 
 var ErrResourcesReleased = errors.New("owned resources released")
 
+var ErrRecoveryMaterialMissing = errors.New("session recovery material missing")
+
 var ErrWorkUnsettled = errors.New("work unsettled")
 
 type (

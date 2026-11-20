@@ -95,6 +95,9 @@ func (v Vault) Load(id string, a runtime.Address, spec runtime.SessionSpec) (Mat
 		return Material{}, err
 	}
 	b, err := os.ReadFile(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return Material{}, errors.Join(runtime.ErrRecoveryMaterialMissing, err)
+	}
 	if err != nil {
 		return Material{}, err
 	}

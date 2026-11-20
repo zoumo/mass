@@ -38,7 +38,7 @@ func (s *entrypointSuite) ticket02CloseRef(kind string, ref resource.SessionRef)
 	var closed resource.Session
 	s.call("session.close", workflowParams{Session: ref}, &closed)
 	s.Equal(events.SessionState("offline"), closed.Status.State)
-	s.Empty(closed.Status.Reason)
+	s.Equal(resource.SessionReasonOwnerReleased, closed.Status.Reason)
 	s.Zero(closed.Status.AppliedGeneration)
 	s.Zero(closed.Status.RuntimeGeneration)
 	s.Nil(closed.Status.Capabilities)
@@ -46,12 +46,12 @@ func (s *entrypointSuite) ticket02CloseRef(kind string, ref resource.SessionRef)
 
 	var idempotent resource.Session
 	s.call("session.close", workflowParams{Session: ref}, &idempotent)
-	s.Equal(events.SessionState("offline"), idempotent.Status.State)
+	s.Equal(closed.Status, idempotent.Status)
 
 	// Close preserves both read paths and does not stop the owning Runtime.
 	var current resource.Session
 	s.call("session.get", workflowParams{Session: ref}, &current)
-	s.Equal(events.SessionState("offline"), current.Status.State)
+	s.Equal(closed.Status, current.Status)
 	s.Equal(closed.Metadata, current.Metadata)
 	s.history(ref)
 	var ownedRuntime resource.Runtime

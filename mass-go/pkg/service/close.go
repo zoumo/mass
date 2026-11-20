@@ -178,7 +178,7 @@ func (s *Service) closeSessionWithGuard(ctx context.Context, ref resource.Sessio
 	if publicationErr != nil {
 		return r, s.failClose(ref, publicationErr)
 	}
-	closed, err := s.closeOffline(ref)
+	closed, err := s.closeOffline(ref, true)
 	if err != nil {
 		return r, err
 	}
@@ -276,16 +276,16 @@ func (s *Service) closeWithoutHandle(ref resource.SessionRef, r resource.Session
 	}
 	switch prior {
 	case "offline":
-		return s.closeOffline(ref)
+		return s.closeOffline(ref, false)
 	case events.Unknown:
-		return s.closeOffline(ref)
+		return s.closeOffline(ref, false)
 	case "opening":
 		if allowOpening || r.Status.AppliedGeneration == 0 {
-			return s.closeOffline(ref)
+			return s.closeOffline(ref, false)
 		}
 	case "closing":
 		if allowClosing || r.Status.AppliedGeneration == 0 {
-			return s.closeOffline(ref)
+			return s.closeOffline(ref, false)
 		}
 	}
 	return r, s.failClose(ref, runtime.FailedPrecondition("session release not confirmed in this process"))
@@ -296,8 +296,17 @@ func unresolvedHistoryLoad(r resource.Session) bool {
 	return h != nil && h.Phase != "completed" && !h.CleanupCompleted
 }
 
-func (s *Service) closeOffline(ref resource.SessionRef) (resource.Session, error) {
-	closed, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r) })
+func (s *Service) closeOffline(ref resource.SessionRef, ownerReleased bool) (resource.Session, error) {
+	closed, err := s.sessionStatus(ref, func(r *resource.Session) {
+		previous := r.Status
+		offlineStatus(r)
+		switch {
+		case ownerReleased:
+			r.Status.Reason = resource.SessionReasonOwnerReleased
+		case previous.State == "offline":
+			r.Status.Reason = previous.Reason
+		}
+	})
 	if err != nil {
 		return closed, s.failClose(ref, err)
 	}

@@ -127,8 +127,8 @@ export const reminderBasis: Record<string, string> = {
   execution_retired: '执行已停用',
   report_received: '已收到本次执行的报告',
   already_scheduled: '已安排一次提醒',
-  awaiting_correlated_end: '等待关联的原生任务结束',
-  end_unconfirmed: '原生任务结束状态未确认',
+  awaiting_correlated_end: '等待 Session 空闲',
+  end_unconfirmed: 'Session 空闲状态未确认',
 }
 
 export const replyLabel = (status?: string) =>
