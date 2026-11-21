@@ -253,24 +253,11 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 			t.Fatal("start race did not settle")
 		}
 	}
-	require.NotEmpty(t, winning)
-	winner := winning[0]
-	if winner.request.OperationID == "start-a" {
-		require.Len(t, winning, 2)
-	} else {
-		require.Equal(t, "start-b", winner.request.OperationID)
-		require.Len(t, winning, 1)
-	}
+	require.Len(t, winning, 1)
 	var created struct{ Result core.WorkReceipt }
-	require.NoError(t, json.Unmarshal(winner.body, &created))
+	require.NoError(t, json.Unmarshal(winning[0].body, &created))
 	started := created.Result
-	for _, result := range winning {
-		require.Equal(t, winner.request, result.request)
-		var replay struct{ Result core.WorkReceipt }
-		require.NoError(t, json.Unmarshal(result.body, &replay))
-		require.Equal(t, started, replay.Result)
-	}
-	require.Equal(t, started, mcpWork[core.WorkReceipt](t, topic, "start_issue", winner.request))
+	mcpWorkError(t, topic, "start_issue", "conflict", winning[0].request)
 	require.NotNil(t, started.SessionBinding)
 	x := *started.SessionBinding
 	require.Equal(t, started.Issue.ID, x.OwnerID)
@@ -400,7 +387,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 
 	complete := core.CompleteIssueRequest{IssueID: reviewedIssue.ID, CompleteRequest: acceptance("accept", reviewedIssue.Revision, ready.ID)}
 	done := mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
-	require.Equal(t, done, mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete))
+	mcpWorkError(t, topic, "issue_complete", "conflict", complete)
 	require.Equal(t, "completed", done.Issue.Status)
 	require.Empty(t, done.Issue.CurrentSessionBindingID)
 	require.Equal(t, complete.Evidence, done.Issue.Completion.Evidence)
@@ -455,7 +442,9 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	auto := issueInput("", "create-start")
 	auto.Start = true
 	second := mcpWork[core.WorkReceipt](t, topic, "create_issue", auto)
-	require.Equal(t, second, mcpWork[core.WorkReceipt](t, topic, "create_issue", auto))
+	secondRetry := mcpWork[core.WorkReceipt](t, topic, "create_issue", auto)
+	require.Equal(t, second.Issue, secondRetry.Issue)
+	require.Equal(t, second.SessionBinding.ID, secondRetry.SessionBinding.ID)
 	require.Equal(t, "mass-t1-i2", second.Issue.ID)
 	require.Equal(t, second.Issue.ID, second.SessionBinding.OwnerID)
 	require.Equal(t, 1, second.SessionBinding.Generation)
@@ -489,7 +478,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	finished := mcpWork[core.Topic](t, topic, "topic_complete", topicComplete)
 	require.Equal(t, "completed", finished.Status)
 	require.Equal(t, topicComplete.Reason, finished.Completion.Reason)
-	require.Equal(t, finished, mcpWork[core.Topic](t, topic, "topic_complete", topicComplete))
+	mcpWorkError(t, topic, "topic_complete", "conflict", topicComplete)
 	mcpWorkError(t, topic, "create_issue", "failed_precondition", issueInput(f.dir, "after-completion"))
 	followUp := input("new-source-after-complete")
 	followUp.Message.ThreadRef.ID, followUp.Message.Channel = "work-main", nil
@@ -625,8 +614,9 @@ func TestIssueStopDispatchCrashStaysUnknown(t *testing.T) {
 	require.Equal(t, "unknown", stop.WorkState)
 	require.Equal(t, "core_stopped_before_stop_settlement", stop.ObservationGap)
 	require.Nil(t, stop.Receipt)
-	require.Equal(t, receipt, roleWork[core.WorkReceipt](t, p, token, "issue_complete", complete))
+	status, body := requestMCPTool(t, p.endpoint, "issue_complete", token, complete)
+	errorCode(t, status, body, http.StatusConflict, "conflict")
 	require.Equal(t, receipt.Issue, readRecord[core.Issue](t, p, "issues/"+receipt.Issue.ID))
 	require.Equal(t, stop, readRecord[core.SessionBinding](t, p, "session-bindings/"+work.SessionBinding.ID).Stop)
-	t.Log("restart retained the Issue acceptance receipt and the original unresolved stop without resubmitting")
+	t.Log("restart retained the Issue acceptance and the original unresolved stop")
 }

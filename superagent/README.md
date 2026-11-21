@@ -27,10 +27,11 @@ bin/superagent observe outbox --message-id MESSAGE_ID
 ```
 
 The default data directory is `./superagent-core-data`, relative to the YAML
-file. Use an empty directory for your first schema 24 startup. Startup rejects
-earlier SQLite schemas and JSON v4 state directories while preserving the original files.
-Set `dataDir` to another empty directory if the configured path contains
-earlier data. Use the original executable to inspect retained MVP history.
+file. Core upgrades a schema 24 directory to schema 25 on startup. The
+transaction removes MCP tool-call history and mutation receipts and preserves
+business records, internal events and saved Trace associations. Use an empty
+`dataDir` for a new installation or when moving from schema 23 or earlier or
+JSON v4 state. Use the original executable to inspect retained MVP history.
 
 Configuration uses [Viper](https://github.com/spf13/viper), CLI commands use
 [Cobra](https://github.com/spf13/cobra), and SQLite uses the pure-Go
@@ -160,6 +161,10 @@ identity and business content. Session acceptance, business completion and
 channel delivery have separate states.
 When execution is configured, accepted input is automatically dispatched through
 massd after fixed-identity Session preparation. No DWS call is made by Core.
+
+Configure OTel export and `observerTrace` to query process and MCP metrics in
+Observer. Metrics reads the time series from OpenObserve and supports filters
+and grouping by metric dimension. See the [telemetry setup](telemetry/README.md).
 
 Open the printed `/observer/` URL and select Topic for its recent events,
 returns and Issue activity. The Issue view shows the goal, configured Runtime

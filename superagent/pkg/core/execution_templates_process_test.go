@@ -232,7 +232,9 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	require.Empty(t, workEvents(t, p, "issue_session_started"))
 
 	work := mcpWork[core.WorkReceipt](t, topic, "create_issue", started)
-	require.Equal(t, work, mcpWork[core.WorkReceipt](t, topic, "create_issue", started))
+	initialRetry := mcpWork[core.WorkReceipt](t, topic, "create_issue", started)
+	require.Equal(t, work.Issue, initialRetry.Issue)
+	require.Equal(t, work.SessionBinding.ID, initialRetry.SessionBinding.ID)
 	require.Equal(t, issueModel, work.Issue.ExecutionProfile)
 	first := verifyTemplateIssue(t, p, massd, peer, work, issueModel)
 	issue := startRoleMCP(t, f, first)

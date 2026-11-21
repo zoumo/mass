@@ -55,7 +55,7 @@ function TraceWorkspace({ traceId, anchor, selected }: { traceId: string; anchor
       <Button type="submit"><Search/>查询 Trace</Button>
       {traceId && <CopyLink href={traceHref(traceId, anchor, selected)}/>}
     </form>
-    {!traceId && <p className="empty">输入 Trace ID，或从事件和工具调用记录打开 Trace。</p>}
+    {!traceId && <p className="empty">输入 Trace ID，或从事件打开 Trace。</p>}
     {traceId && !valid && <p className="read-error" role="alert">Trace ID 须为 32 位十六进制字符。</p>}
     {valid && online && record.loading && !record.data && <p className="empty" role="status">正在读取 Trace…</p>}
     {record.error && <p className="read-error" role="alert">{record.error.includes('404')

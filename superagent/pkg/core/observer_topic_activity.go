@@ -130,7 +130,7 @@ func (s *Store) topicActivity(ctx context.Context, q url.Values) (Page, error) {
 	projection := body
 	if s.hasTraceAssociations {
 		projection = `json_set(` + body + `,'$.traceAssociations',json(CASE
- WHEN kind='issue_created' THEN ` + issueCreationTraces("page.ref") + `
+ WHEN kind='issue_created' THEN ` + observerTraceList("issues", "page.ref") + `
  WHEN kind='issue_session_started' AND json_extract(extra,'$.eventId') IS NULL THEN ` + observerTraceList("session-bindings", "page.ref") + `
  WHEN kind IN ('completion','cancellation','reopening') THEN ` + issueLifecycleTraces("page.issue_id", "page.at") + `
  ELSE ` + observerTraceList("internal-events", "json_extract(page.extra,'$.eventId')") + ` END))`

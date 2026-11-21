@@ -27,7 +27,6 @@
 .performance-legend li { display: flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
 .performance-legend svg { width: 21px; height: 8px; flex: none; }
 .performance-legend li > span { min-width: 0; overflow-wrap: anywhere; }
-.performance-legend small, .performance-inspector small { margin-inline-start: 3px; }
 .performance-inspector {
   display: grid;
   gap: 6px;
@@ -41,6 +40,7 @@
 .performance-inspector output { display: grid; gap: 3px; font-variant-numeric: tabular-nums; }
 .performance-inspector time { color: var(--muted); }
 .performance-inspector output > span { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.performance-inspector output > span > span { min-width: 0; overflow-wrap: anywhere; }
 .performance-inspector strong { font-weight: 600; text-align: right; }
 .performance-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 820px) {

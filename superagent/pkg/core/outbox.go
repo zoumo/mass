@@ -107,7 +107,6 @@ func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (
 		if err := readJSON(ctx, tx, "SELECT "+outboxProjection+" FROM outbox WHERE id=?", &item, id); err != nil {
 			return nil, err
 		}
-		markMCPMutation(ctx, true, false)
 		return json.Marshal(item)
 	}
 	if req.BlockerRef != nil {
@@ -154,7 +153,6 @@ func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (
 	if err = tx.Commit(); err != nil {
 		return nil, storageError()
 	}
-	markMCPMutation(ctx, false, true)
 	return json.Marshal(item)
 }
 

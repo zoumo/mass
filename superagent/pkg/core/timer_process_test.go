@@ -209,7 +209,7 @@ func TestTimerNativeEventAndAuthority(t *testing.T) {
 	followups := mcpWork[struct{ Followups []timerRecord }](t, topic, "get_topic", map[string][]string{"include": {"followups"}}).Followups
 	require.Len(t, followups, 1)
 	require.Equal(t, d, *followups[0].Followup)
-	require.Equal(t, rescheduled, mcpWork[core.Timer](t, topic, "timer_update", update))
+	mcpWorkError(t, topic, "timer_update", "conflict", update)
 	mcpWorkError(t, topic, "timer_cancel", "failed_precondition", cancelTimerInput("too-late", fired.Timer))
 	update.CancelTimerRequest = cancelTimerInput("update-fired", fired.Timer)
 	mcpWorkError(t, topic, "timer_update", "failed_precondition", update)
@@ -235,7 +235,10 @@ func TestTimerNativeEventAndAuthority(t *testing.T) {
 	require.Equal(t, fired.Timer, restarted.Timer)
 	require.Equal(t, d, *restarted.Followup)
 	token := roleToken(t, f, binding)
-	require.Equal(t, scheduled, roleWork[core.Timer](t, p, token, "schedule_followup", r))
+	retried := roleWork[core.Timer](t, p, token, "schedule_followup", r)
+	require.Equal(t, fired.ID, retried.ID)
+	require.Equal(t, fired.Status, retried.Status)
+	require.Equal(t, fired.Revision, retried.Revision)
 	next := roleWork[core.Timer](t, p, token, "schedule_followup", timerInput("next-followup", timerFuture))
 	require.Equal(t, "mass-t1-tm2", next.ID)
 	peer.quiet(t, 600*time.Millisecond)
@@ -264,14 +267,16 @@ func TestTimerRevisionWinsBeforeFire(t *testing.T) {
 				update := core.UpdateTimerRequest{CancelTimerRequest: change, DueAt: timerFuture, Content: "Postpone the followup."}
 				changed = roleWork[core.Timer](t, p, token, "timer_update", update)
 				require.Equal(t, "scheduled", changed.Status)
-				require.Equal(t, changed, roleWork[core.Timer](t, p, token, "timer_update", update))
+				status, data := requestMCPTool(t, p.endpoint, "timer_update", token, update)
+				errorCode(t, status, data, http.StatusConflict, "conflict")
 			} else {
 				changed = roleWork[core.Timer](t, p, token, "timer_cancel", change)
 				require.Equal(t, "canceled", changed.Status)
-				require.Equal(t, changed, roleWork[core.Timer](t, p, token, "timer_cancel", change))
+				status, data := requestMCPTool(t, p.endpoint, "timer_cancel", token, change)
+				errorCode(t, status, data, http.StatusConflict, "conflict")
 				change.ExpectedRevision++
 				change.OperationID = "race-change-again"
-				status, data := requestMCPTool(t, p.endpoint, "timer_cancel", token, change)
+				status, data = requestMCPTool(t, p.endpoint, "timer_cancel", token, change)
 				errorCode(t, status, data, http.StatusConflict, "failed_precondition")
 			}
 			require.Equal(t, 2, changed.Revision)
@@ -281,7 +286,7 @@ func TestTimerRevisionWinsBeforeFire(t *testing.T) {
 			fired := waitTimer(t, p, marker.ID, "fired")
 			waitTimerEvent(t, p, fired.Followup.ID, "sent")
 			require.Equal(t, changed, readRecord[timerRecord](t, p, "timers/"+changed.ID).Timer)
-			require.Equal(t, selected, roleWork[core.Timer](t, p, token, "schedule_followup", r))
+			require.Equal(t, changed, roleWork[core.Timer](t, p, token, "schedule_followup", r))
 			require.Len(t, page(t, p, "messages").Items, 2)
 			require.Len(t, page(t, p, "threads").Items, 2)
 			assertTimerFollowup(t, p, fired)

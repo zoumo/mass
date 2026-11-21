@@ -6,57 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestObserverMCPMetricsCallerScope(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "observer.sqlite"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	ctx := t.Context()
-	_, err = db.ExecContext(ctx, schema+";"+mcpUsageSchema+traceAssociationSchema)
-	require.NoError(t, err)
-	s := &Store{db: db, hasTraceAssociations: true}
-	traceID := "db64663e60fb444b8a93ea9c06c24413"
-	at := time.Now().UTC().Add(-time.Minute).Format(utcTimestamp)
-	_, err = db.ExecContext(ctx, `INSERT INTO trace_associations VALUES('messages','mass-m1','admission',0,?,'',?)`, "00-"+traceID+"-5b147a1058d5e09f-01", at)
-	require.NoError(t, err)
-	insert := func(role, owner, bindingID, traceID, outcome string, duration int, replayed bool) {
-		t.Helper()
-		_, err := db.ExecContext(ctx, `INSERT INTO mcp_tool_calls
- (at,caller_role,caller_id,topic_id,issue_id,session_binding_id,target_issue_id,event_id,tool,action,outcome,duration_ns,trace_id,span_id,replayed,changed)
- VALUES(?,?,?,'mass-t1','',?,'','','update_issue','edit',?,?,?,'',?,0)`, at, role, owner, bindingID, outcome, duration, traceID, replayed)
-		require.NoError(t, err)
-	}
-	for duration := 1; duration <= 20; duration++ {
-		insert("topic", "mass-t1", "topic-binding", traceID, "ok", duration, duration == 1)
-	}
-	insert("issue", "mass-t1-i1", "issue-binding", "", "conflict", 100, false)
-	metrics := func(query string) mcpMetrics {
-		t.Helper()
-		q, err := url.ParseQuery(query)
-		require.NoError(t, err)
-		value, err := s.mcpToolUsage(ctx, q, "metrics")
-		require.NoError(t, err)
-		return value.(mcpMetrics)
-	}
-	topic := metrics("role=topic&callerId=mass-t1")
-	require.Equal(t, mcpMetricStats{Count: 20, Replayed: 1, DurationNS: 210, P95NS: 19}, topic.Total)
-	require.Len(t, topic.Tools, 1)
-	require.Len(t, topic.Trend, 1)
-	require.Equal(t, topic.Total.Count, topic.Trend[0].Count)
-	issue := metrics("role=issue&callerId=mass-t1-i1")
-	require.Equal(t, mcpMetricStats{Count: 1, Failed: 1, DurationNS: 100, P95NS: 100}, issue.Total)
-	require.Equal(t, issue.Total, metrics("sessionBindingId=issue-binding").Total)
-	require.EqualValues(t, 21, metrics("topicId=mass-t1").Total.Count)
-	require.EqualValues(t, 20, metrics("messageId=mass-m1").Total.Count)
-	require.Empty(t, metrics("messageId=unknown").Tools)
-}
 
 func TestObserverTraceReadProjectsKnownFields(t *testing.T) {
 	id := "db64663e60fb444b8a93ea9c06c24413"
@@ -101,7 +55,7 @@ func TestObserverIssueTracePreservesReports(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	ctx := t.Context()
-	_, err = db.ExecContext(ctx, schema+";"+mcpUsageSchema+traceAssociationSchema)
+	_, err = db.ExecContext(ctx, schema+";"+traceAssociationSchema)
 	require.NoError(t, err)
 	s := &Store{db: db, hasTraceAssociations: true}
 	at := now()

@@ -60,7 +60,7 @@ func (s *Store) roleTraceInput(ctx context.Context, b SessionBinding, raw []byte
 		}
 		singleSource = len(messages) == 1
 	}
-	if u := mcpUsageFrom(ctx); u != nil {
+	if u := mcpCallTelemetryFrom(ctx); u != nil {
 		u.eventID = id
 	}
 	if s.telemetry.tracesEnabled && singleSource {

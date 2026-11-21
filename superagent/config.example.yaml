@@ -1,4 +1,5 @@
-# Defaults to this directory beside the YAML file. Use an empty directory for schema 24.
+# Defaults to this directory beside the YAML file. Core upgrades schema 24 to 25 on startup.
+# Use an empty directory for a fresh install or when moving from schema 23 or earlier.
 dataDir: ./superagent-core-data
 # Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
 listen: 127.0.0.1:24370

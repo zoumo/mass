@@ -71,10 +71,10 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 		t.Helper()
 		require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&schemaVersion))
 		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables))
-		require.Equal(t, 24, schemaVersion)
+		require.Equal(t, 25, schemaVersion)
 		require.Equal(t, expectedTables, tables)
 	}
-	checkSchema(10)
+	checkSchema(8)
 
 	// A configuration refusal after DDL should roll the new table back.
 	f.configure(0, "different-account")
@@ -83,7 +83,7 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 	raw, err := cmd.CombinedOutput()
 	require.Error(t, err)
 	require.Contains(t, string(raw), "configured source/account differs")
-	checkSchema(10)
+	checkSchema(8)
 
 	f.configure(0, "account-1")
 	p = f.start("OTEL_TRACES_EXPORTER=otlp", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:0")
@@ -92,7 +92,7 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 	original := observedTraces(t, p, "messages", saved.MessageID)
 	require.Len(t, original, 1)
 	require.Equal(t, "admission", original[0].Phase)
-	checkSchema(11)
+	checkSchema(9)
 	var persisted string
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT traceparent FROM trace_associations WHERE collection='messages' AND object_id=?", saved.MessageID).Scan(&persisted))
 	require.Contains(t, persisted, original[0].TraceID)

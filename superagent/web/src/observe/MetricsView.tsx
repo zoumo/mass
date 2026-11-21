@@ -1,186 +1,221 @@
 import { useState } from 'react'
 import { Button } from '../components/ui/button'
-import { formatTime } from '../workbench'
-import { countText, elapsed, rate } from './metricFormat'
 import { navigate, useRecord, viewHref, type ViewProps } from './observer'
-import PerformanceView, { performanceHref } from './PerformanceView'
-import { TraceLink } from './TraceLinks'
 import './observability.css'
+import './performance.css'
 
-const roles = ['router', 'topic', 'issue'] as const
-type Role = typeof roles[number]
-const dimensions = { all: '全部', message: 'Message', router: 'Router', topic: 'Topic', issue: 'Issue', 'session-binding': 'SessionBinding', tool: '工具' } as const
-type Dimension = keyof typeof dimensions
-const windows = { '1h': '1 小时', '24h': '24 小时', '7d': '7 天', '30d': '30 天' } as const
-type Window = keyof typeof windows
-type Filter = { scope: Dimension; id: string; window: Window; includeIssues: boolean }
-type Timing = { count: number; failed: number; durationNs: number }
-type Stats = Timing & { p95Ns: number; changed: number; replayed: number }
-type Tool = Stats & { role: Role; tool: string }
-type Bucket = Timing & { at: string; role: Role }
-type Metrics = { from: string; until: string; bucketSeconds: number; total: Stats; tools: Tool[]; trend: Bucket[] }
-type Call = { sequence: number; at: string; role: Role; callerId: string; tool: string; action?: string; outcome: string; durationNs: number; traceId?: string; spanId?: string; replayed: boolean }
-type Calls = { items: Call[]; nextBefore?: number }
-
-export function metricsHref(scope: Dimension, id = '', window: Window = '24h', includeIssues = false, before = '') {
-  return viewHref('metrics', id, { scope, window, includeIssues: includeIssues ? 'true' : '', before })
+const windows = { '15m': '15 分钟', '1h': '1 小时', '6h': '6 小时', '24h': '24 小时' } as const
+const definitions = {
+  cpu: { title: 'CPU 使用量', unit: '核' },
+  rss: { title: 'RSS 内存', unit: 'B' },
+  goroutines: { title: 'Goroutine 数', unit: '个' },
+  file_descriptors: { title: '打开的文件描述符', unit: '个' },
+  mcp_rate: { title: 'MCP 调用率', unit: '次/秒' },
+  mcp_failure_rate: { title: 'MCP 失败率', unit: '%' },
+  mcp_p95: { title: 'MCP P95 耗时', unit: '秒' },
+} as const
+const processMetrics = ['cpu', 'rss', 'goroutines', 'file_descriptors'] as const
+const mcpMetrics = ['mcp_rate', 'mcp_failure_rate', 'mcp_p95'] as const
+const dimensions = { all: '汇总', service: '服务', instance: '服务实例', role: '角色', tool: '工具', action: '动作', outcome: '结果' } as const
+const processFilters = ['service', 'instance'] as const
+const mcpFilters = ['role', 'tool', 'action', 'outcome'] as const
+const failureRateFilters = ['role', 'tool', 'action'] as const
+const filterOptions: Partial<Record<keyof typeof dimensions, string[]>> = {
+  service: ['massd', 'superagent-core'], role: ['router', 'topic', 'issue'],
 }
+type MetricID = keyof typeof definitions
+type Point = [unixSeconds: number, value: number]
+type Series = { dimensions: Record<string, string>; points: Point[] }
+type Metric = { id: MetricID; unavailable?: boolean; series: Series[] }
+type Range = { from: number; until: number; stepSeconds: number; metrics: Metric[] }
 
 export default function MetricsView({ query }: ViewProps) {
-  const performance = query.get('tab') === 'performance'
-  const scope = query.get('scope') || 'all'
-  const window = query.get('window') || ''
-  const filter: Filter = {
-    scope: Object.hasOwn(dimensions, scope) ? scope as Dimension : 'all',
-    window: Object.hasOwn(windows, window) ? window as Window : '24h',
-    id: query.get('id') || '', includeIssues: query.get('includeIssues') === 'true',
-  }
-  const toolUsage = performance ? viewHref('metrics') : metricsHref(filter.scope, filter.id, filter.window, filter.includeIssues, query.get('before') || '')
+  const requested = query.get('metric') ?? ''
+  const metric = Object.hasOwn(definitions, requested) ? requested as MetricID : 'process'
+  const window = query.get('window') ?? ''
+  const range = Object.hasOwn(windows, window) ? window : '1h'
+  const isMCP = metric.startsWith('mcp_')
+  const filters = isMCP ? (metric === 'mcp_failure_rate' ? failureRateFilters : mcpFilters) : processFilters
+  const defaultGroup = isMCP ? 'role' : 'instance'
+  const groups = [...filters, 'all'] as const
+  const group = groups.find(key => key === query.get('groupBy')) ?? defaultGroup
+  const params = Object.fromEntries(filters.map(key => [key, query.get(key) ?? '']))
+  const config = { metric, window: range, groupBy: group, ...params }
+  const resource = 'performance?' + new URLSearchParams(Object.entries(config).filter(([, value]) => value))
+  const { data, loading, error } = useRecord<Range>(resource)
+  const charts = metric === 'process' ? processMetrics : [metric]
+  const update = (next: Record<string, string>) => navigate(viewHref('metrics', '', { ...config, ...next }))
   return <div className="observability">
-    <nav className="panel metrics-scopes" aria-label="Metrics">
-      <a href={toolUsage} aria-current={performance ? undefined : 'page'}>工具用量</a>
-      <a href={performance ? viewHref('metrics', '', { tab: 'performance', window }) : performanceHref()} aria-current={performance ? 'page' : undefined}>系统性能</a>
-    </nav>
-    {performance
-      ? <PerformanceView query={query}/>
-      : <MetricsWorkspace key={JSON.stringify(filter)} filter={filter} before={query.get('before') || ''}/>}
-  </div>
-}
-
-function metricsParams(filter: Filter) {
-  const { scope, id, window, includeIssues } = filter
-  const params = new URLSearchParams({ window })
-  if (scope === 'message') params.set('messageId', id)
-  if (scope === 'session-binding') params.set('sessionBindingId', id)
-  if (scope === 'tool' && id) params.set('tool', id)
-  if (scope === 'topic' && includeIssues) params.set('topicId', id)
-  else if (scope === 'router' || scope === 'topic' || scope === 'issue') {
-    params.set('role', scope)
-    if (id) params.set('callerId', id)
-  }
-  return params
-}
-
-function MetricsWorkspace({ filter, before }: { filter: Filter; before: string }) {
-  const { scope, id, window, includeIssues } = filter
-  const [draft, setDraft] = useState(id)
-  const requiresID = scope === 'message' || scope === 'session-binding' || (scope === 'topic' && includeIssues)
-  const ready = !requiresID || Boolean(id)
-  const params = metricsParams(filter)
-  const metrics = useRecord<Metrics>(ready ? 'mcp-tool-usage/metrics?' + params : '')
-  const callParams = new URLSearchParams(params)
-  callParams.set('limit', '20')
-  if (before) callParams.set('before', before)
-  const calls = useRecord<Calls>(ready ? 'mcp-tool-usage/calls?' + callParams : '')
-  const acceptsID = scope !== 'all' && scope !== 'router'
-  const idLabel = scope === 'tool' ? '工具名称' : scope === 'message' || scope === 'session-binding' ? dimensions[scope] + ' ID' : '调用方 ID'
-  return <div className="observability">
-    <nav className="panel metrics-scopes" aria-label="Metrics 统计维度">
-      {Object.entries(dimensions).map(([name, label]) => <a key={name} href={metricsHref(name as Dimension, name === scope ? id : '', window, name === scope && includeIssues)} aria-current={name === scope ? 'page' : undefined}>{label}</a>)}
-    </nav>
-    <form className="panel observable-query" onSubmit={event => { event.preventDefault(); navigate(metricsHref(scope, draft.trim(), window, includeIssues)) }}>
-      {acceptsID && <label>{idLabel}<input required={requiresID} value={draft} onChange={event => setDraft(event.target.value)} placeholder={requiresID ? undefined : '全部'}/></label>}
-      {scope === 'topic' && <label>Topic 用量范围<select aria-label="Topic 用量范围" value={String(includeIssues)} onChange={event => navigate(metricsHref(scope, draft.trim(), window, event.target.value === 'true'))}>
-        <option value="false">Topic 自身</option><option value="true">包含下属 Issue</option>
-      </select></label>}
-      <label>时间范围<select value={window} onChange={event => navigate(metricsHref(scope, id, event.target.value as Window, includeIssues))}>
+    <div className="panel observable-query">
+      <label>指标<select value={metric} onChange={event => {
+        const value = event.target.value
+        const nextMCP = value.startsWith('mcp_')
+        if (nextMCP !== isMCP) navigate(viewHref('metrics', '', { metric: value, window: range }))
+        else update({ metric: value, ...(value === 'mcp_failure_rate' ? { outcome: '', groupBy: group === 'outcome' ? 'role' : group } : {}) })
+      }}>
+        <optgroup label="进程"><option value="process">全部进程指标</option>
+          {processMetrics.map(id => <option key={id} value={id}>{definitions[id].title}</option>)}
+        </optgroup>
+        <optgroup label="MCP">{mcpMetrics.map(id => <option key={id} value={id}>{definitions[id].title}</option>)}</optgroup>
+      </select></label>
+      <label>分组<select value={group} onChange={event => update({ groupBy: event.target.value })}>
+        {groups.map(key => <option key={key} value={key}>{dimensions[key]}</option>)}
+      </select></label>
+      <label>时间范围<select value={range} onChange={event => update({ window: event.target.value })}>
         {Object.entries(windows).map(([value, label]) => <option key={value} value={value}>最近 {label}</option>)}
       </select></label>
-      {acceptsID && <Button type="submit">应用筛选</Button>}
-      {id && (scope === 'message' || scope === 'topic' || scope === 'issue') && <a href={viewHref(scope, id)}>查看 {dimensions[scope]} →</a>}
-      {id && scope === 'session-binding' && <a href={'/observer/?' + new URLSearchParams({ view: 'session-bindings', id })}>查看 SessionBinding →</a>}
+    </div>
+    <form key={JSON.stringify(params)} className="panel observable-query" onSubmit={event => {
+      event.preventDefault()
+      const input = new FormData(event.currentTarget)
+      update(Object.fromEntries(filters.map(key => [key, String(input.get(key) ?? '').trim()])))
+    }}>
+      {filters.map(key => {
+        const options = filterOptions[key]
+        return <label key={key}>{dimensions[key]}{options ? <select name={key} defaultValue={params[key]}>
+          <option value="">全部</option>
+          {options.map(value => <option key={value} value={value}>{value}</option>)}
+        </select> : <input name={key} defaultValue={params[key]} placeholder="全部" maxLength={128} />}</label>
+      })}
+      <Button type="submit">应用筛选</Button>
+      {data && <small className="metric-note">本地时间 · 查询步长 {data.stepSeconds} 秒</small>}
     </form>
-    {scope === 'message' && <p className="metric-note">按 Core 已记录的事件和 Trace 统计关联调用。跨消息共用的调用可能出现在多个 Message 视角。</p>}
-    {!ready && <p className="empty">{scope === 'topic' ? '输入 Topic ID 查看包含下属 Issue 的用量。' : `输入 ${idLabel} 查看关联工具用量。`}</p>}
-    {metrics.loading && ready && !metrics.data && !metrics.error && <p className="empty" role="status">正在读取 Metrics…</p>}
-    {metrics.error && <p className="read-error" role="alert">{metrics.error}{metrics.data && ' · 上一次查询结果'}</p>}
-    {metrics.data && <MetricCharts metrics={metrics.data} filter={filter}/>}
-    {ready && <section className="panel metrics-detail" aria-labelledby="tool-call-records">
-      <header><h2 id="tool-call-records">工具调用记录</h2>{before && <a href={metricsHref(scope, id, window, includeIssues)}>回到最新</a>}</header>
-      {calls.error && <p className="read-error" role="alert">{calls.error}</p>}
-      {calls.data?.items.length === 0 && <p className="empty">当前范围暂无工具调用。</p>}
-      {!!calls.data?.items.length && <div className="metric-table-scroll"><table><thead><tr><th>时间</th><th>调用方</th><th>工具</th><th>结果</th><th>Core 耗时</th><th>Trace</th></tr></thead><tbody>
-        {calls.data.items.map(call => <tr key={call.sequence}>
-          <td><time dateTime={call.at} title={call.at}>{formatTime(call.at)}</time></td>
-          <td><a href={metricsHref(call.role, call.callerId, window)}>{dimensions[call.role]}{call.callerId && ` · ${call.callerId}`} </a></td>
-          <td><a href={metricsHref('tool', call.tool, window)}>{call.tool}</a>{call.action && ` · ${call.action}`}</td>
-          <td>{call.outcome}{call.replayed && ' · 重放'}</td><td>{elapsed(call.durationNs)}</td>
-          <td>{call.traceId ? <TraceLink id={call.traceId} at={call.at} span={call.spanId}/> : '—'}</td>
-        </tr>)}
-      </tbody></table></div>}
-      {calls.data?.nextBefore && <a className="metrics-older" href={metricsHref(scope, id, window, includeIssues, String(calls.data.nextBefore))}>更早的记录 →</a>}
-    </section>}
+    {loading && !data && !error && <p className="empty" role="status">正在读取指标…</p>}
+    {error && <p className="read-error" role="alert">{error}{data && ' · 上一次查询结果'}</p>}
+    {data && <div className={charts.length > 1 ? 'performance-grid' : undefined}>
+      {charts.map(id => <MetricChart key={`${resource}/${id}`} id={id}
+        metric={data.metrics.find(item => item.id === id)} from={data.from} until={data.until} step={data.stepSeconds}/>)}
+    </div>}
   </div>
 }
 
-function MetricCharts({ metrics, filter }: { metrics: Metrics; filter: Filter }) {
-  const total = metrics.total
-  const kpis = [
-    { label: '工具调用次数', value: countText.format(total.count), note: `${total.replayed} 次幂等重放 · ${total.changed} 次业务变更` },
-    { label: '失败率', value: rate(total.failed, total.count), note: `${total.failed} 次失败` },
-    { label: 'Core P95 耗时', value: total.count ? elapsed(total.p95Ns) : '—', note: total.count ? `平均 ${elapsed(total.durationNs / total.count)}` : '无样本' },
-    { label: 'Core 累计耗时', value: elapsed(total.durationNs), note: '逐次工具处理耗时之和' },
-  ]
-  const largest = Math.max(1, ...metrics.tools.map(tool => tool.count))
-  const slowest = Math.max(1, ...metrics.tools.map(tool => tool.p95Ns))
-  return <>
-    <div className="metric-kpis">{kpis.map(kpi => <div className="panel metric-kpi" key={kpi.label}><span>{kpi.label}</span><strong>{kpi.value}</strong><small>{kpi.note}</small></div>)}</div>
-    {total.count > 0 && <>
-      <Trend metrics={metrics}/>
-      <section className="panel metrics-detail">
-        <header><h2>按角色和工具</h2><small>按调用次数排序</small></header>
-        <div className="metric-table-scroll"><table><thead><tr><th>调用方角色</th><th>工具</th><th>调用次数</th><th>失败率</th><th>平均耗时</th><th>P95 耗时</th></tr></thead><tbody>
-          {metrics.tools.map(tool => <tr key={`${tool.role}/${tool.tool}`}>
-            <td><span className="metric-role" data-role={tool.role}>{dimensions[tool.role]}</span></td>
-            <td><a href={metricsHref('tool', tool.tool, filter.window)}>{tool.tool}</a></td>
-            <td><div className="metric-bar" data-role={tool.role}><span style={{ width: `${100 * tool.count / largest}%` }}/><strong>{countText.format(tool.count)}</strong></div></td>
-            <td>{rate(tool.failed, tool.count)}</td><td>{elapsed(tool.durationNs / tool.count)}</td>
-            <td><div className="metric-bar" data-role={tool.role}><span style={{ width: `${100 * tool.p95Ns / slowest}%` }}/><strong>{elapsed(tool.p95Ns)}</strong></div></td>
-          </tr>)}
-        </tbody></table></div>
-      </section>
-    </>}
-  </>
+const plotWidth = 1000
+const plotHeight = 180
+const bands = 4
+const colors = ['#55dac2', '#f7b97a', '#7daeff', '#bb9af7', '#ff928d', '#a4d772']
+const dashes = ['', '6 3', '2 3', '8 3 2 3']
+const axisNumber = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 4 })
+const cpuNumber = new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 })
+const exactNumber = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 21 })
+const axisTime = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+const axisDateTime = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+const sampleTime = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hourCycle: 'h23', timeZoneName: 'shortOffset',
+})
+
+function axisScale(id: MetricID, peak: number) {
+  const minimum = ['cpu', 'mcp_rate', 'mcp_p95'].includes(id) ? 0.005 : 1
+  const step = Math.max(minimum, peak / bands)
+  const power = 10 ** Math.floor(Math.log10(step))
+  const multiplier = [1, 2, 2.5, 5, 10].find(value => value * power >= step) ?? 10
+  const interval = id === 'goroutines' || id === 'file_descriptors' ? Math.ceil(multiplier * power) : multiplier * power
+  const top = id === 'mcp_failure_rate' ? 100 : interval * bands
+  const tickStep = top / bands
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  const order = id === 'rss' ? Math.min(units.length - 1, Math.floor(Math.log2(top) / 10)) : 0
+  return { top, unit: id === 'rss' ? units[order] : definitions[id].unit, labels: Array.from({ length: bands + 1 }, (_, index) =>
+    axisNumber.format(tickStep * (bands - index) / 1024 ** order)) }
 }
 
-function Trend({ metrics }: { metrics: Metrics }) {
-  const [measure, setMeasure] = useState('count')
-  const [selected, select] = useState<number>()
-  const start = Date.parse(metrics.from)
-  const byTime = new Map<number, Bucket[]>()
-  for (const bucket of metrics.trend) {
-    const at = Date.parse(bucket.at)
-    byTime.set(at, [...byTime.get(at) || [], bucket])
+function plotPaths(points: Point[], step: number, x: (at: number) => number, y: (value: number) => number) {
+  let line = ''
+  let dots = ''
+  for (const [index, [at, value]] of points.entries()) {
+    const previous = index > 0 && at - points[index - 1][0] === step
+    const next = index + 1 < points.length && points[index + 1][0] - at === step
+    const position = `${x(at)} ${y(value)}`
+    if (previous || next) line += `${previous ? 'L' : 'M'}${position}`
+    else dots += `M${position}h0.01`
   }
-  const intervals = Array.from({ length: 24 }, (_, index) => {
-    const at = start + index * metrics.bucketSeconds * 1000
-    const buckets = byTime.get(at) || []
-    const total = buckets.reduce((sum, bucket) => sum + bucket.count, 0)
-    const failed = buckets.reduce((sum, bucket) => sum + bucket.failed, 0)
-    const ns = buckets.reduce((sum, bucket) => sum + bucket.durationNs, 0)
-    const value = measure === 'count' ? total : measure === 'failure' ? (total ? failed / total : 0) : (total ? ns / total : 0)
-    const label = measure === 'count' ? `${total} 次` : measure === 'failure' ? rate(failed, total) : total ? elapsed(value) : '—'
-    return { at, buckets, total, value, label }
+  return { line, dots }
+}
+
+function MetricChart({ id, metric, from, until, step }: { id: MetricID; metric?: Metric; from: number; until: number; step: number }) {
+  const [selectedTime, selectTime] = useState<number>()
+  const definition = definitions[id]
+  const heading = `performance-${id}`
+  const series = (metric?.series ?? []).map((item, index) => {
+    const labels = Object.entries(item.dimensions)
+    const label = labels.map(([key, value]) => key === 'action' && !value ? '无动作' : value).join(' · ')
+    return {
+      ...item, key: JSON.stringify(labels), label: label || '全部',
+      points: item.points.map(([at, value]): Point => [at, id === 'mcp_failure_rate' ? value * 100 : value]),
+      color: colors[index % colors.length], dash: dashes[Math.floor(index / colors.length) % dashes.length],
+    }
   })
-  const ceiling = measure === 'failure' ? 1 : Math.max(1, ...intervals.map(interval => interval.value))
-  const axis = (number: number) => measure === 'count' ? countText.format(number) : measure === 'failure' ? rate(number, 1) : elapsed(number)
-  return <section className="panel metrics-trend">
-    <header><h2>工具调用趋势</h2><select aria-label="趋势指标" value={measure} onChange={event => setMeasure(event.target.value)}>
-      <option value="count">调用次数</option><option value="failure">失败率</option><option value="latency">平均 Core 耗时</option>
-    </select></header>
-    <div className="trend-plot"><div className="trend-scale" aria-hidden="true"><span>{axis(ceiling)}</span><span>{axis(0)}</span></div>
-    <div className="trend-chart" aria-label="按时间区间查看工具调用趋势">
-      {intervals.map((interval, index) => <button type="button" key={interval.at} data-selected={index === selected}
-        aria-label={`${formatTime(new Date(interval.at).toISOString())} · ${interval.label}`} onClick={() => select(index)} onFocus={() => select(index)} onMouseEnter={() => select(index)}>
-        {measure === 'count' ? roles.map(role => {
-          const count = interval.buckets.find(bucket => bucket.role === role)?.count || 0
-          return count > 0 && <span key={role} data-role={role} style={{ height: `${100 * count / ceiling}%` }}/>
-        }) : <span style={{ height: `${100 * interval.value / ceiling}%` }}/>}
-      </button>)}
+  const peak = series.reduce((max, item) => item.points.reduce((high, [, value]) => Math.max(high, value), max), 0)
+  const scale = axisScale(id, peak)
+  const x = (at: number) => (at - from) * plotWidth / Math.max(1, until - from)
+  const y = (value: number) => plotHeight * (1 - value / scale.top)
+  const formatTick = new Date(from * 1000).toDateString() === new Date(until * 1000).toDateString() ? axisTime : axisDateTime
+  const timestamps = [...new Set(series.flatMap(item => item.points.map(([at]) => at)))].sort((a, b) => a - b)
+  const selected = selectedTime !== undefined && timestamps.includes(selectedTime) ? selectedTime : timestamps.at(-1)
+  const exactTime = selected === undefined ? '' : sampleTime.format(selected * 1000)
+  const samples = series.flatMap(item => {
+    const point = item.points.find(([at]) => at === selected)
+    return point ? [{ ...item, value: point[1] }] : []
+  })
+  function pointAt(fraction: number) {
+    const time = from + fraction * (until - from)
+    const nearest = timestamps.reduce((closest, at) => Math.abs(at - time) < Math.abs(closest - time) ? at : closest, timestamps[0])
+    selectTime(nearest)
+  }
+  return <section className="panel performance-chart" aria-labelledby={heading}>
+    <header><h2 id={heading}>{definition.title}</h2>{series.length > 0 && <small>{scale.unit}</small>}</header>
+    {metric?.unavailable && <p className="empty" role="status">{series.length ? '部分指标数据无法读取。' : '该指标暂不可用。'}</p>}
+    {!series.length && !metric?.unavailable && <p className="empty">当前范围暂无样本。</p>}
+    {series.length > 0 && <><div className="performance-plot" aria-hidden="true">
+      <div className="performance-scale">{scale.labels.map((label, index) => <span key={index}>{label}</span>)}</div>
+      <svg viewBox={`0 0 ${plotWidth} ${plotHeight}`} preserveAspectRatio="none"
+        onPointerMove={event => {
+          if (event.pointerType !== 'touch') {
+            const bounds = event.currentTarget.getBoundingClientRect()
+            pointAt((event.clientX - bounds.left) / bounds.width)
+          }
+        }}
+        onClick={event => {
+          const bounds = event.currentTarget.getBoundingClientRect()
+          pointAt((event.clientX - bounds.left) / bounds.width)
+        }}>
+        {scale.labels.map((_, index) => <line className="performance-gridline" key={index} x1={0} x2={plotWidth}
+          y1={index * plotHeight / bands} y2={index * plotHeight / bands} vectorEffect="non-scaling-stroke"/>)}
+        {selected !== undefined && <line className="performance-cursor" x1={x(selected)} x2={x(selected)} y1={0} y2={plotHeight}
+          vectorEffect="non-scaling-stroke"/>}
+        {series.map(item => {
+          const paths = plotPaths(item.points, step, x, y)
+          return <g key={item.key} data-instance={item.dimensions.instance} stroke={item.color} fill="none">
+            {paths.line && <path d={paths.line} strokeWidth={2} strokeDasharray={item.dash} vectorEffect="non-scaling-stroke"/>}
+            {paths.dots && <path d={paths.dots} strokeWidth={4} strokeLinecap="round" vectorEffect="non-scaling-stroke"/>}
+          </g>
+        })}
+        {selected !== undefined && samples.map(item => <path key={item.key}
+          d={`M${x(selected)} ${y(item.value)}h0.01`} className="performance-sample" stroke={item.color} strokeWidth={7}
+          strokeLinecap="round" vectorEffect="non-scaling-stroke"/>)}
+      </svg>
+      <div className="performance-axis">{[from, (from + until) / 2, until].map(at => <span key={at}>{formatTick.format(at * 1000)}</span>)}</div>
     </div>
-    <div className="trend-axis"><span>{formatTime(metrics.from)}</span><span>{formatTime(metrics.until)}</span></div></div>
-    <footer>{measure === 'count' && <div>{roles.map(role => <span className="metric-role" data-role={role} key={role}>{dimensions[role]}</span>)}</div>}
-      {selected !== undefined && <output>{formatTime(new Date(intervals[selected].at).toISOString())} · {intervals[selected].label}
-        {measure === 'count' && intervals[selected].buckets.map(bucket => ` · ${dimensions[bucket.role]} ${bucket.count}`)}</output>}</footer>
+    <ul className="performance-legend" aria-label={`${definition.title}时序`}>
+      {series.map(item => <li key={item.key}>
+        <svg viewBox="0 0 24 8" aria-hidden="true"><line x1={0} x2={24} y1={4} y2={4} stroke={item.color} strokeWidth={2} strokeDasharray={item.dash}/></svg>
+        <span>{item.label}</span>
+      </li>)}
+    </ul>
+    {selected !== undefined && <div className="performance-inspector">
+      <label>采样点<input type="range" min={0} max={timestamps.length - 1} value={timestamps.indexOf(selected)}
+        aria-label={`${definition.title}采样点`} aria-valuetext={exactTime} onChange={event => selectTime(timestamps[Number(event.target.value)])}/></label>
+      <output aria-label={`${definition.title}样本`}><time dateTime={new Date(selected * 1000).toISOString()}>{exactTime}</time>
+        {samples.map(item => {
+          const exactValue = `${exactNumber.format(item.value)} ${definition.unit}`
+          return <span key={item.key}>
+            <span title={item.label}>{item.label}</span>
+            <strong title={exactValue}>
+              <span aria-hidden="true">{['cpu', 'mcp_rate', 'mcp_p95', 'mcp_failure_rate'].includes(id) ? `${cpuNumber.format(item.value)} ${definition.unit}` : exactValue}</span>
+              <span className="performance-sr-only">{exactValue}</span>
+            </strong>
+          </span>
+        })}
+      </output>
+    </div>}</>}
   </section>
 }

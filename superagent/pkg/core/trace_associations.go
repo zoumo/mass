@@ -103,21 +103,16 @@ func addTraceLinks(ctx context.Context, links []trace.Link) {
 // Expressions are built from fixed collection names and internal SQL columns.
 // Look up associations through their primary key inside the page query.
 func observerTraceProjection(collection, id, body string) string {
-	association := ""
 	switch collection {
 	case "routing-events":
 		collection = "internal-events"
 	case "reports":
 		collection, id = "internal-events", "json_extract("+body+",'$.eventId')"
-	case "issues":
-		association = issueCreationTraces(id)
-	case "messages", "internal-events", "timers", "session-bindings", "outbox":
+	case "issues", "messages", "internal-events", "timers", "session-bindings", "outbox":
 	default:
 		return body
 	}
-	if association == "" {
-		association = observerTraceList(collection, id)
-	}
+	association := observerTraceList(collection, id)
 	return "json_set(" + body + ",'$.traceAssociations',json(" + association + "))"
 }
 
@@ -125,15 +120,6 @@ func observerTraceList(collection, id string) string {
 	return `(SELECT json_group_array(json_object('phase',phase,'traceId',trace_id)) FROM (
  SELECT DISTINCT phase,substr(traceparent,4,32) AS trace_id FROM trace_associations
  WHERE collection='` + collection + `' AND object_id=` + id + ` ORDER BY phase,revision DESC LIMIT 20))`
-}
-
-func issueCreationTraces(id string) string {
-	// Existing Issues may predate the transactional creation association.
-	// A successful, state-changing create_issue on the target proves creation.
-	return `coalesce(nullif(` + observerTraceList("issues", id) + `,'[]'),
- (SELECT json_array(json_object('phase','creation','traceId',trace_id)) FROM mcp_tool_calls
- WHERE target_issue_id=` + id + ` AND caller_role='topic' AND tool='create_issue' AND changed=1
- AND length(trace_id)=32 ORDER BY seq LIMIT 1),'[]')`
 }
 
 func issueLifecycleTraces(id, at string) string {

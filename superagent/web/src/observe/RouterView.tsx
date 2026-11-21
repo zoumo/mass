@@ -6,7 +6,6 @@ import { Button } from '../components/ui/button'
 import { formatTime, messageTitle, eventStatusLabel, sourceLabel, type Page } from '../workbench'
 import { navigate, usePages, useRecord, viewHref, type ViewProps } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
-import { metricsHref } from './MetricsView'
 import './router.css'
 
 type RouterMessage = {
@@ -57,7 +56,7 @@ function OriginalRoutingEvent({ id }: { id: string }) {
 function RouterHistory({ message }: { message: RouterMessage }) {
   const list = usePages<InternalEvent>('routing-events?' + new URLSearchParams({ messageId: message.id, limit: '20', trace: 'true' }))
   return <section className="router-history" aria-label="路由事件记录">
-    <div className="router-history-heading"><h3>路由事件记录</h3><a href={metricsHref('router')}>Router 用量</a><CopyLink href={location.pathname+location.search}/><a href={viewHref('message', message.id)}>查看消息路径<ArrowUpRight size={14}/></a></div>
+    <div className="router-history-heading"><h3>路由事件记录</h3><a href={viewHref('metrics', '', { metric: 'mcp_rate', role: 'router' })}>Router 指标</a><CopyLink href={location.pathname+location.search}/><a href={viewHref('message', message.id)}>查看消息路径<ArrowUpRight size={14}/></a></div>
     {list.error && <p role="alert" className="read-error">{list.error}{list.data && ' · 快照已过时'}</p>}
     {!list.data && !list.error && <p className="empty">正在读取事件…</p>}
     {list.data?.length === 0 && <p className="empty">事件记录缺失</p>}
