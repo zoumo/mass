@@ -79,7 +79,7 @@ Each authenticated `tools/call` attempt contributes one observation, including
 business errors and retries. Initialization and tool discovery contribute to
 the HTTP request metrics.
 
-In OpenObserve, filter `POST /mcp` spans by `superagent.caller.id` and
+In OpenObserve, filter `POST /v1/mcp` spans by `superagent.caller.id` and
 `superagent.role`. Issue spans include the owning `superagent.topic.id` and
 `superagent.session_binding.id`. When a Topic acts on a verified Issue, its span
 includes `superagent.target.issue.id`. Supported event-driven actions carry

@@ -17,6 +17,7 @@ import (
 	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -103,13 +104,35 @@ func appendCodexPeerTrace(path, method string, params map[string]any) error {
 
 func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 	configured := []runtime.MCPServer{
-		{Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server", Args: []string{"--stdio"}, Env: map[string]string{"TOKEN": "${TOKEN}"}, Cwd: "/mcp-work"},
-		{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/mcp", Headers: map[string]string{"X-Mode": "fixture", "Authorization": "Bearer ${TOKEN}"}, EnvHeaders: map[string]string{"X-Token": "TOKEN"}},
+		{Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server", Args: []string{"--stdio"}, Env: []mcp.NamedValue{mcp.Literal("TOKEN", "${TOKEN}")}, Cwd: "/mcp-work"},
+		{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/mcp", Headers: []mcp.NamedValue{mcp.Literal("X-Mode", "fixture"), mcp.Literal("Authorization", "Bearer ${TOKEN}")}, EnvHeaders: map[string]string{"X-Token": "TOKEN"}},
+		{Name: "literal", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp", Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer fixture-literal")}},
+		{
+			Name: "file", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp",
+			Headers:     []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: "auth.env", Key: "MCP_AUTH"}}}},
+			HeadersFrom: []mcp.ImportSource{{FileRef: &mcp.FileRef{Path: "extra.env"}}},
+		},
 	}
 	empty := []runtime.MCPServer{}
 	for name, servers := range map[string]*[]runtime.MCPServer{"omitted": nil, "empty": &empty, "stdio and http": &configured} {
 		t.Run(name, func(t *testing.T) {
 			driver, cwd, trace, openedID := newCodexMCPDriverTestPeer(t)
+			files := t.TempDir()
+			fileRoot, err := os.OpenRoot(files)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, fileRoot.Close()) })
+			driver.options.MCPFiles = fileRoot.FS()
+			const openAuth = "Bearer fixture-open-${UNDEFINED}"
+			const resumeAuth = "Bearer fixture-resume"
+			const loadAuth = "Bearer fixture-load"
+			rotate := func(value string) {
+				t.Helper()
+				next := filepath.Join(files, "next.env")
+				require.NoError(t, os.WriteFile(next, []byte("MCP_AUTH='"+value+"'\n"), 0o600))
+				require.NoError(t, os.Rename(next, filepath.Join(files, "auth.env")))
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(files, "extra.env"), []byte("authorization='must lose to explicit source'\nX-Mode='from-file'\n"), 0o600))
+			rotate(openAuth)
 			address := runtime.Address{Namespace: "one", SessionName: "mcp"}
 			spec := runtime.SessionSpec{Cwd: cwd, MCPServers: servers}
 			if name == "empty" {
@@ -120,6 +143,7 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
 			*openedID = ""
+			rotate(resumeAuth)
 			resumed, err := driver.ResumeSession(t.Context(), opened.SessionID, address, spec)
 			*openedID = resumed.SessionID
 			require.NoError(t, err)
@@ -130,6 +154,7 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 				defer cancel()
 				assert.NoError(t, driver.CancelHistoryLoad(cleanup, opened.SessionID, "mcp-load"), "cleanup must release the native history load")
 			})
+			rotate(loadAuth)
 			*openedID = opened.SessionID
 			require.NoError(t, driver.LoadSession(t.Context(), opened.SessionID, address, spec, "mcp-load"))
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
@@ -138,6 +163,7 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 			data, err := os.ReadFile(trace)
 			require.NoError(t, err)
 			methods := []string{}
+			fileValues := []string{openAuth, resumeAuth, loadAuth}
 			for line := range bytes.SplitSeq(data, []byte{'\n'}) {
 				var record struct {
 					Method string
@@ -161,8 +187,10 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 					continue
 				}
 				require.Equal(t, map[string]any{
-					"mcp_servers.local":  map[string]any{"command": "/mcp-server", "args": []any{"--stdio"}, "env": map[string]any{"TOKEN": "fixture-secret"}, "cwd": "/mcp-work"},
-					"mcp_servers.remote": map[string]any{"url": "https://example.invalid/mcp", "http_headers": map[string]any{"X-Mode": "fixture"}, "env_http_headers": map[string]any{"X-Token": "TOKEN"}, "bearer_token_env_var": "TOKEN"},
+					"mcp_servers.local":   map[string]any{"command": "/mcp-server", "args": []any{"--stdio"}, "env": map[string]any{"TOKEN": "fixture-secret"}, "cwd": "/mcp-work"},
+					"mcp_servers.remote":  map[string]any{"url": "https://example.invalid/mcp", "http_headers": map[string]any{"X-Mode": "fixture"}, "env_http_headers": map[string]any{"X-Token": "TOKEN"}, "bearer_token_env_var": "TOKEN"},
+					"mcp_servers.literal": map[string]any{"url": "http://127.0.0.1/mcp", "http_headers": map[string]any{"Authorization": "Bearer fixture-literal"}},
+					"mcp_servers.file":    map[string]any{"url": "http://127.0.0.1/mcp", "http_headers": map[string]any{"Authorization": fileValues[len(methods)-1], "X-Mode": "from-file"}},
 				}, record.Params["config"], "SDK emits only declared per-server overrides; native ambient fields remain provider-owned")
 			}
 			require.Equal(t, []string{"thread/start", "thread/resume", "thread/resume"}, methods)
@@ -174,7 +202,7 @@ func TestCodexDriverRejectsInvalidMCPBeforeNativeOpenResumeAndLoad(t *testing.T)
 	address := runtime.Address{Namespace: "one", SessionName: "mcp"}
 	for name, server := range map[string]runtime.MCPServer{
 		"unsupported SSE": {Name: "remote", Type: runtime.MCPTransportSSE, URL: "https://example.invalid/mcp"},
-		"missing secret":  {Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server", Env: map[string]string{"TOKEN": "${MISSING_TOKEN}"}},
+		"missing secret":  {Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server", Env: []mcp.NamedValue{mcp.Literal("TOKEN", "${MISSING_TOKEN}")}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			driver, cwd, trace, openedID := newCodexMCPDriverTestPeer(t)

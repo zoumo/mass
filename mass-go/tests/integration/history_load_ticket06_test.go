@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -102,7 +103,7 @@ func TestTicket06CodexLoadPassesEffectiveMCPToSDK(t *testing.T) {
 		{Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server"},
 		{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/runtime"},
 	}
-	override := []runtime.MCPServer{{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/session", Headers: map[string]string{"X-Scope": "session"}}}
+	override := []runtime.MCPServer{{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/session", Headers: []mcp.NamedValue{mcp.Literal("X-Scope", "session")}}}
 	current, err := svc.GetRuntime("agent")
 	require.NoError(t, err)
 	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: current.Spec.Type, Config: current.Spec.Config, MCPServers: &defaults})

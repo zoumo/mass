@@ -16,8 +16,8 @@ record ingress and Thread subscriptions. `topics`, `issues`,
 `internal_events` records delivery to Sessions. `outbox` records
 external replies. Reports and PR associations are embedded and exposed
 through read views.
-When tracing is enabled, Core stores trace associations. `capabilities/`
-contains private role startup files.
+When tracing is enabled, Core stores trace associations. `sessions.mcpFilesDir`
+contains private role credentials.
 
 Core upgrades schema 24 in one startup transaction. The upgrade drops
 `mcp_tool_calls` and `mcp_mutation_receipts`. It preserves business records,
@@ -26,9 +26,10 @@ rolls back both table removals and the schema version change.
 
 Choose a new empty `dataDir` for schema 23 or earlier, or for JSON v4 state.
 Startup rejects those directories and preserves their contents.
-Keep the old directory for access through its original version.
+Also use an empty `dataDir` when switching from Core's stdio role MCP.
+Keep the old directories for access through their original versions.
 If both directories use the same massd, configure a distinct
-`execution.namespace` for the new directory.
+`sessions.namespace` for the new directory.
 
 SIGTERM/SIGINT stop admission and wait up to ten seconds for active HTTP
 requests. Accepted records survive normal or forced exit. After a lost
@@ -282,14 +283,19 @@ longer than 16 KiB carry a truncation flag. HEAD reads the SessionBinding and re
 headers without opening a massd connection.
 
 
-## Execution configuration and fixed Session preparation
+## Session configuration and preparation
 
-Execution is optional for intake-only operation. To enable it, configure the
-Router workspace, fixed role profiles and at least one Issue template.
+Omit `sessions` for intake-only operation. To start role Sessions, configure
+the Router workspace, fixed role profiles and at least one Issue template.
 
 ```yaml
-execution:
-  massdEndpoint: ws://127.0.0.1:24368/rpc
+# externalURL: https://core.example.com  # Core's address as seen by massd
+massd:
+  endpoint: ws://127.0.0.1:24368/rpc
+  # tokenFile: /private/massd.token
+# operatorTokenFile: /private/operator.token  # enables local input recovery
+sessions:
+  mcpFilesDir: /private/mcp-files
   routerWorkspace: /absolute/workspace
   namespace: superagent
   roles:
@@ -308,9 +314,6 @@ execution:
     - runtimeRef: codex-standard
       model: gpt-6.2-astra
       description: Evaluate architecture and diagnose complex problems.
-  # tokenFile: /private/massd.token  # omit only for explicit local massd access
-  # operatorTokenFile: /private/operator.token  # enables local input recovery
-  # mcpCommand: /absolute/bin/superagent  # defaults to this executable
 ```
 
 Both role profiles require a legal Runtime name and a nonblank model.
@@ -345,7 +348,7 @@ fixed. A newly created Topic binding uses the current Topic profile. Enabling ex
 directory processes its pending Router events.
 
 Use a fixed listener port with execution enabled and keep that endpoint stable
-for existing role MCP processes. An occupied configured port fails startup.
+for existing role Sessions. An occupied configured port fails startup.
 Core ownership is still single
 process. Preparation queries massd by fixed namespace/name before creating,
 never includes initial business input in create, and re-queries the same name
@@ -363,8 +366,8 @@ effort are never options in a route decision.
 
 ## Role MCP and source scope
 
-Core exposes one Streamable HTTP endpoint at `/mcp`. Router, Topic and Issue bindings
-send JSON-RPC 2.0 messages via `POST /mcp` with `Authorization: Bearer TOKEN`.
+Core exposes one Streamable HTTP endpoint at `/v1/mcp`. Router, Topic and Issue bindings
+send JSON-RPC 2.0 messages via `POST /v1/mcp` with `Authorization: Bearer TOKEN`.
 Core authenticates each request against its binding. `tools/list` advertises
 that binding's tools and `tools/call` enforces its permissions. A revoked
 Issue SessionBinding can discover and call `submit_report` for historical work.
@@ -379,7 +382,7 @@ Send the negotiated version in `MCP-Protocol-Version` after initialization.
 Core recognizes protocol versions 2024-11-05, 2025-03-26, 2025-06-18 and
 2025-11-25. An unknown initialization version negotiates 2025-11-25. Core
 returns one JSON response per request and an empty HTTP 202 for accepted
-notifications. `GET /mcp` returns HTTP 405. Core issues no MCP session ID.
+notifications. `GET /v1/mcp` returns HTTP 405. Core issues no MCP session ID.
 
 Successful tool results contain `structuredContent` and a text block with the
 same JSON. Tool validation and business failures set `result.isError` to true
@@ -393,13 +396,23 @@ Topic and Issue Agents use `get_topic` and `get_issue` for scoped business state
 External Message text, metadata, tool arguments and native-subagent suggestions
 cannot select permissions.
 
-MASS-managed native sessions use `superagent mcp --capability-file FILE` as a
-stdio adapter because the session configuration currently cannot supply a
-private bearer token scoped to each binding for an HTTP connection. The adapter
-reads the private file once and uses `initialize` against Core to verify the
-binding ID, role, owner and generation, plus Topic and Issue IDs for an Issue Session.
-An identity mismatch fails with `stale_binding`. The adapter forwards discovery
-and calls to `/mcp`. HTTP clients with a role bearer can use `/mcp` directly.
+MASS-managed role Sessions connect directly to Core `/v1/mcp` over HTTP.
+`externalURL` optionally sets the base URL as seen by the native process on
+the massd host. Core appends `/v1/mcp`. Use a stable HTTPS URL between hosts.
+If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
+upstream `Host` to the local address that receives the request.
+Core writes a private file containing the scoped bearer and passes its relative
+path in `headers[].valueFrom.fileKeyRef`. Configure the same directory in
+`sessions.mcpFilesDir` and `massd --mcp-files-dir` when running separately.
+Across hosts, mount the same credential files at the two configured roots
+and make each Session workspace available at the same absolute path on
+both hosts. Set `massd.endpoint` to the RPC address reachable from Core.
+Create the private directory before starting a separate massd. Compose
+creates the directory and passes it to massd. `sessions.mcpFilesDir` defaults to
+`mcp-files` inside `dataDir`. Without an explicit endpoint, use a fixed Core
+listen port. A wildcard Core listener maps to `127.0.0.1` or `::1` for native
+Session MCP connections. Core persists the URL in the Session spec. Keep that
+URL stable when moving massd or changing Core's network address.
 
 | Tool | Router | Topic | Arguments |
 | --- | --- | --- | --- |
@@ -752,7 +765,7 @@ and timestamp separately from work completion.
 
 ### Local operator reconciliation
 
-Set `execution.operatorTokenFile` to a distinct private credential with at
+Set `operatorTokenFile` to a distinct private credential with at
 least 32 non-whitespace bytes and bind Core to loopback. Inspection uses
 `GET /v1/operator/session-bindings/{sessionBindingId}` to read the saved binding, its stop
 evidence and a live identity-checked massd snapshot. Recovery uses
@@ -783,9 +796,9 @@ idle alone is insufficient.
 explicit start creates the next SessionBinding. For a Topic, settlement prepares its
 next owner so queued source Messages can reach it. Core prefers reusing an
 identity-checked local Claude Session on macOS/Linux after its online native
-process has closed and massd verifies the same resource offline. A new MCP
-process loads a new generation credential. The previous MCP process retains
-its startup identity. Preparation retries ambiguous resume outcomes against
+process has closed and massd verifies the same resource offline. Before
+resuming, Core atomically publishes the next generation credential at the
+same file path. massd reads it when it opens the same native Session. Preparation retries ambiguous resume outcomes against
 the original Session.
 
 During normal Issue Session dispatch, Core resumes the same Session and retries
@@ -823,7 +836,7 @@ arguments. The latest completed recovery returns its saved result on replay.
 ## Topic Timers
 
 Only the current Topic binding may manage its Timers. The Topic must be active.
-MCP clients call these tools through `/mcp` or the stdio adapter.
+MCP clients call these tools through `/v1/mcp`.
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
@@ -1030,7 +1043,7 @@ bin/superagent release-echo MESSAGE_ID --endpoint http://127.0.0.1:24370 \
 ```
 
 The CLI uses `POST /v1/operator/echo-release` with `messageId`, `operationId`
-and `reason`, authenticated with `execution.operatorTokenFile` on the
+and `reason`, authenticated with `operatorTokenFile` on the
 loopback listener. A replay of that release returns its recorded routing
 event. A later match on an already routed Message is recorded for inspection
 without another delivery.

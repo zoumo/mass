@@ -1,6 +1,8 @@
 package runtime_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,9 +16,9 @@ func TestMCPServerSDKServerMapsAndCopiesConfiguration(t *testing.T) {
 		Name:              "remote",
 		Type:              runtime.MCPTransportHTTP,
 		Args:              []string{"--unused"},
-		Env:               map[string]string{"ENV_TOKEN": "${ENV_TOKEN}"},
+		Env:               []mcp.NamedValue{mcp.Literal("ENV_TOKEN", "${ENV_TOKEN}")},
 		URL:               "https://example.invalid/mcp",
-		Headers:           map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		Headers:           []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}")},
 		EnvHeaders:        map[string]string{"X-API-Key": "API_KEY"},
 		BearerTokenEnvVar: "TOKEN",
 	}
@@ -26,20 +28,20 @@ func TestMCPServerSDKServerMapsAndCopiesConfiguration(t *testing.T) {
 		Name:              "remote",
 		Transport:         mcp.TransportHTTP,
 		Args:              []string{"--unused"},
-		Env:               map[string]string{"ENV_TOKEN": "${ENV_TOKEN}"},
+		Env:               []mcp.NamedValue{mcp.Literal("ENV_TOKEN", "${ENV_TOKEN}")},
 		URL:               "https://example.invalid/mcp",
-		Headers:           map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		Headers:           []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}")},
 		EnvHeaders:        map[string]string{"X-API-Key": "API_KEY"},
 		BearerTokenEnvVar: "TOKEN",
 	}, converted)
 
 	converted.Args[0] = "--changed"
-	converted.Env["ENV_TOKEN"] = "changed"
-	converted.Headers["Authorization"] = "changed"
+	*converted.Env[0].Value = "changed"
+	*converted.Headers[0].Value = "changed"
 	converted.EnvHeaders["X-API-Key"] = "changed"
 	require.Equal(t, []string{"--unused"}, server.Args)
-	require.Equal(t, "${ENV_TOKEN}", server.Env["ENV_TOKEN"])
-	require.Equal(t, "Bearer ${TOKEN}", server.Headers["Authorization"])
+	require.Equal(t, "${ENV_TOKEN}", *server.Env[0].Value)
+	require.Equal(t, "Bearer ${TOKEN}", *server.Headers[0].Value)
 	require.Equal(t, "API_KEY", server.EnvHeaders["X-API-Key"])
 }
 
@@ -49,7 +51,7 @@ func TestValidateSessionDefaults(t *testing.T) {
 		Type:    "stdio",
 		Command: "/mcp-server",
 		Args:    []string{"--mode", "strict"},
-		Env:     map[string]string{"TOKEN": "${TOKEN}"},
+		Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "${TOKEN}")},
 	}}
 	defaults := runtime.SessionDefaults{
 		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)},
@@ -95,13 +97,8 @@ func TestValidateMCPServersRejectsUnsafeRemoteConfiguration(t *testing.T) {
 			want:   "url without credentials",
 		},
 		{
-			name:   "literal authorization",
-			server: runtime.MCPServer{Name: "remote", Type: "http", URL: "https://example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer literal-token"}},
-			want:   `header "Authorization" must reference a secret`,
-		},
-		{
 			name:   "literal env token",
-			server: runtime.MCPServer{Name: "local", Type: "stdio", Command: "/mcp", Env: map[string]string{"GITHUB_TOKEN": "literal-token"}},
+			server: runtime.MCPServer{Name: "local", Type: "stdio", Command: "/mcp", Env: []mcp.NamedValue{mcp.Literal("GITHUB_TOKEN", "literal-token")}},
 			want:   `env "GITHUB_TOKEN" must reference a secret`,
 		},
 		{
@@ -128,16 +125,17 @@ func TestValidateMCPServersAcceptsSafeRemoteConfiguration(t *testing.T) {
 			Name:    "remote",
 			Type:    "http",
 			URL:     "https://example.invalid/mcp",
-			Headers: map[string]string{"Authorization": "Bearer ${TOKEN}", "Content-Type": "application/json"},
+			Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}"), mcp.Literal("Content-Type", "application/json")},
 			EnvHeaders: map[string]string{
 				"X-API-Key": "API_KEY",
 			},
 			BearerTokenEnvVar: "TOKEN",
 		},
+		{Name: "literal", Type: "http", URL: "https://example.invalid/mcp", Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer literal-token")}},
 		{Name: "local", Type: "http", URL: "http://127.0.0.1:8080/mcp"},
 		{Name: "local6", Type: "http", URL: "http://[::1]:8080/mcp"},
 		{Name: "local-name", Type: "http", URL: "http://localhost:8080/mcp"},
-		{Name: "events", Type: "sse", URL: "https://example.invalid/sse", Headers: map[string]string{"Authorization": "${TOKEN}"}},
+		{Name: "events", Type: "sse", URL: "https://example.invalid/sse", Headers: []mcp.NamedValue{mcp.Literal("Authorization", "${TOKEN}")}},
 	} {
 		require.NoError(t, runtime.ValidateMCPServers([]runtime.MCPServer{server}))
 	}
@@ -205,4 +203,28 @@ func TestMergeSessionMCPServersTreatsSessionEmptyAsNoOverride(t *testing.T) {
 	overriddenEmpty := runtime.MergeSessionMCPServers(&empty, &empty)
 	require.NotNil(t, overriddenEmpty)
 	require.Empty(t, *overriddenEmpty)
+}
+
+func TestResolveMCPServersRequiresRootAndRejectsEscape(t *testing.T) {
+	rootDir, externalDir := t.TempDir(), t.TempDir()
+	outside := filepath.Join(externalDir, "outside.env")
+	require.NoError(t, os.WriteFile(outside, []byte("AUTH='outside-fixture'\n"), 0o600))
+	require.NoError(t, os.Symlink(outside, filepath.Join(rootDir, "escape.env")))
+	root, err := os.OpenRoot(rootDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, root.Close()) })
+	reference := &mcp.FileKeyRef{Path: "escape.env", Key: "AUTH"}
+	servers := []runtime.MCPServer{{
+		Name: "remote", Type: "http", URL: "http://127.0.0.1/mcp",
+		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: reference}}},
+	}}
+	require.NoError(t, runtime.ValidateMCPServers(servers))
+	_, err = runtime.ResolveMCPServers(servers, nil)
+	require.ErrorContains(t, err, "requires an MCP file system")
+	for _, path := range []string{"escape.env", "missing.env", "../outside.env"} {
+		reference.Path = path
+		_, err := runtime.ResolveMCPServers(servers, root.FS())
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "outside-fixture")
+	}
 }

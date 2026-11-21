@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -43,6 +44,7 @@ func parse(c runtime.Config) (options, error) {
 
 type Factory struct {
 	RecoveryDir    string
+	MCPFiles       fs.FS
 	TracerProvider trace.TracerProvider
 	MeterProvider  metric.MeterProvider
 }
@@ -54,6 +56,7 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
+	o.MCPFiles = f.MCPFiles
 	life, cancel := context.WithCancel(context.Background())
 	provider := agentclaude.New(agentclaude.Config{
 		CLIPath:        o.Executable,
@@ -239,12 +242,13 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		}
 	}
 
-	servers, err := claudeMCPServers(spec.MCPServers, d.options)
+	mcpConfig, err := claudeMCPServers(spec.MCPServers, d.options)
 	if err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	openOptions := sessionOpenOptions(spec, effective, servers)
+	openOptions := sessionOpenOptions(spec, effective, mcpConfig.servers)
+	openOptions.ProcessEnv = mcpConfig.processEnv
 
 	d.mu.Lock()
 	started := d.started

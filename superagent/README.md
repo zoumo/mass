@@ -77,20 +77,20 @@ instance-bound credentials, select the consumer with `outboxConsumer: true`.
 The [Outbox contract](API.md#trigger-outbox) covers task recovery and result
 writeback.
 
-Optional `execution` config sets the massd endpoint, Router workspace,
-namespace, fixed Router and Topic profiles, and the ordered Issue template
-list. Each profile has a `runtimeRef`, `model` and optional `effort`.
+`massd` configures the RPC connection. `sessions` configures the Router
+workspace, namespace, fixed Router and Topic profiles, and ordered Issue
+templates. Each profile has a `runtimeRef`, `model` and optional `effort`.
 Set those values to the literal names supported by your massd and its drivers.
 Topic uses `get_topic` with `include: ["executionTemplates"]` to choose a Runtime and model when
-creating an Issue. Core copies the template's effort into the Issue and Issue Session
+creating an Issue. Core copies the template's effort into the Issue and its
 SessionBinding. A later `start_issue` can use the saved profile or select a new
 pair for an Issue without a current SessionBinding. Changing the Router profile
-requires a new Core data directory. See the [execution configuration](API.md#execution-configuration-and-fixed-session-preparation).
+requires a new Core data directory. See the [Session configuration](API.md#session-configuration-and-preparation).
 Core persists role identity and configuration before creation, reconciles lost
 create responses by querying the same Session, and retains failed preparation
-on the same Topic. Keep the configured listener address stable across restarts so existing MCP
-processes can reconnect.
-The private capabilities directory is never returned by Observer. Core batches
+on the same Topic. Keep the configured listener address stable across restarts
+so existing Sessions can reconnect to Core over HTTP.
+Observer responses omit the contents of the private MCP credentials directory. Core batches
 each Session's input, delivers context through Inject and uses StartOrSteer
 when a batch contains an action. Input delivery leaves Topic business state
 unchanged. See [Issue scheduling, reports and acceptance](API.md#issue-sessionbinding-report-and-acceptance)
@@ -127,11 +127,16 @@ local: true
 
 Use `config.example.yaml` as the starting point for `core.yaml`. Set
 `dataDir: ./superagent` and configure a source and its private token file.
-Add the `execution` block to enable agent execution. Compose fills in
-`execution.massdEndpoint` using the actual RPC address of its massd process.
-Keep the Core listen port fixed when execution is enabled. To use massd
+Add `sessions` to enable agent execution. Compose supplies the actual RPC
+address for `massd.endpoint` and passes `sessions.mcpFilesDir` to massd.
+Keep the Core listen port fixed when using the default loopback MCP URL.
+Set `externalURL` to a stable HTTPS origin when massd runs on another host.
+For separate processes, configure `massd.endpoint` and point massd
+`--mcp-files-dir` and `sessions.mcpFilesDir` at the same private files,
+using a shared mount across hosts. Create the directory before starting massd.
+To use massd
 authentication, configure its `tokenFile` and the matching Core
-`execution.tokenFile` in place of massd local mode. Use an absolute path
+`massd.tokenFile` in place of massd local mode. Use an absolute path
 for the massd `tokenFile` when starting from outside the configuration
 directory.
 
@@ -219,7 +224,7 @@ Normal builds contain no crash-gate environment behavior. Routing tests use
 real Core subprocesses, the public MASS client/WebSocket/Service and a controlled
 Driver. A WebSocket proxy discards actual Session-create responses after Service
 commit, then public queries verify recovery and conflicting configuration refusal.
-Role stdio subprocesses verify startup identity, source scope and work commands.
+Role HTTP MCP tests verify startup identity, source scope and work commands.
 The Issue lifecycle test uses real Core and massd with a controlled native CLI
 peer for execution, delivery, final output and interrupt observation. Unknown schema tests
 synthesize only SQLite version metadata, never business input rows.

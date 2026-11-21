@@ -25,7 +25,7 @@ type issueDetail struct {
 	} `json:"issueSession"`
 }
 
-func blockers(t *testing.T, topic *stdioClient, issue core.Issue, op string, add ...core.BlockerInput) core.Issue {
+func blockers(t *testing.T, topic *roleMCPClient, issue core.Issue, op string, add ...core.BlockerInput) core.Issue {
 	t.Helper()
 	return mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", core.UpdateBlockersRequest{
 		OperationID: op, IssueID: issue.ID, ExpectedRevision: issue.Revision, Add: add,
@@ -51,7 +51,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	foreignBinding, _ := nativeWorkTopic(t, f, p, peer, router, "changes-foreign")
 	topic, foreign := startRoleMCP(t, f, topicBinding), startRoleMCP(t, f, foreignBinding)
 	token := roleToken(t, f, topicBinding)
-	create := func(c *stdioClient, op string) core.Issue {
+	create := func(c *roleMCPClient, op string) core.Issue {
 		return mcpWork[core.WorkReceipt](t, c, "create_issue", issueInput(f.dir, op)).Issue
 	}
 	a, b, c := create(topic, "a"), create(topic, "b"), create(topic, "c")

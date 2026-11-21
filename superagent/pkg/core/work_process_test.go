@@ -12,13 +12,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/mcp"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-func mcpWork[T any](t *testing.T, c *stdioClient, name string, request any) T {
+func mcpWork[T any](t *testing.T, c *roleMCPClient, name string, request any) T {
 	t.Helper()
 	name, request = mutationFixture(name, request)
 	response := c.call("tools/call", map[string]any{"name": name, "arguments": request})
@@ -32,7 +34,7 @@ func mcpWork[T any](t *testing.T, c *stdioClient, name string, request any) T {
 	return out.Result
 }
 
-func mcpWorkError(t *testing.T, c *stdioClient, name, want string, request any) core.Error {
+func mcpWorkError(t *testing.T, c *roleMCPClient, name, want string, request any) core.Error {
 	t.Helper()
 	name, request = mutationFixture(name, request)
 	response := c.call("tools/call", map[string]any{"name": name, "arguments": request})
@@ -58,7 +60,7 @@ func roleWork[T any](t *testing.T, p *process, token, name string, request any) 
 	return out
 }
 
-func checkRoleGoalInput(t *testing.T, p *process, client *stdioClient, token, tool, field, oldField string, args map[string]any) {
+func checkRoleGoalInput(t *testing.T, p *process, client *roleMCPClient, token, tool, field, oldField string, args map[string]any) {
 	t.Helper()
 	var result struct {
 		Tools []struct {
@@ -136,7 +138,7 @@ func waitWorkEvent(t *testing.T, p *process, id, status string) workEventRecord 
 	return found
 }
 
-func nativeWorkTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, router *stdioClient, name string) (core.SessionBinding, core.Receipt) {
+func nativeWorkTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, router *roleMCPClient, name string) (core.SessionBinding, core.Receipt) {
 	t.Helper()
 	msg := input(name)
 	msg.Message.ThreadRef.ID, msg.Message.Channel = name, nil
@@ -290,7 +292,12 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Contains(t, session.Spec.SystemPrompt, "deduplicate by event_id")
 	require.Contains(t, session.Spec.SystemPrompt, "submit_report records a result against the goalRevision you worked on.")
 	require.NotNil(t, session.Spec.MCPServers)
-	require.Contains(t, (*session.Spec.MCPServers)[0].Args, filepath.Join(f.data, "capabilities", issueBinding.ID+".json"))
+	require.Equal(t, []runtime.MCPServer{{
+		Name: "superagent", Type: runtime.MCPTransportHTTP, URL: p.endpoint + "/v1/mcp",
+		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{
+			FileKeyRef: &mcp.FileKeyRef{Path: issueBinding.ID + ".env", Key: "AUTHORIZATION"},
+		}}},
+	}}, *session.Spec.MCPServers)
 	t.Log("same and different concurrent start operations produced one SessionBinding, stable Event and actual StartOrSteer receipt")
 
 	issue := startRoleMCP(t, f, issueBinding)

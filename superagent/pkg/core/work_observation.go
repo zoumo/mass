@@ -42,7 +42,7 @@ func (s *Server) observeIssueSession(ctx context.Context, sessionBindingID strin
 	defer cancel()
 	var b SessionBinding
 	var body []byte
-	if s.config.Execution == nil || s.store.db.QueryRowContext(ctx, "SELECT body FROM session_bindings WHERE id=? AND role='issue' AND state='ready'", sessionBindingID).Scan(&body) != nil ||
+	if s.config.Sessions == nil || s.store.db.QueryRowContext(ctx, "SELECT body FROM session_bindings WHERE id=? AND role='issue' AND state='ready'", sessionBindingID).Scan(&body) != nil ||
 		json.Unmarshal(body, &b) != nil ||
 		b.SessionID == "" || b.SessionUID == "" {
 		return observation

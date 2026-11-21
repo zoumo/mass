@@ -9,7 +9,7 @@ model MCPServer {
   @minLength(1)
   name: string;
 
-  /** stdio 使用 command/args/env/cwd，http 与 sse 使用 url/headers。 */
+  /** stdio 使用 command/args/env/envFrom/cwd，http 与 sse 使用 url/headers/headersFrom。 */
   type: "stdio" | "http" | "sse";
 
   /** stdio 必填，表示启动 MCP server 的命令。 */
@@ -18,8 +18,11 @@ model MCPServer {
   /** stdio 参数。 */
   args?: string[];
 
-  /** stdio 子进程环境变量；敏感值使用 ${ENV_VAR} 引用。 */
-  env?: Record<string>;
+  /** stdio 子进程环境变量。 */
+  env?: MCPNamedValue[];
+
+  /** 从文件批量加载 stdio 子进程环境变量。 */
+  envFrom?: MCPImportSource[];
 
   /** stdio 工作目录；具体 Runtime 类型决定是否支持。 */
   cwd?: string;
@@ -27,14 +30,41 @@ model MCPServer {
   /** http 或 sse 必填。 */
   url?: string;
 
-  /** http 或 sse 请求头；敏感值使用 ${ENV_VAR} 引用。 */
-  headers?: Record<string>;
+  /** http 或 sse 请求头。 */
+  headers?: MCPNamedValue[];
+
+  /** 从文件批量加载 http 或 sse 请求头。 */
+  headersFrom?: MCPImportSource[];
 
   /** 由环境变量名解析 HTTP 请求头；仅 HTTP，具体 Runtime 类型决定是否支持。 */
   envHeaders?: Record<string>;
 
   /** 从指定环境变量取得 Bearer token；仅 HTTP，具体 Runtime 类型决定是否支持。 */
   bearerTokenEnvVar?: string;
+}
+
+/** name 指定目标名称。value 与 valueFrom 必须且只能出现一个。 */
+model MCPNamedValue {
+  name: string;
+  value?: string;
+  valueFrom?: MCPValueSource;
+}
+
+model MCPValueSource {
+  fileKeyRef: MCPFileKeyRef;
+}
+
+model MCPFileKeyRef {
+  path: string;
+  key: string;
+}
+
+model MCPImportSource {
+  fileRef: MCPFileRef;
+}
+
+model MCPFileRef {
+  path: string;
 }
 
 /** 运行环境中的会话选项，不含资源名称、实例引用或版本字段。 */

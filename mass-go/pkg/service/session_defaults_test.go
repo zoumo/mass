@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -97,7 +98,7 @@ func newDefaultsFixture(t *testing.T) (*service.Service, *defaultsDriver, *file.
 		Name:    "runtime",
 		Type:    "http",
 		URL:     "https://example.invalid/runtime",
-		Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}")},
 	}}
 	_, err = svc.CreateRuntime(resource.Runtime{
 		Metadata: resource.Metadata{Name: "agent"},

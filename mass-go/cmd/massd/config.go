@@ -41,6 +41,7 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 		"data":                            "data",
 		"listen":                          "listen",
 		"local":                           "local",
+		"mcpFilesDir":                     "mcp-files-dir",
 		"tokenFile":                       "token-file",
 		"tlsCert":                         "tls-cert",
 		"tlsKey":                          "tls-key",

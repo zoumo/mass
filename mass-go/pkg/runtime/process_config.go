@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ type ProcessConfig struct {
 	Args       []string
 	EnvPolicy  string
 	Env        map[string]string
+	MCPFiles   fs.FS
 }
 
 func ParseProcessConfig(config Config) (ProcessConfig, error) {

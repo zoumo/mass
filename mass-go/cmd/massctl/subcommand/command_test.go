@@ -224,8 +224,8 @@ func (s *CommandSuite) TestRuntimeAndSessionCLIForwardSessionOptions() {
 	})
 	for _, args := range [][]string{
 		{"--url", endpoint, "-o", "json", "runtime", "create", "agent", "--type", "codex", "--features-json", `{"agentQuestions":false}`, "--mcp-servers-json", `[{"name":"remote","type":"http","url":"https://example.invalid"}]`},
-		{"--url", endpoint, "-o", "json", "session", "create", "task", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--features-json", `{"agentQuestions":true}`, "--mcp-servers-json", `[{"name":"remote","type":"stdio","command":"/mcp"}]`},
-		{"--url", endpoint, "-o", "json", "session", "load", "task", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--session-id", "native", "--features-json", `{"agentQuestions":false}`, "--mcp-servers-json", `[{"name":"remote","type":"http","url":"https://example.invalid/load"}]`},
+		{"--url", endpoint, "-o", "json", "session", "create", "task", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--features-json", `{"agentQuestions":true}`, "--mcp-servers-json", `[{"name":"remote","type":"stdio","command":"/mcp","envFrom":[{"fileRef":{"path":"defaults.env"}}],"env":[{"name":"TOKEN","valueFrom":{"fileKeyRef":{"path":"auth.env","key":"API_TOKEN"}}}]}]`},
+		{"--url", endpoint, "-o", "json", "session", "load", "task", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--session-id", "native", "--features-json", `{"agentQuestions":false}`, "--mcp-servers-json", `[{"name":"remote","type":"http","url":"https://example.invalid/load","headers":[{"name":"Authorization","value":"Bearer fixture"}]}]`},
 	} {
 		var out, stderr bytes.Buffer
 		s.Equal(0, subcommand.Run(s.T().Context(), args, strings.NewReader(""), &out, &stderr), stderr.String())
@@ -234,8 +234,8 @@ func (s *CommandSuite) TestRuntimeAndSessionCLIForwardSessionOptions() {
 	defer mu.Unlock()
 	s.Require().Len(params, 3)
 	s.JSONEq(`{"input":{"metadata":{"name":"agent"},"spec":{"type":"codex","config":{},"features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid"}]}}}`, string(params["runtime.create"]))
-	s.JSONEq(`{"input":{"metadata":{"namespace":"demo","name":"task"},"spec":{"runtimeRef":"agent","cwd":"/remote","features":{"agentQuestions":true},"mcpServers":[{"name":"remote","type":"stdio","command":"/mcp"}]}}}`, string(params["session.create"]))
-	s.JSONEq(`{"input":{"metadata":{"namespace":"demo","name":"task"},"runtimeRef":"agent","cwd":"/remote","sessionId":"native","features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid/load"}]}}`, string(params["session.load"]))
+	s.JSONEq(`{"input":{"metadata":{"namespace":"demo","name":"task"},"spec":{"runtimeRef":"agent","cwd":"/remote","features":{"agentQuestions":true},"mcpServers":[{"name":"remote","type":"stdio","command":"/mcp","envFrom":[{"fileRef":{"path":"defaults.env"}}],"env":[{"name":"TOKEN","valueFrom":{"fileKeyRef":{"path":"auth.env","key":"API_TOKEN"}}}]}]}}}`, string(params["session.create"]))
+	s.JSONEq(`{"input":{"metadata":{"namespace":"demo","name":"task"},"runtimeRef":"agent","cwd":"/remote","sessionId":"native","features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid/load","headers":[{"name":"Authorization","value":"Bearer fixture"}]}]}}`, string(params["session.load"]))
 }
 
 func (s *CommandSuite) TestRuntimeDefaultsOnlyUpdatePreservesConfiguration() {

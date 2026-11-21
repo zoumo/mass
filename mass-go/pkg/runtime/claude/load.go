@@ -131,12 +131,13 @@ func (d *Driver) LoadSession(ctx context.Context, id string, address runtime.Add
 		return err
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	servers, err := claudeMCPServers(spec.MCPServers, d.options)
+	mcpConfig, err := claudeMCPServers(spec.MCPServers, d.options)
 	if err != nil {
 		return err
 	}
 	h.unknown = true
-	openOptions := sessionOpenOptions(spec, effective, servers)
+	openOptions := sessionOpenOptions(spec, effective, mcpConfig.servers)
+	openOptions.ProcessEnv = mcpConfig.processEnv
 	openOptions.Cwd = cwd
 	native, err := d.provider.Resume(read, agent.ResumeOptions{
 		SessionID:   id,

@@ -53,6 +53,7 @@ Service 的详细职责：[Session](modules/service/session.md)、[历史](modul
 ## 架构决策
 
 - [ADR-0001：暂不预设业务消息容量限制](adr/0001-defer-http-capacity-limits.md)。
+- [ADR-0002：允许 MCP HTTP 请求头使用字面值](adr/0002-mcp-http-header-values.md)。
 
 ## 更新记录
 

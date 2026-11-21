@@ -48,7 +48,18 @@ func newCompose() *cobra.Command {
 func runCompose(cmd *cobra.Command, massdBin, massdConfig, coreConfig string) (result error) {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	daemon, err := startMassd(massdBin, massdConfig, cmd.ErrOrStderr())
+	config, err := core.LoadComposeConfig(coreConfig)
+	if err != nil {
+		return err
+	}
+	var filesDir string
+	if config.Sessions != nil {
+		filesDir = config.Sessions.MCPFilesDir
+		if err := config.PrepareMCPFiles(); err != nil {
+			return err
+		}
+	}
+	daemon, err := startMassd(massdBin, massdConfig, filesDir, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -72,9 +83,8 @@ func runCompose(cmd *cobra.Command, massdBin, massdConfig, coreConfig string) (r
 		return nil
 	}
 
-	config, err := core.LoadComposedConfig(coreConfig, endpoint)
-	if err != nil {
-		return err
+	if config.Massd != nil {
+		config.Massd.Endpoint = endpoint
 	}
 	return runCore(ctx, cmd, config, endpoint, daemon)
 }
@@ -86,14 +96,18 @@ type massdProcess struct {
 	waitErr error // Published by closing done.
 }
 
-func startMassd(binary, config string, stderr io.Writer) (*massdProcess, error) {
+func startMassd(binary, config, filesDir string, stderr io.Writer) (*massdProcess, error) {
 	stdout, writer, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("cannot create massd startup pipe: %w", err)
 	}
 	defer writer.Close()
 	// The supervisor stops and reaps massd after Core shuts down.
-	cmd := exec.CommandContext(context.Background(), binary, "--config", config)
+	args := []string{"--config", config}
+	if filesDir != "" {
+		args = append(args, "--mcp-files-dir", filesDir)
+	}
+	cmd := exec.CommandContext(context.Background(), binary, args...)
 	cmd.Stdout = writer
 	cmd.Stderr = stderr
 	cmd.WaitDelay = time.Second

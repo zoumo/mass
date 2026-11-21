@@ -73,7 +73,7 @@ func mutationFixture(tool string, args any) (string, any) {
 	return "update_issue", fields
 }
 
-func mcpListTopicsFixture(t *testing.T, c *stdioClient, id string) core.Topic {
+func mcpListTopicsFixture(t *testing.T, c *roleMCPClient, id string) core.Topic {
 	t.Helper()
 	listed := mcpWork[core.Page](t, c, "list_topics", map[string]string{"query": id})
 	for _, raw := range listed.Items {

@@ -27,10 +27,14 @@ type Source struct {
 var instanceIDFormat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
 type Config struct {
-	Execution *ExecutionConfig `mapstructure:"execution"`
-	DataDir   string           `mapstructure:"dataDir"`
-	Listen    string           `mapstructure:"listen"`
-	Sources   []Source         `mapstructure:"sources"`
+	Massd             *MassdConfig    `mapstructure:"massd"`
+	Sessions          *SessionsConfig `mapstructure:"sessions"`
+	OperatorTokenFile string          `mapstructure:"operatorTokenFile"`
+	operatorToken     string
+	DataDir           string   `mapstructure:"dataDir"`
+	Listen            string   `mapstructure:"listen"`
+	ExternalURL       string   `mapstructure:"externalURL"`
+	Sources           []Source `mapstructure:"sources"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
 	// ObserverOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
@@ -39,15 +43,15 @@ type Config struct {
 }
 
 func LoadConfig(path string) (Config, error) {
-	return loadConfig(path, "")
+	return loadConfig(path, false)
 }
 
-// LoadComposedConfig uses the RPC endpoint of the newly started massd for execution.
-func LoadComposedConfig(path, massdEndpoint string) (Config, error) {
-	return loadConfig(path, massdEndpoint)
+// LoadComposeConfig prepares Core for a supervised massd whose endpoint is assigned at startup.
+func LoadComposeConfig(path string) (Config, error) {
+	return loadConfig(path, true)
 }
 
-func loadConfig(path, massdEndpoint string) (Config, error) {
+func loadConfig(path string, composed bool) (Config, error) {
 	var c Config
 	v := viper.New()
 	v.SetConfigFile(path)
@@ -58,7 +62,7 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
 	}
 	if hasRemovedPermissionPreset(v) {
-		return c, problem("invalid_argument", "remove permissionPreset from Superagent execution roles and Issue templates; new Sessions use fullAccess")
+		return c, problem("invalid_argument", "remove permissionPreset from Superagent session roles and Issue templates; new Sessions use fullAccess")
 	}
 	if err := v.UnmarshalExact(&c); err != nil {
 		return c, problem("invalid_argument", "configuration contains unknown or invalid fields")
@@ -71,27 +75,58 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 		if p != "" && !filepath.IsAbs(p) {
 			return filepath.Join(base, p)
 		}
+		if p != "" {
+			return filepath.Clean(p)
+		}
 		return p
 	}
 	c.DataDir = resolve(c.DataDir)
 	if c.ObserverTrace != nil {
 		c.ObserverTrace.CredentialFile = resolve(c.ObserverTrace.CredentialFile)
 	}
-	if c.Execution != nil {
-		var execution ExecutionConfig
-		if err := v.UnmarshalKey("execution", &execution, func(d *mapstructure.DecoderConfig) {
-			d.ErrorUnused = true
-			d.WeaklyTypedInput = false
-			d.DecodeHook = nil
-		}); err != nil {
-			return c, problem("invalid_argument", "execution configuration contains unknown or invalid fields")
+	strict := func(d *mapstructure.DecoderConfig) {
+		d.ErrorUnused = true
+		d.WeaklyTypedInput = false
+		d.DecodeHook = nil
+	}
+	if c.Sessions != nil {
+		var sessions SessionsConfig
+		if err := v.UnmarshalKey("sessions", &sessions, strict); err != nil {
+			return c, problem("invalid_argument", "sessions configuration contains unknown or invalid fields")
 		}
-		if massdEndpoint != "" {
-			execution.MassdEndpoint = massdEndpoint
-		}
-		c.Execution = &execution
-		if err := c.Execution.validate(resolve); err != nil {
+		c.Sessions = &sessions
+		if err := c.Sessions.validate(resolve, c.DataDir); err != nil {
 			return c, err
+		}
+		if c.Massd == nil && composed {
+			c.Massd = &MassdConfig{}
+		}
+		if c.Massd == nil {
+			return c, problem("invalid_argument", "sessions require massd configuration")
+		}
+	} else if c.Massd != nil || c.OperatorTokenFile != "" {
+		return c, problem("invalid_argument", "massd and operatorTokenFile require sessions configuration")
+	}
+	if c.Massd != nil {
+		if v.IsSet("massd") {
+			var massd MassdConfig
+			if err := v.UnmarshalKey("massd", &massd, strict); err != nil {
+				return c, problem("invalid_argument", "massd configuration contains unknown or invalid fields")
+			}
+			c.Massd = &massd
+		}
+		if err := c.Massd.validate(resolve, composed); err != nil {
+			return c, err
+		}
+	}
+	if c.OperatorTokenFile != "" {
+		c.OperatorTokenFile = resolve(c.OperatorTokenFile)
+		c.operatorToken, err = ReadOperatorToken(c.OperatorTokenFile)
+		if err != nil {
+			return c, err
+		}
+		if c.operatorToken == c.Massd.token {
+			return c, problem("invalid_argument", "operator token must be distinct from the massd token")
 		}
 	}
 	if c.DataDir == "" || len(c.Sources) == 0 || c.StorageMaxPages < 0 {
@@ -102,10 +137,15 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 	if err != nil || net.ParseIP(host) == nil || portErr != nil {
 		return c, problem("invalid_argument", "listen must use a numeric IP and port")
 	}
-	if c.Execution != nil && portNumber == 0 {
-		return c, problem("invalid_argument", "execution requires a fixed listen port for role MCP across Core restarts")
+	if c.ExternalURL != "" || c.Sessions != nil {
+		if portNumber == 0 && c.ExternalURL == "" {
+			return c, problem("invalid_argument", "sessions require a fixed listen port for role MCP across Core restarts")
+		}
+		if _, err := c.roleMCPEndpoint(); err != nil {
+			return c, err
+		}
 	}
-	if c.Execution != nil && c.Execution.operatorToken != "" && !net.ParseIP(host).IsLoopback() {
+	if c.operatorToken != "" && !net.ParseIP(host).IsLoopback() {
 		return c, problem("invalid_argument", "operator recovery requires a loopback Core listener")
 	}
 	seenSource := map[string]string{}
@@ -151,7 +191,7 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 			return c, problem("invalid_argument", "source token must have at least 32 non-whitespace bytes")
 		}
 		s.token = token
-		if c.Execution != nil && token == c.Execution.operatorToken {
+		if token == c.operatorToken {
 			return c, problem("invalid_argument", "operator token must be distinct from source credentials")
 		}
 		s.tokenHash = sha256.Sum256([]byte(token))
@@ -165,11 +205,11 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 
 func hasRemovedPermissionPreset(v *viper.Viper) bool {
 	for _, role := range []string{"router", "topic"} {
-		if _, present := v.GetStringMap("execution.roles." + role)["permissionpreset"]; present {
+		if _, present := v.GetStringMap("sessions.roles." + role)["permissionpreset"]; present {
 			return true
 		}
 	}
-	templates, _ := v.Get("execution.issueTemplates").([]any)
+	templates, _ := v.Get("sessions.issueTemplates").([]any)
 	for _, template := range templates {
 		fields, _ := template.(map[string]any)
 		if _, present := fields["permissionpreset"]; present {
@@ -181,6 +221,22 @@ func hasRemovedPermissionPreset(v *viper.Viper) bool {
 
 func (c Config) String() string {
 	return fmt.Sprintf("superagent configuration (%d sources)", len(c.Sources))
+}
+
+// PrepareMCPFiles creates the private directory shared with massd.
+func (c Config) PrepareMCPFiles() error {
+	if c.Sessions == nil {
+		return nil
+	}
+	dir := c.Sessions.MCPFilesDir
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return problem("unavailable", "cannot prepare MCP credentials directory")
+	}
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return problem("failed_precondition", "MCP credentials directory must be private")
+	}
+	return nil
 }
 
 // outboxConsumer returns the explicitly selected sender, or the sole
