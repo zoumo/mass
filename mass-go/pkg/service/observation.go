@@ -98,9 +98,12 @@ func (s *Service) reconcileObservation(ctx context.Context, run *runBinding, l *
 			readCtx, cancel := context.WithTimeout(ctx, turnReadTimeout)
 			result, err := reader.ReconcileTurn(readCtx, native.SessionID, native.Source)
 			cancel()
-			if err == nil && result.TurnID != "" && ctx.Err() == nil && s.recordReconciledTurn(run, l, native, result) {
-				if !result.Latest || s.releaseReconciledTurn(run, l, native, result) {
-					return
+			if err == nil && result.TurnID != "" && ctx.Err() == nil {
+				switch result.Status {
+				case "completed", "failed", "interrupted":
+					if !result.Latest || s.releaseObservationOwner(run, l, native) {
+						return
+					}
 				}
 			}
 		}
@@ -129,45 +132,16 @@ func (s *Service) turnReconcileReadyLocked(l *lane) bool {
 	return true
 }
 
-func (s *Service) recordReconciledTurn(run *runBinding, l *lane, native runtime.DriverSession, result runtime.TurnReconciliation) bool {
-	switch result.Status {
-	case "completed", "failed", "interrupted":
-	default:
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sessionCloseAcceptedLocked(native.SessionID) || !s.observationCurrentLocked(run, l, native) || !s.turnReconcileReadyLocked(l) {
-		return false
-	}
-	saved, err := s.sessionStatus(resource.SessionRef{SessionID: native.SessionID}, func(session *resource.Session) {
-		if session.Metadata.UID == l.session.Metadata.UID && session.Status.State == events.Unknown && session.Status.Reason == sessionObservationLost {
-			session.Status.ReconciledTurn = &resource.ReconciledTurn{TurnID: result.TurnID, Status: result.Status}
-		}
-	})
-	if err != nil {
-		slog.Warn("session turn reconciliation status failed", "session_id", native.SessionID, "error", err)
-		return false
-	}
-	return saved.Metadata.UID == l.session.Metadata.UID && saved.Status.State == events.Unknown &&
-		saved.Status.Reason == sessionObservationLost && matchesReconciledTurn(saved, result)
-}
-
 // A conflicting admission can reject the guard before close starts. Retry the
 // observation and guard within the original budget. A failed close has already
 // taken ownership and is recorded by closeSessionWithGuard.
-func (s *Service) releaseReconciledTurn(run *runBinding, l *lane, native runtime.DriverSession, result runtime.TurnReconciliation) bool {
+func (s *Service) releaseObservationOwner(run *runBinding, l *lane, native runtime.DriverSession) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), turnReleaseTimeout)
 	defer cancel()
 	_, err := s.closeSessionWithGuard(ctx, resource.SessionRef{SessionID: native.SessionID}, func(current resource.Session) bool {
 		return current.Metadata.UID == l.session.Metadata.UID && current.Status.State == events.Unknown &&
-			current.Status.Reason == sessionObservationLost && matchesReconciledTurn(current, result) &&
+			current.Status.Reason == sessionObservationLost &&
 			s.observationCurrentLocked(run, l, native) && s.turnReconcileReadyLocked(l)
 	})
 	return !errors.Is(err, errSessionOperationGuardRejected)
-}
-
-func matchesReconciledTurn(session resource.Session, result runtime.TurnReconciliation) bool {
-	turn := session.Status.ReconciledTurn
-	return turn != nil && turn.TurnID == result.TurnID && turn.Status == result.Status
 }
