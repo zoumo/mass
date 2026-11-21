@@ -232,10 +232,10 @@ func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx
 		dest = append(dest, &followup)
 		sourceFilter = " AND (source=? OR body->>'$.meta' IS NULL OR body->>'$.meta'='{}')"
 	}
-	queryArgs := append(projectionArgs, d.Refs[0].ID, timerSource, pullRequestSource, pullRequestSource, inlineMessageBytes)
+	projectionArgs = append(projectionArgs, d.Refs[0].ID, timerSource, pullRequestSource, pullRequestSource, inlineMessageBytes)
 	err = tx.QueryRowContext(ctx, `SELECT `+columns+` FROM trigger_messages
  WHERE id=?`+sourceFilter+` AND source<>'github' AND source<>? AND body->>'$.threadRef.source'<>?
- AND length(CAST(body->>'$.text' AS BLOB))<=?`+filter+scope, append(queryArgs, args...)...).Scan(dest...)
+ AND length(CAST(body->>'$.text' AS BLOB))<=?`+filter+scope, append(projectionArgs, args...)...).Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

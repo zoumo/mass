@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -20,12 +21,16 @@ func mutationFixture(tool string, args any) (string, any) {
 	if err != nil {
 		return tool, args
 	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil {
+	var decoded map[string]json.RawMessage
+	if json.Unmarshal(raw, &decoded) != nil {
 		return tool, args
 	}
-	move := func(names ...string) map[string]json.RawMessage {
-		moved := map[string]json.RawMessage{}
+	fields := make(map[string]any, len(decoded))
+	for name, value := range decoded {
+		fields[name] = value
+	}
+	move := func(names ...string) map[string]any {
+		moved := map[string]any{}
 		for _, name := range names {
 			if value, ok := fields[name]; ok {
 				moved[name] = value
@@ -34,7 +39,6 @@ func mutationFixture(tool string, args any) (string, any) {
 		}
 		return moved
 	}
-	put := func(key string, value any) { fields[key], _ = json.Marshal(value) }
 	switch tool {
 	case "timer_update", "timer_cancel":
 		if value, ok := fields["timerId"]; ok {
@@ -46,24 +50,22 @@ func mutationFixture(tool string, args any) (string, any) {
 		}
 		return "cancel_followup", fields
 	case "issue_update_requirements", "issue_update_blockers":
-		if string(fields["notifyIssueSession"]) == "true" {
-			put("sessionInput", map[string]string{"mode": "continue"})
+		if string(decoded["notifyIssueSession"]) == "true" {
+			fields["sessionInput"] = map[string]string{"mode": "continue"}
 		}
 		delete(fields, "notifyIssueSession")
 		if tool == "issue_update_blockers" {
-			put("blockers", move("add", "resolve", "unblockedStatus"))
+			fields["blockers"] = move("add", "resolve", "unblockedStatus")
 		}
 	case "issue_session_input":
-		put("sessionInput", move("mode", "content"))
+		fields["sessionInput"] = move("mode", "content")
 		if materials, ok := fields["materials"]; ok {
-			put("materials", map[string]json.RawMessage{"add": materials})
+			fields["materials"] = map[string]any{"add": materials}
 		}
 	default:
 		trans := move("reason", "evidence")
-		put("action", tool[6:])
-		trans["action"] = fields["action"]
-		delete(fields, "action")
-		put("transition", trans)
+		trans["action"] = tool[6:]
+		fields["transition"] = trans
 		if tool[:6] == "topic_" {
 			return "update_topic", fields
 		}

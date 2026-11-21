@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 	agenttestify "github.com/zoumo/agent-sdk-testify"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
@@ -117,6 +118,7 @@ type flowCase struct {
 	expectPermission   bool
 	expectedPermission string
 	permissionOptions  []events.PermissionOption
+	expectedCommand    string
 	expectedToolOutput string
 	runtimeEnvironment map[string]string
 	sessionConfig      *runtime.InitialSessionConfig
@@ -699,8 +701,8 @@ func (h *harness) answerPermissionWithState(api *client.Client, ref resource.Ses
 			if tool, ok := event.Payload().(events.ToolCall); ok && tool.ID == request.Request.ToolCallID {
 				command := commandText(tool.RawInput)
 				require.NotEmpty(h.t, command, "linked native tool input must be visible")
-				if c.provider == "" || c.provider == "codex" {
-					require.Contains(h.t, command, "printf mass-approved > permission-proof.txt")
+				if c.expectedCommand != "" {
+					require.Contains(h.t, command, c.expectedCommand)
 				}
 				visible = true
 			}
@@ -743,7 +745,7 @@ func commandText(raw any) string {
 func (h *harness) replay(material string, expected facts, c flowCase) string {
 	var plan capturePlan
 	readJSON(h.t, filepath.Join(material, "plan.json"), &plan)
-	if c.provider != "claude" && plan.Model != "" {
+	if c.provider != "claude" && plan.Model != "" && c.sessionConfig == nil {
 		c.sessionConfig = &runtime.InitialSessionConfig{Model: plan.Model}
 	}
 	c.budget = 60 * time.Second
@@ -768,7 +770,7 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 		capturedUUID, err := capturedClaudeUserUUID(material, c.legacyClaudeInput)
 		require.NoError(h.t, err)
 		adapter := filepath.Join(session, "claude-replay")
-		h.command("go", "build", "-o", adapter, "./internal/recordingtest/cmd/claudereplay")
+		h.command("go", "-C", h.root, "build", "-o", adapter, "./internal/recordingtest/cmd/claudereplay")
 		launcher := quote(adapter)
 		if c.legacyPermissions {
 			launcher += " --legacy-permissions"
@@ -1317,6 +1319,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 		name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project,
 		legacyPermissions: true,
 		expectPermission:  true, expectedPermission: "Approve command execution",
+		expectedCommand: "printf mass-approved > permission-proof.txt",
 		permissionOptions: []events.PermissionOption{
 			{OptionID: "allow-once", Name: "Allow once", Kind: events.PermissionAllow, Scope: events.PermissionScopeOnce},
 			{OptionID: "native-decision-1", Name: `Allow command prefix ["/bin/zsh" "-lc" "printf mass-approved > permission-proof.txt"]`, Kind: events.PermissionAllow, Scope: events.PermissionScopeAlways},
@@ -1531,10 +1534,10 @@ func RunRecordCodexPermission(t *testing.T) {
 	identity := h.preflight("codex")
 	codex, version := identity.Executable, identity.Version
 	require.NoError(t, os.MkdirAll(recordProject, 0o700))
-	proof := filepath.Join(recordProject, "permission-proof.txt")
-	if err := os.Remove(proof); err != nil && !os.IsNotExist(err) {
-		require.NoError(t, err)
-	}
+	// A write outside the project requires approval in the workspace-write sandbox.
+	proof := filepath.Join(scratch, "permission-proof.txt")
+	command := "printf mass-approved > " + quote(proof)
+	recordPrompt := fmt.Sprintf("Request approval using the shell tool to execute this exact command: `%s`. The test file is outside the project. Do not use other tools. After executing the approved command once, report its exit status.", command)
 	selectedModel := identity.Model
 	plan := filepath.Join(scratch, "plan.json")
 	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-permission", "driverProfile": "consumer", "project": recordProject, "cliVersion": version, "model": selectedModel})
@@ -1544,12 +1547,21 @@ func RunRecordCodexPermission(t *testing.T) {
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
 	overrides, configArgs := codexRecordingConfig(t)
-	config := "exec " + quote(cli) + configArgs + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
+	config := "exec " + quote(cli) + configArgs + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\n"+config), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
 	h.phase = "mass-record-real-session"
-	observed := h.flow(prepared, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true, sessionConfig: &runtime.InitialSessionConfig{Model: selectedModel}, evidence: scratch, budget: 2 * time.Minute})
+	c := flowCase{
+		name: "permission", prompt: recordPrompt, project: recordProject,
+		expectPermission: true, expectedPermission: "Approve command execution",
+		expectedCommand: command,
+		sessionConfig:   &runtime.InitialSessionConfig{Model: selectedModel, PermissionPreset: agent.PermissionPresetManualReview},
+	}
+	recordCase := c
+	recordCase.evidence = scratch
+	recordCase.budget = 2 * time.Minute
+	observed := h.flow(prepared, wrapper, recordCase)
 	writeJSON(t, filepath.Join(scratch, "facts.json"), observed)
 	h.phase = "testify-export"
 	proofData, err := os.ReadFile(proof)
@@ -1562,12 +1574,12 @@ func RunRecordCodexPermission(t *testing.T) {
 	verifyRecordingSession(t, session, version)
 	require.NoError(t, auditCodexCapture(material, selectedModel, observed.SessionID))
 	h.phase = "testify-strict-replay"
-	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
-	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
+	h.replay(material, observed, c)
+	h.replay(material, observed, c)
 	if h.diagnostic != nil {
 		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
 	}
-	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: permissionPrompt, Project: recordProject, Facts: observed}
+	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: recordPrompt, Project: recordProject, Facts: observed}
 	exportRelative, err := filepath.Rel(h.root, filepath.Join(export, "material"))
 	require.NoError(t, err)
 	index.ExportPath = filepath.ToSlash(exportRelative)

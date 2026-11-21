@@ -230,7 +230,7 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 			topic.Goal = *r.Goal
 		}
 		for _, canonical := range urls {
-			if _, err := registerWorkPullRequest(ctx, tx, topic, Issue{}, canonical, ""); err != nil {
+			if err := registerWorkPullRequest(ctx, tx, topic, Issue{}, canonical, ""); err != nil {
 				return nil, err
 			}
 			var persisted Topic
@@ -342,7 +342,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 			appendMaterials(&issue, materials)
 		}
 		for _, canonical := range urls {
-			if _, err := registerWorkPullRequest(ctx, tx, topic, issue, canonical, sessionBindingID); err != nil {
+			if err := registerWorkPullRequest(ctx, tx, topic, issue, canonical, sessionBindingID); err != nil {
 				return nil, err
 			}
 			if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, topic.ID); err != nil {

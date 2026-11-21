@@ -278,21 +278,21 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	a = continued.Issue
 
 	type updateResult struct {
-		req    core.UpdateRequirementsRequest
-		status int
-		body   []byte
+		req core.UpdateRequirementsRequest
+		mcpHTTPResult
 	}
 	results := make(chan updateResult, 2)
 	race := make(chan struct{})
 	for _, suffix := range []string{"α", "β"} {
+		r := core.UpdateRequirementsRequest{
+			OperationID: "notify-" + suffix, IssueID: a.ID, ExpectedRevision: a.Revision,
+			Goal: strings.Repeat(suffix, 5300), NotifyIssueSession: true,
+		}
+		req, err := newMCPToolRequest(t.Context(), p.endpoint, token, "issue_update_requirements", r)
+		require.NoError(t, err)
 		go func() {
-			r := core.UpdateRequirementsRequest{
-				OperationID: "notify-" + suffix, IssueID: a.ID, ExpectedRevision: a.Revision,
-				Goal: strings.Repeat(suffix, 5300), NotifyIssueSession: true,
-			}
 			<-race
-			status, body := requestMCPTool(t, p.endpoint, "issue_update_requirements", token, r)
-			results <- updateResult{r, status, body}
+			results <- updateResult{r, doMCPRequest(req)}
 		}()
 	}
 	close(race)
@@ -301,6 +301,8 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	for range 2 {
 		select {
 		case result := <-results:
+			require.NoError(t, result.err)
+			result.status, result.body = normalizeMCPToolResult(t, result.status, result.body)
 			if result.status == http.StatusOK {
 				winner = result
 				accepted++

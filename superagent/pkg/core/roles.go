@@ -96,11 +96,11 @@ func (s *Server) callRoleTool(ctx context.Context, b SessionBinding, tool string
 			err = problem("invalid_argument", "event_id is required")
 		}
 		if err == nil {
-			var internalEvent internalEvent
-			internalEvent, err = s.store.getInternalEvent(ctx, b, args.ID)
+			var event internalEvent
+			event, err = s.store.getInternalEvent(ctx, b, args.ID)
 			if err == nil {
 				var raw []byte
-				raw, err = internalEvent.MarshalAgentPromptJSON()
+				raw, err = event.MarshalAgentPromptJSON()
 				result = json.RawMessage(raw)
 			}
 		}

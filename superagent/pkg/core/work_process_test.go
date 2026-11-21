@@ -224,17 +224,17 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 
 	type response struct {
 		request core.StartIssueRequest
-		status  int
-		body    []byte
+		mcpHTTPResult
 	}
 	startResults := make(chan response, 3)
 	concurrent := make(chan struct{})
 	for _, op := range []string{"start-a", "start-a", "start-b"} {
+		r := core.StartIssueRequest{OperationID: op, IssueID: pending.Issue.ID, ExpectedRevision: pending.Issue.Revision}
+		req, err := newMCPToolRequest(t.Context(), p.endpoint, token, "start_issue", r)
+		require.NoError(t, err)
 		go func() {
 			<-concurrent
-			r := core.StartIssueRequest{OperationID: op, IssueID: pending.Issue.ID, ExpectedRevision: pending.Issue.Revision}
-			status, body := requestMCPTool(t, p.endpoint, "start_issue", token, r)
-			startResults <- response{r, status, body}
+			startResults <- response{r, doMCPRequest(req)}
 		}()
 	}
 	close(concurrent)
@@ -242,6 +242,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	for range 3 {
 		select {
 		case result := <-startResults:
+			require.NoError(t, result.err)
+			result.status, result.body = normalizeMCPToolResult(t, result.status, result.body)
 			if result.status == http.StatusOK {
 				winning = append(winning, result)
 			} else {

@@ -62,8 +62,10 @@ const conversationPage = conversationFacts + `
   AND (:afterAt='' OR (at,event_id)<(:afterAt,:afterID))
  ORDER BY at DESC,event_id DESC LIMIT :limit)`
 
-const conversationBody = `json_patch(json_object('id',event_id,'kind',kind,'topicId',topic_id,'at',at),detail)`
-const conversationTimeline = conversationPage + ` SELECT ` + conversationBody + `,at,event_id FROM page ORDER BY at DESC,event_id DESC`
+const (
+	conversationBody     = `json_patch(json_object('id',event_id,'kind',kind,'topicId',topic_id,'at',at),detail)`
+	conversationTimeline = conversationPage + ` SELECT ` + conversationBody + `,at,event_id FROM page ORDER BY at DESC,event_id DESC`
+)
 
 var (
 	issueCreationTracesSQL         = issueCreationTraces("page.ref")

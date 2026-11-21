@@ -87,7 +87,7 @@ func TestObserverTraceReadProjectsKnownFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Spans, 2)
 	require.Equal(t, spanID, result.Spans[1].ParentID)
-	require.EqualValues(t, 137, result.Spans[1].OffsetUS)
+	require.InDelta(t, 137, result.Spans[1].OffsetUS, 0)
 	require.EqualValues(t, 42, result.Spans[1].DurationUS)
 	body, err := json.Marshal(result)
 	require.NoError(t, err)

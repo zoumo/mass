@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -63,6 +64,16 @@ func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment stri
 	_, err = os.Stat(session)
 	require.True(t, os.IsNotExist(err), "retain prior session for audit; move it explicitly before retry")
 	require.NoError(t, os.MkdirAll(c.project, 0o700))
+	if c.expectPermission {
+		// The SDK supplies its own --settings for the sandbox. Keep the Bash
+		// rule in project settings so the CLI reads both.
+		settings := filepath.Join(c.project, ".claude")
+		require.NoError(t, os.Mkdir(settings, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(settings, "settings.json"), []byte(`{
+  "permissions": {"ask": ["Bash"]},
+  "sandbox": {"autoAllowBashIfSandboxed": false}
+}`), 0o600))
+	}
 	plan := filepath.Join(scratch, "plan.json")
 	planValue := map[string]any{
 		"version":       1,
@@ -79,11 +90,7 @@ func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment stri
 	cli := filepath.Join(scratch, "claude")
 	require.NoError(t, os.Symlink(identity.path, cli))
 	native := filepath.Join(scratch, "native-claude")
-	command := "exec " + quote(cli)
-	if c.expectPermission {
-		command += " --settings " + quote(`{"permissions":{"ask":["Bash"]}}`)
-	}
-	command += " \"$@\"\n"
+	command := "exec " + quote(cli) + " \"$@\"\n"
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(c.project)+" || exit 1\n"+command), 0o700))
 	wrapper := filepath.Join(scratch, "record-claude")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exec \"$MASS_RECORD_NATIVE\" \"$@\"; fi\nexec \"$MASS_RECORD_TOOL\" agent record --fixture-dir \"$MASS_RECORD_SESSION\" --cmd \"$MASS_RECORD_NATIVE\" -- \"$@\"\n"), 0o700))
@@ -94,6 +101,9 @@ func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment stri
 		"MASS_RECORD_NATIVE":  native,
 	}
 	c.sessionConfig = &runtime.InitialSessionConfig{Model: identity.model}
+	if c.expectPermission {
+		c.sessionConfig.PermissionPreset = agent.PermissionPresetManualReview
+	}
 	h.phase = "mass-record-real-session"
 	observed := h.flow(route, wrapper, c)
 	h.phase = "testify-export"

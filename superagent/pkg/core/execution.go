@@ -235,7 +235,10 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 		if !b.ExecutionProfile.sameModel(configured) || b.Workspace != c.Execution.RouterWorkspace || b.Namespace != c.Execution.Namespace+"-router" {
 			return problem("failed_precondition", "execution configuration differs from persisted Router binding")
 		}
-		expected := makeSpec(c, b)
+		expected, err := makeSpec(c, b)
+		if err != nil {
+			return err
+		}
 		// Existing Sessions keep their persisted instructions, permissions, and features.
 		expected.SystemPrompt = spec.SystemPrompt
 		expected.Features = spec.Features
@@ -318,7 +321,10 @@ func (b SessionBinding) capabilityFileID() string {
 }
 
 func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous SessionBinding) (SessionBinding, error) {
-	fresh := makeSpec(c, b)
+	fresh, err := makeSpec(c, b)
+	if err != nil {
+		return SessionBinding{}, err
+	}
 	request, err := usePreviousSession(ctx, tx, &b, previous, fresh.SystemPrompt)
 	if err != nil {
 		return SessionBinding{}, err
@@ -348,7 +354,7 @@ func bindingSystemPrompt(b SessionBinding) string {
 	return commonRolePrompt + "\n\n" + prompt
 }
 
-func makeSpec(c Config, b SessionBinding) resource.SessionSpec {
+func makeSpec(c Config, b SessionBinding) (resource.SessionSpec, error) {
 	servers := []runtime.MCPServer{{Name: "superagent", Type: runtime.MCPTransportStdio, Command: c.Execution.MCPCommand, Args: []string{"mcp", "--capability-file", filepath.Join(c.DataDir, "capabilities", b.capabilityFileID()+".json")}, Cwd: b.MCPWorkingDirectory}}
 	prompt := bindingSystemPrompt(b)
 	if b.Role == "topic" && len(c.Execution.IssueTemplates) != 0 {
@@ -356,13 +362,16 @@ func makeSpec(c Config, b SessionBinding) resource.SessionSpec {
 		for _, template := range c.Execution.IssueTemplates {
 			templates = append(templates, map[string]string{"runtimeRef": template.RuntimeRef, "model": template.Model, "description": template.Description})
 		}
-		raw, _ := json.Marshal(templates) // The template view contains only strings.
+		raw, err := json.Marshal(templates)
+		if err != nil {
+			return resource.SessionSpec{}, err
+		}
 		prompt += "\nConfigured Issue Agent templates\n" + string(raw)
 	}
 	return resource.SessionSpec{RuntimeRef: b.RuntimeRef, SessionSpec: runtime.SessionSpec{
 		Config: b.sessionConfig(), Cwd: b.Workspace, SystemPrompt: prompt, MCPServers: &servers,
 		Features: &runtime.SessionFeatures{AgentQuestions: new(false)},
-	}}
+	}}, nil
 }
 
 func (s *Store) newTopic(ctx context.Context, tx *sql.Tx, key, digest string, n NewTopic, at string) (string, error) {
@@ -693,7 +702,11 @@ func (s *Server) useFreshSession(ctx context.Context, b SessionBinding) error {
 	if err != nil {
 		return err
 	}
-	replacement, err := json.Marshal(makeSpec(s.config, b))
+	spec, err := makeSpec(s.config, b)
+	if err != nil {
+		return err
+	}
+	replacement, err := json.Marshal(spec)
 	if err == nil {
 		_, err = s.store.db.ExecContext(ctx, "UPDATE session_bindings SET spec=?,body=?,next_attempt_at='' WHERE id=? AND state='pending'", replacement, raw, b.ID)
 	}

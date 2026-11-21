@@ -76,13 +76,26 @@ func newMCPToolRequest(ctx context.Context, endpoint, token, tool string, args a
 
 func sendMCPRequest(t *testing.T, req *http.Request) (int, []byte) {
 	t.Helper()
+	result := doMCPRequest(req)
+	require.NoError(t, result.err)
+	return result.status, result.body
+}
+
+type mcpHTTPResult struct {
+	status int
+	body   []byte
+	err    error
+}
+
+func doMCPRequest(req *http.Request) mcpHTTPResult {
 	client := http.Client{Timeout: 10 * time.Second}
 	response, err := client.Do(req)
-	require.NoError(t, err)
+	if err != nil {
+		return mcpHTTPResult{err: err}
+	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
-	require.NoError(t, err)
-	return response.StatusCode, body
+	return mcpHTTPResult{status: response.StatusCode, body: body, err: err}
 }
 
 func decodeMCPResponse(t *testing.T, body []byte, id string) mcpTestResponse {
@@ -101,6 +114,11 @@ func requestMCPTool(t *testing.T, endpoint, tool, token string, args any) (int, 
 	req, err := newMCPToolRequest(t.Context(), endpoint, token, tool, args)
 	require.NoError(t, err)
 	status, body := sendMCPRequest(t, req)
+	return normalizeMCPToolResult(t, status, body)
+}
+
+func normalizeMCPToolResult(t *testing.T, status int, body []byte) (int, []byte) {
+	t.Helper()
 	if status != http.StatusOK {
 		return status, body
 	}
