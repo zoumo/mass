@@ -1,5 +1,4 @@
 import { eventStatusLabel, stateLabel } from '../../workbench'
-import { metricsHref } from '../MetricsView'
 import SessionPreview from './SessionPreview'
 import { identity, reminderBasis, type RecordProps, type Kind } from './records'
 
@@ -140,7 +139,6 @@ export default function SessionEvidence({ kind, detail, navigate }: RecordProps)
           此 Issue 的报告历史
         </button>
       )}
-      {isBinding && <a href={metricsHref('session-binding', identity(detail))}>此会话绑定的工具调用</a>}
       {isBinding && (detail.sessionId && detail.sessionUid
         ? <SessionPreview key={identity(detail) + ':' + detail.sessionUid} sessionBindingId={identity(detail)}/>
         : <p>核心服务记录 Session 标识后，即可查看历史。</p>)}

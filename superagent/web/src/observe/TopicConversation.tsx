@@ -7,7 +7,6 @@ import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { ObjectAvatar, ConversationCard, type Participant } from './ConversationCard'
 import { navigate, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
-import { metricsHref } from './MetricsView'
 import './conversation.css'
 
 const view = 'topic-conversation'
@@ -446,7 +445,7 @@ function GroupInfo({ topicId }: { topicId: string }) {
       {issues.next && <Button size="sm" variant="ghost" disabled={!online || issues.loading}
         onClick={() => void issues.more()}>加载更多 Issue</Button>}
     </section>
-    <section className="conversation-section observable-actions"><a href={viewHref('topic', topicId)}>查看 Topic 记录 →</a><a href={metricsHref('topic', topicId)}>工具用量 →</a></section>
+    <section className="conversation-section observable-actions"><a href={viewHref('topic', topicId)}>查看 Topic 记录 →</a></section>
   </>
 }
 

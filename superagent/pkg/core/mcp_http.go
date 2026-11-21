@@ -95,17 +95,17 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 	var result any
 	if request.Method == "tools/call" {
 		call, protocolErr := prepareMCPTool(request.Params, binding)
-		usage := newMCPUsage(binding)
+		usage := newMCPCallTelemetry(binding)
 		var toolErr error
 		if protocolErr == nil && traceRoleTool(call.name) {
-			call.arguments, parent, toolErr = s.store.roleTraceInput(context.WithValue(r.Context(), mcpUsageContextKey{}, usage), binding, call.arguments, call.name)
+			call.arguments, parent, toolErr = s.store.roleTraceInput(context.WithValue(r.Context(), mcpCallTelemetryContextKey{}, usage), binding, call.arguments, call.name)
 		}
 		observe()
 		err = protocolErr
 		if err == nil {
 			var value any
 			if toolErr == nil {
-				value, toolErr = s.callRoleTool(context.WithValue(r.Context(), mcpUsageContextKey{}, usage), binding, call.name, call.arguments)
+				value, toolErr = s.callRoleTool(context.WithValue(r.Context(), mcpCallTelemetryContextKey{}, usage), binding, call.name, call.arguments)
 			}
 			result, err = makeMCPToolResult(value, toolErr)
 		}

@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	schemaVersion = 24
-	applicationID = 1398096210
+	schemaVersion         = 25
+	previousSchemaVersion = 24
+	applicationID         = 1398096210
 )
 
 type Store struct {
@@ -72,7 +73,7 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		}
 	}
 	dbPath := filepath.Join(c.DataDir, "core.sqlite")
-	if err := checkDatabaseHeader(dbPath); err != nil {
+	if _, err := checkDatabaseHeader(dbPath); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(filepath.Join(c.DataDir, ".core.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
@@ -89,7 +90,8 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 			_ = s.Close()
 		}
 	}()
-	if err := checkDatabaseHeader(dbPath); err != nil {
+	hasHeader, err := checkDatabaseHeader(dbPath)
+	if err != nil {
 		return nil, err
 	}
 	df, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
@@ -110,24 +112,36 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, storageError()
 	}
 	s.db.SetMaxOpenConns(1)
-	var version int
-	if err = s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return nil, storageError()
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	if version == 0 {
+	// The WAL can contain the current database identity before checkpointing.
+	var version, app uint32
+	if err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return nil, storageError()
+	}
+	if err = tx.QueryRowContext(ctx, "PRAGMA application_id").Scan(&app); err != nil {
+		return nil, storageError()
+	}
+	switch {
+	case !hasHeader && version == 0 && app == 0:
 		// Put the schema identity in the main file before enabling WAL. Startup
 		// can then reject earlier databases without touching their sidecars.
 		if _, err = tx.ExecContext(ctx, schema+fmt.Sprintf("PRAGMA application_id=%d; PRAGMA user_version=%d;", applicationID, schemaVersion)); err != nil {
 			return nil, storageError()
 		}
-	}
-	if _, err = tx.ExecContext(ctx, mcpUsageSchema+mcpMutationSchema); err != nil {
-		return nil, storageError()
+	default:
+		if err := checkDatabaseIdentity(version, app); err != nil {
+			return nil, err
+		}
+		if version == previousSchemaVersion {
+			if _, err = tx.ExecContext(ctx, `DROP TABLE mcp_mutation_receipts;
+DROP TABLE mcp_tool_calls;`+fmt.Sprintf("PRAGMA user_version=%d;", schemaVersion)); err != nil {
+				return nil, storageError()
+			}
+		}
 	}
 	if s.telemetry.tracesEnabled {
 		if _, err = tx.ExecContext(ctx, traceAssociationSchema); err != nil {
@@ -172,29 +186,33 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 
 // Read the main SQLite file directly. Even a read-only SQLite connection can
 // create or modify WAL shared-memory files when opening an earlier database.
-func checkDatabaseHeader(path string) error {
+func checkDatabaseHeader(path string) (bool, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return storageError()
+		return false, storageError()
 	}
 	defer func() { _ = f.Close() }()
 	var header [100]byte
 	n, err := f.ReadAt(header[:], 0)
 	if n == 0 && errors.Is(err, io.EOF) {
-		return nil
+		return false, nil
 	}
 	if err != nil || string(header[:16]) != "SQLite format 3\x00" {
-		return problem("failed_precondition", "invalid SQLite database; set dataDir to a new empty directory")
+		return false, problem("failed_precondition", "invalid SQLite database; set dataDir to a new empty directory")
 	}
 	version := binary.BigEndian.Uint32(header[60:64])
 	app := binary.BigEndian.Uint32(header[68:72])
+	return true, checkDatabaseIdentity(version, app)
+}
+
+func checkDatabaseIdentity(version, app uint32) error {
 	if app != applicationID {
 		return problem("failed_precondition", "database belongs to another format; set dataDir to a new empty directory")
 	}
-	if version != schemaVersion {
+	if version != schemaVersion && version != previousSchemaVersion {
 		return problem("unsupported", fmt.Sprintf("schema version %d is unsupported; set dataDir to a new empty directory for schema %d", version, schemaVersion))
 	}
 	return nil

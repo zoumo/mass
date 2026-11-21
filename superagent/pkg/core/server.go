@@ -250,22 +250,12 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/v1/observer/")
 	if r.URL.Path == observerPerformancePath {
-		result, err := s.observerTraces.performance(r.Context(), r.URL.Query().Get("window"))
+		result, err := s.observerTraces.performance(r.Context(), r.URL.Query())
 		if err != nil {
 			s.fail(w, err)
 			return
 		}
 		s.write(w, http.StatusOK, result)
-		return
-	}
-	if r.URL.Path == mcpUsagePath || r.URL.Path == mcpUsagePath+"/calls" || r.URL.Path == mcpUsagePath+"/metrics" {
-		mode := strings.TrimPrefix(r.URL.Path, mcpUsagePath+"/")
-		usage, err := s.store.mcpToolUsage(r.Context(), r.URL.Query(), mode)
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.write(w, http.StatusOK, usage)
 		return
 	}
 	if path == "health" {

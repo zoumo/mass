@@ -39,7 +39,7 @@ export default function App() {
   const [paused, setPaused] = useState(() => sessionStorage.getItem('observer-paused') === 'true')
   const [online, setOnline] = useState(navigator.onLine)
   const [revision, setRevision] = useState(0)
-  const refreshMs = !diagnostics && view === 'metrics' && query.get('tab') === 'performance' ? 30000 : 5000
+  const refreshMs = !diagnostics && view === 'metrics' ? 30000 : 5000
   const refresh = () => setRevision((tick) => tick + 1)
   useEffect(() => {
     const update = () => setOnline(navigator.onLine)

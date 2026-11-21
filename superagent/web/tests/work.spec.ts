@@ -79,7 +79,7 @@ test('Issue requirements, reports, input evidence and business acceptance are re
  await expect(dialog.getByText('历史报告', { exact: false })).toBeVisible()
  await dialog.getByRole('button', { name: '查看 SessionBinding', exact: true }).click()
  await expect(page).toHaveURL(/view=session-bindings&id=/)
- await expect(dialog.getByRole('link', { name: '此会话绑定的工具调用' })).toHaveAttribute('href', /perspective=metrics&id=.*&scope=session-binding/)
+ await expect(dialog.getByRole('link', { name: '此会话绑定的工具调用' })).toHaveCount(0)
  await expect(dialog.getByText('报告提醒', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('会话绑定已停用')
  await expect(dialog.getByText('Session 已受理', { exact: true })).toBeVisible()
  await expect(dialog.getByText('原生任务状态', { exact: true })).toBeVisible()
@@ -192,27 +192,10 @@ test('A reopened Issue links each report to its own binding and retains shared M
  await expect(dialog.getByTestId('recovery-evidence')).toContainText('已完成 · settle')
  await expect(dialog.getByTestId('release-evidence')).toContainText('native_session_closed')
  const history = dialog.getByRole('region', { name: 'Session 历史' })
- async function expectScopedCalls(sessionBindingId: string) {
-  const calls = page.waitForResponse(response => {
-   const url = new URL(response.url())
-   return url.pathname === '/v1/observer/mcp-tool-usage/calls' && url.searchParams.get('sessionBindingId') === sessionBindingId
-  })
-  await dialog.getByRole('link', { name: '此会话绑定的工具调用' }).click()
-  await expect(page.getByRole('textbox', { name: 'SessionBinding ID' })).toHaveValue(sessionBindingId)
-  const result = await calls
-  expect(result.ok()).toBeTruthy()
-  const { items } = await result.json() as { items: { sessionBindingId: string; tool: string }[] }
-  expect(items.filter(call => call.tool === 'submit_report')).toHaveLength(1)
-  expect(items.every(call => call.sessionBindingId === sessionBindingId)).toBeTruthy()
-  await expect(page.getByRole('region', { name: '工具调用记录' }).getByRole('link', { name: 'submit_report' })).toBeVisible()
-  await page.goBack()
- }
  await expect(history.getByText(retainedHistory, { exact: true })).toBeVisible()
- await expectScopedCalls(originalSessionBindingId)
  await page.goBack()
  await currentSession.click()
  await expect(history.getByText(retainedHistory, { exact: true })).toBeVisible()
- await expectScopedCalls(currentSessionBindingId)
  await dialog.getByRole('button', { name: '查看上一个会话绑定' }).click()
  await expect(page).toHaveURL(new RegExp(`view=session-bindings&id=${originalSessionBindingId}(?:&|$)`))
 })

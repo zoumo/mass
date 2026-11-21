@@ -68,7 +68,7 @@ const (
 )
 
 var (
-	issueCreationTracesSQL         = issueCreationTraces("page.ref")
+	issueCreationTracesSQL         = observerTraceList("issues", "page.ref")
 	conversationEventTracesSQL     = observerTraceList("internal-events", "json_extract(page.detail,'$.eventId')")
 	conversationTimelineWithTraces = conversationPage + `
  SELECT json_set(` + conversationBody + `,

@@ -30,15 +30,14 @@ type performanceMetric struct {
 }
 
 type performanceSeries struct {
-	Service  string       `json:"service"`
-	Instance string       `json:"instance"`
-	Points   [][2]float64 `json:"points"`
+	Dimensions map[string]string `json:"dimensions"`
+	Points     [][2]float64      `json:"points"`
 }
 
-func (r *observerTraceReader) performance(ctx context.Context, window string) (observerPerformance, error) {
+func (r *observerTraceReader) performance(ctx context.Context, q url.Values) (observerPerformance, error) {
 	var result observerPerformance
 	var seconds, step int64
-	switch window {
+	switch q.Get("window") {
 	case "15m":
 		seconds, step = 900, 15
 	case "", "1h":
@@ -49,6 +48,12 @@ func (r *observerTraceReader) performance(ctx context.Context, window string) (o
 		seconds, step = 86400, 300
 	default:
 		return result, problem("invalid_argument", "invalid performance window")
+	}
+	// Cover the default minute-long export period at short resolutions.
+	lookback := "[" + strconv.FormatInt(max(90, step), 10) + "s]"
+	queries, err := observerMetricQueries(q, lookback)
+	if err != nil {
+		return result, err
 	}
 	if r == nil {
 		return result, problem("failed_precondition", "Performance query source is not configured")
@@ -61,24 +66,11 @@ func (r *observerTraceReader) performance(ctx context.Context, window string) (o
 	}
 	until := time.Now().Unix() / step * step
 	result = observerPerformance{From: until - seconds, Until: until, StepSeconds: step}
-	const services = `{service_name=~"massd|superagent-core",service_instance_id!=""}`
-	const byInstance = ` by (service_name, service_instance_id) `
-	// Cover the default minute-long export period at short resolutions.
-	lookback := "[" + strconv.FormatInt(max(90, step), 10) + "s]"
-	gauge := func(metric string) string {
-		return "max" + byInstance + "(last_over_time(" + metric + services + lookback + "))"
-	}
-	queries := []struct{ id, expression string }{
-		{"cpu", "sum" + byInstance + "(rate(process_cpu_time" + services + "[5m]))"},
-		{"rss", gauge("process_memory_usage")},
-		{"goroutines", gauge("go_goroutine_count")},
-		{"file_descriptors", gauge("process_unix_file_descriptor_count")},
-	}
 	result.Metrics = make([]performanceMetric, len(queries))
 	var pending sync.WaitGroup
 	for i, query := range queries {
 		pending.Go(func() {
-			series, ok := r.performanceRange(ctx, until-seconds, until, step, query.expression)
+			series, ok := r.performanceRange(ctx, until-seconds, until, step, query)
 			result.Metrics[i] = performanceMetric{ID: query.id, Series: series, Unavailable: !ok}
 		})
 	}
@@ -86,10 +78,10 @@ func (r *observerTraceReader) performance(ctx context.Context, window string) (o
 	return result, nil
 }
 
-func (r *observerTraceReader) performanceRange(ctx context.Context, from, until, step int64, query string) ([]performanceSeries, bool) {
+func (r *observerTraceReader) performanceRange(ctx context.Context, from, until, step int64, query metricRangeQuery) ([]performanceSeries, bool) {
 	series := []performanceSeries{}
 	params := url.Values{
-		"query": {query}, "start": {strconv.FormatInt(from, 10)},
+		"query": {query.expression}, "start": {strconv.FormatInt(from, 10)},
 		"end": {strconv.FormatInt(until, 10)}, "step": {strconv.FormatInt(step, 10)},
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.metricsURL+"?"+params.Encode(), http.NoBody)
@@ -115,10 +107,7 @@ func (r *observerTraceReader) performanceRange(ctx context.Context, from, until,
 		Data   struct {
 			ResultType string
 			Result     []struct {
-				Metric struct {
-					Service  string `json:"service_name"`
-					Instance string `json:"service_instance_id"`
-				}
+				Metric map[string]string
 				Values [][2]json.RawMessage
 			}
 		}
@@ -128,12 +117,12 @@ func (r *observerTraceReader) performanceRange(ctx context.Context, from, until,
 		return series, false
 	}
 	for _, result := range page.Data.Result {
-		service, instance := result.Metric.Service, result.Metric.Instance
-		if (service != "superagent-core" && service != "massd") || instance == "" || len(instance) > 128 {
+		dimensions, ok := observerMetricDimensions(result.Metric, query.labels)
+		if !ok {
 			continue
 		}
 		previous := from - step
-		line := performanceSeries{Service: service, Instance: instance}
+		line := performanceSeries{Dimensions: dimensions}
 		for _, sample := range result.Values {
 			var at int64
 			var raw string
@@ -153,10 +142,42 @@ func (r *observerTraceReader) performanceRange(ctx context.Context, from, until,
 		}
 	}
 	slices.SortFunc(series, func(a, b performanceSeries) int {
-		if a.Service != b.Service {
-			return strings.Compare(a.Service, b.Service)
+		for _, key := range query.labels {
+			if order := strings.Compare(a.Dimensions[key], b.Dimensions[key]); order != 0 {
+				return order
+			}
 		}
-		return strings.Compare(a.Instance, b.Instance)
+		return 0
 	})
 	return series, true
+}
+
+func observerMetricDimensions(raw map[string]string, labels []string) (map[string]string, bool) {
+	dimensions := make(map[string]string, len(labels))
+	for _, key := range labels {
+		value := raw[key]
+		switch key {
+		case "service_name":
+			if value != "massd" && value != "superagent-core" {
+				return nil, false
+			}
+		case "superagent_action":
+			if value != "" && !metricFilterValue.MatchString(value) {
+				return nil, false
+			}
+		default:
+			if !metricFilterValue.MatchString(value) {
+				return nil, false
+			}
+		}
+		dimension := strings.TrimPrefix(key, "superagent_")
+		switch key {
+		case "service_name":
+			dimension = "service"
+		case "service_instance_id":
+			dimension = "instance"
+		}
+		dimensions[dimension] = value
+	}
+	return dimensions, true
 }

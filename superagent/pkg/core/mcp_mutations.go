@@ -3,17 +3,8 @@ package core
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"strings"
 )
-
-const mcpMutationSchema = `
-CREATE TABLE IF NOT EXISTS mcp_mutation_receipts (
- session_binding_id TEXT NOT NULL REFERENCES session_bindings(id), tool TEXT NOT NULL,
- operation_id TEXT NOT NULL, digest TEXT NOT NULL, result BLOB NOT NULL,
- PRIMARY KEY(session_binding_id, tool, operation_id)
-);`
 
 type mutationRevision struct {
 	OperationID      string `json:"operationId"`
@@ -68,69 +59,8 @@ type updateIssueArgs struct {
 	Transition   *changeTransition `json:"transition,omitempty"`
 }
 
-// Save the response with the mutation in the same transaction, so a lost
-// response can be replayed without applying another write or checking a stale revision.
-func (s *Store) commitMCPMutation(ctx context.Context, b SessionBinding, tool, operationID string, args any, apply workMutation) (json.RawMessage, error) {
-	replayed := false
-	var committed bool
-	result, err := s.commitWork(ctx, b, tool, operationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
-		digest := creationDigest(args)
-		var recorded string
-		var raw json.RawMessage
-		err := tx.QueryRowContext(ctx, `SELECT digest,result FROM mcp_mutation_receipts WHERE session_binding_id=? AND tool=? AND operation_id=?`, b.ID, tool, operationID).Scan(&recorded, &raw)
-		if err == nil {
-			if recorded != digest {
-				return nil, problem("conflict", "operationId was already used with other parameters")
-			}
-			if b.Role == "topic" && (tool == "update_issue" || tool == "create_issue" || tool == "start_issue") {
-				var receipt WorkReceipt
-				if json.Unmarshal(raw, &receipt) == nil {
-					markMCPIssueTarget(ctx, receipt.Issue.ID)
-				}
-			}
-			replayed = true
-			return raw, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, storageError()
-		}
-		value, err := apply(ctx, tx, b)
-		if err != nil {
-			return nil, err
-		}
-		raw, err = json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO mcp_mutation_receipts VALUES(?,?,?,?,?)`, b.ID, tool, operationID, digest, raw); err != nil {
-			return nil, storageError()
-		}
-		committed = true
-		return raw, nil
-	})
-	if err == nil {
-		markMCPMutation(ctx, replayed, committed)
-		if committed {
-			switch r := args.(type) {
-			case updateTopicArgs:
-				if r.Transition != nil {
-					commitGate("lifecycle_after_commit")
-				}
-			case updateIssueArgs:
-				if r.Transition != nil {
-					commitGate("lifecycle_after_commit")
-				}
-				if r.Goal != nil && r.SessionInput != nil {
-					commitGate("requirements_after_commit")
-				}
-			}
-		}
-	}
-	return result, err
-}
-
 func setMCPAction(ctx context.Context, t *changeTransition) {
-	if u := mcpUsageFrom(ctx); u != nil {
+	if u := mcpCallTelemetryFrom(ctx); u != nil {
 		u.action = "edit"
 		if t != nil {
 			switch t.Action {
@@ -202,7 +132,7 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 	if r.PullRequests != nil {
 		r.PullRequests.Add = urls
 	}
-	return s.commitMCPMutation(ctx, b, "update_topic", r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
+	result, err := s.commitWork(ctx, b, "update_topic", r.OperationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		var topic Topic
 		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
 			return nil, err
@@ -250,15 +180,16 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 			return changeTopicLifecycle("topic_"+t.Action, LifecycleRequest{OperationID: r.OperationID, ExpectedRevision: r.ExpectedRevision, Reason: t.Reason})(ctx, tx, b)
 		}
 		if before == creationDigest(topic) {
-			if u := mcpUsageFrom(ctx); u != nil {
-				u.noChange = true
-			}
 			return topic, nil
 		}
 		topic.Revision++
 		topic.UpdatedAt = now()
 		return topic, putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", topic, topic.ID)
 	})
+	if err == nil && r.Transition != nil {
+		commitGate("lifecycle_after_commit")
+	}
+	return result, err
 }
 
 func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte) (any, error) {
@@ -290,7 +221,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 	if r.PullRequests != nil {
 		r.PullRequests.Add = urls
 	}
-	return s.commitMCPMutation(ctx, b, "update_issue", r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
+	result, err := s.commitWork(ctx, b, "update_issue", r.OperationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		var issue Issue
 		var topic Topic
 		var sessionBindingID string
@@ -378,9 +309,6 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 			return changeIssueLifecycle("issue_"+t.Action, IssueLifecycleRequest{LifecycleRequest: LifecycleRequest{OperationID: r.OperationID, ExpectedRevision: r.ExpectedRevision, Reason: t.Reason}, IssueID: issue.ID})(ctx, tx, b)
 		}
 		if before == creationDigest(issue) && r.SessionInput == nil {
-			if u := mcpUsageFrom(ctx); u != nil {
-				u.noChange = true
-			}
 			return WorkReceipt{Issue: issue}, nil
 		}
 		issue.Revision++
@@ -421,4 +349,13 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 		}
 		return notifyIssueSession(ctx, tx, issue, id, kind, input.Content, materials)
 	})
+	if err == nil {
+		if r.Transition != nil {
+			commitGate("lifecycle_after_commit")
+		}
+		if r.Goal != nil && r.SessionInput != nil {
+			commitGate("requirements_after_commit")
+		}
+	}
+	return result, err
 }
