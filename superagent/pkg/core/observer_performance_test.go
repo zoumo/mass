@@ -47,10 +47,11 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 				t.Error("CPU requires a counter rate")
 			}
 			_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"matrix","result":[
-{"metric":{"service_name":"massd","service_instance_id":"new","private_label":"secret"},"values":[[%d,"0.5"],[%d,"NaN"],[%d,"0.75"]]},
+{"metric":{"service_name":"superagent-core","service_instance_id":"first"},"values":[[%d,"1"]]},
 {"metric":{"service_name":"massd","service_instance_id":"old"},"values":[[%d,"0"]]},
+{"metric":{"service_name":"massd","service_instance_id":"new","private_label":"secret"},"values":[[%d,"0.5"],[%d,"NaN"],[%d,"0.75"]]},
 {"metric":{"service_name":"other","service_instance_id":"unrelated"},"values":[[%d,"10"]]}
-]}}`, start+15, start+30, start+45, start, start)
+]}}`, start, start, start+15, start+30, start+45, start)
 		}
 	}))
 	t.Cleanup(upstream.Close)
@@ -83,6 +84,7 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 	require.Equal(t, []performanceSeries{
 		{Dimensions: map[string]string{"service": "massd", "instance": "new"}, Points: [][2]float64{{float64(result.From + 15), 0.5}, {float64(result.From + 45), 0.75}}},
 		{Dimensions: map[string]string{"service": "massd", "instance": "old"}, Points: [][2]float64{{float64(result.From), 0}}},
+		{Dimensions: map[string]string{"service": "superagent-core", "instance": "first"}, Points: [][2]float64{{float64(result.From), 1}}},
 	}, cpu.Series)
 	require.NotNil(t, result.Metrics[2].Series)
 	require.Empty(t, result.Metrics[2].Series)

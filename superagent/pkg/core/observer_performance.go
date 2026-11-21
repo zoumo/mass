@@ -141,8 +141,12 @@ func (r *observerTraceReader) performanceRange(ctx context.Context, from, until,
 			series = append(series, line)
 		}
 	}
+	dimensionKeys := make([]string, len(query.labels))
+	for i, label := range query.labels {
+		dimensionKeys[i] = observerMetricDimensionKey(label)
+	}
 	slices.SortFunc(series, func(a, b performanceSeries) int {
-		for _, key := range query.labels {
+		for _, key := range dimensionKeys {
 			if order := strings.Compare(a.Dimensions[key], b.Dimensions[key]); order != 0 {
 				return order
 			}
@@ -170,14 +174,18 @@ func observerMetricDimensions(raw map[string]string, labels []string) (map[strin
 				return nil, false
 			}
 		}
-		dimension := strings.TrimPrefix(key, "superagent_")
-		switch key {
-		case "service_name":
-			dimension = "service"
-		case "service_instance_id":
-			dimension = "instance"
-		}
-		dimensions[dimension] = value
+		dimensions[observerMetricDimensionKey(key)] = value
 	}
 	return dimensions, true
+}
+
+func observerMetricDimensionKey(label string) string {
+	switch label {
+	case "service_name":
+		return "service"
+	case "service_instance_id":
+		return "instance"
+	default:
+		return strings.TrimPrefix(label, "superagent_")
+	}
 }
