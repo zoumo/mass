@@ -16,6 +16,7 @@ import (
 	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
@@ -71,7 +72,7 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 			Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}},
 		},
 	})
-	return newDriver(
+	driver := newDriver(
 		recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.Executable},
 		o,
 		provider,
@@ -82,7 +83,11 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 			}
 			return client, nil
 		},
-	), nil
+	)
+	if f.TracerProvider != nil {
+		driver.tracer = f.TracerProvider.Tracer("massd.runtime.codex")
+	}
+	return driver, nil
 }
 
 func newDriver(vault recovery.Vault, options options, provider agent.Core, nativeClient func() (codexReadClient, error)) *Driver {
@@ -144,6 +149,7 @@ type Driver struct {
 	op            sync.Mutex
 	options       options
 	pipe          *events.EventPipe
+	tracer        trace.Tracer
 	taken         bool
 	provider      agent.Core
 	nativeClient  func() (codexReadClient, error)
@@ -385,18 +391,8 @@ func (d *Driver) bindSession(native agent.Session, address runtime.Address, sour
 		ExpectedEOF: func() bool {
 			return s.closing.Load()
 		},
-		ObservationFailure: func(event agent.Event) error {
-			problem, ok := event.Payload.(agent.SessionErrorPayload)
-			if !ok || problem.Reason != "unsupported_native_item" {
-				return nil
-			}
-			return &runtime.OperationError{
-				Code:    string(agent.ErrorUnavailable),
-				Reason:  problem.Reason,
-				Message: problem.Message,
-			}
-		},
 		Sink: func(ctx context.Context, event events.SessionEvent) error {
+			d.traceUnsupportedItem(ctx, event)
 			source := codexEventSource(event)
 			if work := source.Work(); work != "" {
 				s.observeWork(event, work)
@@ -423,6 +419,33 @@ func (d *Driver) bindSession(native agent.Session, address runtime.Address, sour
 	d.sessions[native.ID()] = s
 	d.mu.Unlock()
 	return s, nil
+}
+
+func (d *Driver) traceUnsupportedItem(ctx context.Context, event events.SessionEvent) {
+	if d.tracer == nil {
+		return
+	}
+	problem, ok := event.Payload().(events.SessionError)
+	if !ok || problem.Reason != "unsupported_native_item" {
+		return
+	}
+	// The relay has normalized the SDK's raw notification to JSON values.
+	codexMeta, _ := event.Meta["codex"].(map[string]any)
+	method, _ := codexMeta["method"].(string)
+	raw, _ := codexMeta["raw"].(map[string]any)
+	params, _ := raw["params"].(map[string]any)
+	item, _ := params["item"].(map[string]any)
+	itemType, _ := item["type"].(string)
+
+	attrs := []attribute.KeyValue{attribute.String("reason", problem.Reason)}
+	if method != "" {
+		attrs = append(attrs, attribute.String("codex.method", method))
+	}
+	if itemType != "" {
+		attrs = append(attrs, attribute.String("codex.item.type", itemType))
+	}
+	_, span := d.tracer.Start(ctx, "codex.unsupported_native_item", trace.WithAttributes(attrs...))
+	span.End()
 }
 
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
