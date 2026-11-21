@@ -23,7 +23,6 @@ export type DiagnosticRow = WorkbenchRow & {
     observedAt: string
     sessionId: string
     sessionUid: string
-    generation: number
     workId?: string
     provider?: string
     continuous: boolean
@@ -33,8 +32,6 @@ export type DiagnosticRow = WorkbenchRow & {
   reminder?: DiagnosticRow
   evidence?: string[]
   questions?: string[]
-  preparation?: DiagnosticRow
-  startup?: DiagnosticRow
   messageId?: string
   instanceId?: string
   connection?: string
@@ -81,19 +78,24 @@ export type DiagnosticRow = WorkbenchRow & {
   dueAt?: string
   firedAt?: string
   details?: string
-  historical?: boolean
   eventId?: string
   sessionId?: string
   sessionUid?: string
   runtimeRef?: string
   startEventId?: string
   reminderEventId?: string
-  preparationAtRetirement?: string
+  startGoalRevision?: number
+  retiredAt?: string
+  previousSessionBindingId?: string
+  recovery?: { status: string; mode: string; createdAt: string; completedAt?: string; lastError?: string; replacementSessionBindingId?: string }
+  recipient?: { session_binding_id?: string }
+  sender?: { session_binding_id?: string }
+  current?: boolean
   reminderEligibility?: string
   event_id?: string
   ownerId?: string
 }
-const workKinds = ['issues', 'executions', 'reports', 'timers', 'pull-requests'] as const
+const workKinds = ['issues', 'reports', 'timers', 'pull-requests'] as const
 export const kinds = [
   'messages',
   'threads',
@@ -103,7 +105,7 @@ export const kinds = [
   'routing-events',
   'subscriptions',
   'relations',
-  'bindings',
+  'session-bindings',
   'internal-events',
 ] as const
 export type Kind = (typeof kinds)[number]
@@ -113,20 +115,19 @@ const collectionLabels: Record<Kind, string> = {
   outbox: '回执',
   topics: 'Topic',
   issues: 'Issue',
-  executions: '执行记录',
   reports: '报告',
   timers: '定时器',
   'pull-requests': '拉取请求',
   'routing-events': '路由事件',
   subscriptions: '订阅',
   relations: '路由关系',
-  bindings: '绑定',
+  'session-bindings': '会话绑定',
   'internal-events': '内部事件',
 }
 export const viewLabel = (view: Kind) => collectionLabels[view]
 export const reminderBasis: Record<string, string> = {
-  execution_retired: '执行已停用',
-  report_received: '已收到本次执行的报告',
+  session_binding_retired: '会话绑定已停用',
+  report_received: '已收到当前报告',
   already_scheduled: '已安排一次提醒',
   awaiting_correlated_end: '等待 Session 空闲',
   end_unconfirmed: 'Session 空闲状态未确认',

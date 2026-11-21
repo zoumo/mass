@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -17,10 +16,10 @@ type Material struct {
 }
 
 type Completion struct {
-	Reason      string   `json:"reason"`
-	Evidence    []string `json:"evidence"`
-	CompletedAt string   `json:"completedAt"`
-	BindingID   string   `json:"bindingId"`
+	Reason           string   `json:"reason"`
+	Evidence         []string `json:"evidence"`
+	CompletedAt      string   `json:"completedAt"`
+	SessionBindingID string   `json:"sessionBindingId"`
 }
 
 type Issue struct {
@@ -39,7 +38,7 @@ type Issue struct {
 	Materials                 []Material        `json:"materials,omitempty"`
 	Status                    string            `json:"status"`
 	Revision                  int               `json:"revision"`
-	CurrentExecutionID        string            `json:"currentExecutionId,omitempty"`
+	CurrentSessionBindingID   string            `json:"currentSessionBindingId,omitempty"`
 	CreatedAt                 string            `json:"createdAt"`
 	UpdatedAt                 string            `json:"updatedAt"`
 	Completion                *Completion       `json:"completion,omitempty"`
@@ -57,9 +56,6 @@ func (i Issue) MarshalAgentPromptJSON() ([]byte, error) {
 		view["revision"] = i.Revision
 	case reportSubmittedKind:
 		view["title"] = i.Title
-		if i.CurrentExecutionID != "" {
-			view["currentExecutionId"] = i.CurrentExecutionID
-		}
 	}
 	if i.promptEventKind != routedMessageKind {
 		view["revision"] = i.Revision
@@ -72,24 +68,6 @@ func (i Issue) MarshalAgentPromptJSON() ([]byte, error) {
 		view["materials"] = i.Materials
 	}
 	return json.Marshal(view)
-}
-
-type Execution struct {
-	ID                      string           `json:"id"`
-	IssueID                 string           `json:"issueId"`
-	TopicID                 string           `json:"topicId"`
-	BindingID               string           `json:"bindingId"`
-	Generation              int              `json:"generation"`
-	CreatedAt               string           `json:"createdAt"`
-	Revision                int              `json:"goalRevision"`
-	StartEventID            string           `json:"startEventId"`
-	Authority               string           `json:"authority"`
-	RetiredGoalRevision     int              `json:"retiredGoalRevision,omitempty"`
-	RetiredAt               string           `json:"retiredAt,omitempty"`
-	PreparationAtRetirement string           `json:"preparationAtRetirement,omitempty"`
-	Stop                    *StopRequest     `json:"stop,omitempty"`
-	WorkObservation         *WorkObservation `json:"workObservation,omitempty"`
-	ReminderEventID         string           `json:"reminderEventId,omitempty"`
 }
 
 type CreateIssueRequest struct {
@@ -151,12 +129,12 @@ type CompleteIssueRequest struct {
 }
 
 type WorkReceipt struct {
-	Issue               Issue      `json:"issue"`
-	Execution           *Execution `json:"execution,omitempty"`
-	NotificationEventID string     `json:"notificationEventId,omitempty"`
+	Issue               Issue           `json:"issue"`
+	SessionBinding      *SessionBinding `json:"sessionBinding,omitempty"`
+	NotificationEventID string          `json:"notificationEventId,omitempty"`
 }
 
-func (s *Store) workCommand(ctx context.Context, b Binding, tool string, raw []byte) (json.RawMessage, error) {
+func (s *Store) workCommand(ctx context.Context, b SessionBinding, tool string, raw []byte) (json.RawMessage, error) {
 	if b.Role != "topic" {
 		return nil, problem("forbidden", "only Topic can manage its work")
 	}
@@ -202,7 +180,7 @@ func (s *Store) workCommand(ctx context.Context, b Binding, tool string, raw []b
 	}
 }
 
-func decodeWorkCommand[T any](ctx context.Context, s *Store, b Binding, kind string, raw []byte, operationID func(T) string, apply func(T) workMutation) (json.RawMessage, error) {
+func decodeWorkCommand[T any](ctx context.Context, s *Store, b SessionBinding, kind string, raw []byte, operationID func(T) string, apply func(T) workMutation) (json.RawMessage, error) {
 	var r T
 	if err := decodeStrict(raw, &r); err != nil {
 		return nil, err
@@ -210,9 +188,9 @@ func decodeWorkCommand[T any](ctx context.Context, s *Store, b Binding, kind str
 	return s.commitWork(ctx, b, kind, operationID(r), apply(r))
 }
 
-type workMutation func(context.Context, *sql.Tx, Binding) (any, error)
+type workMutation func(context.Context, *sql.Tx, SessionBinding) (any, error)
 
-func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID string, apply workMutation) (_ json.RawMessage, retErr error) {
+func (s *Store) commitWork(ctx context.Context, b SessionBinding, kind, operationID string, apply workMutation) (_ json.RawMessage, retErr error) {
 	if operation := workTraceOperation(kind); operation != "" {
 		var finish func(string)
 		ctx, finish = s.telemetry.startOperation(ctx, operation, b.Role)
@@ -272,7 +250,7 @@ func workTraceOperation(tool string) string {
 	}
 }
 
-func currentTopic(ctx context.Context, tx *sql.Tx, b Binding) (Topic, error) {
+func currentTopic(ctx context.Context, tx *sql.Tx, b SessionBinding) (Topic, error) {
 	var t Topic
 	if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
 		return t, err
@@ -283,7 +261,7 @@ func currentTopic(ctx context.Context, tx *sql.Tx, b Binding) (Topic, error) {
 	return t, nil
 }
 
-func topicIssue(ctx context.Context, tx *sql.Tx, b Binding, id string) (Issue, error) {
+func topicIssue(ctx context.Context, tx *sql.Tx, b SessionBinding, id string) (Issue, error) {
 	var issue Issue
 	if id == "" {
 		return issue, problem("invalid_argument", "issueId is required")
@@ -328,7 +306,7 @@ func validateMaterials(ctx context.Context, tx *sql.Tx, topicID string, material
 }
 
 func (s *Store) createIssue(r CreateIssueRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		key := creationKey("issue", b.ID, r.OperationID)
 		digest := creationDigest(r)
 		if id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM issues WHERE creation_key=?", key); err != nil {
@@ -338,9 +316,9 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 			if err != nil || !r.Start {
 				return WorkReceipt{Issue: issue}, err
 			}
-			var x Execution
-			err = readJSON(ctx, tx, "SELECT body FROM executions WHERE issue_id=? AND generation=1", &x, id)
-			return WorkReceipt{Issue: issue, Execution: &x}, err
+			var original SessionBinding
+			err = readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE role='issue' AND owner_id=? AND generation=1", &original, id)
+			return WorkReceipt{Issue: issue, SessionBinding: &original}, err
 		}
 		t, err := currentTopic(ctx, tx, b)
 		if err != nil {
@@ -402,7 +380,7 @@ func checkWorkspace(path string) error {
 }
 
 func (s *Store) startIssue(r StartIssueRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		if (r.RuntimeRef == nil) != (r.Model == nil) {
 			return nil, problem("invalid_argument", "provide both runtimeRef and model, or omit both")
 		}
@@ -413,8 +391,8 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 		if err := checkWorkspace(issue.Workspace); err != nil {
 			return nil, err
 		}
-		if issue.CurrentExecutionID != "" {
-			return nil, problem("conflict", "Issue already has a current Execution")
+		if issue.CurrentSessionBindingID != "" {
+			return nil, problem("conflict", "Issue already has a current SessionBinding")
 		}
 		if r.RuntimeRef != nil {
 			issue.ExecutionProfile, err = s.config.Execution.issueProfile(*r.RuntimeRef, *r.Model)
@@ -430,62 +408,49 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 }
 
 func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, sender eventIdentity) (WorkReceipt, error) {
-	if issue.CurrentExecutionID != "" {
-		return WorkReceipt{}, problem("conflict", "Issue already has a current Execution")
+	if issue.CurrentSessionBindingID != "" {
+		return WorkReceipt{}, problem("conflict", "Issue already has a current SessionBinding")
 	}
 	if len(issue.Blockers) != 0 {
-		return WorkReceipt{}, problem("failed_precondition", "starting an Execution requires resolving the Issue's blockers")
+		return WorkReceipt{}, problem("failed_precondition", "starting an Issue requires resolving its blockers")
 	}
-	previous, err := previousIssue(ctx, tx, issue.ID)
+	previous, err := previousIssueBinding(ctx, tx, issue.ID)
 	if err != nil {
 		return WorkReceipt{}, err
 	}
 	at := now()
-	generation := previous.Generation + 1
-	x := Execution{
-		ID: issue.ID + "-e" + strconv.Itoa(generation), IssueID: issue.ID, TopicID: issue.TopicID, Generation: generation,
-		CreatedAt: at, StartEventID: newID("evt"), Authority: "current",
-	}
-	b, err := createIssueBinding(ctx, tx, s.config, x, issue, previous)
+	b, err := createIssueBinding(ctx, tx, s.config, issue, previous, at)
 	if err != nil {
 		return WorkReceipt{}, err
 	}
-	x.BindingID = b.ID
 	issue.Status = "active"
 	issue.Revision++
-	issue.UpdatedAt, issue.CurrentExecutionID = at, x.ID
-	x.Revision = issue.RequirementsRevision
-	if err := putJSON(ctx, tx, "INSERT INTO executions(id,issue_id,binding_id,generation,created_at,body) VALUES(?,?,?,?,?,?)", x, x.ID, issue.ID, b.ID, x.Generation, at); err != nil {
-		return WorkReceipt{}, err
-	}
-	if err := executionCreate.save(ctx, tx, x.ID, 0); err != nil {
-		return WorkReceipt{}, err
-	}
+	issue.UpdatedAt, issue.CurrentSessionBindingID = at, b.ID
 	if err := saveIssue(ctx, tx, issue); err != nil {
 		return WorkReceipt{}, err
 	}
 	payload, err := json.Marshal(map[string]any{
-		"topicId": issue.TopicID, "issueId": issue.ID, "executionId": x.ID,
-		"previousExecutionId": previous.OwnerID, "materials": issue.Materials, "completion": issue.Completion,
-		"instruction": "Use get_issue as needed to read current goals for current requirements and materials. Check retained workspace results before repeating work. Verify and submit a Report.",
+		"topicId": issue.TopicID, "issueId": issue.ID,
+		"materials": issue.Materials, "completion": issue.Completion,
+		"instruction": "Use get_issue to read the current goal and materials as needed. Check existing workspace results before repeating work. Verify the result and submit a Report.",
 	})
 	if err != nil {
 		return WorkReceipt{}, err
 	}
 	err = enqueueInternalEvent(ctx, tx, internalEvent{
-		ID: x.StartEventID, Kind: issueSessionStarted,
+		ID: b.StartEventID, Kind: issueSessionStarted,
 		Sender:    sender,
-		Recipient: eventIdentity{Kind: "issue", ExecutionID: x.ID},
+		Recipient: eventIdentity{Kind: "issue", SessionBindingID: b.ID},
 		Body:      payload, Refs: []eventReference{issueGoalRef(issue)},
 	})
-	return WorkReceipt{Issue: issue, Execution: &x}, err
+	return WorkReceipt{Issue: issue, SessionBinding: &b}, err
 }
 
 func saveIssue(ctx context.Context, tx *sql.Tx, issue Issue) error {
 	return putJSON(ctx, tx, "UPDATE issues SET body=?2 WHERE id=?1", issue, issue.ID)
 }
 
-func (r CompleteRequest) completion(b Binding, at string) (*Completion, error) {
+func (r CompleteRequest) completion(b SessionBinding, at string) (*Completion, error) {
 	if strings.TrimSpace(r.Reason) == "" || len(r.Evidence) == 0 {
 		return nil, problem("invalid_argument", "completion requires a reason and evidence references")
 	}
@@ -494,11 +459,11 @@ func (r CompleteRequest) completion(b Binding, at string) (*Completion, error) {
 			return nil, problem("invalid_argument", "evidence references must not be empty")
 		}
 	}
-	return &Completion{Reason: r.Reason, Evidence: r.Evidence, BindingID: b.ID, CompletedAt: at}, nil
+	return &Completion{Reason: r.Reason, Evidence: r.Evidence, SessionBindingID: b.ID, CompletedAt: at}, nil
 }
 
 func completeIssue(r CompleteIssueRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		if _, err := currentTopic(ctx, tx, b); err != nil {
 			return nil, err
 		}
@@ -517,23 +482,23 @@ func completeIssue(r CompleteIssueRequest) workMutation {
 		if err != nil {
 			return nil, err
 		}
-		var x *Execution
-		if issue.CurrentExecutionID != "" {
-			retired, err := retireExecution(ctx, tx, issue.CurrentExecutionID, at, false)
+		var x *SessionBinding
+		if issue.CurrentSessionBindingID != "" {
+			retired, err := retireIssueBinding(ctx, tx, issue, at, false)
 			if err != nil {
 				return nil, err
 			}
 			x = &retired
 		}
 		previousStatus := issue.Status
-		issue.Status, issue.UpdatedAt, issue.CurrentExecutionID = "completed", at, ""
+		issue.Status, issue.UpdatedAt, issue.CurrentSessionBindingID = "completed", at, ""
 		issue.Revision++
-		return WorkReceipt{Issue: issue, Execution: x}, saveIssueLifecycleTransition(ctx, tx, issue, previousStatus)
+		return WorkReceipt{Issue: issue, SessionBinding: x}, saveIssueLifecycleTransition(ctx, tx, issue, previousStatus)
 	}
 }
 
 func completeTopic(r CompleteRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		t, err := currentTopic(ctx, tx, b)
 		if err != nil {
 			return nil, err

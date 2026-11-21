@@ -29,28 +29,29 @@ const conversationEvents = `
  FROM issues i WHERE i.seq<=:issues AND (:topic='' OR i.topic_id=:topic)
  UNION ALL
  SELECT i.topic_id,'issue_session_dispatch',d.created_at,d.event_id,
- json_object('actor','topic','recipient','issue','eventId',d.event_id,'issueId',i.id,
-  'executionId',x.id,'generation',x.generation,'title',json_extract(i.body,'$.title'),
+ json_object('actor',json_extract(d.sender,'$.kind'),'recipient','issue','eventId',d.event_id,'issueId',i.id,
+  'sessionBindingId',b.id,'title',json_extract(i.body,'$.title'),
   'summary',substr(coalesce(json_extract(d.content,'$.data.text'),json_extract(d.content,'$.data.prompt'),
     json_extract(d.body,'$.instruction')),1,240),
   'content',json(d.content),
   'status',d.status,
   'dispatchKind',CASE WHEN d.kind='issue_session_update' AND d.event_id GLOB 'goal-update_*' THEN 'goal_notification' ELSE d.kind END)
  FROM internal_events d
- JOIN executions x ON x.id=json_extract(d.recipient,'$.execution_id')
- JOIN issues i ON i.id=x.issue_id AND i.id=json_extract(d.refs,'$[0].id')
+ JOIN session_bindings b ON b.role='issue' AND b.id=json_extract(d.recipient,'$.session_binding_id')
+ JOIN issues i ON i.id=b.owner_id AND i.id=json_extract(d.refs,'$[0].id')
  WHERE d.kind IN ('issue_session_started','issue_session_update','context_supplement')
-  AND json_extract(d.sender,'$.kind')='topic' AND json_extract(d.sender,'$.topic_id')=i.topic_id
+  AND ((json_extract(d.sender,'$.kind')='topic' AND json_extract(d.sender,'$.topic_id')=i.topic_id)
+   OR (json_extract(d.sender,'$.kind')='core' AND d.kind='issue_session_started'))
   AND json_extract(d.recipient,'$.kind')='issue' AND json_extract(d.refs,'$[0].kind')='issue'
   AND d.rowid<=:internalEvents AND i.seq<=:issues AND (:topic='' OR i.topic_id=:topic)
  UNION ALL
  SELECT i.topic_id,'report',r.created_at,r.id,
  json_object('actor','issue','recipient','topic','reportId',r.id,'issueId',i.id,
-  'executionId',r.execution_id,'generation',json_extract(r.body,'$.generation'),
+  'sessionBindingId',r.session_binding_id,'historical',json(r.body->'$.historical'),
   'title',json_extract(i.body,'$.title'),'reportKind',json_extract(r.body,'$.kind'),
   'summary',substr(json_extract(r.body,'$.summary'),1,240),'eventId',json_extract(r.body,'$.eventId'))
  FROM issues i JOIN reports r ON r.issue_id=i.id
- WHERE r.seq<=:reports AND i.seq<=:issues AND json_extract(r.body,'$.historical')=0
+ WHERE r.seq<=:reports AND i.seq<=:issues
   AND (:topic='' OR i.topic_id=:topic)`
 
 const conversationFacts = `WITH events(topic_id,kind,at,ref,detail) AS (` + conversationEvents + `),

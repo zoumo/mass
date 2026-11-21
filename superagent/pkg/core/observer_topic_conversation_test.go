@@ -13,24 +13,23 @@ import (
 )
 
 type conversationRow struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	Kind          string `json:"kind"`
-	TopicID       string `json:"topicId"`
-	ThreadKey     string `json:"threadKey"`
-	MessageID     string `json:"messageId"`
-	EventID       string `json:"eventId"`
-	Actor         string `json:"actor"`
-	Recipient     string `json:"recipient"`
-	LastMessageAt string `json:"lastMessageAt"`
-	DispatchKind  string `json:"dispatchKind"`
-	ExecutionID   string `json:"executionId"`
-	IssueID       string `json:"issueId"`
-	Generation    int    `json:"generation"`
-	At            string `json:"at"`
-	ReportID      string `json:"reportId"`
-	ReportKind    string `json:"reportKind"`
-	Summary       string `json:"summary"`
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	Kind             string `json:"kind"`
+	TopicID          string `json:"topicId"`
+	ThreadKey        string `json:"threadKey"`
+	MessageID        string `json:"messageId"`
+	EventID          string `json:"eventId"`
+	Actor            string `json:"actor"`
+	Recipient        string `json:"recipient"`
+	LastMessageAt    string `json:"lastMessageAt"`
+	DispatchKind     string `json:"dispatchKind"`
+	SessionBindingID string `json:"sessionBindingId"`
+	IssueID          string `json:"issueId"`
+	At               string `json:"at"`
+	ReportID         string `json:"reportId"`
+	ReportKind       string `json:"reportKind"`
+	Summary          string `json:"summary"`
 }
 
 func conversationPage(t *testing.T, p *process, query url.Values) ([]conversationRow, string) {
@@ -142,7 +141,7 @@ func TestObserverTopicConversationIssueDispatch(t *testing.T) {
 	f, _ := eventFixture(t, boundary.url)
 	p := f.start()
 	routerToken := roleToken(t, f, waitBinding(t, p, "router", "", "ready"))
-	createTopic := func(label string) (core.Binding, core.Receipt) {
+	createTopic := func(label string) (core.SessionBinding, core.Receipt) {
 		t.Helper()
 		message := submit(t, p, f, conversationInput(label, label))
 		route := decide(t, p, routerToken, newRoute(label, []string{message.MessageID}, f.dir))
@@ -162,11 +161,11 @@ func TestObserverTopicConversationIssueDispatch(t *testing.T) {
 	require.Equal(t, other.OwnerID, topics[0].ID, "creating an Issue alone does not promote its Topic")
 
 	started := roleWork[core.WorkReceipt](t, p, token, "start_issue", startRequest("start", issue))
-	waitBinding(t, p, "issue", started.Execution.ID, "ready")
+	waitBinding(t, p, "issue", started.SessionBinding.ID, "ready")
 	before, cursor := conversationPage(t, p, url.Values{"topicId": {topic.OwnerID}, "limit": {"1"}})
 	require.Len(t, before, 1)
 	require.NotEmpty(t, cursor)
-	require.Equal(t, "issue_session_dispatch/"+started.Execution.StartEventID, before[0].ID)
+	require.Equal(t, "issue_session_dispatch/"+started.SessionBinding.StartEventID, before[0].ID)
 	topics, _ = conversationPage(t, p, url.Values{})
 	require.Equal(t, topic.OwnerID, topics[0].ID, "Issue Session startup is a conversation message")
 
@@ -191,31 +190,28 @@ func TestObserverTopicConversationIssueDispatch(t *testing.T) {
 	params := url.Values{"mode": {"conversation"}, "topicId": {topic.OwnerID}, "filter": {"issue_session_dispatch"}}
 	result := page(t, p, "topic-activity?"+params.Encode())
 	want := []struct {
-		kind, id, execution string
-		generation          int
+		kind, id, sessionBindingID string
 	}{
-		{"goal_notification", updated.NotificationEventID, started.Execution.ID, 1},
-		{"issue_session_update", continued.NotificationEventID, started.Execution.ID, 1},
-		{"context_supplement", supplemented.NotificationEventID, started.Execution.ID, 1},
-		{"issue_session_started", started.Execution.StartEventID, started.Execution.ID, 1},
+		{"goal_notification", updated.NotificationEventID, started.SessionBinding.ID},
+		{"issue_session_update", continued.NotificationEventID, started.SessionBinding.ID},
+		{"context_supplement", supplemented.NotificationEventID, started.SessionBinding.ID},
+		{"issue_session_started", started.SessionBinding.StartEventID, started.SessionBinding.ID},
 	}
 	require.Len(t, result.Items, len(want))
 	var latestDispatchAt string
 	for i, raw := range result.Items {
 		var dispatch struct {
-			ID           string `json:"id"`
-			DispatchKind string `json:"dispatchKind"`
-			ExecutionID  string `json:"executionId"`
-			IssueID      string `json:"issueId"`
-			Generation   int    `json:"generation"`
-			At           string `json:"at"`
-			Status       string `json:"status"`
+			ID               string `json:"id"`
+			DispatchKind     string `json:"dispatchKind"`
+			SessionBindingID string `json:"sessionBindingId"`
+			IssueID          string `json:"issueId"`
+			At               string `json:"at"`
+			Status           string `json:"status"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &dispatch))
 		require.Equal(t, "issue_session_dispatch/"+want[i].id, dispatch.ID)
 		require.Equal(t, want[i].kind, dispatch.DispatchKind)
-		require.Equal(t, want[i].execution, dispatch.ExecutionID)
-		require.Equal(t, want[i].generation, dispatch.Generation)
+		require.Equal(t, want[i].sessionBindingID, dispatch.SessionBindingID)
 		require.Equal(t, issue.ID, dispatch.IssueID)
 		require.NotEmpty(t, dispatch.Status)
 		if i == 0 {
@@ -231,11 +227,11 @@ func TestObserverTopicConversationIssueDispatch(t *testing.T) {
 
 type conversationFixture struct {
 	process       *process
-	issueToken   string
+	issueToken    string
 	topicID       string
 	otherTopicID  string
 	issue         core.Issue
-	execution     core.Execution
+	binding       core.SessionBinding
 	routedEventID string
 	direct        core.Receipt
 	report        core.ReportRequest
@@ -258,7 +254,7 @@ func seedTopicConversation(t *testing.T, extraMessages int) conversationFixture 
 	create.Title = "Verify conversation build"
 	create.Start = true
 	work := roleWork[core.WorkReceipt](t, p, token, "create_issue", create)
-	issue := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	issue := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 
 	direct := submit(t, p, f, conversationInput("conversation-direct", "conversation"))
 	for i := range extraMessages {
@@ -270,12 +266,12 @@ func seedTopicConversation(t *testing.T, extraMessages int) conversationFixture 
 	otherTopicID := decide(t, p, routerToken, otherRoute).Targets[0].TopicID
 	return conversationFixture{
 		process: p, issueToken: roleToken(t, f, issue), topicID: topic.OwnerID,
-		otherTopicID: otherTopicID, issue: work.Issue, execution: *work.Execution,
+		otherTopicID: otherTopicID, issue: work.Issue, binding: *work.SessionBinding,
 		routedEventID: target.EventIDs[routed.MessageID], direct: direct,
 		report: core.ReportRequest{
 			OperationID: "conversation-report", Kind: "ready", Summary: "Conversation build verified",
 			Details: "All conversation build checks passed.", Evidence: []string{"artifacts/conversation.log"},
-			Questions: []string{"Ready to publish?"}, GoalRevision: work.Execution.Revision,
+			Questions: []string{"Ready to publish?"}, GoalRevision: work.SessionBinding.StartGoalRevision,
 		},
 	}
 }
@@ -311,7 +307,7 @@ func TestObserverTopicConversationReport(t *testing.T) {
 
 	remainder, _ := conversationPage(t, p, url.Values{"topicId": {f.topicID}, "cursor": {timelineCursor}})
 	require.Len(t, remainder, 3)
-	require.Equal(t, "issue_session_dispatch/"+f.execution.StartEventID, remainder[0].ID)
+	require.Equal(t, "issue_session_dispatch/"+f.binding.StartEventID, remainder[0].ID)
 	require.Equal(t, "issue_created/"+f.issue.ID, remainder[1].ID)
 	require.Equal(t, "router_routed/"+f.routedEventID, remainder[2].ID)
 
@@ -321,7 +317,7 @@ func TestObserverTopicConversationReport(t *testing.T) {
 	want := conversationRow{
 		ID: "report/" + report.ID, TopicID: f.topicID, Kind: "report",
 		Title: f.issue.Title, Actor: "issue", Recipient: "topic", At: report.CreatedAt, ReportID: report.ID,
-		IssueID: f.issue.ID, ExecutionID: f.execution.ID, Generation: f.execution.Generation,
+		IssueID: f.issue.ID, SessionBindingID: f.binding.ID,
 		ReportKind: f.report.Kind, Summary: f.report.Summary, EventID: report.EventID,
 	}
 	require.Equal(t, want, all[0])

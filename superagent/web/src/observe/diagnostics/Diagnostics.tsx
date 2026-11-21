@@ -69,9 +69,10 @@ function columns(kind: Kind, rows: DiagnosticRow[]): Column[] {
       return [['业务状态', (r) => stateLabel(r.status)]]
     case 'outbox':
       return [['发送状态', (r) => replyLabel(r.status)]]
-    case 'bindings':
+    case 'session-bindings':
       return [
-        ['准备状态', (r) => stateLabel(r.state)],
+        ['状态', (r) => stateLabel(r.state)],
+        ['启动输入', (r) => r.startup && eventStatusLabel(r.startup.status)],
         ['原因', (r) => r.lastError],
         ['所属记录', (r) => r.ownerId],
       ]
@@ -82,16 +83,10 @@ function columns(kind: Kind, rows: DiagnosticRow[]): Column[] {
         ['版本', (r) => r.revision],
         ['跟进通知事件', (r) => followupLabel(r.followup)],
       ]
-    case 'executions':
-      return [
-        ['执行权', (r) => stateLabel(r.authority)],
-        ['准备状态', (r) => stateLabel(r.preparationAtRetirement || r.preparation?.state)],
-        ['启动输入', (r) => stateLabel(r.startup?.status)],
-      ]
     case 'reports':
       return [
         ['报告类型', (r) => stateLabel(r.kind)],
-        ['执行来源', (r) => (r.historical ? '历史执行' : '提交时为当前执行')],
+        ['报告状态', (r) => (r.current ? '当前报告' : '历史报告')],
       ]
     case 'relations':
     case 'routing-events':
@@ -157,7 +152,7 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   const rows = list.data || []
   const cols = columns(kind, rows)
   const open: OpenCollection = (view, filterId, key, selected) => {
-    if (!key && (view === 'executions' || view === 'reports')) key = 'issueId'
+    if (!key && view === 'reports') key = 'issueId'
     navigate(href(view, filterId, key, selected))
   }
   const dialog = useRef<HTMLDialogElement>(null)

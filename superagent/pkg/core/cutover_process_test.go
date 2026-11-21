@@ -25,7 +25,7 @@ func TestCutoverDefaultAndSchema(t *testing.T) {
 	require.NoError(t, err)
 	write(t, f.config, strings.Replace(string(config), "dataDir: "+f.data+"\n", "", 1))
 	p := f.start()
-	require.NotEmpty(t, submit(t, p, f, input("nine-table-schema")).MessageID)
+	require.NotEmpty(t, submit(t, p, f, input("session-binding-schema")).MessageID)
 	p.stop(t, false)
 	require.NoFileExists(t, filepath.Join(f.data, "core.sqlite"))
 	assertCutoverSchema(t, filepath.Join(f.dir, "superagent-core-data", "core.sqlite"))
@@ -39,7 +39,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 23, version)
+	require.Equal(t, 24, version)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
 		require.NoError(t, err)
@@ -55,15 +55,14 @@ func assertCutoverSchema(t *testing.T, path string) {
 		t.Logf("%s -> %v", query, values)
 	}
 	check("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-		[]string{"executions", "internal_events", "issues", "mcp_mutation_receipts", "mcp_tool_calls", "outbox", "scheduled_tasks", "session_bindings", "threads", "topics", "trigger_messages"})
+		[]string{"internal_events", "issues", "mcp_mutation_receipts", "mcp_tool_calls", "outbox", "scheduled_tasks", "session_bindings", "threads", "topics", "trigger_messages"})
 	check("SELECT name FROM pragma_table_info('outbox') ORDER BY cid", []string{"id", "message_id", "content", "status", "receipt", "blocker_ref"})
 	check("SELECT name FROM pragma_table_info('internal_events') ORDER BY cid",
 		[]string{"event_id", "kind", "sender", "recipient", "content", "body", "refs", "created_at", "status", "sent_at"})
 	check(`SELECT m.name||'.'||f."from"||' -> '||f."table"||'.'||f."to"
  FROM sqlite_schema m,pragma_foreign_key_list(m.name) f WHERE m.type='table' ORDER BY 1`,
 		[]string{
-			"executions.binding_id -> session_bindings.id", "executions.issue_id -> issues.id",
-			"issues.topic_id -> topics.id", "mcp_mutation_receipts.binding_id -> session_bindings.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.topic_id -> topics.id",
+			"issues.topic_id -> topics.id", "mcp_mutation_receipts.session_binding_id -> session_bindings.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.topic_id -> topics.id",
 			"scheduled_tasks.trigger_message_id -> trigger_messages.id", "trigger_messages.thread_key -> threads.key",
 		})
 	check(`SELECT "table" FROM pragma_foreign_key_check`, nil)
@@ -151,7 +150,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	create := issueInput(f.dir, "cutover-issue")
 	create.Start = true
 	work := mcpWork[core.WorkReceipt](t, topic, "create_issue", create)
-	x := work.Execution
+	x := work.SessionBinding
 	issueBinding := waitBinding(t, p, "issue", x.ID, "ready")
 	issue := startRoleMCP(t, f, issueBinding)
 	firstWork := peer.next(t, "turn/start")
@@ -162,7 +161,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 
 	report := func(op, kind, summary string, questions []string) core.Report {
 		return mcpWork[core.Report](t, issue, "submit_report", core.ReportRequest{
-			OperationID: op, Kind: kind, Summary: summary, Questions: questions, GoalRevision: x.Revision,
+			OperationID: op, Kind: kind, Summary: summary, Questions: questions, GoalRevision: x.StartGoalRevision,
 		})
 	}
 	const question = "Which region should I check?"
@@ -222,7 +221,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	require.Contains(t, next.text, answer.ID)
 	next.answer <- nativeSubmitAnswer{workID: "cutover-continue"}
 	waitWorkEvent(t, p, continued.NotificationEventID, "sent")
-	require.Equal(t, x.ID, continued.Issue.CurrentExecutionID)
+	require.Equal(t, x.ID, continued.Issue.CurrentSessionBindingID)
 	require.Equal(t, answer.ID, continued.Issue.ResolvedBlockers[0].Resolution.MessageID)
 	require.Empty(t, continued.Issue.Blockers)
 	ready := report("cutover-ready", "ready", "East region checked.", nil)
@@ -233,7 +232,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	outcome := mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
 	require.Equal(t, "completed", outcome.Issue.Status)
 	require.Len(t, outcome.Issue.Reports, 2)
-	require.Len(t, page(t, p, "executions?issueId="+waiting.ID).Items, 1)
+	require.Len(t, page(t, p, "session-bindings?issueId="+waiting.ID).Items, 1)
 	require.Len(t, workEvents(t, p, "issue_session_update"), 1)
 	require.Len(t, page(t, p, "outbox").Items, 1)
 	require.Len(t, page(t, p, "messages").Items, 2)
@@ -266,7 +265,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, code)
 	p.stop(t, false)
 	assertCutoverSchema(t, filepath.Join(f.data, "core.sqlite"))
-	t.Logf("business issue=%s execution=%s completed; delivery=%s sent; Outbox=%s task=%s native=%s sent with one send and %d task queries",
+	t.Logf("business issue=%s sessionBinding=%s completed; delivery=%s sent; Outbox=%s task=%s native=%s sent with one send and %d task queries",
 		waiting.ID, x.ID, internalEvent.ID, reply.ID, task, questionNative, queries)
 }
 

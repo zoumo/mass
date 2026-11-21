@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	schemaVersion = 23
+	schemaVersion = 24
 	applicationID = 1398096210
 )
 
@@ -352,7 +352,7 @@ func (s *Store) List(ctx context.Context, kind, thread, token string, limit int)
 	return s.listScoped(ctx, QueryRequest{Collection: kind, ThreadKey: thread, Cursor: token, Limit: limit}, nil, nil)
 }
 
-func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding, source *Source) (Page, error) {
+func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *SessionBinding, source *Source) (Page, error) {
 	p := Page{Items: []json.RawMessage{}}
 	kind, thread, token, limit := q.Collection, q.ThreadKey, q.Cursor, q.Limit
 	if limit < 1 || limit > 200 {
@@ -380,7 +380,10 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		parentColumn, parent = "referenced_issue", q.IssueID
 		relatedFilter = `EXISTS (SELECT 1 FROM json_each(refs) ref
  WHERE CASE json_extract(ref.value,'$.kind') WHEN 'issue' THEN json_extract(ref.value,'$.id') ELSE json_extract(ref.value,'$.issue_id') END=?)`
-	case q.IssueID != "" && q.TopicID == "" && (kind == "reports" || kind == "executions" || kind == "pull-requests"):
+	case q.IssueID != "" && q.TopicID == "" && kind == "session-bindings" && binding == nil && source == nil:
+		parentColumn, parent = "owner_id", q.IssueID
+		relatedFilter = "role='issue' AND owner_id=?"
+	case q.IssueID != "" && q.TopicID == "" && (kind == "reports" || kind == "pull-requests"):
 		parentColumn, parent = "issue_id", q.IssueID
 	case q.TopicID != "" || q.IssueID != "":
 		return p, problem("invalid_argument", "unsupported topicId or issueId filter; use only one parent")
@@ -404,11 +407,11 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		table, timeCol, idCol = "(SELECT rowid AS seq,* FROM internal_events)", "created_at", "event_id"
 	case "routing-events":
 		table, timeCol, idCol = "routing_events", "created_at", "event_id"
-	case "bindings":
+	case "session-bindings":
 		table, timeCol, idCol = "session_bindings", "created_at", "id"
 	case "outbox":
 		table, timeCol, idCol = "(SELECT rowid AS seq,* FROM outbox) AS outbox", "printf('%020d',outbox.seq)", "id"
-	case "topics", "issues", "executions", "reports":
+	case "topics", "issues", "reports":
 		table, timeCol, idCol = kind, "created_at", "id"
 	case "timers":
 		table, timeCol, idCol = "scheduled_tasks", "created_at", "id"
@@ -550,11 +553,11 @@ func (s *Store) Get(ctx context.Context, kind, id string) (json.RawMessage, erro
 	return s.getScoped(ctx, kind, id, nil, nil)
 }
 
-func (s *Store) getScoped(ctx context.Context, kind, id string, binding *Binding, source *Source) (json.RawMessage, error) {
+func (s *Store) getScoped(ctx context.Context, kind, id string, binding *SessionBinding, source *Source) (json.RawMessage, error) {
 	return s.getRecord(ctx, kind, id, binding, source, false)
 }
 
-func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Binding, source *Source, observerTrace bool) (json.RawMessage, error) {
+func (s *Store) getRecord(ctx context.Context, kind, id string, binding *SessionBinding, source *Source, observerTrace bool) (json.RawMessage, error) {
 	scope, args, err := scopeSQL(kind, binding)
 	if err != nil {
 		return nil, err
@@ -571,9 +574,9 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Binding
 		table, idCol = "internal_events", "event_id"
 	case "routing-events":
 		table, idCol = "routing_events", "event_id"
-	case "bindings":
+	case "session-bindings":
 		table = "session_bindings"
-	case "topics", "issues", "executions", "reports", "outbox":
+	case "topics", "issues", "reports", "outbox":
 	case "timers":
 		table = "scheduled_tasks"
 	case "threads":

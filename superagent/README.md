@@ -6,7 +6,7 @@ messages, routes them through one global Router and independent Topics, prepares
 fixed massd Sessions, batches durable inputs and exposes read-only observation.
 Topics can schedule Issue Sessions, receive Reports, accept, cancel and reopen work.
 Topics can schedule one-time followups via Timer tools. Router and Topic can
-reply to a source Message through a durable Outbox. Topic and current Issue bindings
+reply to a source Message through a durable Outbox. Topic and current Issue SessionBindings
 roles can explicitly register PRs and subscribe their Topic to the resource Thread.
 Execution is opt-in through configuration; intake-only operation starts no Agent.
 
@@ -27,7 +27,7 @@ bin/superagent observe outbox --message-id MESSAGE_ID
 ```
 
 The default data directory is `./superagent-core-data`, relative to the YAML
-file. Use an empty directory for your first schema 23 startup. Startup rejects
+file. Use an empty directory for your first schema 24 startup. Startup rejects
 earlier SQLite schemas and JSON v4 state directories while preserving the original files.
 Set `dataDir` to another empty directory if the configured path contains
 earlier data. Use the original executable to inspect retained MVP history.
@@ -82,8 +82,8 @@ list. Each profile has a `runtimeRef`, `model` and optional `effort`.
 Set those values to the literal names supported by your massd and its drivers.
 Topic uses `get_topic` with `include: ["executionTemplates"]` to choose a Runtime and model when
 creating an Issue. Core copies the template's effort into the Issue and Issue Session
-binding. A later `issue_start` can use the saved profile or select a new
-pair for an Issue without a current Execution. Changing the Router profile
+SessionBinding. A later `start_issue` can use the saved profile or select a new
+pair for an Issue without a current SessionBinding. Changing the Router profile
 requires a new Core data directory. See the [execution configuration](API.md#execution-configuration-and-fixed-session-preparation).
 Core persists role identity and configuration before creation, reconciles lost
 create responses by querying the same Session, and retains failed preparation
@@ -92,13 +92,13 @@ processes can reconnect.
 The private capabilities directory is never returned by Observer. Core batches
 each Session's input, delivers context through Inject and uses StartOrSteer
 when a batch contains an action. Input delivery leaves Topic business state
-unchanged. See [Issue scheduling, reports and acceptance](API.md#issue-execution-report-and-acceptance)
+unchanged. See [Issue scheduling, reports and acceptance](API.md#issue-sessionbinding-report-and-acceptance)
 for the Topic and Issue role tools.
 See [Topic Timers](API.md#topic-timers) for one-shot scheduling, lifecycle fences
 and followup delivery through normal Message intake.
 See [PR registration](API.md#pull-request-registration-and-subscriptions) for
 role scope, the source Message contract and URL rules.
-Local operators can inspect a role with `superagent inspect-binding BINDING_ID`
+Local operators can inspect a role with `superagent inspect-session-binding SESSION_BINDING_ID`
 and use `recover-input` to reconcile input, settle a retired binding or replace
 a Session after verifying release.
 See [the input recovery contract](API.md#local-operator-reconciliation).
@@ -162,18 +162,18 @@ When execution is configured, accepted input is automatically dispatched through
 massd after fixed-identity Session preparation. No DWS call is made by Core.
 
 Open the printed `/observer/` URL and select Topic for its recent events,
-returns and Issue activity. The Issue view shows goals, the saved execution profile, Executions,
-Reports and explicit business acceptance. Session binding details show the
-runtime, model and configured effort for the selected binding generation. Message shows the channel original,
+returns and Issue activity. The Issue view shows the goal, configured Runtime
+and model, current Session, Reports and recorded acceptance. SessionBinding
+details show its Runtime, model, configured effort and input status. Message shows the channel original,
 Thread and routing or echo history. Diagnostics opens collection lists and
 record details, including full message bodies, Session preparation, live
 Session previews and channel receipts. Topic and Issue link to the PR URLs
 they follow and their subscriptions.
 The PR details link to Thread history. A newly registered Thread shows when it
 has received no source input.
-The diagnostics list Topics, subscriptions, routing history, Session bindings
-and internal event acceptance. Issue
-drawers link to their Execution history, startup evidence and Report timeline.
+Diagnostics lists Topics, subscriptions, routing history, SessionBindings and
+internal event acceptance. Issue details link to the SessionBindings and the
+Report timeline.
 Message and Thread drawers link to reply history. Outbox details show the
 target, blocker reference, status, channel task and native send results.
 Topic and Issue details display the recorded acceptance. Session preparation

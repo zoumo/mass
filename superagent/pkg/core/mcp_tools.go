@@ -28,10 +28,10 @@ func roleTools(role string) []mcpTool {
 	tools := []mcpTool{tool("get_internal_event", "Read the stored event addressed to you. Use when truncated input omits a fact you need.", map[string]any{"event_id": text}, "event_id")}
 	if role == "issue" {
 		return append(tools,
-			tool("get_issue", "Read your bound Issue, current Execution, goal revision, materials, and blockers.", nil),
+			tool("get_issue", "Read your bound Issue, goal revision, materials, and blockers.", nil),
 			tool("get_message", "Read a Message referenced in your Issue materials.", map[string]any{"messageId": text}, "messageId"),
 			tool("update_issue", "Update the title, append materials, or register PR URLs for your bound Issue. Use its current revision. Supply at least one change.", issueUpdate, "operationId", "expectedRevision"),
-			tool("submit_report", "Report the result of your bound Execution against the goalRevision you used. A retired Execution can submit a historical Report.", map[string]any{"operationId": text, "kind": enum("progress", "ready", "blocked", "failed"), "summary": text, "goalRevision": revision, "details": text, "evidence": array(text), "questions": array(text)}, "operationId", "kind", "summary", "goalRevision"),
+			tool("submit_report", "Report the result of your Issue work against the goalRevision you used. A retired SessionBinding can submit a historical Report.", map[string]any{"operationId": text, "kind": enum("progress", "ready", "blocked", "failed"), "summary": text, "goalRevision": revision, "details": text, "evidence": array(text), "questions": array(text)}, "operationId", "kind", "summary", "goalRevision"),
 		)
 	}
 	messageIncludes := []string{"thread", "replies"}
@@ -60,17 +60,17 @@ func roleTools(role string) []mcpTool {
 	resolve := array(objectSchema(map[string]any{"blockerId": text, "reason": text, "messageId": text}, "blockerId", "reason"))
 	blockers := objectSchema(map[string]any{"add": array(objectSchema(map[string]any{"kind": enum("human", "dependency"), "reason": text, "dependencyIssueId": text}, "kind", "reason")), "resolve": resolve, "unblockedStatus": enum("pending", "active")})
 	issueUpdate["issueId"], issueUpdate["goal"], issueUpdate["blockers"] = text, text, blockers
-	issueUpdate["executionInput"] = objectSchema(map[string]any{"mode": enum(contextSupplement, "continue"), "content": structuredContentInputSchema()}, "mode")
+	issueUpdate["sessionInput"] = objectSchema(map[string]any{"mode": enum(contextSupplement, "continue"), "content": structuredContentInputSchema()}, "mode")
 	issueUpdate["transition"] = transition
 	dueAt := map[string]any{"type": "string", "format": "date-time"}
 	return append(tools,
 		tool("get_topic", "Read your bound Topic. Expand templates, followups, or PR associations when needed.", map[string]any{"include": include("executionTemplates", "followups", "pullRequests")}),
 		tool("update_topic", "Edit your Topic, register PR URLs, or explicitly complete, cancel, or reopen it. Use its current revision. Completion requires evidence and terminal Issues.", map[string]any{"operationId": text, "expectedRevision": revision, "title": text, "description": map[string]any{"type": "string"}, "goal": text, "pullRequests": prs, "transition": transition}, "operationId", "expectedRevision"),
-		tool("create_issue", "Create an Issue with a goal and acceptance criteria. Choose runtimeRef and model together. The Issue inherits the Topic workspace unless you supply one. Use start=true to schedule its Execution atomically.", map[string]any{"operationId": text, "title": text, "goal": text, "runtimeRef": text, "model": text, "workspace": text, "materials": materials, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "goal", "runtimeRef", "model"),
-		tool("get_issue", "Read an Issue in your Topic, with optional Executions, Reports, and PR associations.", map[string]any{"issueId": text, "include": include("executions", "reports", "pullRequests")}, "issueId"),
+		tool("create_issue", "Create an Issue with a goal and acceptance criteria. Choose runtimeRef and model together. The Issue inherits the Topic workspace unless you supply one. Use start=true to prepare its Issue Session atomically.", map[string]any{"operationId": text, "title": text, "goal": text, "runtimeRef": text, "model": text, "workspace": text, "materials": materials, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "goal", "runtimeRef", "model"),
+		tool("get_issue", "Read an Issue in your Topic, with optional Reports and PR associations.", map[string]any{"issueId": text, "include": include("reports", "pullRequests")}, "issueId"),
 		tool("list_issues", "List Issues in your Topic, optionally filtered by status.", map[string]any{"status": enum("pending", "active", "blocked", "completed", "canceled"), "cursor": text, "limit": limit}),
-		tool("start_issue", "Schedule an Execution for an Issue at its current revision. Resolve open blockers first or in this call. To change its execution profile, supply runtimeRef and model together.", map[string]any{"operationId": text, "issueId": text, "expectedRevision": revision, "resolve": resolve, "runtimeRef": text, "model": text}, "operationId", "issueId", "expectedRevision"),
-		tool("update_issue", "Update an Issue in your Topic at its current revision. You may combine changes, materials, blockers, and PR associations. Use executionInput to supplement or continue a current Execution, or transition for an explicit lifecycle decision.", issueUpdate, "operationId", "issueId", "expectedRevision"),
+		tool("start_issue", "Start an Issue Session at its current revision. Resolve open blockers first or in this call. To change its execution profile, supply runtimeRef and model together.", map[string]any{"operationId": text, "issueId": text, "expectedRevision": revision, "resolve": resolve, "runtimeRef": text, "model": text}, "operationId", "issueId", "expectedRevision"),
+		tool("update_issue", "Update an Issue in your Topic at its current revision. You may combine changes, materials, blockers, and PR associations. Use sessionInput to supplement or continue work in the current Issue Session, or transition for an explicit lifecycle decision.", issueUpdate, "operationId", "issueId", "expectedRevision"),
 		tool("get_report", "Read the full Report and its evidence for an Issue in your Topic.", map[string]any{"reportId": text}, "reportId"),
 		tool("decline_message", "Decline a routed Message that belongs elsewhere. Copy event_id and give a reason so Router can reconsider it.", map[string]any{"event_id": text, "reason": text}, "event_id", "reason"),
 		tool("schedule_followup", "Schedule a one-time followup at an RFC3339 timestamp with a time zone.", map[string]any{"operationId": text, "dueAt": dueAt, "content": text, "materials": materials}, "operationId", "dueAt", "content"),

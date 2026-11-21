@@ -18,7 +18,7 @@ type updateFollowupArgs struct {
 	Materials *[]Material `json:"materials,omitempty"`
 }
 
-func (s *Store) followupCommand(ctx context.Context, b Binding, tool string, raw []byte) (any, error) {
+func (s *Store) followupCommand(ctx context.Context, b SessionBinding, tool string, raw []byte) (any, error) {
 	if tool == "schedule_followup" {
 		var r SetTimerRequest
 		if err := decodeStrict(raw, &r); err != nil {
@@ -39,7 +39,7 @@ func (s *Store) followupCommand(ctx context.Context, b Binding, tool string, raw
 			return nil, problem("invalid_argument", "provide at least one followup update")
 		}
 	}
-	return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		if r.FollowupID == "" {
 			return nil, problem("invalid_argument", "followupId is required")
 		}

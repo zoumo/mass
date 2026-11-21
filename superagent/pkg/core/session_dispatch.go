@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
@@ -21,14 +20,6 @@ const (
 	batchBytes   = 64 * 1024
 	previewBytes = 8 * 1024
 )
-
-func truncatePreview(text string) string {
-	cut := previewBytes
-	for !utf8.RuneStart(text[cut]) {
-		cut--
-	}
-	return text[:cut]
-}
 
 type Attempt struct {
 	ID             string
@@ -96,7 +87,7 @@ func permanentHandshakeRejection(err error) bool {
 	return parseErr == nil && statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError && statusCode != http.StatusTooManyRequests
 }
 
-func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resource.SessionSpec, a Attempt,
+func (s *Server) dispatchSessionInput(ctx context.Context, b SessionBinding, spec resource.SessionSpec, a Attempt,
 	method string, wire []byte, admit func(*issueWatch) (bool, error),
 ) (Attempt, *issueWatch) {
 	c, err := s.massClient()

@@ -21,13 +21,14 @@ const mcpUsageSchema = `
 CREATE TABLE IF NOT EXISTS mcp_tool_calls (
  seq INTEGER PRIMARY KEY, at TEXT NOT NULL, caller_role TEXT NOT NULL,
  caller_id TEXT NOT NULL, topic_id TEXT NOT NULL, issue_id TEXT NOT NULL,
- execution_id TEXT NOT NULL, target_issue_id TEXT NOT NULL,
+ session_binding_id TEXT NOT NULL, target_issue_id TEXT NOT NULL,
  event_id TEXT NOT NULL, tool TEXT NOT NULL, action TEXT NOT NULL,
  outcome TEXT NOT NULL, duration_ns INTEGER NOT NULL, trace_id TEXT NOT NULL,
  span_id TEXT NOT NULL, replayed INTEGER NOT NULL, changed INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mcp_tool_calls_at ON mcp_tool_calls(at);
 CREATE INDEX IF NOT EXISTS mcp_tool_calls_caller ON mcp_tool_calls(caller_role,caller_id,at);
+CREATE INDEX IF NOT EXISTS mcp_tool_calls_session_binding ON mcp_tool_calls(session_binding_id,at);
 CREATE INDEX IF NOT EXISTS mcp_tool_calls_topic ON mcp_tool_calls(topic_id,at);
 CREATE INDEX IF NOT EXISTS mcp_tool_calls_issue ON mcp_tool_calls(issue_id,at);
 CREATE INDEX IF NOT EXISTS mcp_tool_calls_target_issue ON mcp_tool_calls(target_issue_id,at);
@@ -36,18 +37,18 @@ CREATE INDEX IF NOT EXISTS mcp_tool_calls_target_issue ON mcp_tool_calls(target_
 type mcpUsageContextKey struct{}
 
 type mcpUsage struct {
-	role, callerID, topicID, issueID, executionID string
-	targetIssueID, eventID, action                string
-	replayed, changed, noChange                   bool
+	role, callerID, topicID, issueID, sessionBindingID string
+	targetIssueID, eventID, action                     string
+	replayed, changed, noChange                        bool
 }
 
-func newMCPUsage(b Binding) *mcpUsage {
-	u := &mcpUsage{role: b.Role, callerID: b.OwnerID}
+func newMCPUsage(b SessionBinding) *mcpUsage {
+	u := &mcpUsage{role: b.Role, callerID: b.OwnerID, sessionBindingID: b.ID}
 	switch b.Role {
 	case "topic":
 		u.topicID = b.OwnerID
 	case "issue":
-		u.callerID, u.topicID, u.issueID, u.executionID = b.IssueID, b.TopicID, b.IssueID, b.OwnerID
+		u.topicID, u.issueID = b.TopicID, b.OwnerID
 	}
 	return u
 }
@@ -98,12 +99,12 @@ func (s *Store) recordMCPTool(ctx context.Context, start time.Time, usage *mcpUs
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(attrs...)
 	for key, value := range map[string]string{
-		"superagent.caller.id":       usage.callerID,
-		"superagent.topic.id":        usage.topicID,
-		"superagent.issue.id":        usage.issueID,
-		"superagent.execution.id":    usage.executionID,
-		"superagent.target.issue.id": usage.targetIssueID,
-		"superagent.event.id":        usage.eventID,
+		"superagent.caller.id":          usage.callerID,
+		"superagent.topic.id":           usage.topicID,
+		"superagent.issue.id":           usage.issueID,
+		"superagent.session_binding.id": usage.sessionBindingID,
+		"superagent.target.issue.id":    usage.targetIssueID,
+		"superagent.event.id":           usage.eventID,
 	} {
 		if value != "" {
 			span.SetAttributes(attribute.String(key, value))
@@ -121,9 +122,9 @@ func (s *Store) recordMCPTool(ctx context.Context, start time.Time, usage *mcpUs
 	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if _, err := s.db.ExecContext(persist, `INSERT INTO mcp_tool_calls
- (at,caller_role,caller_id,topic_id,issue_id,execution_id,target_issue_id,event_id,tool,action,outcome,duration_ns,trace_id,span_id,replayed,changed)
+ (at,caller_role,caller_id,topic_id,issue_id,session_binding_id,target_issue_id,event_id,tool,action,outcome,duration_ns,trace_id,span_id,replayed,changed)
  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, start.UTC().Format(utcTimestamp), usage.role, usage.callerID, usage.topicID,
-		usage.issueID, usage.executionID, usage.targetIssueID, usage.eventID, tool, usage.action, outcome, duration.Nanoseconds(), traceID, spanID, usage.replayed, usage.changed && err == nil); err != nil {
+		usage.issueID, usage.sessionBindingID, usage.targetIssueID, usage.eventID, tool, usage.action, outcome, duration.Nanoseconds(), traceID, spanID, usage.replayed, usage.changed && err == nil); err != nil {
 		slog.ErrorContext(ctx, "record MCP tool call", "role", usage.role, "tool", tool, "error", err)
 	}
 }
@@ -146,23 +147,23 @@ type mcpUsagePage struct {
 }
 
 type mcpCallRecord struct {
-	Sequence      int64  `json:"sequence"`
-	At            string `json:"at"`
-	Role          string `json:"role"`
-	CallerID      string `json:"callerId"`
-	TopicID       string `json:"topicId,omitempty"`
-	IssueID       string `json:"issueId,omitempty"`
-	ExecutionID   string `json:"executionId,omitempty"`
-	TargetIssueID string `json:"targetIssueId,omitempty"`
-	EventID       string `json:"eventId,omitempty"`
-	Tool          string `json:"tool"`
-	Action        string `json:"action,omitempty"`
-	Outcome       string `json:"outcome"`
-	DurationNS    int64  `json:"durationNs"`
-	TraceID       string `json:"traceId,omitempty"`
-	SpanID        string `json:"spanId,omitempty"`
-	Replayed      bool   `json:"replayed"`
-	Changed       bool   `json:"changed"`
+	Sequence         int64  `json:"sequence"`
+	At               string `json:"at"`
+	Role             string `json:"role"`
+	CallerID         string `json:"callerId"`
+	TopicID          string `json:"topicId,omitempty"`
+	IssueID          string `json:"issueId,omitempty"`
+	SessionBindingID string `json:"sessionBindingId,omitempty"`
+	TargetIssueID    string `json:"targetIssueId,omitempty"`
+	EventID          string `json:"eventId,omitempty"`
+	Tool             string `json:"tool"`
+	Action           string `json:"action,omitempty"`
+	Outcome          string `json:"outcome"`
+	DurationNS       int64  `json:"durationNs"`
+	TraceID          string `json:"traceId,omitempty"`
+	SpanID           string `json:"spanId,omitempty"`
+	Replayed         bool   `json:"replayed"`
+	Changed          bool   `json:"changed"`
 }
 
 type mcpCallPage struct {
@@ -192,6 +193,8 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 			where += " AND caller_role=?"
 		case "callerId":
 			where += " AND caller_id=?"
+		case "sessionBindingId":
+			where += " AND session_binding_id=?"
 		case "tool":
 			where += " AND tool=?"
 		case "window":
@@ -281,7 +284,7 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 
 func (s *Store) mcpToolCalls(ctx context.Context, where string, args []any, limit int) (mcpCallPage, error) {
 	page := mcpCallPage{Items: []mcpCallRecord{}}
-	rows, err := s.db.QueryContext(ctx, `SELECT seq,at,caller_role,caller_id,topic_id,issue_id,execution_id,target_issue_id,event_id,tool,action,outcome,duration_ns,trace_id,span_id,replayed,changed
+	rows, err := s.db.QueryContext(ctx, `SELECT seq,at,caller_role,caller_id,topic_id,issue_id,session_binding_id,target_issue_id,event_id,tool,action,outcome,duration_ns,trace_id,span_id,replayed,changed
  FROM mcp_tool_calls`+where+` ORDER BY seq DESC LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
 		return page, storageError()
@@ -293,7 +296,7 @@ func (s *Store) mcpToolCalls(ctx context.Context, where string, args []any, limi
 			break
 		}
 		var row mcpCallRecord
-		if err := rows.Scan(&row.Sequence, &row.At, &row.Role, &row.CallerID, &row.TopicID, &row.IssueID, &row.ExecutionID, &row.TargetIssueID,
+		if err := rows.Scan(&row.Sequence, &row.At, &row.Role, &row.CallerID, &row.TopicID, &row.IssueID, &row.SessionBindingID, &row.TargetIssueID,
 			&row.EventID, &row.Tool, &row.Action, &row.Outcome, &row.DurationNS, &row.TraceID, &row.SpanID, &row.Replayed, &row.Changed); err != nil {
 			return page, storageError()
 		}

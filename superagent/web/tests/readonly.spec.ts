@@ -25,8 +25,8 @@ test('Message and Thread lead to scoped work, reports, explicit acceptance and S
  await expect(drawer.getByRole('heading', { name: 'Observer routing Topic' })).toBeVisible()
  await drawer.getByRole('button', { name: '查看 Topic 下的 Issue' }).click()
  await page.getByRole('button', { name: 'Review blocked build' }).click()
- await drawer.getByRole('button', { name: '当前执行', exact: true }).click()
- await expect(drawer.getByText('当前执行 · 第 1 代')).toBeVisible()
+ await drawer.getByRole('button', { name: '当前会话', exact: true }).click()
+ await expect(page).toHaveURL(/view=session-bindings&id=/)
  await expect(drawer.getByText('准备状态', { exact: true }).locator('xpath=following-sibling::dd[1]')).toContainText('已就绪')
  await expect(drawer.getByText('Session 已受理', { exact: true })).toBeVisible()
  await page.goBack()
@@ -48,7 +48,7 @@ test('Message and Thread lead to scoped work, reports, explicit acceptance and S
 
 test('Session reconnect rereads durable history while browsing produces no dependency writes', async ({ page, request }, testInfo) => {
  const state = async () => (await request.get(`${audit}/state`)).json() as Promise<{
-  rpc: Record<string, number>; polls: number; sentOffers: number; pendingOffers: number; channelSends: number; sentId: string; bindingId: string
+  rpc: Record<string, number>; polls: number; sentOffers: number; pendingOffers: number; channelSends: number; sentId: string; sessionBindingId: string
  }>
  const before = await state()
  const sentPath = `/v1/observer/outbox/${before.sentId}`
@@ -69,7 +69,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
   expect(r.method()).toBe('GET')
   headers.push(r.allHeaders())
  })
- await page.goto(`/observer/?view=bindings&id=${before.bindingId}`)
+ await page.goto(`/observer/?view=session-bindings&id=${before.sessionBindingId}`)
  expect((await (await documentRequest).allHeaders())['cookie']).toContain('observer_fixture=browser-cookie')
  const history = page.getByRole('region', { name: 'Session 历史' })
  const live = page.getByRole('region', { name: 'Session 实时预览' })
@@ -79,7 +79,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  expect((await request.post(`${audit}/emit-live`)).status()).toBe(204)
  await expect(live.getByText('Live before disconnect [redacted] [redacted]', { exact: true })).toBeVisible()
  await expect(history.getByText(/Live before disconnect/)).toHaveCount(0)
- const historyRoute = `**/v1/observer/session-preview/${before.bindingId}/history?*`
+ const historyRoute = `**/v1/observer/session-preview/${before.sessionBindingId}/history?*`
  await page.route(historyRoute, route => route.abort())
  expect((await request.post(`${audit}/emit-stored`)).status()).toBe(204)
  await expect(history.getByText(/无法读取历史/)).toBeVisible()
@@ -103,7 +103,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  await expect(page.getByRole('dialog').getByText('已发送', { exact: true })).toBeVisible()
  await page.getByRole('button', { name: '查看目标消息', exact: true }).click()
  await expect(page.getByTestId('message-body')).toHaveText('Original input outbox-observer-source')
- const previewPath = `/v1/observer/session-preview/${before.bindingId}`
+ const previewPath = `/v1/observer/session-preview/${before.sessionBindingId}`
  for (const path of [`${previewPath}/history`, `${previewPath}/live`, sentPath, '/observer/']) {
   const head = await request.head(path)
   expect(head.status()).toBe(200)

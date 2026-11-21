@@ -136,7 +136,7 @@ func waitWorkEvent(t *testing.T, p *process, id, status string) workEventRecord 
 	return found
 }
 
-func nativeWorkTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, router *stdioClient, name string) (core.Binding, core.Receipt) {
+func nativeWorkTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, router *stdioClient, name string) (core.SessionBinding, core.Receipt) {
 	t.Helper()
 	msg := input(name)
 	msg.Message.ThreadRef.ID, msg.Message.Channel = name, nil
@@ -198,11 +198,11 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, create.Goal, pending.Issue.Requirements)
 	require.Equal(t, mainBinding.Workspace, pending.Issue.Workspace)
 	require.Equal(t, create.Materials, pending.Issue.Materials)
-	require.Nil(t, pending.Execution)
+	require.Nil(t, pending.SessionBinding)
 	checkRoleGoalInput(t, p, topic, token, "update_issue", "goal", "requirements", map[string]any{
 		"operationId": "check-update-input", "issueId": pending.Issue.ID, "expectedRevision": pending.Issue.Revision, "goal": "Verify the update contract",
 	})
-	require.Empty(t, page(t, p, "executions").Items)
+	require.Empty(t, issueBindings(t, p))
 	require.Empty(t, workEvents(t, p, "issue_session_started"))
 	require.Len(t, bindings(t, p), 3)
 	peer.quiet(t, 300*time.Millisecond)
@@ -269,16 +269,17 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 		require.Equal(t, started, replay.Result)
 	}
 	require.Equal(t, started, mcpWork[core.WorkReceipt](t, topic, "start_issue", winner.request))
-	require.NotNil(t, started.Execution)
-	x := *started.Execution
-	require.Equal(t, "mass-t1-i1-e1", x.ID)
-	require.Equal(t, x.ID, started.Issue.CurrentExecutionID)
-	startTrace := observedTraces(t, p, "executions", x.ID)
+	require.NotNil(t, started.SessionBinding)
+	x := *started.SessionBinding
+	require.Equal(t, started.Issue.ID, x.OwnerID)
+	require.Equal(t, 1, x.Generation)
+	require.Equal(t, x.ID, started.Issue.CurrentSessionBindingID)
+	startTrace := observedTraces(t, p, "session-bindings", x.ID)
 	require.Len(t, startTrace, 1)
 	require.Equal(t, "creation", startTrace[0].Phase)
 	require.Equal(t, []observerTrace{{TraceID: startTrace[0].TraceID, Phase: "enqueue"}},
 		observedTraces(t, p, "internal-events", x.StartEventID))
-	require.Len(t, page(t, p, "executions").Items, 1)
+	require.Len(t, issueBindings(t, p), 1)
 	require.Len(t, workEvents(t, p, "issue_session_started"), 1)
 	issueBinding := waitBinding(t, p, "issue", x.ID, "ready")
 	require.Equal(t, mainBinding.Namespace, issueBinding.Namespace)
@@ -301,7 +302,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Contains(t, session.Spec.SystemPrompt, "submit_report records a result against the goalRevision you worked on.")
 	require.NotNil(t, session.Spec.MCPServers)
 	require.Contains(t, (*session.Spec.MCPServers)[0].Args, filepath.Join(f.data, "capabilities", issueBinding.ID+".json"))
-	t.Log("same and different concurrent start operations produced one Execution, stable Event and actual StartOrSteer receipt")
+	t.Log("same and different concurrent start operations produced one SessionBinding, stable Event and actual StartOrSteer receipt")
 
 	issue := startRoleMCP(t, f, issueBinding)
 	issueToken := roleToken(t, f, issueBinding)
@@ -314,17 +315,17 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.NotContains(t, listed, "binding_get")
 	mcpWorkError(t, issue, "binding_get", "forbidden", struct{}{})
 	current := mcpWork[core.WorkReceipt](t, issue, "get_issue", struct{}{})
-	require.NotNil(t, current.Execution.WorkObservation)
-	require.Equal(t, issueBinding.SessionID, current.Execution.WorkObservation.SessionID)
-	require.Equal(t, "turn-"+issueBinding.SessionID, current.Execution.WorkObservation.WorkID)
-	current.Execution.WorkObservation = nil
-	require.Equal(t, started, current)
+	require.Equal(t, started.Issue, current.Issue)
+	require.Nil(t, current.SessionBinding)
+	observed := waitIssueObservation(t, p, &x, "observing")
+	require.Equal(t, issueBinding.SessionID, observed.WorkObservation.SessionID)
+	require.Equal(t, "turn-"+issueBinding.SessionID, observed.WorkObservation.WorkID)
 	material := mcpWork[json.RawMessage](t, issue, "get_message", map[string]string{"messageId": source.MessageID})
 	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"text":"Original input work-main","actor":"sender-1"}`, source.MessageID), string(material))
 	longMaterial := mcpWork[json.RawMessage](t, issue, "get_message", map[string]string{"messageId": longReceipt.MessageID})
 	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"text":%q,"actor":"sender-1"}`, longReceipt.MessageID, long.Message.Text), string(longMaterial))
 	mcpWorkError(t, issue, "get_message", "not_found", map[string]string{"messageId": other.MessageID})
-	mcpWorkError(t, issue, "get_issue", "invalid_argument", map[string]string{"executionId": x.ID})
+	mcpWorkError(t, issue, "get_issue", "invalid_argument", map[string]string{"sessionBindingId": x.ID})
 	mcpWorkError(t, issue, "get_report", "forbidden", struct{}{})
 	mcpWorkError(t, issue, "submit_report", "invalid_argument", map[string]string{"operationId": "forged", "kind": "ready", "summary": "unsafe", "topicId": otherBinding.OwnerID})
 	status, data := requestMCPTool(t, p.endpoint, "update_issue", issueToken, map[string]any{
@@ -350,8 +351,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 		report := mcpWork[core.Report](t, issue, "submit_report", r)
 		require.Equal(t, "mass-t1-i1-r"+strconv.Itoa(i+1), report.ID)
 		require.Equal(t, report, mcpWork[core.Report](t, issue, "submit_report", r))
-		require.Equal(t, x.ID, report.ExecutionID)
-		require.Equal(t, x.Generation, report.Generation)
+		require.Equal(t, x.ID, report.SessionBindingID)
 		require.Equal(t, r.Evidence, report.Evidence)
 		require.Equal(t, r.Details, report.Details)
 		require.Equal(t, r.Questions, report.Questions)
@@ -361,8 +361,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 		notice := peer.next(t, "turn/start")
 		require.Equal(t, mainBinding.SessionID, notice.session)
 		view := decodeInternalBatch(t, notice, report.EventID)[0]
-		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"issueId":%q,"executionId":%q,"goalRevision":%d,"kind":%q,"summary":%q,"details":%q,"evidence":["notes/check.txt"],"questions":["Inspect exit code?"],"historical":false}`, report.ID, report.IssueID, report.ExecutionID, report.Revision, report.Kind, report.Summary, report.Details), string(view.Report))
-		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"title":%q,"goal":%q,"goalRevision":%d,"currentExecutionId":%q,"status":"active","revision":%d}`, started.Issue.ID, started.Issue.Title, create.Goal, started.Issue.RequirementsRevision, x.ID, started.Issue.Revision), string(view.Issue))
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"issueId":%q,"goalRevision":%d,"kind":%q,"summary":%q,"details":%q,"evidence":["notes/check.txt"],"questions":["Inspect exit code?"],"historical":false,"current":true}`, report.ID, report.IssueID, report.Revision, report.Kind, report.Summary, report.Details), string(view.Report))
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"title":%q,"goal":%q,"goalRevision":%d,"status":"active","revision":%d}`, started.Issue.ID, started.Issue.Title, create.Goal, started.Issue.RequirementsRevision, started.Issue.Revision), string(view.Issue))
 		require.NoError(t, json.Unmarshal(view.Issue, &reviewedIssue))
 		notice.answer <- nativeSubmitAnswer{complete: true}
 		waitWorkEvent(t, p, report.EventID, "sent")
@@ -372,8 +372,14 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Len(t, page(t, p, "reports").Items, 4)
 	require.Equal(t, "active", readRecord[core.Issue](t, p, "issues/"+started.Issue.ID).Status)
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+mainBinding.OwnerID).Status)
-	review := mcpWork[core.Report](t, topic, "get_report", map[string]string{"reportId": ready.ID})
-	require.Equal(t, ready, review)
+	review := mcpWork[struct {
+		core.Report
+		Current bool `json:"current"`
+	}](t, topic, "get_report", map[string]string{"reportId": ready.ID})
+	require.Empty(t, review.SessionBindingID)
+	require.True(t, review.Current)
+	review.SessionBindingID = ready.SessionBindingID
+	require.Equal(t, ready, review.Report)
 	require.Equal(t, ready, readRecord[core.Report](t, p, "reports/"+ready.ID))
 	mcpWorkError(t, foreign, "get_report", "not_found", map[string]string{"reportId": ready.ID})
 	withReports := mcpWork[core.Issue](t, topic, "get_issue", map[string]any{
@@ -394,17 +400,16 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	done := mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
 	require.Equal(t, done, mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete))
 	require.Equal(t, "completed", done.Issue.Status)
-	require.Empty(t, done.Issue.CurrentExecutionID)
+	require.Empty(t, done.Issue.CurrentSessionBindingID)
 	require.Equal(t, complete.Evidence, done.Issue.Completion.Evidence)
-	require.Equal(t, "historical", done.Execution.Authority)
-	require.Equal(t, "ready", done.Execution.PreparationAtRetirement)
-	require.Equal(t, "requested", done.Execution.Stop.Status)
+	require.Equal(t, "revoked", done.SessionBinding.State)
+	require.Equal(t, "requested", done.SessionBinding.Stop.Status)
 	mcpWorkError(t, issue, "get_issue", "stale_binding", struct{}{})
 	mcpWorkError(t, issue, "get_message", "stale_binding", map[string]string{"messageId": source.MessageID})
 	mcpWorkError(t, issue, "get_internal_event", "stale_binding", map[string]string{"event_id": x.StartEventID})
-	var stopped core.Execution
+	var stopped core.SessionBinding
 	require.Eventually(t, func() bool {
-		stopped = readRecord[core.Execution](t, p, "executions/"+x.ID)
+		stopped = readRecord[core.SessionBinding](t, p, "session-bindings/"+x.ID)
 		return stopped.Stop != nil && stopped.Stop.Status == "observed"
 	}, 8*time.Second, 20*time.Millisecond)
 	require.Equal(t, "controlAcknowledged", stopped.Stop.Receipt.Result)
@@ -429,11 +434,11 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	identity := initializeMCP(t, p.endpoint, issueToken)
 	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"role":"issue","ownerId":%q,"generation":%d,"topicId":%q,"issueId":%q}`,
 		issueBinding.ID, issueBinding.OwnerID, issueBinding.Generation, issueBinding.TopicID, issueBinding.IssueID), string(identity))
-	late := core.ReportRequest{OperationID: "late", Kind: "progress", Summary: "Late report from retired Issue Session", GoalRevision: x.Revision}
+	late := core.ReportRequest{OperationID: "late", Kind: "progress", Summary: "Late report from retired Issue Session", GoalRevision: x.StartGoalRevision}
 	report := mcpWork[core.Report](t, historicalIssue, "submit_report", late)
 	require.Equal(t, "mass-t1-i1-r5", report.ID)
 	require.True(t, report.Historical)
-	require.Equal(t, x.ID, report.ExecutionID)
+	require.Equal(t, x.ID, report.SessionBindingID)
 	require.Equal(t, report, mcpWork[core.Report](t, issue, "submit_report", late))
 	context := peer.next(t, "thread/inject_items")
 	require.Equal(t, mainBinding.SessionID, context.session)
@@ -450,15 +455,16 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	second := mcpWork[core.WorkReceipt](t, topic, "create_issue", auto)
 	require.Equal(t, second, mcpWork[core.WorkReceipt](t, topic, "create_issue", auto))
 	require.Equal(t, "mass-t1-i2", second.Issue.ID)
-	require.Equal(t, "mass-t1-i2-e1", second.Execution.ID)
-	secondBinding := waitBinding(t, p, "issue", second.Execution.ID, "ready")
+	require.Equal(t, second.Issue.ID, second.SessionBinding.OwnerID)
+	require.Equal(t, 1, second.SessionBinding.Generation)
+	secondBinding := waitBinding(t, p, "issue", second.SessionBinding.ID, "ready")
 	require.Equal(t, mainBinding.Workspace, secondBinding.Workspace)
 	final := peer.next(t, "turn/start")
 	require.Equal(t, secondBinding.SessionID, final.session)
-	decodeInternalBatch(t, final, second.Execution.StartEventID)
+	decodeInternalBatch(t, final, second.SessionBinding.StartEventID)
 	final.answer <- nativeSubmitAnswer{complete: true, final: "Verified the result. This is ordinary model output."}
-	waitWorkEvent(t, p, second.Execution.StartEventID, "sent")
-	ended := waitIssueObservation(t, p, second.Execution, "ended")
+	waitWorkEvent(t, p, second.SessionBinding.StartEventID, "sent")
+	ended := waitIssueObservation(t, p, second.SessionBinding, "ended")
 	reminder := checkReminderCall(t, peer, secondBinding, ended)
 	reminder.answer <- nativeSubmitAnswer{workID: "ordinary-output-reminder", complete: true}
 	waitWorkEvent(t, p, ended.ReminderEventID, "sent")
@@ -493,11 +499,11 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	waitRouteStatus(t, p, follow.EventID, "sent")
 	require.Equal(t, finished, readRecord[core.Topic](t, p, "topics/"+mainBinding.OwnerID))
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+otherBinding.OwnerID).Status)
-	require.Len(t, page(t, p, "executions").Items, 2)
+	require.Len(t, issueBindings(t, p), 2)
 	t.Log("Report and turn completion left business state active; explicit acceptance retained its evidence; a real follow-up reached the completed Topic without reopening it")
 }
 
-func workBoundaryTopic(t *testing.T, f *fixture, p *process) (core.Binding, string) {
+func workBoundaryTopic(t *testing.T, f *fixture, p *process) (core.SessionBinding, string) {
 	t.Helper()
 	router := waitBinding(t, p, "router", "", "ready")
 	m := submit(t, p, f, input("work-boundary"))
@@ -519,10 +525,10 @@ func TestIssueReportCommitCrash(t *testing.T) {
 			create := issueInput(f.dir, "create")
 			create.Start = true
 			work := roleWork[core.WorkReceipt](t, p, token, "create_issue", create)
-			binding := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+			binding := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 			issue := roleToken(t, f, binding)
-			waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
-			r := core.ReportRequest{OperationID: "crash-report", Kind: "ready", Summary: "Verified before crash", GoalRevision: work.Execution.Revision}
+			waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
+			r := core.ReportRequest{OperationID: "crash-report", Kind: "ready", Summary: "Verified before crash", GoalRevision: work.SessionBinding.StartGoalRevision}
 			req, err := newMCPToolRequest(t.Context(), p.endpoint, issue, "submit_report", r)
 			require.NoError(t, err)
 			done := make(chan error, 1)
@@ -580,16 +586,16 @@ func TestIssueCompleteFencesUnclaimedStart(t *testing.T) {
 	})
 	complete := core.CompleteIssueRequest{IssueID: work.Issue.ID, CompleteRequest: acceptance("complete", updated.Issue.Revision, "already-verified.txt")}
 	done := roleWork[core.WorkReceipt](t, p, token, "issue_complete", complete)
-	require.Nil(t, done.Execution.Stop)
-	require.Equal(t, "historical", done.Execution.Authority)
+	require.Nil(t, done.SessionBinding.Stop)
+	require.Equal(t, "revoked", done.SessionBinding.State)
 	write(t, filepath.Join(gate, "release"), "release")
-	require.Empty(t, waitWorkEvent(t, p, work.Execution.StartEventID, "superseded").SentAt)
+	require.Empty(t, waitWorkEvent(t, p, work.SessionBinding.StartEventID, "superseded").SentAt)
 	require.Empty(t, waitWorkEvent(t, p, updated.NotificationEventID, "superseded").SentAt)
 	p.stop(t, false)
 	p = f.start()
-	require.Empty(t, waitWorkEvent(t, p, work.Execution.StartEventID, "superseded").SentAt)
+	require.Empty(t, waitWorkEvent(t, p, work.SessionBinding.StartEventID, "superseded").SentAt)
 	require.Empty(t, waitWorkEvent(t, p, updated.NotificationEventID, "superseded").SentAt)
-	require.Equal(t, done.Execution.BindingID, waitBinding(t, p, "issue", work.Execution.ID, "revoked").ID)
+	require.Equal(t, done.SessionBinding.ID, waitBinding(t, p, "issue", work.SessionBinding.ID, "revoked").ID)
 	t.Log("prepared but unclaimed startup and requirements update remained superseded on restart, with no native input attempt or stop request")
 }
 
@@ -604,21 +610,21 @@ func TestIssueStopDispatchCrashStaysUnknown(t *testing.T) {
 	create := issueInput(f.dir, "create-stop")
 	create.Start = true
 	work := roleWork[core.WorkReceipt](t, p, token, "create_issue", create)
-	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+	waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
 	complete := core.CompleteIssueRequest{IssueID: work.Issue.ID, CompleteRequest: acceptance("complete-stop", work.Issue.Revision, "verified.txt")}
 	receipt := roleWork[core.WorkReceipt](t, p, token, "issue_complete", complete)
-	require.Equal(t, "requested", receipt.Execution.Stop.Status)
+	require.Equal(t, "requested", receipt.SessionBinding.Stop.Status)
 	waitWorkGate(t, gate, "stop_before_rpc")
-	require.Equal(t, "dispatching", readRecord[core.Execution](t, p, "executions/"+work.Execution.ID).Stop.Status)
+	require.Equal(t, "dispatching", readRecord[core.SessionBinding](t, p, "session-bindings/"+work.SessionBinding.ID).Stop.Status)
 	p.stop(t, true)
 	p = f.start()
-	stop := readRecord[core.Execution](t, p, "executions/"+work.Execution.ID).Stop
+	stop := readRecord[core.SessionBinding](t, p, "session-bindings/"+work.SessionBinding.ID).Stop
 	require.Equal(t, "unknown", stop.Status)
 	require.Equal(t, "unknown", stop.WorkState)
 	require.Equal(t, "core_stopped_before_stop_settlement", stop.ObservationGap)
 	require.Nil(t, stop.Receipt)
 	require.Equal(t, receipt, roleWork[core.WorkReceipt](t, p, token, "issue_complete", complete))
 	require.Equal(t, receipt.Issue, readRecord[core.Issue](t, p, "issues/"+receipt.Issue.ID))
-	require.Equal(t, stop, readRecord[core.Execution](t, p, "executions/"+work.Execution.ID).Stop)
+	require.Equal(t, stop, readRecord[core.SessionBinding](t, p, "session-bindings/"+work.SessionBinding.ID).Stop)
 	t.Log("restart retained the Issue acceptance receipt and the original unresolved stop without resubmitting")
 }

@@ -24,7 +24,7 @@ func traceRoleTool(tool string) bool {
 }
 
 // Strip tracing metadata before strict decoding and computing business idempotency digests.
-func (s *Store) roleTraceInput(ctx context.Context, b Binding, raw []byte, tool string) ([]byte, trace.SpanContext, error) {
+func (s *Store) roleTraceInput(ctx context.Context, b SessionBinding, raw []byte, tool string) ([]byte, trace.SpanContext, error) {
 	var parent trace.SpanContext
 	var fields map[string]json.RawMessage
 	if err := decodeStrict(raw, &fields); err != nil {
@@ -43,7 +43,7 @@ func (s *Store) roleTraceInput(ctx context.Context, b Binding, raw []byte, tool 
 	var kind, firstReference string
 	err := s.db.QueryRowContext(ctx, `SELECT kind,coalesce(json_extract(refs,'$[0].id'),'')
  FROM internal_events WHERE event_id=? AND `+eventRecipientKind+`=? AND `+eventRecipientOwner+`=?
- AND status IN ('dispatching','sent')`, id, b.Role, b.OwnerID).Scan(&kind, &firstReference)
+ AND status IN ('dispatching','sent')`, id, b.Role, b.eventRecipientID()).Scan(&kind, &firstReference)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, parent, problem("not_found", "triggering event is unavailable to this role")
 	}

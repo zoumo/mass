@@ -18,7 +18,7 @@ func validIncludes(includes []string, allowed ...string) error {
 	return nil
 }
 
-func (s *Server) mcpQuery(ctx context.Context, b Binding, tool string, raw []byte) (any, error) {
+func (s *Server) mcpQuery(ctx context.Context, b SessionBinding, tool string, raw []byte) (any, error) {
 	switch tool {
 	case "list_messages", "list_topics", "list_issues":
 		return s.mcpList(ctx, b, tool, raw)
@@ -113,7 +113,7 @@ func (s *Server) mcpQuery(ctx context.Context, b Binding, tool string, raw []byt
 		if err := decodeStrict(raw, &q); err != nil {
 			return nil, err
 		}
-		if err := validIncludes(q.Include, "executions", "reports", "pullRequests"); err != nil {
+		if err := validIncludes(q.Include, "reports", "pullRequests"); err != nil {
 			return nil, err
 		}
 		value, err := s.store.mcpRecord(ctx, b, "issues", q.IssueID)
@@ -121,17 +121,16 @@ func (s *Server) mcpQuery(ctx context.Context, b Binding, tool string, raw []byt
 			return nil, err
 		}
 		markMCPIssueTarget(ctx, q.IssueID)
-		if !slices.Contains(q.Include, "reports") {
+		if slices.Contains(q.Include, "reports") {
+			value["reports"], err = s.store.mcpExpansion(ctx, b, QueryRequest{Collection: "reports", IssueID: q.IssueID})
+			if err != nil {
+				return nil, err
+			}
+		} else {
 			delete(value, "reports")
 		}
 		if !slices.Contains(q.Include, "pullRequests") {
 			delete(value, "pullRequests")
-		}
-		if slices.Contains(q.Include, "executions") {
-			value["executions"], err = s.store.mcpExpansion(ctx, b, QueryRequest{Collection: "executions", IssueID: q.IssueID})
-			if err != nil {
-				return nil, err
-			}
 		}
 		return value, nil
 	case "get_report":
@@ -153,7 +152,7 @@ func (s *Server) mcpQuery(ctx context.Context, b Binding, tool string, raw []byt
 	return nil, problem("forbidden", "unknown scoped query")
 }
 
-func (s *Store) mcpRecord(ctx context.Context, b Binding, collection, id string) (map[string]json.RawMessage, error) {
+func (s *Store) mcpRecord(ctx context.Context, b SessionBinding, collection, id string) (map[string]json.RawMessage, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, problem("invalid_argument", "record ID is required")
 	}
@@ -168,7 +167,7 @@ func (s *Store) mcpRecord(ctx context.Context, b Binding, collection, id string)
 	return value, nil
 }
 
-func (s *Store) mcpExpansion(ctx context.Context, b Binding, q QueryRequest) (json.RawMessage, error) {
+func (s *Store) mcpExpansion(ctx context.Context, b SessionBinding, q QueryRequest) (json.RawMessage, error) {
 	var items []json.RawMessage
 	q.Limit = 200
 	for {
@@ -188,7 +187,7 @@ func (s *Store) mcpExpansion(ctx context.Context, b Binding, q QueryRequest) (js
 	return json.Marshal(items)
 }
 
-func (s *Server) mcpList(ctx context.Context, b Binding, tool string, raw []byte) (any, error) {
+func (s *Server) mcpList(ctx context.Context, b SessionBinding, tool string, raw []byte) (any, error) {
 	var q QueryRequest
 	switch tool {
 	case "list_messages":

@@ -19,10 +19,10 @@ func newRecoverInput() *cobra.Command {
 	var req core.RecoveryRequest
 	var endpoint, tokenFile string
 	cmd := &cobra.Command{
-		Use: "recover-input BINDING_ID", Short: "Reconcile a local role binding before retry, settlement or replacement",
+		Use: "recover-input SESSION_BINDING_ID", Short: "Reconcile a local SessionBinding before retry, settlement or replacement",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			req.BindingID = args[0]
+			req.SessionBindingID = args[0]
 			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodPost, "/v1/operator/input-recovery", req)
 		},
 	}
@@ -42,10 +42,10 @@ func newRecoverInput() *cobra.Command {
 func newInspectBinding() *cobra.Command {
 	var endpoint, tokenFile string
 	cmd := &cobra.Command{
-		Use: "inspect-binding BINDING_ID", Short: "Read a role binding and its live massd evidence",
+		Use: "inspect-session-binding SESSION_BINDING_ID", Short: "Read a SessionBinding and its live massd evidence",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodGet, "/v1/operator/bindings/"+url.PathEscape(args[0]), nil)
+			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodGet, "/v1/operator/session-bindings/"+url.PathEscape(args[0]), nil)
 		},
 	}
 	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Local Core HTTP endpoint")

@@ -15,10 +15,7 @@ import (
 )
 
 type inputBatch struct {
-	BindingID     string            `json:"bindingId,omitempty"`
-	Generation    int               `json:"generation,omitempty"`
-	Events        []json.RawMessage `json:"events"`
-	SchemaVersion int               `json:"schemaVersion,omitempty"`
+	Events []json.RawMessage `json:"events"`
 }
 
 const inlineMessageBytes = 2 * 1024
@@ -49,51 +46,7 @@ func businessEventCurrent(ctx context.Context, tx *sql.Tx, d internalEvent) (boo
 	return !terminal(topic.Status), nil
 }
 
-func encodeLegacyInternalEvent(d internalEvent) (json.RawMessage, error) {
-	event := struct {
-		internalEvent
-		BodyPreview    string          `json:"body_preview,omitempty"`
-		ContentPreview string          `json:"content_preview,omitempty"`
-		Truncated      bool            `json:"truncated,omitempty"`
-		ContentRef     *eventReference `json:"content_ref,omitempty"`
-	}{internalEvent: d}
-	truncate := func() {
-		event.Truncated = true
-		event.ContentRef = &eventReference{Kind: "internal_event", ID: d.ID}
-	}
-	if len(d.Body) > previewBytes {
-		event.BodyPreview = truncatePreview(string(d.Body))
-		event.Body = nil
-		truncate()
-	}
-	if d.Content != nil && len(d.Content.Data) > previewBytes {
-		var prose struct {
-			Text   string `json:"text"`
-			Prompt string `json:"prompt"`
-		}
-		if err := json.Unmarshal(d.Content.Data, &prose); err != nil {
-			return nil, err
-		}
-		event.ContentPreview = prose.Text + prose.Prompt
-		if len(event.ContentPreview) > previewBytes {
-			event.ContentPreview = truncatePreview(event.ContentPreview)
-		}
-		event.Content = nil
-		truncate()
-	}
-	raw, err := json.Marshal(event)
-	if err != nil || len(raw) <= batchBytes-512 {
-		return raw, err
-	}
-	// Unabridged content and references remain available through get_internal_event.
-	event.Content = nil
-	event.ContentPreview = ""
-	event.Refs = nil
-	truncate()
-	return json.Marshal(event)
-}
-
-func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEventBatch, error) {
+func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (internalEventBatch, error) {
 	var batch internalEventBatch
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -107,7 +60,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEve
  FROM internal_events WHERE `+eventRecipientKind+`=? AND `+eventRecipientOwner+`=?
  AND status IN ('pending','dispatching')
 
- ORDER BY rowid LIMIT ?`, b.Role, b.OwnerID, batchLimit)
+ ORDER BY rowid LIMIT ?`, b.Role, b.eventRecipientID(), batchLimit)
 	if err != nil {
 		return batch, err
 	}
@@ -135,9 +88,6 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEve
 	var boundIssue *Issue
 	batch.method = "inject"
 	var envelope inputBatch
-	if b.AgentPromptVersion == 0 {
-		envelope.BindingID, envelope.Generation, envelope.SchemaVersion = b.ID, b.Generation, 4
-	}
 	at, full := time.Now(), false
 	for _, q := range queue {
 		current, err := businessEventCurrent(ctx, tx, q.item)
@@ -161,57 +111,52 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEve
 			break
 		}
 		var raw, referenceOnly json.RawMessage
-		if b.AgentPromptVersion == 0 {
-			raw, err = encodeLegacyInternalEvent(q.item)
-		} else {
-			view := q.item
-			view.promptVersion = b.AgentPromptVersion
+		view := q.item
+		raw, err = view.MarshalAgentPromptJSON()
+		if err == nil && len(raw) > previewBytes {
+			view.truncated = true
 			raw, err = view.MarshalAgentPromptJSON()
-			if err == nil && len(raw) > previewBytes {
-				view.truncated = true
-				raw, err = view.MarshalAgentPromptJSON()
-			}
-			inlineTopic := b.Role == "topic" && view.Kind == routedMessageKind
-			inlineRouter := b.Role == "router" && b.AgentPromptVersion >= agentPromptVersion && view.Kind == routeRequestKind
-			maxViewBytes := min(previewBytes, batchBytes-len(batch.wire)-1)
-			issueContext := false
-			if err == nil && !view.truncated && inlineTopic && b.AgentPromptVersion >= agentPromptVersion {
-				if boundTopic == nil {
-					var topic Topic
-					if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
-						return batch, err
-					}
-					boundTopic = &topic
+		}
+		inlineTopic := b.Role == "topic" && view.Kind == routedMessageKind
+		inlineRouter := b.Role == "router" && view.Kind == routeRequestKind
+		maxViewBytes := min(previewBytes, batchBytes-len(batch.wire)-1)
+		issueContext := false
+		if err == nil && !view.truncated && inlineTopic {
+			if boundTopic == nil {
+				var topic Topic
+				if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
+					return batch, err
 				}
-				view.topic = boundTopic
+				boundTopic = &topic
 			}
-			if err == nil && !view.truncated && view.Content == nil && len(view.Refs) == 1 &&
-				view.Refs[0].Kind == messageRefKind && (inlineTopic || inlineRouter) {
-				err = view.loadInlineTriggerMessage(ctx, tx, b)
-			} else if err == nil && !view.truncated && b.AgentPromptVersion >= agentPromptVersion {
-				switch {
-				case b.Role == "topic" && view.Kind == reportSubmittedKind:
-					err = view.loadInlineReport(ctx, tx, b)
-				case b.Role == "issue" && (view.Kind == issueSessionStarted || view.Kind == issueSessionUpdateKind || view.Kind == contextSupplement):
-					if boundIssue == nil {
-						issue, _, readErr := currentBoundIssue(ctx, tx, b)
-						if readErr != nil {
-							return batch, readErr
-						}
-						boundIssue = &issue
+			view.topic = boundTopic
+		}
+		if err == nil && !view.truncated && view.Content == nil && len(view.Refs) == 1 &&
+			view.Refs[0].Kind == messageRefKind && (inlineTopic || inlineRouter) {
+			err = view.loadInlineTriggerMessage(ctx, tx, b)
+		} else if err == nil && !view.truncated {
+			switch {
+			case b.Role == "topic" && view.Kind == reportSubmittedKind:
+				err = view.loadInlineReport(ctx, tx, b)
+			case b.Role == "issue" && (view.Kind == issueSessionStarted || view.Kind == issueSessionUpdateKind || view.Kind == contextSupplement):
+				if boundIssue == nil {
+					issue, _, readErr := currentBoundIssue(ctx, tx, b)
+					if readErr != nil {
+						return batch, readErr
 					}
-					err = view.loadInlineIssueContext(ctx, tx, boundIssue, maxViewBytes)
-					issueContext = view.issue != nil || len(view.messages) != 0
+					boundIssue = &issue
 				}
+				err = view.loadInlineIssueContext(ctx, tx, boundIssue, maxViewBytes)
+				issueContext = view.issue != nil || len(view.messages) != 0
 			}
-			if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0) {
-				var enriched json.RawMessage
-				enriched, err = view.MarshalAgentPromptJSON()
-				if err == nil && (b.AgentPromptVersion < agentPromptVersion || len(enriched) <= maxViewBytes) {
-					referenceOnly, raw = raw, enriched
-					if issueContext {
-						batch.boundIssueRevision = boundIssue.Revision
-					}
+		}
+		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0) {
+			var enriched json.RawMessage
+			enriched, err = view.MarshalAgentPromptJSON()
+			if err == nil && len(enriched) <= maxViewBytes {
+				referenceOnly, raw = raw, enriched
+				if issueContext {
+					batch.boundIssueRevision = boundIssue.Revision
 				}
 			}
 		}
@@ -256,7 +201,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEve
 
 // loadInlineTriggerMessage uses the same scope as get_trigger_message. A matched Topic
 // quote carries the open blocker snapshot from the same transaction.
-func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx, b Binding) error {
+func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
 	scope, args, err := scopeSQL("messages", &b)
 	if err != nil {
 		return err
@@ -274,7 +219,7 @@ func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx
 		columns += ",thread_key,json_object('round'," + routingRound + ",'state'," + routingState + ")"
 		filter += " AND " + routingState + "='pending' AND " + routingRound + "=1"
 		dest = append(dest, &threadKey, &routing)
-	} else if b.AgentPromptVersion >= agentPromptVersion {
+	} else {
 		columns += ",body->>'$.quotedMessage' IS NOT NULL,CASE WHEN body->>'$.quotedMessage' IS NOT NULL THEN " + quotedReplyForTopic + " END"
 		projectionArgs = append(projectionArgs, b.OwnerID)
 		dest = append(dest, &hasQuote, &quotedReply)
@@ -340,7 +285,7 @@ func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx
 	return nil
 }
 
-func (d *internalEvent) loadInlineReport(ctx context.Context, tx *sql.Tx, b Binding) error {
+func (d *internalEvent) loadInlineReport(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
 	if len(d.Refs) != 1 || d.Refs[0].Kind != "report" {
 		return nil
 	}
@@ -357,7 +302,8 @@ func (d *internalEvent) loadInlineReport(ctx context.Context, tx *sql.Tx, b Bind
 	if err != nil {
 		return err
 	}
-	if issue.CurrentExecutionID == report.ExecutionID && issue.RequirementsRevision == report.Revision {
+	report.Current = reportIsCurrent(report, issue)
+	if report.Current {
 		d.issue, d.report = &issue, &report
 	}
 	return nil
@@ -431,7 +377,7 @@ func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, 
 	return rows.Err()
 }
 
-func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch internalEventBatch, watch *issueWatch) (bool, error) {
+func (s *Store) admitInternalBatch(ctx context.Context, b SessionBinding, batch internalEventBatch, watch *issueWatch) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -519,7 +465,7 @@ func (s *Store) finishInternalBatch(ctx context.Context, batch internalEventBatc
 	return tx.Commit()
 }
 
-func (s *Server) coordinateInternalEvents(life, call context.Context, b Binding, spec resource.SessionSpec) bool {
+func (s *Server) coordinateInternalEvents(life, call context.Context, b SessionBinding, spec resource.SessionSpec) bool {
 	if retry, ok := s.internalEventDispatchRetries.Load(b.ID); ok && time.Now().Before(retry.(time.Time)) {
 		return false
 	}

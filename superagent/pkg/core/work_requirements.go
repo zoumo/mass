@@ -9,14 +9,14 @@ import (
 )
 
 type UpdateRequirementsRequest struct {
-	OperationID      string `json:"operationId"`
-	IssueID          string `json:"issueId"`
-	ExpectedRevision int    `json:"expectedRevision"`
-	Goal             string `json:"goal,omitempty"`
-	NotifyIssueSession     bool   `json:"notifyIssueSession,omitempty"`
+	OperationID        string `json:"operationId"`
+	IssueID            string `json:"issueId"`
+	ExpectedRevision   int    `json:"expectedRevision"`
+	Goal               string `json:"goal,omitempty"`
+	NotifyIssueSession bool   `json:"notifyIssueSession,omitempty"`
 }
 
-func editableIssue(ctx context.Context, tx *sql.Tx, b Binding, id string, expected int) (Issue, error) {
+func editableIssue(ctx context.Context, tx *sql.Tx, b SessionBinding, id string, expected int) (Issue, error) {
 	if _, err := currentTopic(ctx, tx, b); err != nil {
 		return Issue{}, err
 	}
@@ -34,10 +34,10 @@ func editableIssue(ctx context.Context, tx *sql.Tx, b Binding, id string, expect
 }
 
 const (
-	issueSessionStarted       = "issue_session_started"
-	issueSessionUpdateKind    = "issue_session_update"
-	reportSubmittedKind = "report_submitted"
-	reportReminderKind  = "report_reminder"
+	issueSessionStarted    = "issue_session_started"
+	issueSessionUpdateKind = "issue_session_update"
+	reportSubmittedKind    = "report_submitted"
+	reportReminderKind     = "report_reminder"
 )
 
 type IssueSessionInputRequest struct {
@@ -61,7 +61,7 @@ func issueGoalRef(issue Issue) eventReference {
 }
 
 func updateRequirements(r UpdateRequirementsRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		issue, err := editableIssue(ctx, tx, b, r.IssueID, r.ExpectedRevision)
 		if err != nil {
 			return nil, err
@@ -94,7 +94,7 @@ func updateRequirements(r UpdateRequirementsRequest) workMutation {
 }
 
 func issueSessionInput(r IssueSessionInputRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		if r.Content != nil {
 			if err := r.Content.normalize(); err != nil {
 				return nil, err
@@ -152,18 +152,18 @@ func canContinueIssue(issue Issue) bool {
 }
 
 func notifyIssueSession(ctx context.Context, tx *sql.Tx, issue Issue, id, kind string, content *StructuredContent, materials []Material) (WorkReceipt, error) {
-	if issue.CurrentExecutionID == "" {
-		return WorkReceipt{}, problem("failed_precondition", "Issue Session update requires a current Execution")
+	if issue.CurrentSessionBindingID == "" {
+		return WorkReceipt{}, problem("failed_precondition", "Issue Session update requires a current SessionBinding")
 	}
 	if kind == issueSessionUpdateKind && !canContinueIssue(issue) {
 		return WorkReceipt{}, problem("failed_precondition", "Issue Session continuation requires an active Issue with all blockers resolved")
 	}
-	var x Execution
-	if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=? AND issue_id=?", &x, issue.CurrentExecutionID, issue.ID); err != nil {
+	binding, err := loadIssueBinding(ctx, tx, issue.CurrentSessionBindingID)
+	if err != nil {
 		return WorkReceipt{}, err
 	}
-	if x.Authority != "current" {
-		return WorkReceipt{}, problem("failed_precondition", "Issue Session update requires a current Execution")
+	if binding.State == "revoked" || binding.OwnerID != issue.ID || binding.TopicID != issue.TopicID {
+		return WorkReceipt{}, problem("failed_precondition", "Issue Session update requires a current SessionBinding")
 	}
 	refs := []eventReference{issueGoalRef(issue)}
 	for _, material := range materials {
@@ -181,10 +181,10 @@ func notifyIssueSession(ctx context.Context, tx *sql.Tx, issue Issue, id, kind s
 			return WorkReceipt{}, err
 		}
 	}
-	err := enqueueInternalEvent(ctx, tx, internalEvent{
+	err = enqueueInternalEvent(ctx, tx, internalEvent{
 		ID: id, Kind: kind,
 		Sender:    eventIdentity{Kind: "topic", TopicID: issue.TopicID},
-		Recipient: eventIdentity{Kind: "issue", ExecutionID: x.ID},
+		Recipient: eventIdentity{Kind: "issue", SessionBindingID: binding.ID},
 		Content:   content,
 		Body:      body,
 		Refs:      refs,
@@ -198,11 +198,11 @@ func workEventCurrent(ctx context.Context, tx *sql.Tx, d internalEvent) (bool, e
 	default:
 		return true, nil
 	}
-	var x Execution
-	if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=?", &x, d.Recipient.ExecutionID); err != nil {
+	binding, err := loadIssueBinding(ctx, tx, d.Recipient.SessionBindingID)
+	if err != nil {
 		return false, err
 	}
-	issue, err := issueForExecution(ctx, tx, x)
+	issue, err := issueForBinding(ctx, tx, binding)
 	if errorCode(err) == "stale_binding" || errorCode(err) == "not_found" {
 		return false, nil
 	}
@@ -210,7 +210,7 @@ func workEventCurrent(ctx context.Context, tx *sql.Tx, d internalEvent) (bool, e
 		return false, err
 	}
 	if d.Kind == reportReminderKind {
-		return d.ID == x.ReminderEventID && !issueHasExecutionReport(issue, x.ID), nil
+		return d.ID == binding.ReminderEventID && !issueHasCurrentReport(issue), nil
 	}
 	return canContinueIssue(issue) && slices.Contains(d.Refs, issueGoalRef(issue)), nil
 }

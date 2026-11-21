@@ -31,46 +31,34 @@ type StopObservation struct {
 	StopReason string `json:"stopReason,omitempty"`
 }
 
-func retireExecution(ctx context.Context, tx *sql.Tx, id, at string, cancel bool) (Execution, error) {
-	var x Execution
-	if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=?", &x, id); err != nil {
-		return x, err
+func retireIssueBinding(ctx context.Context, tx *sql.Tx, issue Issue, at string, cancel bool) (SessionBinding, error) {
+	b, err := loadIssueBinding(ctx, tx, issue.CurrentSessionBindingID)
+	if err != nil {
+		return b, err
+	}
+	if b.State == "revoked" || b.OwnerID != issue.ID || b.TopicID != issue.TopicID {
+		return b, problem("stale_binding", "Issue Session no longer owns the current Issue")
 	}
 	var dispatched bool
-	if err := tx.QueryRowContext(ctx, `SELECT json_type(b.body,'$.close') IS NULL AND
- (? OR EXISTS (SELECT 1 FROM internal_events WHERE `+eventRecipientKind+`='issue' AND `+eventRecipientOwner+`=b.owner_id
- AND status IN ('dispatching','sent'))) FROM session_bindings b WHERE b.id=?`, cancel, x.BindingID).Scan(&dispatched); err != nil {
-		return x, storageError()
-	}
-	if err := supersedeExecutionEvents(ctx, tx, x.ID); err != nil {
-		return x, err
-	}
-	if dispatched {
-		var err error
-		x.Stop, err = requestBindingStop(ctx, tx, x.BindingID, at)
+	if b.Close == nil {
+		err = tx.QueryRowContext(ctx, `SELECT ? OR EXISTS (SELECT 1 FROM internal_events WHERE `+eventRecipientKind+`='issue' AND `+eventRecipientOwner+`=?
+ AND status IN ('dispatching','sent'))`, cancel, b.ID).Scan(&dispatched)
 		if err != nil {
-			return x, err
+			return b, storageError()
 		}
 	}
-	if err := tx.QueryRowContext(ctx, "SELECT state FROM session_bindings WHERE id=?", x.BindingID).Scan(&x.PreparationAtRetirement); err != nil {
-		return x, storageError()
+	if err := supersedeIssueBindingEvents(ctx, tx, b.ID); err != nil {
+		return b, err
 	}
-	issue, err := issueForExecution(ctx, tx, x)
-	if err != nil {
-		return x, err
+	if dispatched {
+		b.Stop = &StopRequest{Status: "requested", RequestedAt: at, WorkState: "unknown"}
 	}
-	x.Authority, x.RetiredAt, x.RetiredGoalRevision = "historical", at, issue.RequirementsRevision
-	if observation := x.WorkObservation; observation != nil && observation.inProgress() {
-		observation.loseContinuity("execution_retired")
+	b.State, b.NextAttemptAt = "revoked", ""
+	b.RetiredAt, b.RetiredGoalRevision = at, issue.RequirementsRevision
+	if observation := b.WorkObservation; observation != nil && observation.inProgress() {
+		observation.loseContinuity("session_binding_retired")
 	}
-	if err := revokeBinding(ctx, tx, x.BindingID); err != nil {
-		return x, err
-	}
-	return x, saveExecution(ctx, tx, x)
-}
-
-func saveExecution(ctx context.Context, tx *sql.Tx, x Execution) error {
-	return putJSON(ctx, tx, "UPDATE executions SET body=?2 WHERE id=?1", x, x.ID)
+	return b, putJSON(ctx, tx, "UPDATE session_bindings SET state='revoked',next_attempt_at='',body=?2 WHERE id=?1", b, b.ID)
 }
 
 func recoverStops(ctx context.Context, tx *sql.Tx) error {
@@ -106,7 +94,7 @@ func (s *Store) claimStop(ctx context.Context, bindingID string) (StopRequest, e
 	return stop, tx.Commit()
 }
 
-func (s *Server) stopBinding(life, call context.Context, b Binding, spec resource.SessionSpec) {
+func (s *Server) stopBinding(life, call context.Context, b SessionBinding, spec resource.SessionSpec) {
 	stop, err := s.store.claimStop(life, b.ID)
 	if err != nil {
 		return
@@ -145,7 +133,7 @@ func (s *Store) finishStop(ctx context.Context, bindingID string, stop StopReque
 	return err
 }
 
-func (s *Server) dispatchStop(ctx context.Context, b Binding, spec resource.SessionSpec, stop *StopRequest) {
+func (s *Server) dispatchStop(ctx context.Context, b SessionBinding, spec resource.SessionSpec, stop *StopRequest) {
 	stop.Status = "blocked"
 	c, err := s.massClient()
 	if err != nil {
@@ -191,7 +179,7 @@ func (s *Server) dispatchStop(ctx context.Context, b Binding, spec resource.Sess
 	}
 }
 
-func recordStopObservation(ctx context.Context, sub *client.Subscription, b Binding, stop *StopRequest) {
+func recordStopObservation(ctx context.Context, sub *client.Subscription, b SessionBinding, stop *StopRequest) {
 	observe, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	for {

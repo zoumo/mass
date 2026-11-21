@@ -8,8 +8,7 @@ import { BatchSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace'
 
 const apiPrefix = '/v1/observer/'
 const apiCollections = new Set([
-  'bindings',
-  'executions',
+  'session-bindings',
   'internal-events',
   'issues',
   'messages',

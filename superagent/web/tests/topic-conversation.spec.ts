@@ -88,12 +88,11 @@ test('reads Issue creation and Issue Session dispatch separately, with real grou
   const startup = timeline.getByRole('article').filter({ hasText: 'Verify sample build' })
   await expect(startup.getByRole('group', { name: '发送方' })).toHaveText('Topic Session')
   await expect(startup.getByRole('group', { name: '收件方' })).toHaveText('Issue Session')
-  await expect(startup.locator('header code')).toHaveText('mass-t1-i1-e1')
-  await expect(startup.getByText('第 1 次', { exact: true })).toBeVisible()
-  await startup.getByRole('link', { name: /启动 Execution/ }).click()
+  await expect(startup.locator('header code')).toHaveText(/^evt_/)
+  await startup.getByRole('link', { name: /启动 Issue Session/ }).click()
   await expect(details.getByText('Session 已受理', { exact: true })).toBeVisible()
   await expect(details.getByText('artifacts/build-notes.md', { exact: true })).toBeVisible()
-  await expect(details.getByRole('link', { name: '查看 Execution →' })).toHaveAttribute('href', /view=executions&id=/)
+  await expect(details.getByRole('link', { name: '查看 SessionBinding →' })).toHaveAttribute('href', /view=session-bindings&id=/)
   await expect(details.getByRole('link', { name: '查看事件记录 →' })).toHaveAttribute('href', /view=internal-events&id=/)
 
   await timeline.getByRole('link', { name: /目标更新/ }).click()
@@ -167,11 +166,11 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   expect(Math.abs(await anchorOffset() - offset)).toBeLessThan(2)
   await expect(reading.getByRole('link', { name: /Conversation pipeline/ })).toHaveAttribute('aria-current', 'true')
 
-  const milestones = entries.filter({ hasText: /Original input conversation-routed|创建 Issue.*Verify conversation build|启动 Execution|Original input conversation-direct|Conversation build verified/ })
+  const milestones = entries.filter({ hasText: /Original input conversation-routed|创建 Issue.*Verify conversation build|启动 Issue Session|Original input conversation-direct|Conversation build verified/ })
   await expect(milestones).toHaveText([
     /Router.+Original input conversation-routed/,
     /Topic.*Issue.*创建 Issue.*Verify conversation build/,
-    /Topic.*Issue Session.*启动 Execution.*Verify conversation build/,
+    /Topic.*Issue Session.*启动 Issue Session.*Verify conversation build/,
     /Core.+Original input conversation-direct/,
     /Issue Session.*Topic.*申请验收.*Conversation build verified/,
   ])
@@ -182,9 +181,10 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   const details = reading.getByRole('complementary', { name: '消息详情' })
   await expect(details.getByText('All conversation build checks passed.')).toBeVisible()
   await expect(details.getByText('artifacts/conversation.log')).toBeVisible()
+  await expect(details.getByText('当前报告', { exact: true })).toBeVisible()
   await expect(details.getByText('待 Topic 验收')).toBeVisible()
   await expect(details.getByRole('link', { name: '查看 Issue →' })).toHaveAttribute('href', /perspective=issue&id=/)
-  await expect(details.getByRole('link', { name: '查看 Execution →' })).toHaveAttribute('href', /view=executions&id=/)
+  await expect(details.getByRole('link', { name: '查看 SessionBinding →' })).toHaveAttribute('href', /view=session-bindings&id=/)
   await expect(details.getByRole('link', { name: '查看 Report →' })).toHaveAttribute('href', /view=reports&id=/)
   await expect(details.getByRole('link', { name: '查看启动事件 →' })).toHaveAttribute('href', /view=internal-events&id=/)
   await reading.reload()
@@ -204,6 +204,7 @@ test('reads Issue acceptance from the saved completion alongside its Issue Repor
   await timeline.getByRole('link', { name: /Sample build verified/ }).click()
   const details = page.getByRole('complementary', { name: '消息详情' })
   await expect(details.getByText('Build exited with code 0.')).toBeVisible()
+  await expect(details.getByText('历史报告', { exact: true })).toBeVisible()
   await expect(details.getByRole('heading', { name: 'Issue 已验收' })).toBeVisible()
   await expect(details.getByText('Reviewed the sample build log')).toBeVisible()
 })

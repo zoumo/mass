@@ -13,7 +13,7 @@ import './topic.css'
 
 const actions = {
   routed_message: '投往 Topic', route_request: 'Topic 退回', issue_created: '创建 Issue',
-  execution_started: '启动 Execution', goal_notification: '通知 Issue Session 当前目标版本',
+  issue_session_started: '启动 Issue Session', goal_notification: '通知 Issue Session 当前目标版本',
   issue_session_update: '通知 Issue Session 继续', context_supplement: '补充 Issue Session 上下文',
   report_submitted: '提交报告', blocker_resolved: '解除阻塞', completion: '业务验收',
   cancellation: '取消 Issue', reopening: '重开 Issue', issue_snapshot: '已保存的 Issue 状态',
@@ -21,12 +21,12 @@ const actions = {
 
 type Event = {
   id: string; kind: keyof typeof actions; at: string; actor?: string; traceAssociations?: TraceAssociation[]
-  title?: string; issueId?: string; messageId?: string; executionId?: string; reportId?: string
-  eventId?: string; returnedEventId?: string; bindingId?: string; blockerId?: string
-  summary?: string; status?: string; issueStatus?: string; goalRevision?: number; generation?: number
+  title?: string; issueId?: string; messageId?: string; sessionBindingId?: string; reportId?: string
+  eventId?: string; returnedEventId?: string; blockerId?: string
+  summary?: string; status?: string; issueStatus?: string; goalRevision?: number; historical?: boolean
 }
 type Detail = WorkbenchRow & {
-  details?: string; evidence?: string[]; resolvedBlockers?: {
+  details?: string; evidence?: string[]; current?: boolean; resolvedBlockers?: {
     id: string; reason: string; resolution?: { at: string; reason: string; messageId?: string }
   }[]
   body?: string
@@ -72,10 +72,11 @@ function MessageFacts({ row }: { row: Event }) {
 
 function IssueFacts({ row }: { row: Event }) {
   const notification = ['goal_notification','issue_session_update','context_supplement'].includes(row.kind)
-  const collection = row.reportId ? 'reports' : row.kind === 'execution_started' ? 'executions' : notification ? 'internal-events' : 'issues'
-  const id = row.reportId || (row.kind === 'execution_started' ? row.executionId : notification ? row.eventId : row.issueId)
+  const collection = row.reportId ? 'reports' : row.kind === 'issue_session_started' ? 'session-bindings' : notification ? 'internal-events' : 'issues'
+  const id = row.reportId || (row.kind === 'issue_session_started' ? row.sessionBindingId : notification ? row.eventId : row.issueId)
   const detail = useRecord<Detail>(collection + '/' + encodeURIComponent(id!))
   const data = detail.data
+  const currentReport = data?.current ?? (row.historical ? false : undefined)
   const change = row.kind === 'completion' ? data?.completion : row.kind === 'cancellation' ? data?.cancellation : row.kind === 'reopening' ? data?.reopening : undefined
   const changeTime = change && ('completedAt' in change ? change.completedAt : change.at)
   const blocker = data?.resolvedBlockers?.find(item => item.id === row.blockerId && item.resolution?.at === row.at)
@@ -84,9 +85,9 @@ function IssueFacts({ row }: { row: Event }) {
     {!data && !detail.error && <p>正在读取详情…</p>}
     <dl>
       <Fact label={row.kind === 'issue_snapshot' ? '快照时间' : '记录时间'}>{row.at}</Fact>
-      {row.bindingId && <Fact label="主体绑定">{row.bindingId}</Fact>}
+      {row.sessionBindingId && <Fact label="SessionBinding">{row.sessionBindingId}</Fact>}
       {row.goalRevision && <Fact label="记录的目标版本">{row.goalRevision}</Fact>}
-      {row.generation && <Fact label="执行代数">{row.generation}</Fact>}
+      {currentReport !== undefined && <Fact label="报告状态">{currentReport ? '当前报告' : '历史报告'}</Fact>}
       {row.summary && <Fact label="报告摘要">{data?.summary || row.summary}</Fact>}
       {data?.details && <Fact label="报告详情">{data.details}</Fact>}
       {data?.evidence?.length ? <Fact label="报告证据">{data.evidence.join('\n')}</Fact> : null}
@@ -105,7 +106,7 @@ function IssueFacts({ row }: { row: Event }) {
     <div className="topic-links">
       <a href={viewHref('issue',row.issueId)}>查看此 Issue →</a>
       {row.reportId && <a href={recordHref('reports',{ id: row.reportId })}>查看报告 →</a>}
-      {row.executionId && <a href={recordHref('executions',{ id: row.executionId })}>查看执行 →</a>}
+      {row.sessionBindingId && <a href={recordHref('session-bindings',{ id: row.sessionBindingId })}>查看 SessionBinding →</a>}
       {row.eventId && <a href={recordHref('internal-events',{ id: row.eventId })}>查看事件 →</a>}
       {blocker?.resolution?.messageId && <a href={viewHref('message',blocker.resolution.messageId)}>解除依据消息 →</a>}
     </div>
@@ -136,19 +137,19 @@ function topicLane(row: Event, topic: FlowNode): FlowLane {
   }
 
   const issue: FlowNode = { kind:'issue', label:row.title || row.issueId || 'Issue', href:row.issueId ? viewHref('issue',row.issueId) : undefined }
-  const execution: FlowNode = { kind:'execution', label:row.generation ? 'Issue Session · 第 ' + row.generation + ' 代' : 'Issue Session',
-    href:row.executionId ? recordHref('executions',{ id:row.executionId }) : undefined }
+  const session: FlowNode = { kind:'session', label:'Issue Session',
+    href:row.sessionBindingId ? recordHref('session-bindings',{ id:row.sessionBindingId }) : undefined }
   const actor: FlowNode = row.actor === 'topic' ? topic : { kind:'state', label:actors[row.actor || ''] || '主体未记录' }
   if (row.kind === 'report_submitted') {
     const report: FlowNode = { kind:'report', label:row.summary || '报告', href:row.reportId ? recordHref('reports',{ id:row.reportId }) : undefined }
-    return lane([execution,report,issue], ['提交报告','报告所属 Issue'])
+    return lane([session,report,issue], ['提交报告','报告所属 Issue'])
   }
   if (row.kind === 'issue_snapshot') {
     return lane([issue,{ kind:'state', label:stateLabel(row.issueStatus) }], ['快照状态'])
   }
-  if (row.executionId) {
+  if (row.sessionBindingId) {
     const label = row.kind === 'goal_notification' && row.goalRevision ? '通知目标版本 ' + row.goalRevision : actions[row.kind]
-    return lane([actor,execution,issue], [label,'执行所属 Issue'])
+    return lane([actor,session,issue], [label,'会话所属 Issue'])
   }
   return lane([actor,issue], [actions[row.kind]])
 }
@@ -223,7 +224,7 @@ function TopicDetail({ id, filter }: {id: string; filter: keyof typeof categorie
         <p>{t.completion.reason}</p>{t.completion.evidence?.map((ref,i) => <p key={i}>{ref}</p>)}</details>}
       <nav className="topic-links" aria-label="Topic 关联记录">
         <a href={viewHref('issue','',{ topicId:id })}>所属 Issue →</a><a href={metricsHref('topic', id)}>工具用量 →</a>
-        {t.bindingId && <a href={recordHref('bindings',{id:t.bindingId})}>查看 Session →</a>}
+        {t.sessionBindingId && <a href={recordHref('session-bindings',{id:t.sessionBindingId})}>查看 Session →</a>}
         <a href={recordHref('subscriptions',{topicId:id})}>来源订阅 →</a>
         <a href={recordHref('pull-requests',{topicId:id})}>关联 PR →</a>
         <a href={recordHref('outbox',{topicId:id})}>渠道回执 →</a>

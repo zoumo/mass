@@ -61,7 +61,7 @@ type OutboxReceipt struct {
 	Uncertain      bool   `json:"uncertain,omitempty"`
 }
 
-func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (_ json.RawMessage, retErr error) {
+func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (_ json.RawMessage, retErr error) {
 	if b.Role != "router" && b.Role != "topic" {
 		return nil, problem("forbidden", "only Router and Topic can reply")
 	}
@@ -168,7 +168,7 @@ func replyAddressPresent(channel *Channel) bool {
 	return channel.Type != "dws" && len(channel.Address) > 0
 }
 
-func replyTarget(ctx context.Context, tx *sql.Tx, b Binding, req ReplyRequest) (Message, error) {
+func replyTarget(ctx context.Context, tx *sql.Tx, b SessionBinding, req ReplyRequest) (Message, error) {
 	var message Message
 	query := "SELECT body FROM trigger_messages WHERE TRUE"
 	var args []any
@@ -213,7 +213,7 @@ func replyTarget(ctx context.Context, tx *sql.Tx, b Binding, req ReplyRequest) (
 	return message, nil
 }
 
-func validateBlockerReply(ctx context.Context, tx *sql.Tx, b Binding, ref BlockerRef) error {
+func validateBlockerReply(ctx context.Context, tx *sql.Tx, b SessionBinding, ref BlockerRef) error {
 	if b.Role != "topic" {
 		return problem("forbidden", "only Topic can attach a blocker to a reply")
 	}

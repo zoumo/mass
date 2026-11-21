@@ -47,14 +47,14 @@ func mutationFixture(tool string, args any) (string, any) {
 		return "cancel_followup", fields
 	case "issue_update_requirements", "issue_update_blockers":
 		if string(fields["notifyIssueSession"]) == "true" {
-			put("executionInput", map[string]string{"mode": "continue"})
+			put("sessionInput", map[string]string{"mode": "continue"})
 		}
 		delete(fields, "notifyIssueSession")
 		if tool == "issue_update_blockers" {
 			put("blockers", move("add", "resolve", "unblockedStatus"))
 		}
 	case "issue_session_input":
-		put("executionInput", move("mode", "content"))
+		put("sessionInput", move("mode", "content"))
 		if materials, ok := fields["materials"]; ok {
 			put("materials", map[string]json.RawMessage{"add": materials})
 		}

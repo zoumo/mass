@@ -186,7 +186,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	start := issueInput(f.dir, "http-mcp-issue")
 	start.Start = true
 	work := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", start)
-	issueBinding := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	issueBinding := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 	issueToken := roleToken(t, f, issueBinding)
 
 	call := func(token, method string, id, params any) (int, []byte) {
@@ -203,7 +203,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 		{issueToken, "issue", "submit_report", "create_issue"},
 	} {
 		identity := initializeMCP(t, p.endpoint, check.token)
-		var binding core.Binding
+		var binding core.SessionBinding
 		require.NoError(t, json.Unmarshal(identity, &binding))
 		require.Equal(t, check.role, binding.Role)
 		status, body := call(check.token, "notifications/initialized", nil, nil)
@@ -380,7 +380,7 @@ func TestMCPToolUsageByAuthenticatedCaller(t *testing.T) {
 	start.Start = true
 	created := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", start)
 	issue := created.Issue
-	issueBinding := waitBinding(t, p, "issue", created.Execution.ID, "ready")
+	issueBinding := waitBinding(t, p, "issue", created.SessionBinding.ID, "ready")
 	issueToken := roleToken(t, f, issueBinding)
 	topicArgs := map[string]any{
 		"operationId": "topic-edit", "issueId": issue.ID, "expectedRevision": issue.Revision,
@@ -408,14 +408,16 @@ func TestMCPToolUsageByAuthenticatedCaller(t *testing.T) {
 	rollup := usagePage{Count: 2, Items: []usageRow{issueRow, topicRow}}
 	require.Equal(t, rollup, readRecord[usagePage](t, p, usage+"&topicId="+topicID))
 	require.Equal(t, rollup, readRecord[usagePage](t, p, usage+"&issueId="+issue.ID))
+	bindingFilter := "&sessionBindingId=" + issueBinding.ID
+	require.Equal(t, usagePage{Count: 1, Items: []usageRow{issueRow}}, readRecord[usagePage](t, p, usage+bindingFilter))
 
 	require.Equal(t, topicEdit.Issue, roleWork[core.WorkReceipt](t, p, topicToken, "update_issue", topicArgs).Issue)
 	topicArgs["operationId"] = "stale-edit"
 	status, body := requestMCPTool(t, p.endpoint, "update_issue", topicToken, topicArgs)
 	errorCode(t, status, body, http.StatusConflict, "conflict")
 	type callRow struct {
-		Role, CallerID, IssueID, TargetIssueID, ExecutionID, EventID, Outcome, TraceID, SpanID string
-		Replayed, Changed                                                                      bool
+		Role, CallerID, IssueID, TargetIssueID, SessionBindingID, EventID, Outcome, TraceID, SpanID string
+		Replayed, Changed                                                                           bool
 	}
 	type callPage struct {
 		Items      []callRow
@@ -433,8 +435,9 @@ func TestMCPToolUsageByAuthenticatedCaller(t *testing.T) {
 	require.Len(t, second.Items, 2)
 	require.Zero(t, second.NextBefore)
 	require.Equal(t, issue.ID, second.Items[0].IssueID)
-	require.Equal(t, created.Execution.ID, second.Items[0].ExecutionID)
+	require.Equal(t, created.SessionBinding.ID, second.Items[0].SessionBindingID)
 	require.Empty(t, second.Items[0].TargetIssueID)
+	require.Equal(t, callPage{Items: []callRow{second.Items[0]}}, readRecord[callPage](t, p, calls+bindingFilter))
 	original := second.Items[1]
 	require.Equal(t, topicEvent, original.EventID)
 	require.Equal(t, issue.ID, original.TargetIssueID)

@@ -22,7 +22,7 @@ const mcpMaxRequestBytes = 1 << 20
 func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var parent trace.SpanContext
-	var binding Binding
+	var binding SessionBinding
 	var observed *telemetryResponse
 	observe := func() {
 		if s.store.telemetry.enabled {
@@ -156,7 +156,7 @@ func mcpHTTPError(id json.RawMessage, code int64, message string) mcpHTTPRespons
 	return mcpHTTPResponse{JSONRPC: "2.0", ID: id, Error: &rpc2.Error{Code: code, Message: message}}
 }
 
-func (s *Server) mcpRequest(request mcpHTTPRequest, b Binding) (any, error) {
+func (s *Server) mcpRequest(request mcpHTTPRequest, b SessionBinding) (any, error) {
 	switch request.Method {
 	case "initialize":
 		if b.State == "revoked" && b.Role != "issue" {
@@ -203,7 +203,7 @@ func (s *Server) mcpRequest(request mcpHTTPRequest, b Binding) (any, error) {
 var mcpToolsByRole = map[string][]mcpTool{
 	"router": roleTools("router"),
 	"topic":  roleTools("topic"),
-	"issue": roleTools("issue"),
+	"issue":  roleTools("issue"),
 }
 
 var knownMCPTools = func() map[string]bool {
@@ -222,7 +222,7 @@ type mcpToolCall struct {
 	metricName string
 }
 
-func prepareMCPTool(params *json.RawMessage, b Binding) (mcpToolCall, error) {
+func prepareMCPTool(params *json.RawMessage, b SessionBinding) (mcpToolCall, error) {
 	var p struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`

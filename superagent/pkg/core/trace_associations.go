@@ -32,7 +32,6 @@ var (
 	timerRevision    = tracePhase{"timers", "revision"}
 	issueCreation    = tracePhase{"issues", "creation"}
 	issueLifecycle   = tracePhase{"issue-lifecycle", "transition"}
-	executionCreate  = tracePhase{"executions", "creation"}
 	outboxEnqueue    = tracePhase{"outbox", "enqueue"}
 )
 
@@ -111,7 +110,7 @@ func observerTraceProjection(collection, id, body string) string {
 		collection, id = "internal-events", "json_extract("+body+",'$.eventId')"
 	case "issues":
 		association = issueCreationTraces(id)
-	case "messages", "internal-events", "timers", "executions", "outbox":
+	case "messages", "internal-events", "timers", "session-bindings", "outbox":
 	default:
 		return body
 	}

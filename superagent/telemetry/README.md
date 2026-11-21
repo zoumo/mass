@@ -84,11 +84,12 @@ Core stores one call record for each authenticated tool attempt. Query
 counts. Query `?topicId=TOPIC_ID` for the Topic and its Issue Agents together.
 Use `?role=issue&callerId=ISSUE_ID` for one Issue Agent. Filter by `tool` and
 RFC3339 `from` and `until` to compare runs. The `/calls` endpoint adds individual
-attempts and their trace and span IDs.
+attempts and their trace and span IDs. Use `?sessionBindingId=SESSION_BINDING_ID`
+to inspect calls made under one binding.
 
 In OpenObserve, filter `POST /mcp` spans by `superagent.caller.id` and
 `superagent.role`. Issue spans include the owning `superagent.topic.id` and
-`superagent.execution.id`. When a Topic acts on a verified Issue, its span
+`superagent.session_binding.id`. When a Topic acts on a verified Issue, its span
 includes `superagent.target.issue.id`. Supported event-driven actions carry
 `superagent.event.id` and can continue that event's trace. Metric labels use
 role, tool, outcome, and bounded action values. Core counts remain available if
@@ -157,7 +158,7 @@ sum by (superagent_observer_view) (superagent_observer_view_duration_count{servi
 
 ## Find a trace from a Core record
 
-Open a Message, Internal Event, Scheduled Task, Execution, or Outbox record
+Open a Message, Internal Event, Scheduled Task, SessionBinding, or Outbox record
 in Observer Diagnostics. Select its Trace ID to open the waterfall in Observer
 when `observerTrace` is configured.
 With Core tracing enabled, the database records W3C Trace Context in one

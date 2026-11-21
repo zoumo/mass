@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -44,6 +43,7 @@ type routeDriver struct {
 	mu            sync.Mutex
 	opens         int
 	failOpens     int
+	allowResume   bool
 	inputs        map[string][]runtime.Input
 	sources       map[string]events.Source
 	injectErr     error
@@ -68,8 +68,15 @@ func (d *routeDriver) OpenSession(_ context.Context, a runtime.Address, _ runtim
 	return runtime.DriverSession{SessionID: id, Source: source, Capabilities: runtime.Capabilities{"textInput": true}}, nil
 }
 
-func (*routeDriver) ResumeSession(context.Context, string, runtime.Address, runtime.SessionSpec) (runtime.DriverSession, error) {
-	return runtime.DriverSession{}, errors.New("unexpected resume")
+func (d *routeDriver) ResumeSession(_ context.Context, id string, _ runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.allowResume {
+		return runtime.DriverSession{}, errors.New("unexpected resume")
+	}
+	source := events.NewSource()
+	d.sources[id] = source
+	return runtime.DriverSession{SessionID: id, Source: source, Capabilities: runtime.Capabilities{"textInput": true}}, nil
 }
 
 func (*routeDriver) LoadSession(context.Context, string, runtime.Address, runtime.SessionSpec, string) error {
@@ -119,11 +126,16 @@ type routeBoundary struct {
 
 func newRouteBoundary(t *testing.T) *routeBoundary {
 	t.Helper()
+	return newRouteBoundaryWithRuntime(t, "fixture")
+}
+
+func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundary {
+	t.Helper()
 	st, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
 	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, sources: map[string]events.Source{}}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": routeFactory{d}}))
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
+	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}))
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
 	require.NoError(t, err)
 	api, err := transport.New(svc, transport.Options{LocalOnly: true, WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})
 	require.NoError(t, err)
@@ -253,19 +265,30 @@ func (f *fixture) execution(boundary *routeBoundary) {
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
 }
 
-func bindings(t *testing.T, p *process) []core.Binding {
+func bindings(t *testing.T, p *process) []core.SessionBinding {
 	t.Helper()
-	_, data := request(t, http.MethodGet, p.endpoint, "/v1/observer/bindings", "", nil)
+	_, data := request(t, http.MethodGet, p.endpoint, "/v1/observer/session-bindings", "", nil)
 	var page struct {
-		Items []core.Binding `json:"items"`
+		Items []core.SessionBinding `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(data, &page))
 	return page.Items
 }
 
-func waitBinding(t *testing.T, p *process, role, owner, state string) core.Binding {
+func issueBindings(t *testing.T, p *process) []core.SessionBinding {
 	t.Helper()
-	var found core.Binding
+	var result []core.SessionBinding
+	for _, b := range bindings(t, p) {
+		if b.Role == "issue" {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+func waitBinding(t *testing.T, p *process, role, identity, state string) core.SessionBinding {
+	t.Helper()
+	var found core.SessionBinding
 	t.Cleanup(func() {
 		if t.Failed() && found.State != state {
 			t.Logf("last binding at failed readiness check: %+v", found)
@@ -273,7 +296,11 @@ func waitBinding(t *testing.T, p *process, role, owner, state string) core.Bindi
 	})
 	require.Eventually(t, func() bool {
 		for _, b := range bindings(t, p) {
-			if b.Role == role && b.OwnerID == owner {
+			id := b.OwnerID
+			if b.Role == "issue" {
+				id = b.ID
+			}
+			if b.Role == role && id == identity {
 				found = b
 				if b.State == state {
 					return true
@@ -281,11 +308,11 @@ func waitBinding(t *testing.T, p *process, role, owner, state string) core.Bindi
 			}
 		}
 		return false
-	}, 15*time.Second, 50*time.Millisecond, "binding role=%s owner=%s state=%s", role, owner, state)
+	}, 15*time.Second, 50*time.Millisecond, "binding role=%s identity=%s state=%s", role, identity, state)
 	return found
 }
 
-func roleToken(t *testing.T, f *fixture, b core.Binding) string {
+func roleToken(t *testing.T, f *fixture, b core.SessionBinding) string {
 	t.Helper()
 	path := testCapabilityPath(f, b)
 	data, err := os.ReadFile(path)
@@ -298,7 +325,7 @@ func roleToken(t *testing.T, f *fixture, b core.Binding) string {
 	return c.Token
 }
 
-func testCapabilityPath(f *fixture, b core.Binding) string {
+func testCapabilityPath(f *fixture, b core.SessionBinding) string {
 	id := b.ID
 	if b.CapabilityFileID != "" {
 		id = b.CapabilityFileID
@@ -426,7 +453,7 @@ func TestRoutingPublicProcess(t *testing.T) {
 	status, data = requestMCPTool(t, p.endpoint, "list_topics", token, map[string]string{"query": topicID, "role": "issue"})
 	require.Equal(t, http.StatusBadRequest, status, string(data))
 	summary := roleCall(t, p, token, "list_topics", map[string]string{"query": topicID})
-	require.NotContains(t, string(summary), "bindingId")
+	require.NotContains(t, string(summary), "sessionBindingId")
 	require.NotContains(t, string(summary), "workspace")
 	// Return bypasses the existing single subscription and increments the round.
 	returned := roleCall(t, p, topicToken, "decline_message", core.DeclineMessageRequest{EventID: second.EventID, Reason: "outside scope"})
@@ -497,7 +524,7 @@ type stdioClient struct {
 	stderr bytes.Buffer
 }
 
-func startRoleMCP(t *testing.T, f *fixture, b core.Binding) *stdioClient {
+func startRoleMCP(t *testing.T, f *fixture, b core.SessionBinding) *stdioClient {
 	t.Helper()
 	c := &stdioClient{t: t}
 	c.cmd = exec.CommandContext(context.Background(), f.coreExecutable(), "mcp", "--capability-file", testCapabilityPath(f, b))
@@ -542,7 +569,7 @@ func (c *stdioClient) call(method string, params any) map[string]json.RawMessage
 	return result
 }
 
-func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Binding, topicID, otherID string) {
+func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.SessionBinding, topicID, otherID string) {
 	t.Helper()
 	r := startRoleMCP(t, f, router)
 	s := startRoleMCP(t, f, topic)
@@ -559,14 +586,14 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Binding
 	require.NotContains(t, string(listed["result"]), "binding_get")
 	mcpWorkError(t, r, "binding_get", "forbidden", struct{}{})
 	mcpWorkError(t, s, "binding_get", "forbidden", struct{}{})
-	for _, binding := range []core.Binding{router, topic} {
+	for _, binding := range []core.SessionBinding{router, topic} {
 		identity := initializeMCP(t, p.endpoint, roleToken(t, f, binding))
 		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"role":%q,"ownerId":%q,"generation":%d}`,
 			binding.ID, binding.Role, binding.OwnerID, binding.Generation), string(identity))
 	}
 	got := r.call("tools/call", map[string]any{"name": "list_topics", "arguments": map[string]string{"query": topicID}})
 	require.Empty(t, got["error"])
-	require.NotContains(t, string(got["result"]), "bindingId")
+	require.NotContains(t, string(got["result"]), "sessionBindingId")
 	mcpWorkError(t, s, "get_topic", "invalid_argument", map[string]string{"topicId": otherID})
 	mcpWorkError(t, s, "route_messages", "forbidden", struct{}{})
 	incoming := input("mcp-ignore")
@@ -770,8 +797,8 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	create.Materials = []core.Material{{Label: "Build notes", URI: "artifacts/build-notes.md"}}
 	create.Start = true
 	work := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
-	issue := waitBinding(t, p, "issue", work.Execution.ID, "ready")
-	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+	issue := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
+	waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
 	roleWork[core.Topic](t, p, topicToken, "update_topic", prUpdate("observer-pr-without-input", 1, internalPR))
 	work.Issue = roleWork[core.WorkReceipt](t, p, roleToken(t, f, issue), "update_issue",
 		prUpdate("observer-pr-with-input", work.Issue.Revision, firstPRAlias)).Issue
@@ -779,7 +806,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	report := roleWork[core.Report](t, p, roleToken(t, f, issue), "submit_report",
 		core.ReportRequest{
 			OperationID: "observer-report", Kind: "ready", Summary: "Sample build verified",
-			Details: "Build exited with code 0.", Evidence: []string{"artifacts/build.log"}, GoalRevision: work.Execution.Revision,
+			Details: "Build exited with code 0.", Evidence: []string{"artifacts/build.log"}, GoalRevision: work.SessionBinding.StartGoalRevision,
 		})
 	waitWorkEvent(t, p, report.EventID, "sent")
 	roleWork[core.WorkReceipt](t, p, topicToken, "issue_complete", core.CompleteIssueRequest{
@@ -792,11 +819,11 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	create.OperationID = "observer-blocked"
 	create.Title = "Review blocked build"
 	blocked := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
-	waitWorkEvent(t, p, blocked.Execution.StartEventID, "sent")
-	blockedIssue := waitBinding(t, p, "issue", blocked.Execution.ID, "ready")
+	waitWorkEvent(t, p, blocked.SessionBinding.StartEventID, "sent")
+	blockedIssue := waitBinding(t, p, "issue", blocked.SessionBinding.ID, "ready")
 	roleWork[core.Report](t, p, roleToken(t, f, blockedIssue), "submit_report", core.ReportRequest{
 		OperationID: "observer-blocked-report", Kind: "progress", Summary: "Archive review in progress",
-		GoalRevision: blocked.Execution.Revision,
+		GoalRevision: blocked.SessionBinding.StartGoalRevision,
 	})
 	updated := roleWork[core.WorkReceipt](t, p, topicToken, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "observer-update-requirements", IssueID: blocked.Issue.ID, ExpectedRevision: blocked.Issue.Revision,
@@ -822,11 +849,11 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 
 	create.OperationID, create.Title = "observer-canceled", "Canceled sample validation"
 	canceled := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
-	waitWorkEvent(t, p, canceled.Execution.StartEventID, "sent")
+	waitWorkEvent(t, p, canceled.SessionBinding.StartEventID, "sent")
 	cancel := issueLifecycle("observer-cancel", canceled.Issue)
 	cancel.Reason = "The sample build was withdrawn"
 	stopped := roleWork[core.WorkReceipt](t, p, topicToken, "issue_cancel", cancel)
-	_ = waitObservedStop(t, p, "executions", stopped.Execution.ID)
+	_ = waitObservedStop(t, p, "session-bindings", stopped.SessionBinding.ID)
 	channel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/send" {
 			http.NotFound(w, r)
@@ -1012,17 +1039,22 @@ func TestRoutingPreviousSchemaRefused(t *testing.T) {
 	path := filepath.Join(f.data, "core.sqlite")
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	// This fixture sets only the previous schema header; no business records are manufactured.
-	_, err = db.ExecContext(t.Context(), "PRAGMA application_id=1398096210; PRAGMA user_version=22;")
+	defer func() { require.NoError(t, db.Close()) }()
+	_, err = db.ExecContext(t.Context(), "PRAGMA application_id=1398096210; PRAGMA user_version=23;")
 	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	before, err := os.ReadFile(path)
+	_, err = db.ExecContext(t.Context(), "PRAGMA journal_mode=WAL; CREATE TABLE executions (id TEXT PRIMARY KEY);")
 	require.NoError(t, err)
+	before := make(map[string][]byte)
+	for _, file := range []string{path, path + "-wal", path + "-shm"} {
+		before[file], err = os.ReadFile(file)
+		require.NoError(t, err)
+	}
 	f.fails("unsupported")
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, sha256.Sum256(before), sha256.Sum256(after))
-	t.Log("schema 22 refused; previous database bytes unchanged")
+	for file, want := range before {
+		got, err := os.ReadFile(file)
+		require.NoError(t, err)
+		require.Equal(t, want, got, file)
+	}
 }
 
 func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
@@ -1187,7 +1219,7 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 		Create: &core.NewTopic{Title: "Separate scope", Workspace: f.dir}, MessageIDs: req.MessageIDs,
 	})
 	decision := decide(t, p, routerToken, req)
-	targets := map[string]core.Binding{}
+	targets := map[string]core.SessionBinding{}
 	for _, target := range decision.Targets {
 		binding := waitBinding(t, p, "topic", target.TopicID, "ready")
 		targets[binding.SessionID] = binding

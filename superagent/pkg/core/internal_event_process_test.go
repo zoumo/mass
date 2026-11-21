@@ -17,9 +17,9 @@ import (
 )
 
 type eventParty struct {
-	Kind        string `json:"kind"`
-	TopicID     string `json:"topic_id,omitempty"`
-	ExecutionID string `json:"execution_id,omitempty"`
+	Kind             string `json:"kind"`
+	TopicID          string `json:"topic_id,omitempty"`
+	SessionBindingID string `json:"session_binding_id,omitempty"`
 }
 
 type internalEvent struct {
@@ -245,7 +245,7 @@ func TestInternalEventRestartAfterLostReceipt(t *testing.T) {
 	t.Log("Dropped massd acceptance after the native reply, killed Core before settlement, and recovered dispatching and pending IDs. A second restart skipped sent items.")
 }
 
-func TestInternalEventRetiredExecution(t *testing.T) {
+func TestInternalEventRetiredSessionBinding(t *testing.T) {
 	peer := newNativeSubmitPeer(t)
 	endpoint, _ := startEventTestMassd(t, peer)
 	f, operatorFile := eventFixture(t, endpoint)
@@ -253,8 +253,8 @@ func TestInternalEventRetiredExecution(t *testing.T) {
 	topic, _ := startReminderTopic(t, f, p, peer)
 	work, old, start := startReminderWorker(t, f, p, peer, topic)
 	start.accept()
-	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
-	recipient := eventParty{Kind: "issue", ExecutionID: work.Execution.ID}
+	waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
+	recipient := eventParty{Kind: "issue", SessionBindingID: work.SessionBinding.ID}
 	first := newInternalEvent("retire-dispatching", "context_supplement", recipient)
 	queueInternal(t, p, first)
 	held := peer.next(t, "thread/inject_items")
@@ -268,7 +268,7 @@ func TestInternalEventRetiredExecution(t *testing.T) {
 	for _, id := range []string{first.ID, pending.ID} {
 		require.Empty(t, waitInternalEvent(t, f, id, "superseded").SentAt)
 	}
-	_ = waitObservedStop(t, p, "executions", work.Execution.ID)
+	_ = waitObservedStop(t, p, "session-bindings", work.SessionBinding.ID)
 	release := recoveryFor("release-retired-issue", "replace", old.ID)
 	release.StopRuntime = true
 	require.Equal(t, "runtime_stopped", recoverRoleBinding(t, p, operatorFile, release).Close.Method)
@@ -287,16 +287,16 @@ func TestInternalEventRetiredExecution(t *testing.T) {
 	waitInternalEvent(t, f, first.ID, "superseded")
 	reopened := mcpWork[core.WorkReceipt](t, topic, "issue_reopen", issueLifecycle("reopen", canceled.Issue))
 	replacement := mcpWork[core.WorkReceipt](t, topic, "start_issue", startRequest("replace", reopened.Issue))
-	require.NotEqual(t, work.Execution.ID, replacement.Execution.ID)
-	b := waitBinding(t, p, "issue", replacement.Execution.ID, "ready")
+	require.NotEqual(t, work.SessionBinding.ID, replacement.SessionBinding.ID)
+	b := waitBinding(t, p, "issue", replacement.SessionBinding.ID, "ready")
 	require.NotEqual(t, old.SessionID, b.SessionID)
 	onlyStart := peer.next(t, "turn/start")
-	decodeInternalBatch(t, onlyStart, replacement.Execution.StartEventID)
+	decodeInternalBatch(t, onlyStart, replacement.SessionBinding.StartEventID)
 	onlyStart.accept()
-	waitWorkEvent(t, p, replacement.Execution.StartEventID, "sent")
+	waitWorkEvent(t, p, replacement.SessionBinding.StartEventID, "sent")
 	peer.quiet(t, 400*time.Millisecond)
 	for _, id := range []string{first.ID, pending.ID} {
 		waitInternalEvent(t, f, id, "superseded")
 	}
-	t.Log("A late acceptance kept the old row superseded. Startup independently fenced a stale dispatching fixture. Issue Session replacement replayed neither old Execution item.")
+	t.Log("A late acceptance kept the old row superseded. Startup independently fenced a stale dispatching fixture. Issue Session replacement replayed neither item from the retired SessionBinding.")
 }

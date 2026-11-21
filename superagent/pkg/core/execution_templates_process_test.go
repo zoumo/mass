@@ -69,11 +69,11 @@ func TestExecutionTemplateConfig(t *testing.T) {
 }
 
 var (
-	issueModel = core.ExecutionProfile{RuntimeRef: "agent", Model: "issue-model", Effort: "medium"}
+	issueModel  = core.ExecutionProfile{RuntimeRef: "agent", Model: "issue-model", Effort: "medium"}
 	reviewModel = core.ExecutionProfile{RuntimeRef: "agent", Model: "review-model"}
 )
 
-func assertSessionProfile(t *testing.T, massd *client.Client, peer *nativeSubmitPeer, binding core.Binding, want core.ExecutionProfile) {
+func assertSessionProfile(t *testing.T, massd *client.Client, peer *nativeSubmitPeer, binding core.SessionBinding, want core.ExecutionProfile) {
 	t.Helper()
 	require.Equal(t, want, binding.ExecutionProfile)
 	var session resource.Session
@@ -94,7 +94,7 @@ func assertSessionProfile(t *testing.T, massd *client.Client, peer *nativeSubmit
 	require.Equal(t, new(false), questions)
 }
 
-func assertTemplateAccess(t *testing.T, p *process, binding core.Binding, f *fixture, mcp *stdioClient, permitted bool) {
+func assertTemplateAccess(t *testing.T, p *process, binding core.SessionBinding, f *fixture, mcp *stdioClient, permitted bool) {
 	t.Helper()
 	var result struct {
 		Tools []struct {
@@ -139,7 +139,7 @@ func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
 	defer db.Close()
 	var body, saved []byte
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT body,spec FROM session_bindings WHERE role='router'").Scan(&body, &saved))
-	var binding core.Binding
+	var binding core.SessionBinding
 	require.NoError(t, json.Unmarshal(body, &binding))
 	var spec resource.SessionSpec
 	require.NoError(t, json.Unmarshal(saved, &spec))
@@ -227,7 +227,7 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	invalid.RuntimeRef, invalid.Model = "agent", ""
 	mcpWorkError(t, topic, "create_issue", "invalid_argument", invalid)
 	require.Empty(t, page(t, p, "issues").Items)
-	require.Empty(t, page(t, p, "executions").Items)
+	require.Empty(t, issueBindings(t, p))
 	require.Len(t, bindings(t, p), 2)
 	require.Empty(t, workEvents(t, p, "issue_session_started"))
 
@@ -260,7 +260,7 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	mcpWorkError(t, topic, "start_issue", "failed_precondition", override)
 	current := readRecord[core.Issue](t, p, "issues/"+switchIssue.ID)
 	require.Equal(t, switchIssue, current)
-	require.Len(t, page(t, p, "executions").Items, 1)
+	require.Len(t, issueBindings(t, p), 1)
 	require.Len(t, bindings(t, p), 3)
 	require.Len(t, workEvents(t, p, "issue_session_started"), 1)
 
@@ -273,15 +273,15 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	p = f.start()
 	require.Equal(t, routerBinding.SessionUID, waitBinding(t, p, "router", "", "ready").SessionUID)
 	require.Equal(t, topicBinding.SessionUID, waitBinding(t, p, "topic", topicBinding.OwnerID, "ready").SessionUID)
-	recovered := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	recovered := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 	require.Equal(t, first.ID, recovered.ID)
 	require.Equal(t, first.SessionID, recovered.SessionID)
 	require.Equal(t, first.SessionUID, recovered.SessionUID)
 	assertSessionProfile(t, massd, peer, recovered, issueModel)
 	retry := mcpWork[core.WorkReceipt](t, topic, "create_issue", started)
 	require.Equal(t, work.Issue, retry.Issue)
-	require.Equal(t, work.Execution.ID, retry.Execution.ID)
-	require.Equal(t, work.Execution.BindingID, retry.Execution.BindingID)
+	require.Equal(t, work.SessionBinding.ID, retry.SessionBinding.ID)
+	require.Equal(t, work.SessionBinding.ID, retry.SessionBinding.ID)
 	require.Equal(t, keep, readRecord[core.Issue](t, p, "issues/"+keep.ID))
 	require.Equal(t, []core.IssueTemplate{
 		{ExecutionProfile: reviewModel, Description: "Review results with new guidance"},
@@ -304,9 +304,9 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	badRuntime.RuntimeRef, badRuntime.Model, badRuntime.Start = missing.RuntimeRef, missing.Model, true
 	unavailable := mcpWork[core.WorkReceipt](t, topic, "create_issue", badRuntime)
 	require.Equal(t, missing, unavailable.Issue.ExecutionProfile)
-	var pending core.Binding
+	var pending core.SessionBinding
 	require.Eventually(t, func() bool {
-		pending = readRecord[core.Binding](t, p, "bindings/"+unavailable.Execution.BindingID)
+		pending = readRecord[core.SessionBinding](t, p, "session-bindings/"+unavailable.SessionBinding.ID)
 		return pending.LastError != ""
 	}, 5*time.Second, 50*time.Millisecond)
 	require.Equal(t, missing, pending.ExecutionProfile)
@@ -316,15 +316,15 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	t.Logf("Missing Runtime preserved the selected profile and exposed %s", pending.LastError)
 }
 
-func verifyTemplateIssue(t *testing.T, p *process, massd *client.Client, peer *nativeSubmitPeer, work core.WorkReceipt, profile core.ExecutionProfile) core.Binding {
+func verifyTemplateIssue(t *testing.T, p *process, massd *client.Client, peer *nativeSubmitPeer, work core.WorkReceipt, profile core.ExecutionProfile) core.SessionBinding {
 	t.Helper()
-	require.NotNil(t, work.Execution)
-	binding := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	require.NotNil(t, work.SessionBinding)
+	binding := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 	assertSessionProfile(t, massd, peer, binding, profile)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, call.session)
-	require.Equal(t, "issue_session_started", decodeInternalBatch(t, call, work.Execution.StartEventID)[0].Kind)
+	require.Equal(t, "issue_session_started", decodeInternalBatch(t, call, work.SessionBinding.StartEventID)[0].Kind)
 	call.accept()
-	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+	waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
 	return binding
 }

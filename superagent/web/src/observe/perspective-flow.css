@@ -12,7 +12,7 @@
 .perspective-flow .flow-message { color: #43d8cc; }
 .perspective-flow .flow-router { color: #c4a8ff; }
 .perspective-flow .flow-topic { color: #82ddb4; }
-.perspective-flow .flow-issue, .perspective-flow .flow-execution { color: #aac8ef; }
+.perspective-flow .flow-issue, .perspective-flow .flow-session { color: #aac8ef; }
 .perspective-flow .flow-report, .perspective-flow .flow-state { color: #e4c88b; }
 .flow-edge { display: flex; align-items: center; gap: 3px; padding: 2px; font-size: 12px; color: #b4c9d9; }
 .flow-detail { margin-top: 5px; color: #bfcee2; font-size: 12px; }

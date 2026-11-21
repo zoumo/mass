@@ -32,7 +32,7 @@ func stringSchema() map[string]any { return map[string]any{"type": "string", "mi
 const (
 	mcpPath            = "/mcp"
 	mcpProtocolVersion = "2025-11-25"
-	mcpBindingMeta     = "mass.dev/binding"
+	mcpBindingMeta     = "mass.dev/session-binding"
 )
 
 type mcpHandler struct {
@@ -58,7 +58,7 @@ func RunMCPStdio(ctx context.Context, input io.Reader, output io.Writer, path st
 		return err
 	}
 	u, err := url.Parse(startup.Endpoint)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || net.ParseIP(u.Hostname()) == nil || startup.Token == "" || startup.BindingID == "" || startup.Generation < 1 || (startup.Role != "router" && startup.Role != "topic" && startup.Role != "issue") {
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || net.ParseIP(u.Hostname()) == nil || startup.Token == "" || startup.SessionBindingID == "" || startup.Generation < 1 || (startup.Role != "router" && startup.Role != "topic" && startup.Role != "issue") {
 		return problem("invalid_argument", "invalid startup capability")
 	}
 	h := &mcpHandler{capability: startup, http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
@@ -75,7 +75,7 @@ func RunMCPStdio(ctx context.Context, input io.Reader, output io.Writer, path st
 		return err
 	}
 	var initialized struct {
-		Meta map[string]Binding `json:"_meta"`
+		Meta map[string]SessionBinding `json:"_meta"`
 	}
 	if json.Unmarshal(raw, &initialized) != nil || !capabilityMatches(startup, initialized.Meta[mcpBindingMeta]) {
 		return problem("stale_binding", "startup capability does not match authenticated binding")

@@ -38,12 +38,12 @@ func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path str
 		s.fail(w, problem("not_found", "unknown Session preview"))
 		return
 	}
-	raw, err := s.store.Get(r.Context(), "bindings", id)
+	raw, err := s.store.Get(r.Context(), "session-bindings", id)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	var binding Binding
+	var binding SessionBinding
 	if json.Unmarshal(raw, &binding) != nil || s.config.Execution == nil || binding.SessionID == "" || binding.SessionUID == "" {
 		s.fail(w, problem("unavailable", "Session identity has not been recorded"))
 		return
@@ -106,18 +106,18 @@ func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path str
 	s.write(w, http.StatusOK, map[string]any{"events": rows, "nextCursor": page.Next, "syncedEventId": page.SyncedEventID, "observedAt": now()})
 }
 
-func matchesPreviewSession(ctx context.Context, c *client.Client, b Binding, ref resource.SessionRef) bool {
+func matchesPreviewSession(ctx context.Context, c *client.Client, b SessionBinding, ref resource.SessionRef) bool {
 	var session resource.Session
 	return c.GetSession(ctx, ref, &session) == nil &&
 		session.Status.SessionID == b.SessionID && session.Metadata.UID == b.SessionUID &&
 		session.Metadata.Namespace == b.Namespace && session.Metadata.Name == b.Name
 }
 
-func previewEventMatches(e events.SessionEvent, b Binding) bool {
+func previewEventMatches(e events.SessionEvent, b SessionBinding) bool {
 	return e.SessionID == b.SessionID && e.Namespace == b.Namespace && e.SessionName == b.Name
 }
 
-func (s *Server) streamSessionPreview(ctx context.Context, w http.ResponseWriter, sub *client.Subscription, b Binding) {
+func (s *Server) streamSessionPreview(ctx context.Context, w http.ResponseWriter, sub *client.Subscription, b SessionBinding) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	controller := http.NewResponseController(w)
 	send := func(frame sessionPreviewFrame) bool {

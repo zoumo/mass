@@ -20,9 +20,9 @@ type IssueLifecycleRequest struct {
 }
 
 type LifecycleChange struct {
-	Reason    string `json:"reason"`
-	At        string `json:"at"`
-	BindingID string `json:"bindingId"`
+	Reason           string `json:"reason"`
+	At               string `json:"at"`
+	SessionBindingID string `json:"sessionBindingId"`
 }
 
 // BindingClose records verified resource release separately from observation of
@@ -35,7 +35,7 @@ type BindingClose struct {
 }
 
 func changeIssueLifecycle(tool string, r IssueLifecycleRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		if _, err := currentTopic(ctx, tx, b); err != nil {
 			return nil, err
 		}
@@ -46,7 +46,7 @@ func changeIssueLifecycle(tool string, r IssueLifecycleRequest) workMutation {
 		if err := checkRevision(issue.ID, r.ExpectedRevision, issue.Revision); err != nil {
 			return nil, err
 		}
-		change := LifecycleChange{Reason: r.Reason, At: now(), BindingID: b.ID}
+		change := LifecycleChange{Reason: r.Reason, At: now(), SessionBindingID: b.ID}
 		if strings.TrimSpace(change.Reason) == "" {
 			return nil, problem("invalid_argument", "a lifecycle reason is required")
 		}
@@ -71,23 +71,23 @@ func cancelIssue(ctx context.Context, tx *sql.Tx, issue Issue, change LifecycleC
 	if terminal(issue.Status) {
 		return WorkReceipt{}, problem("failed_precondition", "Issue is already terminal")
 	}
-	var execution *Execution
-	if issue.CurrentExecutionID != "" {
-		x, err := retireExecution(ctx, tx, issue.CurrentExecutionID, change.At, true)
+	var retired *SessionBinding
+	if issue.CurrentSessionBindingID != "" {
+		x, err := retireIssueBinding(ctx, tx, issue, change.At, true)
 		if err != nil {
 			return WorkReceipt{}, err
 		}
-		execution = &x
+		retired = &x
 	}
 	prior := issue.Status
-	issue.Status, issue.UpdatedAt, issue.CurrentExecutionID, issue.Cancellation = "canceled", change.At, "", &change
+	issue.Status, issue.UpdatedAt, issue.CurrentSessionBindingID, issue.Cancellation = "canceled", change.At, "", &change
 	issue.Revision++
 	commitGate("lifecycle_before_transition")
-	return WorkReceipt{Issue: issue, Execution: execution}, saveIssueLifecycleTransition(ctx, tx, issue, prior)
+	return WorkReceipt{Issue: issue, SessionBinding: retired}, saveIssueLifecycleTransition(ctx, tx, issue, prior)
 }
 
 func changeTopicLifecycle(tool string, r LifecycleRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		var t Topic
 		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
 			return nil, err
@@ -95,7 +95,7 @@ func changeTopicLifecycle(tool string, r LifecycleRequest) workMutation {
 		if err := checkRevision(t.ID, r.ExpectedRevision, t.Revision); err != nil {
 			return nil, err
 		}
-		change := LifecycleChange{Reason: r.Reason, At: now(), BindingID: b.ID}
+		change := LifecycleChange{Reason: r.Reason, At: now(), SessionBindingID: b.ID}
 		if strings.TrimSpace(change.Reason) == "" {
 			return nil, problem("invalid_argument", "a lifecycle reason is required")
 		}
@@ -120,7 +120,7 @@ func changeTopicLifecycle(tool string, r LifecycleRequest) workMutation {
 	}
 }
 
-func cancelTopicWork(ctx context.Context, tx *sql.Tx, b Binding, change LifecycleChange) error {
+func cancelTopicWork(ctx context.Context, tx *sql.Tx, b SessionBinding, change LifecycleChange) error {
 	if err := invalidateTimers(ctx, tx, b.OwnerID, change.At); err != nil {
 		return err
 	}
@@ -167,10 +167,9 @@ func revokeBinding(ctx context.Context, tx *sql.Tx, id string) error {
 	return nil
 }
 
-func previousIssue(ctx context.Context, tx *sql.Tx, issueID string) (Binding, error) {
-	var b Binding
-	err := readJSON(ctx, tx, `SELECT b.body FROM executions e JOIN session_bindings b ON b.id=e.binding_id
- WHERE e.issue_id=? ORDER BY e.generation DESC LIMIT 1`, &b, issueID)
+func previousIssueBinding(ctx context.Context, tx *sql.Tx, issueID string) (SessionBinding, error) {
+	var b SessionBinding
+	err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE role='issue' AND owner_id=? ORDER BY generation DESC LIMIT 1`, &b, issueID)
 	var p *Error
 	if errors.As(err, &p) && p.Code == "not_found" {
 		return b, nil

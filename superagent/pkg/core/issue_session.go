@@ -10,22 +10,25 @@ import (
 )
 
 type Report struct {
-	ID          string   `json:"id"`
-	TopicID     string   `json:"topicId"`
-	IssueID     string   `json:"issueId"`
-	ExecutionID string   `json:"executionId"`
-	BindingID   string   `json:"bindingId"`
-	Generation  int      `json:"generation"`
-	Revision    int      `json:"goalRevision,omitempty"`
-	Sequence    int64    `json:"sequence"`
-	Kind        string   `json:"kind"`
-	Summary     string   `json:"summary"`
-	Details     string   `json:"details,omitempty"`
-	Evidence    []string `json:"evidence,omitempty"`
-	Questions   []string `json:"questions,omitempty"`
-	CreatedAt   string   `json:"createdAt"`
-	EventID     string   `json:"eventId"`
-	Historical  bool     `json:"historical"`
+	ID               string   `json:"id"`
+	TopicID          string   `json:"topicId"`
+	IssueID          string   `json:"issueId"`
+	SessionBindingID string   `json:"sessionBindingId"`
+	Revision         int      `json:"goalRevision,omitempty"`
+	Sequence         int64    `json:"sequence"`
+	Kind             string   `json:"kind"`
+	Summary          string   `json:"summary"`
+	Details          string   `json:"details,omitempty"`
+	Evidence         []string `json:"evidence,omitempty"`
+	Questions        []string `json:"questions,omitempty"`
+	CreatedAt        string   `json:"createdAt"`
+	EventID          string   `json:"eventId"`
+	Historical       bool     `json:"historical"`
+	Current          bool     `json:"-"`
+}
+
+func reportIsCurrent(report Report, issue Issue) bool {
+	return !report.Historical && issue.CurrentSessionBindingID == report.SessionBindingID && issue.RequirementsRevision == report.Revision
 }
 
 var _ AgentPromptView = Report{}
@@ -33,7 +36,7 @@ var _ AgentPromptView = Report{}
 func (r Report) MarshalAgentPromptJSON() ([]byte, error) {
 	view := map[string]any{
 		"id": r.ID, "issueId": r.IssueID, "kind": r.Kind, "summary": r.Summary,
-		"executionId": r.ExecutionID, "historical": r.Historical,
+		"historical": r.Historical, "current": r.Current,
 	}
 	if r.Revision != 0 {
 		view["goalRevision"] = r.Revision
@@ -60,46 +63,45 @@ type ReportRequest struct {
 	GoalRevision int      `json:"goalRevision,omitempty"`
 }
 
-func boundIssueExecution(ctx context.Context, tx *sql.Tx, b Binding) (Execution, error) {
-	var x Execution
-	if b.Role != "issue" {
-		return x, problem("forbidden", "only Issue Session can access its bound Execution")
-	}
-	if err := readJSON(ctx, tx, `SELECT e.body FROM executions e JOIN session_bindings b ON b.id=e.binding_id
- WHERE e.id=? AND e.binding_id=? AND e.issue_id=? AND e.generation=?
- AND (b.state<>'revoked' OR json_extract(e.body,'$.authority')='historical')`, &x, b.OwnerID, b.ID, b.IssueID, b.Generation); err != nil {
-		return x, err
-	}
-	if x.TopicID != b.TopicID {
-		return x, problem("stale_binding", "Issue Session binding scope changed")
-	}
-	return x, nil
+func loadIssueBinding(ctx context.Context, tx *sql.Tx, id string) (SessionBinding, error) {
+	var binding SessionBinding
+	err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=? AND role='issue'", &binding, id)
+	return binding, err
 }
 
-func issueForExecution(ctx context.Context, tx *sql.Tx, x Execution) (Issue, error) {
+func boundIssue(ctx context.Context, tx *sql.Tx, b SessionBinding) (Issue, error) {
 	var issue Issue
-	if x.Authority != "current" {
-		return issue, problem("stale_binding", "Issue Session Execution is historical")
+	if b.Role != "issue" || b.OwnerID != b.IssueID {
+		return issue, problem("forbidden", "SessionBinding does not own an Issue")
 	}
-	if err := readJSON(ctx, tx, "SELECT body FROM issues WHERE id=? AND topic_id=?", &issue, x.IssueID, x.TopicID); err != nil {
+	err := readJSON(ctx, tx, "SELECT body FROM issues WHERE id=? AND topic_id=?", &issue, b.OwnerID, b.TopicID)
+	return issue, err
+}
+
+func issueForBinding(ctx context.Context, tx *sql.Tx, b SessionBinding) (Issue, error) {
+	issue, err := boundIssue(ctx, tx, b)
+	if err != nil {
 		return issue, err
 	}
-	if issue.CurrentExecutionID != x.ID || terminal(issue.Status) {
+	if b.State == "revoked" || issue.CurrentSessionBindingID != b.ID || terminal(issue.Status) {
 		return issue, problem("stale_binding", "Issue Session no longer owns the current Issue")
 	}
 	return issue, nil
 }
 
-func currentBoundIssue(ctx context.Context, tx *sql.Tx, b Binding) (Issue, Execution, error) {
-	x, err := boundIssueExecution(ctx, tx, b)
+func currentBoundIssue(ctx context.Context, tx *sql.Tx, b SessionBinding) (Issue, SessionBinding, error) {
+	stored, err := loadIssueBinding(ctx, tx, b.ID)
 	if err != nil {
-		return Issue{}, x, err
+		return Issue{}, stored, err
 	}
-	issue, err := issueForExecution(ctx, tx, x)
-	return issue, x, err
+	if !sameBinding(stored, b) {
+		return Issue{}, stored, problem("stale_binding", "Issue Session scope changed")
+	}
+	issue, err := issueForBinding(ctx, tx, stored)
+	return issue, stored, err
 }
 
-func (s *Store) queryBoundIssue(ctx context.Context, b Binding, tool string, raw []byte) (any, error) {
+func (s *Store) queryBoundIssue(ctx context.Context, b SessionBinding, tool string, raw []byte) (any, error) {
 	if b.Role != "issue" {
 		return nil, problem("forbidden", "only Issue Session can read its bound Issue")
 	}
@@ -123,34 +125,26 @@ func (s *Store) queryBoundIssue(ctx context.Context, b Binding, tool string, raw
 		return nil, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	issue, x, err := currentBoundIssue(ctx, tx, b)
+	issue, _, err := currentBoundIssue(ctx, tx, b)
 	if err != nil {
 		return nil, err
 	}
 	if tool == "get_issue" {
-		return WorkReceipt{Issue: issue, Execution: &x}, nil
+		return WorkReceipt{Issue: issue}, nil
 	}
 	if !slices.ContainsFunc(issue.Materials, func(m Material) bool { return m.MessageID == query.MessageID }) {
 		return nil, problem("not_found", "Message is not a material of the bound Issue")
 	}
-	if b.AgentPromptVersion == 1 {
-		var message json.RawMessage
-		err = readJSON(ctx, tx, `SELECT json_patch(
- json_object('id',id,'text',body->>'$.text','actor',body->>'$.actor'),
- json_object('at',body->>'$.at','url',body->>'$.url'))
- FROM trigger_messages WHERE id=?`, &message, query.MessageID)
-		return message, err
-	}
 	var message Message
 	err = readJSON(ctx, tx, "SELECT body FROM trigger_messages WHERE id=?", &message, query.MessageID)
-	if err != nil || b.AgentPromptVersion == 0 {
-		return message, err
+	if err != nil {
+		return nil, err
 	}
 	view, err := message.MarshalAgentPromptJSON()
 	return json.RawMessage(view), err
 }
 
-func (s *Store) submitIssueReport(ctx context.Context, b Binding, raw []byte) (json.RawMessage, error) {
+func (s *Store) submitIssueReport(ctx context.Context, b SessionBinding, raw []byte) (json.RawMessage, error) {
 	if b.Role != "issue" {
 		return nil, problem("forbidden", "only Issue Session can report")
 	}
@@ -166,22 +160,25 @@ func (s *Store) submitIssueReport(ctx context.Context, b Binding, raw []byte) (j
 	if strings.TrimSpace(r.Summary) == "" || r.GoalRevision < 1 {
 		return nil, problem("invalid_argument", "Report summary and a positive goalRevision are required")
 	}
-	return s.commitWork(ctx, b, "submit_report", r.OperationID, func(ctx context.Context, tx *sql.Tx, binding Binding) (any, error) {
-		x, err := boundIssueExecution(ctx, tx, binding)
+	return s.commitWork(ctx, b, "submit_report", r.OperationID, func(ctx context.Context, tx *sql.Tx, binding SessionBinding) (any, error) {
+		stored, err := loadIssueBinding(ctx, tx, binding.ID)
 		if err != nil {
 			return nil, err
 		}
-		historical := x.Authority == "historical"
+		if !sameBinding(stored, binding) {
+			return nil, problem("stale_binding", "Issue Session scope changed")
+		}
+		historical := stored.State == "revoked"
 		var issue Issue
-		if historical {
-			err = readJSON(ctx, tx, "SELECT body FROM issues WHERE id=? AND topic_id=?", &issue, x.IssueID, x.TopicID)
+		if historical && stored.RetiredGoalRevision != 0 {
+			issue, err = boundIssue(ctx, tx, stored)
 		} else {
-			issue, err = issueForExecution(ctx, tx, x)
+			issue, err = issueForBinding(ctx, tx, stored)
 		}
 		if err != nil {
 			return nil, err
 		}
-		key := "$." + creationKey("report", x.ID, r.OperationID)
+		key := "$." + creationKey("report", stored.ID, r.OperationID)
 		digest := creationDigest(r)
 		id, err := numberedCreation(ctx, tx, digest, `SELECT json_extract(creation,'$.id'),json_extract(creation,'$.digest')
  FROM (SELECT json_extract(report_creations,?2) AS creation FROM issues WHERE id=?1)
@@ -198,19 +195,19 @@ func (s *Store) submitIssueReport(ctx context.Context, b Binding, raw []byte) (j
 			return report, err
 		}
 		upper := issue.RequirementsRevision
-		if historical && x.RetiredGoalRevision != 0 {
-			upper = x.RetiredGoalRevision
+		if historical {
+			upper = stored.RetiredGoalRevision
 		}
-		if r.GoalRevision < x.Revision || r.GoalRevision > upper {
-			return nil, problem("invalid_argument", "goalRevision is outside the bound Execution's goal revisions")
+		if r.GoalRevision < stored.StartGoalRevision || r.GoalRevision > upper {
+			return nil, problem("invalid_argument", "goalRevision is outside the SessionBinding's goal revisions")
 		}
 		var seq int64
 		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0)+1 FROM reports").Scan(&seq); err != nil {
 			return nil, storageError()
 		}
 		report := Report{
-			ID: issue.ID + "-r" + strconv.Itoa(len(issue.Reports)+1), TopicID: x.TopicID, IssueID: x.IssueID, ExecutionID: x.ID, BindingID: binding.ID,
-			Generation: x.Generation, Revision: r.GoalRevision, Sequence: seq, Kind: r.Kind, Summary: r.Summary, Details: r.Details,
+			ID: issue.ID + "-r" + strconv.Itoa(len(issue.Reports)+1), TopicID: issue.TopicID, IssueID: issue.ID, SessionBindingID: stored.ID,
+			Revision: r.GoalRevision, Sequence: seq, Kind: r.Kind, Summary: r.Summary, Details: r.Details,
 			Evidence: r.Evidence, Questions: r.Questions, CreatedAt: now(), EventID: newID("evt"), Historical: historical,
 		}
 		issue.Reports = append(issue.Reports, report)
@@ -219,20 +216,20 @@ func (s *Store) submitIssueReport(ctx context.Context, b Binding, raw []byte) (j
  WHERE id=?1`, issue, issue.ID, key, report.ID, digest); err != nil {
 			return nil, err
 		}
-		if !historical && x.ReminderEventID != "" {
-			if err := supersedeInternalEvent(ctx, tx, x.ReminderEventID); err != nil {
+		if reportIsCurrent(report, issue) && stored.ReminderEventID != "" {
+			if err := supersedeInternalEvent(ctx, tx, stored.ReminderEventID); err != nil {
 				return nil, err
 			}
 		}
 		commitGate("report_before_notification")
 		kind := reportSubmittedKind
-		if historical {
+		if !reportIsCurrent(report, issue) {
 			kind = contextSupplement
 		}
 		err = enqueueInternalEvent(ctx, tx, internalEvent{
 			ID: report.EventID, Kind: kind,
-			Sender:    eventIdentity{Kind: "issue", ExecutionID: x.ID},
-			Recipient: eventIdentity{Kind: "topic", TopicID: x.TopicID},
+			Sender:    eventIdentity{Kind: "issue", SessionBindingID: stored.ID},
+			Recipient: eventIdentity{Kind: "topic", TopicID: issue.TopicID},
 			Refs:      []eventReference{{Kind: "report", ID: report.ID, IssueID: issue.ID, GoalRevision: r.GoalRevision}},
 		})
 		if err == nil {
