@@ -57,7 +57,7 @@ func observedTraces(t *testing.T, p *process, collection, id string) []observerT
 	return detail.Associations
 }
 
-func TestTraceAssociationsSchema22(t *testing.T) {
+func TestTraceAssociationsSchema23(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
 	historical := submit(t, p, f, input("before-tracing"))
@@ -71,10 +71,10 @@ func TestTraceAssociationsSchema22(t *testing.T) {
 		t.Helper()
 		require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&schemaVersion))
 		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables))
-		require.Equal(t, 22, schemaVersion)
+		require.Equal(t, 23, schemaVersion)
 		require.Equal(t, expectedTables, tables)
 	}
-	checkSchema(9)
+	checkSchema(11)
 
 	// A configuration refusal after DDL should roll the new table back.
 	f.configure(0, "different-account")
@@ -83,7 +83,7 @@ func TestTraceAssociationsSchema22(t *testing.T) {
 	raw, err := cmd.CombinedOutput()
 	require.Error(t, err)
 	require.Contains(t, string(raw), "configured source/account differs")
-	checkSchema(9)
+	checkSchema(11)
 
 	f.configure(0, "account-1")
 	p = f.start("OTEL_TRACES_EXPORTER=otlp", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:0")
@@ -92,7 +92,7 @@ func TestTraceAssociationsSchema22(t *testing.T) {
 	original := observedTraces(t, p, "messages", saved.MessageID)
 	require.Len(t, original, 1)
 	require.Equal(t, "admission", original[0].Phase)
-	checkSchema(10)
+	checkSchema(12)
 	var persisted string
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT traceparent FROM trace_associations WHERE collection='messages' AND object_id=?", saved.MessageID).Scan(&persisted))
 	require.Contains(t, persisted, original[0].TraceID)
@@ -107,7 +107,7 @@ func TestTraceAssociationsSchema22(t *testing.T) {
 	require.Empty(t, observedTraces(t, p, "messages", untraced.MessageID))
 }
 
-func TestTraceAssociationsRestartDelivery(t *testing.T) {
+func TestTraceAssociationsRestartEvent(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	var drop atomic.Bool
 	drop.Store(true)
@@ -126,8 +126,8 @@ func TestTraceAssociationsRestartDelivery(t *testing.T) {
 		receipts = append(receipts, submit(t, p, f, record))
 	}
 	first, second := receipts[0], receipts[1]
-	waitInternalDelivery(t, f, first.EventID, "pending")
-	waitInternalDelivery(t, f, second.EventID, "pending")
+	waitInternalEvent(t, f, first.EventID, "pending")
+	waitInternalEvent(t, f, second.EventID, "pending")
 
 	links := make(map[string]string)
 	for _, receipt := range receipts {
@@ -135,7 +135,7 @@ func TestTraceAssociationsRestartDelivery(t *testing.T) {
 		require.Len(t, admission, 1)
 		require.Equal(t, "admission", admission[0].Phase)
 		require.Equal(t, []observerTrace{{TraceID: admission[0].TraceID, Phase: "enqueue"}},
-			observedTraces(t, p, "internal-deliveries", receipt.EventID))
+			observedTraces(t, p, "internal-events", receipt.EventID))
 		links[admission[0].TraceID] = receipt.MessageID
 	}
 	require.Len(t, links, 2)
@@ -148,7 +148,7 @@ func TestTraceAssociationsRestartDelivery(t *testing.T) {
 	f.execution(retryBoundary)
 	p = f.start(env...)
 	for _, receipt := range receipts {
-		waitInternalDelivery(t, f, receipt.EventID, "sent")
+		waitInternalEvent(t, f, receipt.EventID, "sent")
 	}
 	p.stop(t, false)
 	admissions := make(map[string]string)
@@ -165,7 +165,7 @@ func TestTraceAssociationsRestartDelivery(t *testing.T) {
 	var lostReceipt bool
 	delivered := make(map[string]bool)
 	for _, span := range spans() {
-		if span.GetName() != "superagent.internal_delivery.dispatch" {
+		if span.GetName() != "superagent.internal_event.dispatch" {
 			continue
 		}
 		attempts++
@@ -176,7 +176,7 @@ func TestTraceAssociationsRestartDelivery(t *testing.T) {
 			switch attribute.GetKey() {
 			case "superagent.outcome":
 				outcome = attribute.GetValue().GetStringValue()
-			case "superagent.delivery.batch.size":
+			case "superagent.event.batch.size":
 				batchSize = attribute.GetValue().GetIntValue()
 			}
 		}
@@ -197,12 +197,12 @@ func TestTraceAssociationsRestartDelivery(t *testing.T) {
 		t.Logf("dispatch_trace_id=%x dispatch_span_id=%x outcome=%s batch_size=%d", span.GetTraceId(), span.GetSpanId(), outcome, batchSize)
 	}
 	require.GreaterOrEqual(t, attempts, 2, "one simulated lost receipt must retry")
-	require.True(t, lostReceipt, "first delivery result was lost")
+	require.True(t, lostReceipt, "first dispatch receipt was lost")
 	require.EqualValues(t, 2, largestBatch, "the two admissions must be linked in one batch")
 	require.Len(t, delivered, 2)
 }
 
-func TestTraceAssociationsSingleDeliveryParent(t *testing.T) {
+func TestTraceAssociationsSingleEventParent(t *testing.T) {
 	receiver, spans := coreOTLPReceiver(t, "")
 	f := fixtureAt(t)
 	f.execution(newRouteBoundary(t))
@@ -210,25 +210,25 @@ func TestTraceAssociationsSingleDeliveryParent(t *testing.T) {
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
 	source := submit(t, p, f, input("single-trace"))
-	waitInternalDelivery(t, f, source.EventID, "sent")
+	waitInternalEvent(t, f, source.EventID, "sent")
 	route := struct {
 		core.RouteRequest
-		TriggerDeliveryID string `json:"triggerDeliveryId"`
+		TriggerEventID string `json:"triggerEventId"`
 	}{newRoute("single-trace", []string{source.MessageID}, f.dir), source.EventID}
-	decision := mcpWork[core.RouteDecision](t, router, "route_decide", route)
+	decision := mcpWork[core.RouteDecision](t, router, "route_messages", route)
 	target := decision.Targets[0]
-	delivery := target.DeliveryIDs[source.MessageID]
-	waitInternalDelivery(t, f, delivery, "sent")
+	internalEvent := target.EventIDs[source.MessageID]
+	waitInternalEvent(t, f, internalEvent, "sent")
 
 	topic := startRoleMCP(t, f, waitBinding(t, p, "topic", target.TopicID, "ready"))
 	create := struct {
 		core.CreateIssueRequest
-		TriggerDeliveryID string `json:"triggerDeliveryId,omitempty"`
+		TriggerEventID string `json:"triggerEventId,omitempty"`
 	}{issueInput(f.dir, "issue-trace"), source.EventID}
-	mcpWorkError(t, topic, "issue_create", "not_found", create)
-	create.TriggerDeliveryID = delivery
-	created := mcpWork[core.WorkReceipt](t, topic, "issue_create", create)
-	replay := mcpWork[core.WorkReceipt](t, topic, "issue_create", create.CreateIssueRequest)
+	mcpWorkError(t, topic, "create_issue", "not_found", create)
+	create.TriggerEventID = internalEvent
+	created := mcpWork[core.WorkReceipt](t, topic, "create_issue", create)
+	replay := mcpWork[core.WorkReceipt](t, topic, "create_issue", create.CreateIssueRequest)
 	require.Equal(t, created, replay, "trace metadata does not change the operation's business digest")
 	p.stop(t, false)
 
@@ -246,8 +246,8 @@ func TestTraceAssociationsSingleDeliveryParent(t *testing.T) {
 	}
 	require.NotNil(t, issue)
 	for _, name := range []string{
-		"POST /v1/role/{tool}", "superagent.internal_delivery.dispatch", "superagent.routing.decide",
-		"POST /v1/role/{tool}", "superagent.internal_delivery.dispatch", "superagent.message.admit",
+		"POST /mcp", "superagent.internal_event.dispatch", "superagent.routing.decide",
+		"POST /mcp", "superagent.internal_event.dispatch", "superagent.message.admit",
 		"POST /v1/channel/messages",
 	} {
 		parent := byID[hex.EncodeToString(issue.GetParentSpanId())]

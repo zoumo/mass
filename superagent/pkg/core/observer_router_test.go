@@ -16,8 +16,8 @@ import (
 )
 
 type routerMessageRow struct {
-	ID, State, ActivityAt, ActivityID, ActivityKind, ActivityReason, ReturnedDeliveryID string
-	Targets                                                                             []struct{ ID, TopicID, Title, Reason string }
+	ID, State, ActivityAt, ActivityID, ActivityKind, ActivityReason, ReturnedEventID string
+	Targets                                                                          []struct{ ID, TopicID, Title, Reason string }
 }
 
 func routerRows(t *testing.T, p *process, query string) ([]routerMessageRow, string) {
@@ -37,10 +37,10 @@ func tieBrowserRouterRegistrations(t *testing.T, f *fixture) {
 	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite")+"?_pragma=busy_timeout(5000)")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
-	result, err := db.ExecContext(t.Context(), `UPDATE internal_deliveries SET created_at=(
- SELECT d.created_at FROM routing_deliveries d JOIN trigger_messages m ON m.id=d.message_id
+	result, err := db.ExecContext(t.Context(), `UPDATE internal_events SET created_at=(
+ SELECT d.created_at FROM routing_events d JOIN trigger_messages m ON m.id=d.message_id
  WHERE m.native_id='browser-53' AND d.kind='route_request'
- ) WHERE id=(SELECT json_extract(body,'$.eventId') FROM trigger_messages WHERE native_id='browser-54')`)
+ ) WHERE event_id=(SELECT json_extract(body,'$.eventId') FROM trigger_messages WHERE native_id='browser-54')`)
 	require.NoError(t, err)
 	count, err := result.RowsAffected()
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestObserverRouterMessages(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	const tied = "2024-01-01T00:00:00.000000000Z"
-	_, err = db.ExecContext(t.Context(), "UPDATE internal_deliveries SET created_at=? WHERE kind='route_request'", tied)
+	_, err = db.ExecContext(t.Context(), "UPDATE internal_events SET created_at=? WHERE kind='route_request'", tied)
 	require.NoError(t, err)
 	slices.Sort(ids)
 	slices.Reverse(ids)
@@ -114,11 +114,11 @@ func TestObserverRouterMessages(t *testing.T) {
 	onlyDirect, _ := routerRows(t, p, filter)
 	require.Empty(t, onlyDirect)
 	topicToken := roleToken(t, f, topic)
-	roleCall(t, p, topicToken, "message_return", core.ReturnRequest{DeliveryID: direct.EventID, Reason: "请检查其他目标"})
+	roleCall(t, p, topicToken, "decline_message", core.DeclineMessageRequest{EventID: direct.EventID, Reason: "请检查其他目标"})
 	returned, _ := routerRows(t, p, filter)
 	require.Len(t, returned, 1)
 	require.Equal(t, "pending", returned[0].State)
-	require.Equal(t, direct.EventID, returned[0].ReturnedDeliveryID)
+	require.Equal(t, direct.EventID, returned[0].ReturnedEventID)
 	require.Equal(t, "请检查其他目标", returned[0].ActivityReason)
 	both := newRoute("router-both", []string{direct.MessageID}, f.dir)
 	both.Rounds[direct.MessageID] = 2
@@ -128,11 +128,11 @@ func TestObserverRouterMessages(t *testing.T) {
 	targets, _ := routerRows(t, p, filter)
 	require.Len(t, targets, 1)
 	require.Len(t, targets[0].Targets, 2)
-	roleCall(t, p, topicToken, "message_return", core.ReturnRequest{DeliveryID: multi.Targets[1].DeliveryIDs[direct.MessageID], Reason: "转交剩余检查"})
+	roleCall(t, p, topicToken, "decline_message", core.DeclineMessageRequest{EventID: multi.Targets[1].EventIDs[direct.MessageID], Reason: "转交剩余检查"})
 	partial, _ := routerRows(t, p, filter)
 	require.Len(t, partial[0].Targets, 1)
 	require.Equal(t, both.Reason, partial[0].Targets[0].Reason)
-	require.Equal(t, multi.Targets[0].DeliveryIDs[direct.MessageID], partial[0].Targets[0].ID)
+	require.Equal(t, multi.Targets[0].EventIDs[direct.MessageID], partial[0].Targets[0].ID)
 	require.Equal(t, "转交剩余检查", partial[0].ActivityReason)
 	both.OperationID, both.Reason = "router-again", "只复核退回项目"
 	both.Rounds[direct.MessageID] = 3
@@ -142,8 +142,8 @@ func TestObserverRouterMessages(t *testing.T) {
 	require.Len(t, final, 1)
 	require.Equal(t, "routed", final[0].State)
 	require.Len(t, final[0].Targets, 2)
-	require.Equal(t, multi.Targets[0].DeliveryIDs[direct.MessageID], final[0].Targets[0].ID)
+	require.Equal(t, multi.Targets[0].EventIDs[direct.MessageID], final[0].Targets[0].ID)
 	require.Equal(t, "两个目标分别核对", final[0].Targets[0].Reason)
-	require.Equal(t, again.Targets[0].DeliveryIDs[direct.MessageID], final[0].Targets[1].ID)
+	require.Equal(t, again.Targets[0].EventIDs[direct.MessageID], final[0].Targets[1].ID)
 	require.Equal(t, "只复核退回项目", final[0].Targets[1].Reason)
 }

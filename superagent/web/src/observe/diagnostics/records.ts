@@ -1,4 +1,4 @@
-import { stateLabel, routingDeliveryLabel, type WorkbenchRow } from '../../workbench'
+import { stateLabel, eventStatusLabel, type WorkbenchRow } from '../../workbench'
 import type { StructuredBody } from '../StructuredContent'
 
 export type DiagnosticRow = WorkbenchRow & {
@@ -90,7 +90,7 @@ export type DiagnosticRow = WorkbenchRow & {
   reminderEventId?: string
   preparationAtRetirement?: string
   reminderEligibility?: string
-  delivery_id?: string
+  event_id?: string
   ownerId?: string
 }
 const workKinds = ['issues', 'executions', 'reports', 'timers', 'pull-requests'] as const
@@ -100,11 +100,11 @@ export const kinds = [
   'outbox',
   'topics',
   ...workKinds,
-  'routing-deliveries',
+  'routing-events',
   'subscriptions',
   'relations',
   'bindings',
-  'internal-deliveries',
+  'internal-events',
 ] as const
 export type Kind = (typeof kinds)[number]
 const collectionLabels: Record<Kind, string> = {
@@ -117,11 +117,11 @@ const collectionLabels: Record<Kind, string> = {
   reports: '报告',
   timers: '定时器',
   'pull-requests': '拉取请求',
-  'routing-deliveries': '路由投递',
+  'routing-events': '路由事件',
   subscriptions: '订阅',
   relations: '路由关系',
   bindings: '绑定',
-  'internal-deliveries': '内部投递',
+  'internal-events': '内部事件',
 }
 export const viewLabel = (view: Kind) => collectionLabels[view]
 export const reminderBasis: Record<string, string> = {
@@ -135,10 +135,10 @@ export const reminderBasis: Record<string, string> = {
 export const replyLabel = (status?: string) =>
   status === 'sent' ? '已发送' : status === 'pending' ? '待发送' : stateLabel(status)
 export function followupLabel(followup?: DiagnosticRow) {
-  return followup ? routingDeliveryLabel(followup.status) : '—'
+  return followup ? eventStatusLabel(followup.status) : '—'
 }
 
-export const identity = (row: DiagnosticRow) => String(row.id || row.key || '')
+export const identity = (row: DiagnosticRow) => String(row.event_id || row.id || row.key || '')
 
 export type Filter = 'topicId' | 'issueId' | 'messageId' | 'threadKey'
 export type OpenCollection = (kind: Kind, filterId?: string, filter?: Filter, id?: string) => void

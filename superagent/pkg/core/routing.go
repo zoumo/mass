@@ -65,10 +65,10 @@ type NewTopic struct {
 	Workspace   string `json:"workspace"`
 }
 type RouteTarget struct {
-	TopicID     string            `json:"topicId,omitempty"`
-	Create      *NewTopic         `json:"create,omitempty"`
-	MessageIDs  []string          `json:"messageIds"`
-	DeliveryIDs map[string]string `json:"deliveryIds,omitempty"`
+	TopicID    string            `json:"topicId,omitempty"`
+	Create     *NewTopic         `json:"create,omitempty"`
+	MessageIDs []string          `json:"messageIds"`
+	EventIDs   map[string]string `json:"eventIds,omitempty"`
 }
 type RouteRequest struct {
 	OperationID string         `json:"operationId"`
@@ -83,9 +83,9 @@ type RouteDecision struct {
 	RouteRequest
 	CreatedAt string `json:"createdAt"`
 }
-type ReturnRequest struct {
-	DeliveryID string `json:"deliveryId"`
-	Reason     string `json:"reason"`
+type DeclineMessageRequest struct {
+	EventID string `json:"event_id"`
+	Reason  string `json:"reason"`
 }
 type Relation struct {
 	ID         string `json:"id"`
@@ -97,7 +97,7 @@ type Relation struct {
 	DecisionID string `json:"decisionId,omitempty"`
 	CreatedAt  string `json:"createdAt"`
 	Status     string `json:"status,omitempty"`
-	DeliveryID string `json:"deliveryId,omitempty"`
+	EventID    string `json:"eventId,omitempty"`
 	Returned   bool   `json:"returned,omitempty"`
 }
 
@@ -159,7 +159,7 @@ func validateRoute(r RouteRequest) error {
 	covered := map[string]bool{}
 	targets := map[string]bool{}
 	for _, target := range r.Targets {
-		if len(target.DeliveryIDs) != 0 || (target.Create == nil) == (target.TopicID == "") || len(target.MessageIDs) == 0 {
+		if len(target.EventIDs) != 0 || (target.Create == nil) == (target.TopicID == "") || len(target.MessageIDs) == 0 {
 			return problem("invalid_argument", "each target needs one topicId or create and explicit messageIds")
 		}
 		if target.Create != nil {

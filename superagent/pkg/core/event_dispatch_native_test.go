@@ -22,40 +22,40 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-var deliveryBuild struct {
+var dispatchBuild struct {
 	sync.Once
 	massd, relay string
 	log          []byte
 	err          error
 }
 
-func deliveryBinaries(t *testing.T) (string, string) {
+func dispatchBinaries(t *testing.T) (string, string) {
 	t.Helper()
-	deliveryBuild.Do(func() {
+	dispatchBuild.Do(func() {
 		dir := filepath.Dir(binary)
-		deliveryBuild.massd = filepath.Join(dir, "massd")
-		deliveryBuild.relay = filepath.Join(dir, "live-config-peer")
-		for target, pkg := range map[string]string{deliveryBuild.massd: "./cmd/massd", deliveryBuild.relay: "./tests/integration/testdata/live-config-peer"} {
+		dispatchBuild.massd = filepath.Join(dir, "massd")
+		dispatchBuild.relay = filepath.Join(dir, "live-config-peer")
+		for target, pkg := range map[string]string{dispatchBuild.massd: "./cmd/massd", dispatchBuild.relay: "./tests/integration/testdata/live-config-peer"} {
 			cmd := exec.CommandContext(t.Context(), "go", "build", "-race", "-o", target, pkg)
 			cmd.Dir = "../../../mass-go"
 			cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
-			deliveryBuild.log, deliveryBuild.err = cmd.CombinedOutput()
-			if deliveryBuild.err != nil {
+			dispatchBuild.log, dispatchBuild.err = cmd.CombinedOutput()
+			if dispatchBuild.err != nil {
 				return
 			}
 		}
 	})
-	require.NoError(t, deliveryBuild.err, "%s", deliveryBuild.log)
-	return deliveryBuild.massd, deliveryBuild.relay
+	require.NoError(t, dispatchBuild.err, "%s", dispatchBuild.log)
+	return dispatchBuild.massd, dispatchBuild.relay
 }
 
-type nativeDeliveryCall struct {
+type nativeSubmitCall struct {
 	method, session, text string
-	answer                chan nativeDeliveryAnswer
+	answer                chan nativeSubmitAnswer
 	notify                func(string, any)
 }
 
-type nativeDeliveryAnswer struct {
+type nativeSubmitAnswer struct {
 	code           int
 	message        string
 	unknown        bool
@@ -65,9 +65,9 @@ type nativeDeliveryAnswer struct {
 	endBeforeReply bool
 }
 
-type nativeDeliveryPeer struct {
+type nativeSubmitPeer struct {
 	listener        net.Listener
-	calls           chan nativeDeliveryCall
+	calls           chan nativeSubmitCall
 	trace           chan string
 	active          sync.Map
 	done            chan struct{}
@@ -86,11 +86,11 @@ type nativeOpenGate struct {
 	release chan struct{}
 }
 
-func newNativeDeliveryPeer(t *testing.T) *nativeDeliveryPeer {
+func newNativeSubmitPeer(t *testing.T) *nativeSubmitPeer {
 	t.Helper()
 	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	p := &nativeDeliveryPeer{listener: l, calls: make(chan nativeDeliveryCall, 32), trace: make(chan string, 256), done: make(chan struct{}), released: make(chan struct{}, 16)}
+	p := &nativeSubmitPeer{listener: l, calls: make(chan nativeSubmitCall, 32), trace: make(chan string, 256), done: make(chan struct{}), released: make(chan struct{}, 16)}
 	var accepting, serving sync.WaitGroup
 	accepting.Go(func() {
 		for {
@@ -129,7 +129,7 @@ func newNativeDeliveryPeer(t *testing.T) *nativeDeliveryPeer {
 	return p
 }
 
-type nativeDeliveryRequest struct {
+type nativeSubmitRequest struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
 	Params struct {
@@ -155,7 +155,7 @@ type nativeDeliveryRequest struct {
 	} `json:"params"`
 }
 
-func (p *nativeDeliveryPeer) serve(conn net.Conn) {
+func (p *nativeSubmitPeer) serve(conn net.Conn) {
 	enc := json.NewEncoder(conn)
 	var writes sync.Mutex
 	send := func(data any) {
@@ -172,7 +172,7 @@ func (p *nativeDeliveryPeer) serve(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 64*1024), 512*1024)
 	for scanner.Scan() {
-		var req nativeDeliveryRequest
+		var req nativeSubmitRequest
 		if json.Unmarshal(scanner.Bytes(), &req) != nil {
 			return
 		}
@@ -215,7 +215,7 @@ func (p *nativeDeliveryPeer) serve(conn net.Conn) {
 				continue
 			}
 			if req.Method == "thread/start" {
-				session = "native-delivery-" + strconv.FormatInt(p.threadIDs.Add(1), 10)
+				session = "native-event-dispatch-" + strconv.FormatInt(p.threadIDs.Add(1), 10)
 				p.workspaces.Store(session, req.Params.Cwd)
 				p.initialConfigs.Store(session, config)
 			} else {
@@ -262,8 +262,8 @@ func (p *nativeDeliveryPeer) serve(conn net.Conn) {
 	}
 }
 
-func (p *nativeDeliveryPeer) input(req nativeDeliveryRequest, respond, send func(any), notify func(string, any)) {
-	call := nativeDeliveryCall{method: req.Method, session: req.Params.ThreadID, answer: make(chan nativeDeliveryAnswer, 1), notify: notify}
+func (p *nativeSubmitPeer) input(req nativeSubmitRequest, respond, send func(any), notify func(string, any)) {
+	call := nativeSubmitCall{method: req.Method, session: req.Params.ThreadID, answer: make(chan nativeSubmitAnswer, 1), notify: notify}
 	switch {
 	case req.Method == "thread/inject_items" && len(req.Params.Items) == 1 && len(req.Params.Items[0].Content) == 1:
 		call.text = req.Params.Items[0].Content[0].Text
@@ -275,7 +275,7 @@ func (p *nativeDeliveryPeer) input(req nativeDeliveryRequest, respond, send func
 	case <-p.done:
 		return
 	}
-	var result nativeDeliveryAnswer
+	var result nativeSubmitAnswer
 	select {
 	case result = <-call.answer:
 	case <-p.done:
@@ -317,7 +317,7 @@ func (p *nativeDeliveryPeer) input(req nativeDeliveryRequest, respond, send func
 	}
 }
 
-func (p *nativeDeliveryPeer) next(t *testing.T, method string) nativeDeliveryCall {
+func (p *nativeSubmitPeer) next(t *testing.T, method string) nativeSubmitCall {
 	t.Helper()
 	select {
 	case call := <-p.calls:
@@ -328,11 +328,11 @@ func (p *nativeDeliveryPeer) next(t *testing.T, method string) nativeDeliveryCal
 		return call
 	case <-time.After(8 * time.Second):
 		t.Fatalf("native call %s not observed", method)
-		return nativeDeliveryCall{}
+		return nativeSubmitCall{}
 	}
 }
 
-func (p *nativeDeliveryPeer) quiet(t *testing.T, duration time.Duration) {
+func (p *nativeSubmitPeer) quiet(t *testing.T, duration time.Duration) {
 	t.Helper()
 	select {
 	case call := <-p.calls:
@@ -341,27 +341,27 @@ func (p *nativeDeliveryPeer) quiet(t *testing.T, duration time.Duration) {
 	}
 }
 
-func (call nativeDeliveryCall) accept() { call.answer <- nativeDeliveryAnswer{} }
+func (call nativeSubmitCall) accept() { call.answer <- nativeSubmitAnswer{} }
 
-func (call nativeDeliveryCall) end(workID string) {
+func (call nativeSubmitCall) end(workID string) {
 	call.notify("turn/completed", map[string]any{
 		"threadId": call.session, "turn": map[string]any{"id": workID, "status": "completed", "items": []any{}},
 	})
 }
 
-func (call nativeDeliveryCall) idle() {
+func (call nativeSubmitCall) idle() {
 	call.notify("thread/status/changed", map[string]any{"threadId": call.session, "status": map[string]string{"type": "idle"}})
 }
 
-func startDeliveryMassd(t *testing.T, peer *nativeDeliveryPeer) (string, *client.Client) {
+func startEventTestMassd(t *testing.T, peer *nativeSubmitPeer) (string, *client.Client) {
 	t.Helper()
-	endpoint, c, _ := startDeliveryMassdWithData(t, peer)
+	endpoint, c, _ := startEventTestMassdWithData(t, peer)
 	return endpoint, c
 }
 
-func startDeliveryMassdWithData(t *testing.T, peer *nativeDeliveryPeer) (string, *client.Client, string) {
+func startEventTestMassdWithData(t *testing.T, peer *nativeSubmitPeer) (string, *client.Client, string) {
 	t.Helper()
-	massd, relay := deliveryBinaries(t)
+	massd, relay := dispatchBinaries(t)
 	return startNativeMassd(t, massd, resource.RuntimeSpec{
 		Type:     "codex",
 		Config:   runtime.Config{"executable": relay, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": peer.listener.Addr().String()}},

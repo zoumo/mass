@@ -16,22 +16,23 @@ import (
 )
 
 type Server struct {
-	bindingOperations       sync.Map
-	sessionInputs           sync.Map
-	internalDeliveryRetries sync.Map
-	runtimeOperations       sync.RWMutex
-	workerWatches           sync.Map
-	workerWatchGroup        sync.WaitGroup
-	executionCancel         context.CancelFunc
-	executionDone           chan struct{}
-	outboxCancel            context.CancelFunc
-	outboxDone              chan struct{}
-	observerLife            context.Context
-	observerTelemetry       *observerTelemetryGateway
-	store                   *Store
-	config                  Config
-	http                    *http.Server
-	listener                net.Listener
+	bindingOperations            sync.Map
+	sessionInputs                sync.Map
+	internalEventDispatchRetries sync.Map
+	runtimeOperations            sync.RWMutex
+	issueWatches                 sync.Map
+	issueWatchGroup              sync.WaitGroup
+	executionCancel              context.CancelFunc
+	executionDone                chan struct{}
+	outboxCancel                 context.CancelFunc
+	outboxDone                   chan struct{}
+	observerLife                 context.Context
+	observerTelemetry            *observerTelemetryGateway
+	observerTraces               *observerTraceReader
+	store                        *Store
+	config                       Config
+	http                         *http.Server
+	listener                     net.Listener
 }
 
 func Start(c Config) (*Server, error) {
@@ -44,6 +45,10 @@ func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	traces, err := newObserverTraceReader(c.ObserverTrace)
+	if err != nil {
+		return nil, err
+	}
 	store, err := openStore(c, options)
 	if err != nil {
 		return nil, err
@@ -53,7 +58,7 @@ func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
 		_ = store.Close()
 		return nil, problem("unavailable", "cannot bind listen address")
 	}
-	s := &Server{store: store, config: c, listener: l, observerTelemetry: gateway}
+	s := &Server{store: store, config: c, listener: l, observerTelemetry: gateway, observerTraces: traces}
 	if c.Execution != nil {
 		if _, err = store.db.ExecContext(context.Background(), `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
  WHERE state='ready'`); err != nil {
@@ -86,6 +91,9 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.observerTraces != nil {
+		defer s.observerTraces.client.CloseIdleConnections()
+	}
 	if s.observerTelemetry != nil {
 		defer s.observerTelemetry.client.CloseIdleConnections()
 	}
@@ -140,9 +148,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.observerTelemetry.serve(w, r)
 		return
 	}
-	deferredRoleTrace := s.store.telemetry.tracesEnabled && r.Method == http.MethodPost &&
-		strings.HasPrefix(r.URL.Path, "/v1/role/") && traceRoleTool(strings.TrimPrefix(r.URL.Path, "/v1/role/"))
-	if s.store.telemetry.enabled && !deferredRoleTrace {
+	if r.URL.Path == mcpPath {
+		s.serveMCP(w, r)
+		return
+	}
+	if s.store.telemetry.enabled {
 		observed, request := s.store.telemetry.startHTTP(w, r)
 		defer observed.finishRequest()
 		w, r = observed, request
@@ -182,8 +192,6 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.write(w, http.StatusOK, receipt)
 	case r.URL.Path == "/v1/channel/outbox" || strings.HasPrefix(r.URL.Path, "/v1/channel/outbox/"):
 		s.channelOutbox(w, r)
-	case strings.HasPrefix(r.URL.Path, "/v1/role/"):
-		s.role(w, r, deferredRoleTrace)
 	case r.URL.Path == "/v1/operator/input-recovery":
 		s.recoverInput(w, r)
 	case r.URL.Path == "/v1/operator/echo-release":
@@ -231,7 +239,35 @@ func (s *Server) authenticate(r *http.Request) (Source, bool) {
 }
 
 func (s *Server) query(w http.ResponseWriter, r *http.Request) {
+	if id, ok := strings.CutPrefix(r.URL.Path, observerTracePath); ok {
+		result, err := s.observerTraces.read(r.Context(), id, r.URL.Query())
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		s.write(w, http.StatusOK, result)
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/v1/observer/")
+	if r.URL.Path == observerPerformancePath {
+		result, err := s.observerTraces.performance(r.Context(), r.URL.Query().Get("window"))
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		s.write(w, http.StatusOK, result)
+		return
+	}
+	if r.URL.Path == mcpUsagePath || r.URL.Path == mcpUsagePath+"/calls" || r.URL.Path == mcpUsagePath+"/metrics" {
+		mode := strings.TrimPrefix(r.URL.Path, mcpUsagePath+"/")
+		usage, err := s.store.mcpToolUsage(r.Context(), r.URL.Query(), mode)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		s.write(w, http.StatusOK, usage)
+		return
+	}
 	if path == "health" {
 		state, err := s.store.observerHealth(r.Context())
 		if err != nil {
@@ -285,8 +321,9 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		query := QueryRequest{
 			Collection: kind, ThreadKey: q.Get("threadKey"),
 			TopicID: q.Get("topicId"), IssueID: q.Get("issueId"), MessageID: q.Get("messageId"), Cursor: q.Get("cursor"), Limit: limit,
-			preview: q.Get("preview") == "true",
-			newest:  q.Get("order") == "newest",
+			preview:       q.Get("preview") == "true",
+			newest:        q.Get("order") == "newest",
+			observerTrace: q.Get("trace") == "true",
 		}
 		if kind == "router-messages" {
 			if q.Get("order") != "" && !query.newest {
@@ -359,7 +396,16 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		body = strings.ReplaceAll(body, string(encoded[1:len(encoded)-1]), "[redacted]")
+		needle := string(encoded[1 : len(encoded)-1])
+		// MCP tool text includes an escaped copy of the structured JSON.
+		if needle != token {
+			doubleEncoded, err := json.Marshal(needle)
+			if err != nil {
+				return "", err
+			}
+			body = strings.ReplaceAll(body, string(doubleEncoded[1:len(doubleEncoded)-1]), "[redacted]")
+		}
+		body = strings.ReplaceAll(body, needle, "[redacted]")
 	}
 	rows, queryErr := s.store.db.QueryContext(ctx, "SELECT token FROM session_bindings")
 	if queryErr != nil {

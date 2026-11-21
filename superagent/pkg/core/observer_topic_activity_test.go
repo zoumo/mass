@@ -59,12 +59,12 @@ func TestObserverTopicActivityWatermark(t *testing.T) {
  json_object('id','mass-t1-i1','topicId','mass-t1','title','Older snapshot','status','completed','createdAt',?1,'updatedAt',?2,'goalRevision',4),'a','')`, at, updated)
 	insert(`INSERT INTO issues(topic_id,number,created_at,body,creation_key,creation_digest) VALUES('mass-t1',2,?1,
  json_object('id','mass-t1-i2','topicId','mass-t1','title','Issue B','status','pending','createdAt',?1,'updatedAt',?1),'b','')`, at)
-	addDelivery := func(id string) {
-		insert(`INSERT INTO internal_deliveries(id,kind,created_at,sender,recipient,refs,status)
+	addEvent := func(id string) {
+		insert(`INSERT INTO internal_events(event_id,kind,created_at,sender,recipient,refs,status)
  VALUES(?1,'routed_message',?2,'{"kind":"router"}','{"kind":"topic","topic_id":"mass-t1"}',
  json_array(json_object('kind','trigger_message','id',?3)),'sent')`, id, at, receipt.MessageID)
 	}
-	addDelivery("receive")
+	addEvent("receive")
 	query := "topicId=mass-t1&limit=1"
 	first, token := topicEvents(t, p, query)
 	require.Len(t, first, 1)
@@ -76,7 +76,7 @@ func TestObserverTopicActivityWatermark(t *testing.T) {
 		require.Equal(t, 400, status)
 	}
 	// A late insertion even with the exact same saved timestamp must not enter page two.
-	addDelivery("late")
+	addEvent("late")
 	all := first
 	for token != "" {
 		next, cursor := topicEvents(t, p, query+"&cursor="+url.QueryEscape(token))
@@ -126,7 +126,7 @@ func TestObserverTopicActivitySavedActions(t *testing.T) {
 	d := decide(t, p, roleToken(t, f, router), newRoute("activity-saved", []string{m.MessageID}, f.dir))
 	topic := waitBinding(t, p, "topic", d.Targets[0].TopicID, "ready")
 	token := roleToken(t, f, topic)
-	created := roleWork[core.WorkReceipt](t, p, token, "issue_create", issueInput(f.dir, "activity-saved"))
+	created := roleWork[core.WorkReceipt](t, p, token, "create_issue", issueInput(f.dir, "activity-saved"))
 	b := roleWork[core.WorkReceipt](t, p, token, "issue_update_blockers", core.UpdateBlockersRequest{
 		OperationID: "hold", IssueID: created.Issue.ID, ExpectedRevision: created.Issue.Revision, Add: []core.BlockerInput{human("review needed")},
 	})

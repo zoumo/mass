@@ -19,7 +19,7 @@ type conversationRow struct {
 	TopicID       string `json:"topicId"`
 	ThreadKey     string `json:"threadKey"`
 	MessageID     string `json:"messageId"`
-	DeliveryID    string `json:"deliveryId"`
+	EventID       string `json:"eventId"`
 	Actor         string `json:"actor"`
 	Recipient     string `json:"recipient"`
 	LastMessageAt string `json:"lastMessageAt"`
@@ -106,14 +106,14 @@ func TestObserverTopicConversationIngress(t *testing.T) {
 	require.Equal(t, topicB, both[0].TopicID)
 	require.Equal(t, direct.ThreadKey, both[0].ThreadKey)
 	require.Equal(t, direct.MessageID, both[0].MessageID)
-	require.Equal(t, direct.EventID, both[0].DeliveryID)
+	require.Equal(t, direct.EventID, both[0].EventID)
 	require.Equal(t, "core", both[0].Actor)
 	require.Equal(t, "topic", both[0].Recipient)
 	routed, _ := conversationPage(t, p, url.Values{"topicId": {topicB}, "filter": {"router_routed"}})
 	require.Len(t, routed, 2)
 	require.Equal(t, shared.ThreadKey, routed[1].ThreadKey)
 	require.Equal(t, shared.MessageID, routed[1].MessageID)
-	require.Equal(t, decision.Targets[1].DeliveryIDs[shared.MessageID], routed[1].DeliveryID)
+	require.Equal(t, decision.Targets[1].EventIDs[shared.MessageID], routed[1].EventID)
 	require.Equal(t, "router", routed[1].Actor)
 	directRows, _ := conversationPage(t, p, url.Values{"topicId": {topicB}, "filter": {"thread_direct"}})
 	require.Equal(t, both, directRows)
@@ -137,9 +137,9 @@ func TestObserverTopicConversationIngress(t *testing.T) {
 	}
 }
 
-func TestObserverTopicConversationWorkerDispatch(t *testing.T) {
+func TestObserverTopicConversationIssueDispatch(t *testing.T) {
 	boundary := newRouteBoundary(t)
-	f, _ := deliveryFixture(t, boundary.url)
+	f, _ := eventFixture(t, boundary.url)
 	p := f.start()
 	routerToken := roleToken(t, f, waitBinding(t, p, "router", "", "ready"))
 	createTopic := func(label string) (core.Binding, core.Receipt) {
@@ -151,9 +151,9 @@ func TestObserverTopicConversationWorkerDispatch(t *testing.T) {
 	topic, ingress := createTopic("dispatch")
 	other, _ := createTopic("other")
 	token := roleToken(t, f, topic)
-	issue := roleWork[core.WorkReceipt](t, p, token, "issue_create", issueInput(f.dir, "dispatch")).Issue
+	issue := roleWork[core.WorkReceipt](t, p, token, "create_issue", issueInput(f.dir, "dispatch")).Issue
 
-	rows, _ := conversationPage(t, p, url.Values{"topicId": {topic.OwnerID}, "filter": {"worker_dispatch"}})
+	rows, _ := conversationPage(t, p, url.Values{"topicId": {topic.OwnerID}, "filter": {"issue_session_dispatch"}})
 	require.Empty(t, rows)
 	rows, _ = conversationPage(t, p, url.Values{"topicId": {topic.OwnerID}, "filter": {"issue_created"}})
 	require.Len(t, rows, 1)
@@ -161,26 +161,26 @@ func TestObserverTopicConversationWorkerDispatch(t *testing.T) {
 	topics, _ := conversationPage(t, p, url.Values{})
 	require.Equal(t, other.OwnerID, topics[0].ID, "creating an Issue alone does not promote its Topic")
 
-	started := roleWork[core.WorkReceipt](t, p, token, "issue_start", startRequest("start", issue))
-	waitBinding(t, p, "worker", started.Execution.ID, "ready")
+	started := roleWork[core.WorkReceipt](t, p, token, "start_issue", startRequest("start", issue))
+	waitBinding(t, p, "issue", started.Execution.ID, "ready")
 	before, cursor := conversationPage(t, p, url.Values{"topicId": {topic.OwnerID}, "limit": {"1"}})
 	require.Len(t, before, 1)
 	require.NotEmpty(t, cursor)
-	require.Equal(t, "worker_dispatch/"+started.Execution.StartEventID, before[0].ID)
+	require.Equal(t, "issue_session_dispatch/"+started.Execution.StartEventID, before[0].ID)
 	topics, _ = conversationPage(t, p, url.Values{})
-	require.Equal(t, topic.OwnerID, topics[0].ID, "Worker startup is a conversation message")
+	require.Equal(t, topic.OwnerID, topics[0].ID, "Issue Session startup is a conversation message")
 
-	supplemented := roleWork[core.WorkReceipt](t, p, token, "issue_worker_update", core.WorkerUpdateRequest{
+	supplemented := roleWork[core.WorkReceipt](t, p, token, "issue_session_input", core.IssueSessionInputRequest{
 		OperationID: "supplement", IssueID: issue.ID, ExpectedRevision: started.Issue.Revision, Mode: "context_supplement",
-		Content:   &core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"Context for Worker"}`)},
+		Content:   &core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"Context for Issue Session"}`)},
 		Materials: []core.Material{{Label: "Ingress", MessageID: ingress.MessageID}},
 	})
-	continued := roleWork[core.WorkReceipt](t, p, token, "issue_worker_update", core.WorkerUpdateRequest{
+	continued := roleWork[core.WorkReceipt](t, p, token, "issue_session_input", core.IssueSessionInputRequest{
 		OperationID: "continue", IssueID: issue.ID, ExpectedRevision: supplemented.Issue.Revision, Mode: "continue",
 		Content: &core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"Continue the current work"}`)},
 	})
 	updated := roleWork[core.WorkReceipt](t, p, token, "issue_update_requirements", core.UpdateRequirementsRequest{
-		OperationID: "goal", IssueID: issue.ID, ExpectedRevision: continued.Issue.Revision, Goal: "Updated goal", NotifyWorker: true,
+		OperationID: "goal", IssueID: issue.ID, ExpectedRevision: continued.Issue.Revision, Goal: "Updated goal", NotifyIssueSession: true,
 	})
 	remainder, end := conversationPage(t, p, url.Values{"topicId": {topic.OwnerID}, "cursor": {cursor}})
 	require.Empty(t, end)
@@ -188,16 +188,16 @@ func TestObserverTopicConversationWorkerDispatch(t *testing.T) {
 	require.Equal(t, "issue_created/"+issue.ID, remainder[0].ID)
 	require.Equal(t, ingress.MessageID, remainder[1].MessageID)
 
-	params := url.Values{"mode": {"conversation"}, "topicId": {topic.OwnerID}, "filter": {"worker_dispatch"}}
+	params := url.Values{"mode": {"conversation"}, "topicId": {topic.OwnerID}, "filter": {"issue_session_dispatch"}}
 	result := page(t, p, "topic-activity?"+params.Encode())
 	want := []struct {
 		kind, id, execution string
 		generation          int
 	}{
 		{"goal_notification", updated.NotificationEventID, started.Execution.ID, 1},
-		{"worker_update", continued.NotificationEventID, started.Execution.ID, 1},
+		{"issue_session_update", continued.NotificationEventID, started.Execution.ID, 1},
 		{"context_supplement", supplemented.NotificationEventID, started.Execution.ID, 1},
-		{"worker_started", started.Execution.StartEventID, started.Execution.ID, 1},
+		{"issue_session_started", started.Execution.StartEventID, started.Execution.ID, 1},
 	}
 	require.Len(t, result.Items, len(want))
 	var latestDispatchAt string
@@ -212,7 +212,7 @@ func TestObserverTopicConversationWorkerDispatch(t *testing.T) {
 			Status       string `json:"status"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &dispatch))
-		require.Equal(t, "worker_dispatch/"+want[i].id, dispatch.ID)
+		require.Equal(t, "issue_session_dispatch/"+want[i].id, dispatch.ID)
 		require.Equal(t, want[i].kind, dispatch.DispatchKind)
 		require.Equal(t, want[i].execution, dispatch.ExecutionID)
 		require.Equal(t, want[i].generation, dispatch.Generation)
@@ -230,21 +230,21 @@ func TestObserverTopicConversationWorkerDispatch(t *testing.T) {
 }
 
 type conversationFixture struct {
-	process          *process
-	workerToken      string
-	topicID          string
-	otherTopicID     string
-	issue            core.Issue
-	execution        core.Execution
-	routedDeliveryID string
-	direct           core.Receipt
-	report           core.ReportRequest
+	process       *process
+	issueToken   string
+	topicID       string
+	otherTopicID  string
+	issue         core.Issue
+	execution     core.Execution
+	routedEventID string
+	direct        core.Receipt
+	report        core.ReportRequest
 }
 
 func seedTopicConversation(t *testing.T, extraMessages int) conversationFixture {
 	t.Helper()
 	boundary := newRouteBoundary(t)
-	f, _ := deliveryFixture(t, boundary.url)
+	f, _ := eventFixture(t, boundary.url)
 	p := f.start()
 	routerToken := roleToken(t, f, waitBinding(t, p, "router", "", "ready"))
 
@@ -257,8 +257,8 @@ func seedTopicConversation(t *testing.T, extraMessages int) conversationFixture 
 	create := issueInput(f.dir, "conversation-issue")
 	create.Title = "Verify conversation build"
 	create.Start = true
-	work := roleWork[core.WorkReceipt](t, p, token, "issue_create", create)
-	worker := waitBinding(t, p, "worker", work.Execution.ID, "ready")
+	work := roleWork[core.WorkReceipt](t, p, token, "create_issue", create)
+	issue := waitBinding(t, p, "issue", work.Execution.ID, "ready")
 
 	direct := submit(t, p, f, conversationInput("conversation-direct", "conversation"))
 	for i := range extraMessages {
@@ -269,9 +269,9 @@ func seedTopicConversation(t *testing.T, extraMessages int) conversationFixture 
 	otherRoute.Targets[0].Create.Title = "Other recent conversation"
 	otherTopicID := decide(t, p, routerToken, otherRoute).Targets[0].TopicID
 	return conversationFixture{
-		process: p, workerToken: roleToken(t, f, worker), topicID: topic.OwnerID,
+		process: p, issueToken: roleToken(t, f, issue), topicID: topic.OwnerID,
 		otherTopicID: otherTopicID, issue: work.Issue, execution: *work.Execution,
-		routedDeliveryID: target.DeliveryIDs[routed.MessageID], direct: direct,
+		routedEventID: target.EventIDs[routed.MessageID], direct: direct,
 		report: core.ReportRequest{
 			OperationID: "conversation-report", Kind: "ready", Summary: "Conversation build verified",
 			Details: "All conversation build checks passed.", Evidence: []string{"artifacts/conversation.log"},
@@ -293,9 +293,9 @@ func TestObserverTopicConversationReport(t *testing.T) {
 	require.Equal(t, f.direct.ThreadKey, first[0].ThreadKey)
 	require.NotEmpty(t, timelineCursor)
 
-	report := roleWork[core.Report](t, p, f.workerToken, "report_submit", f.report)
-	require.Equal(t, report, roleWork[core.Report](t, p, f.workerToken, "report_submit", f.report))
-	notification := readRecord[workDeliveryRecord](t, p, "internal-deliveries/"+report.EventID)
+	report := roleWork[core.Report](t, p, f.issueToken, "submit_report", f.report)
+	require.Equal(t, report, roleWork[core.Report](t, p, f.issueToken, "submit_report", f.report))
+	notification := readRecord[workEventRecord](t, p, "internal-events/"+report.EventID)
 	require.Equal(t, "report_submitted", notification.Kind)
 	require.Equal(t, report, readRecord[core.Report](t, p, "reports/"+report.ID))
 
@@ -311,18 +311,18 @@ func TestObserverTopicConversationReport(t *testing.T) {
 
 	remainder, _ := conversationPage(t, p, url.Values{"topicId": {f.topicID}, "cursor": {timelineCursor}})
 	require.Len(t, remainder, 3)
-	require.Equal(t, "worker_dispatch/"+f.execution.StartEventID, remainder[0].ID)
+	require.Equal(t, "issue_session_dispatch/"+f.execution.StartEventID, remainder[0].ID)
 	require.Equal(t, "issue_created/"+f.issue.ID, remainder[1].ID)
-	require.Equal(t, "router_routed/"+f.routedDeliveryID, remainder[2].ID)
+	require.Equal(t, "router_routed/"+f.routedEventID, remainder[2].ID)
 
 	all, _ := conversationPage(t, p, url.Values{"topicId": {f.topicID}})
 	require.Len(t, all, 5)
 	require.Equal(t, append(first, remainder...), all[1:])
 	want := conversationRow{
 		ID: "report/" + report.ID, TopicID: f.topicID, Kind: "report",
-		Title: f.issue.Title, Actor: "worker", Recipient: "topic", At: report.CreatedAt, ReportID: report.ID,
+		Title: f.issue.Title, Actor: "issue", Recipient: "topic", At: report.CreatedAt, ReportID: report.ID,
 		IssueID: f.issue.ID, ExecutionID: f.execution.ID, Generation: f.execution.Generation,
-		ReportKind: f.report.Kind, Summary: f.report.Summary, DeliveryID: report.EventID,
+		ReportKind: f.report.Kind, Summary: f.report.Summary, EventID: report.EventID,
 	}
 	require.Equal(t, want, all[0])
 	filtered, _ := conversationPage(t, p, url.Values{"topicId": {f.topicID}, "filter": {"report"}})

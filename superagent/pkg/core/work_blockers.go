@@ -31,13 +31,13 @@ type BlockerResolutionRecord struct {
 	At string `json:"at"`
 }
 type UpdateBlockersRequest struct {
-	OperationID      string              `json:"operationId"`
-	IssueID          string              `json:"issueId"`
-	ExpectedRevision int                 `json:"expectedRevision"`
-	Add              []BlockerInput      `json:"add,omitempty"`
-	Resolve          []BlockerResolution `json:"resolve,omitempty"`
-	NotifyWorker     bool                `json:"notifyWorker,omitempty"`
-	UnblockedStatus  string              `json:"unblockedStatus,omitempty"`
+	OperationID        string              `json:"operationId"`
+	IssueID            string              `json:"issueId"`
+	ExpectedRevision   int                 `json:"expectedRevision"`
+	Add                []BlockerInput      `json:"add,omitempty"`
+	Resolve            []BlockerResolution `json:"resolve,omitempty"`
+	NotifyIssueSession bool                `json:"notifyIssueSession,omitempty"`
+	UnblockedStatus    string              `json:"unblockedStatus,omitempty"`
 }
 
 func updateBlockers(r UpdateBlockersRequest) workMutation {
@@ -46,59 +46,67 @@ func updateBlockers(r UpdateBlockersRequest) workMutation {
 		if err != nil {
 			return nil, err
 		}
-		if len(r.Add) == 0 && len(r.Resolve) == 0 {
-			return nil, problem("invalid_argument", "supply blockers to add or resolve")
-		}
-		if err := resolveBlockers(ctx, tx, &issue, r.Resolve); err != nil {
+		retired, err := applyBlockerChanges(ctx, tx, b, &issue, changeBlockers{Add: r.Add, Resolve: r.Resolve, UnblockedStatus: r.UnblockedStatus})
+		if err != nil {
 			return nil, err
-		}
-		for _, input := range r.Add {
-			if err := validateBlocker(ctx, tx, b, issue.ID, input); err != nil {
-				return nil, err
-			}
-			// Resolved blockers retain their numbers and count toward the next one.
-			number := len(issue.Blockers) + len(issue.ResolvedBlockers) + 1
-			id := issue.ID + "-b" + strconv.Itoa(number)
-			issue.Blockers = append(issue.Blockers, Blocker{ID: id, BlockerInput: input})
-		}
-		if len(issue.Blockers) == 0 {
-			if r.UnblockedStatus != "pending" && r.UnblockedStatus != "active" {
-				return nil, problem("invalid_argument", "resolving the last blocker requires unblockedStatus pending or active")
-			}
-			issue.Status = r.UnblockedStatus
-		} else {
-			if r.UnblockedStatus != "" {
-				return nil, problem("invalid_argument", "unblockedStatus is only available when resolving the last blocker")
-			}
-			issue.Status = "blocked"
 		}
 		issue.Revision++
 		issue.UpdatedAt = now()
-		if r.UnblockedStatus == "active" && issue.CurrentExecutionID == "" {
-			return nil, problem("failed_precondition", "active requires a current Execution")
-		}
-		var retired *Execution
-		if r.UnblockedStatus == "pending" && issue.CurrentExecutionID != "" {
-			x, err := retireExecution(ctx, tx, issue.CurrentExecutionID, issue.UpdatedAt, false)
-			if err != nil {
-				return nil, err
-			}
-			retired, issue.CurrentExecutionID = &x, ""
-		}
 		if err := saveIssue(ctx, tx, issue); err != nil {
 			return nil, err
 		}
-		if r.NotifyWorker {
+		if r.NotifyIssueSession {
 			var materials []Material
 			for _, item := range r.Resolve {
 				if item.MessageID != "" {
 					materials = append(materials, Material{MessageID: item.MessageID})
 				}
 			}
-			return notifyWorker(ctx, tx, issue, newID("delivery"), workerUpdateKind, nil, materials)
+			return notifyIssueSession(ctx, tx, issue, newID("evt"), issueSessionUpdateKind, nil, materials)
 		}
 		return WorkReceipt{Issue: issue, Execution: retired}, nil
 	}
+}
+
+func applyBlockerChanges(ctx context.Context, tx *sql.Tx, b Binding, issue *Issue, changes changeBlockers) (*Execution, error) {
+	if len(changes.Add) == 0 && len(changes.Resolve) == 0 {
+		return nil, problem("invalid_argument", "supply blockers to add or resolve")
+	}
+	if err := resolveBlockers(ctx, tx, issue, changes.Resolve); err != nil {
+		return nil, err
+	}
+	for _, input := range changes.Add {
+		if err := validateBlocker(ctx, tx, b, issue.ID, input); err != nil {
+			return nil, err
+		}
+		// Resolved blockers retain their numbers and count toward the next one.
+		number := len(issue.Blockers) + len(issue.ResolvedBlockers) + 1
+		id := issue.ID + "-b" + strconv.Itoa(number)
+		issue.Blockers = append(issue.Blockers, Blocker{ID: id, BlockerInput: input})
+	}
+	if len(issue.Blockers) == 0 {
+		if changes.UnblockedStatus != "pending" && changes.UnblockedStatus != "active" {
+			return nil, problem("invalid_argument", "resolving the last blocker requires unblockedStatus pending or active")
+		}
+		issue.Status = changes.UnblockedStatus
+	} else {
+		if changes.UnblockedStatus != "" {
+			return nil, problem("invalid_argument", "unblockedStatus is only available when resolving the last blocker")
+		}
+		issue.Status = "blocked"
+	}
+	if changes.UnblockedStatus == "active" && issue.CurrentExecutionID == "" {
+		return nil, problem("failed_precondition", "active requires a current Execution")
+	}
+	var retired *Execution
+	if changes.UnblockedStatus == "pending" && issue.CurrentExecutionID != "" {
+		x, err := retireExecution(ctx, tx, issue.CurrentExecutionID, now(), false)
+		if err != nil {
+			return nil, err
+		}
+		retired, issue.CurrentExecutionID = &x, ""
+	}
+	return retired, nil
 }
 
 // resolveBlockers only resolves blockers currently open on this Issue. A
@@ -191,6 +199,9 @@ func saveIssueLifecycleTransition(ctx context.Context, tx *sql.Tx, issue Issue, 
 	if previousStatus == issue.Status || (!terminal(issue.Status) && !terminal(previousStatus)) {
 		return nil
 	}
+	if err := issueLifecycle.save(ctx, tx, issue.ID+"/"+issue.UpdatedAt, issue.Revision); err != nil {
+		return err
+	}
 	var raw string
 	if err := tx.QueryRowContext(ctx, `SELECT json_group_array(id) FROM (
  SELECT id FROM issues WHERE topic_id=? AND EXISTS (
@@ -214,10 +225,10 @@ func saveIssueLifecycleTransition(ctx context.Context, tx *sql.Tx, issue Issue, 
 	if err != nil {
 		return err
 	}
-	if err := enqueueInternalDelivery(ctx, tx, internalDelivery{
-		ID: newID("delivery"), Kind: contextSupplement,
-		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "topic", TopicID: issue.TopicID},
-		Body: payload, Refs: []deliveryReference{{Kind: "issue", ID: issue.ID}},
+	if err := enqueueInternalEvent(ctx, tx, internalEvent{
+		ID: newID("evt"), Kind: contextSupplement,
+		Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "topic", TopicID: issue.TopicID},
+		Body: payload, Refs: []eventReference{{Kind: "issue", ID: issue.ID}},
 	}); err != nil {
 		return err
 	}

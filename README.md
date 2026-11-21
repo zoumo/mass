@@ -91,14 +91,14 @@ See the [interactive massd diagram](docs/assets/mass-v2-architecture.html) and t
 ![Superagent architecture](docs/assets/superagent-architecture.svg)
 
 Superagent accepts messages from channel adapters. Its Router directs messages
-to Topics, and Topics coordinate Issues and Worker Reports. The read-only
+to Topics, and Topics coordinate Issues and Issue Reports. The read-only
 Observer queries the business state that Superagent persists in its own SQLite
 database. See the [interactive Superagent diagram](docs/assets/superagent-architecture.html).
 
 ![Combined MASS and Superagent architecture](docs/assets/mass-superagent-architecture.svg)
 
 When execution is enabled, Superagent uses the public Go client to prepare
-and drive Router, Topic, and Worker Sessions in `massd`. Other API clients can
+and drive Router Sessions, Topic Sessions, and Issue Sessions in `massd`. Other API clients can
 connect to the same daemon directly. See the
 [interactive combined diagram](docs/assets/mass-superagent-architecture.html).
 
@@ -106,7 +106,7 @@ connect to the same daemon directly. See the
 
 Superagent is an experimental application for routing messages and coordinating
 agent work. You can run it for message intake with execution disabled. Enable
-execution to run Workers through `massd`. Open `/observer/` to inspect message
+execution to run Issue Sessions through `massd`. Open `/observer/` to inspect message
 routing and Issue progress.
 
 Most of Superagent's design and core concepts were inspired by the
@@ -182,7 +182,7 @@ Superagent is experimental.
 | 🧪 Demonstration | Isolated end-to-end runtime scenarios | Uses mock CLIs. Real-agent checks run separately. |
 | 💬 Claude input | Text input, close, and resume | Each input uses one text block. Resume requires an absolute `CLAUDE_CONFIG_DIR`. |
 | 🤝 Permissions & questions | JSON-RPC `session.answer` | Answer through the API. |
-| Superagent | Message routing, Worker coordination, and a read-only Observer | Experimental. Execution requires explicit configuration. |
+| Superagent | Message routing, Issue Session coordination, and a read-only Observer | Experimental. Execution requires explicit configuration. |
 
 ## Development
 

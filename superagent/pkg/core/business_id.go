@@ -46,9 +46,9 @@ func numberedCreation(ctx context.Context, tx *sql.Tx, digest, query string, arg
 	}
 }
 
-func existingCreation(ctx context.Context, tx *sql.Tx, table, key, id string) (bool, error) {
+func existingCreation(ctx context.Context, tx *sql.Tx, table, idColumn, key, id string) (bool, error) {
 	var found string
-	err := tx.QueryRowContext(ctx, "SELECT id FROM "+table+" WHERE id GLOB ?", key+"_*").Scan(&found)
+	err := tx.QueryRowContext(ctx, "SELECT "+idColumn+" FROM "+table+" WHERE "+idColumn+" GLOB ?", key+"_*").Scan(&found)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return false, nil

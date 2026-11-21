@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { Button } from '../../components/ui/button'
+import { TraceLink } from '../TraceLinks'
 import ExecutionProfileFields from '../ExecutionProfileFields'
 import StructuredContent from '../StructuredContent'
-import { routingDeliveryLabel, stateLabel } from '../../workbench'
+import { eventStatusLabel, stateLabel } from '../../workbench'
 import SessionEvidence from './SessionEvidence'
 import ChannelEvidence from './ChannelEvidence'
 import { followupLabel, identity, replyLabel, type RecordProps, type Kind } from './records'
 
-function TraceID({ traceId, phase }: { traceId: string; phase: string }) {
+function TraceID({ traceId, phase, at }: { traceId: string; phase: string; at?: string }) {
   const [result, setResult] = useState('')
   async function copy() {
     try {
@@ -19,7 +20,7 @@ function TraceID({ traceId, phase }: { traceId: string; phase: string }) {
   }
   return (
     <li>
-      {phase} · <code>{traceId}</code>
+      {phase} · <TraceLink id={traceId} at={at}/>
       <Button type="button" variant="ghost" size="sm" onClick={copy}>
         <span aria-live="polite">{result || '复制 Trace ID'}</span>
       </Button>
@@ -36,8 +37,8 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
         <span className="record-state">
           {kind === 'outbox'
             ? replyLabel(String(detail.status))
-            : kind === 'routing-deliveries' || kind === 'internal-deliveries' || kind === 'relations'
-              ? routingDeliveryLabel(detail.status)
+            : kind === 'routing-events' || kind === 'internal-events' || kind === 'relations'
+              ? eventStatusLabel(detail.status)
               : stateLabel(String(detail.acceptance || detail.status || detail.state))}
         </span>
       )}
@@ -45,7 +46,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       {detail.reason && <p>{detail.reason}</p>}
       {detail.lastError && <p role="status">{detail.lastError}</p>}
       {detail.actor && <h2>{detail.actor}</h2>}
-      {(kind === 'outbox' || kind === 'internal-deliveries') && detail.content && typeof detail.content !== 'string' && <StructuredContent content={detail.content} />}
+      {(kind === 'outbox' || kind === 'internal-events') && detail.content && typeof detail.content !== 'string' && <StructuredContent content={detail.content} />}
       {detail.text && (
         <pre className="body-text" data-testid="message-body">
           {detail.text}
@@ -64,7 +65,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           <h2>关联 Trace</h2>
           <ul>
             {detail.traceAssociations.map((association) => (
-              <TraceID key={association.phase + '/' + association.traceId} {...association} />
+              <TraceID key={association.phase + '/' + association.traceId} {...association} at={detail.createdAt || detail.receivedAt} />
             ))}
           </ul>
         </section>
@@ -128,7 +129,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           </button>
         </>
       )}
-      {['subscriptions', 'relations', 'routing-deliveries'].includes(kind) && detail.messageId && (
+      {['subscriptions', 'relations', 'routing-events'].includes(kind) && detail.messageId && (
         <button onClick={() => showRecord('messages', detail.messageId!)} type="button">
           查看来源消息
         </button>
@@ -196,20 +197,20 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
             <dt>目标版本</dt>
             <dd>{detail.goalRevision}</dd>
             {detail.executionProfile && <ExecutionProfileFields profile={detail.executionProfile}/>}
-            <dt>执行器 Session</dt>
+            <dt>Issue Session</dt>
             <dd>
-              {detail.currentExecutionId ? stateLabel(detail.workerSession?.state) : '当前没有执行'}
-              {detail.workerSession?.observedAt && <span> · {detail.workerSession.observedAt}</span>}
-              {detail.workerSession?.observationGap && <span> · {detail.workerSession.observationGap}</span>}
+              {detail.currentExecutionId ? stateLabel(detail.issueSession?.state) : '当前没有执行'}
+              {detail.issueSession?.observedAt && <span> · {detail.issueSession.observedAt}</span>}
+              {detail.issueSession?.observationGap && <span> · {detail.issueSession.observationGap}</span>}
             </dd>
             <dt>最近一次目标变更通知</dt>
             {detail.latestRequirementsNotification && (
               <dd>
-                {routingDeliveryLabel(detail.latestRequirementsNotification.status)} · 目标版本{' '}
+                {eventStatusLabel(detail.latestRequirementsNotification.status)} · 目标版本{' '}
                 {detail.latestRequirementsNotification.revision}
                 <button
                   onClick={() =>
-                    showRecord('internal-deliveries', identity(detail.latestRequirementsNotification!))
+                    showRecord('internal-events', identity(detail.latestRequirementsNotification!))
                   }
                   type="button"
                 >
@@ -277,7 +278,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
             )}
             {detail.followup && (
               <>
-                <dt>跟进通知投递</dt>
+                <dt>跟进通知事件</dt>
                 <dd>{followupLabel(detail.followup)}</dd>
               </>
             )}
@@ -287,9 +288,9 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
               查看触发消息
             </button>
           )}
-          {detail.followup?.kind === 'routed_message' && detail.followup.id && (
-            <button onClick={() => showRecord('routing-deliveries', detail.followup!.id!)} type="button">
-              查看跟进投递
+          {detail.followup?.kind === 'routed_message' && detail.followup.event_id && (
+            <button onClick={() => showRecord('routing-events', detail.followup!.event_id!)} type="button">
+              查看跟进事件
             </button>
           )}
         </>
@@ -360,7 +361,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           <button onClick={() => showRecord('executions', String(detail.executionId))} type="button">
             查看执行记录
           </button>
-          <button onClick={() => showRecord('internal-deliveries', String(detail.eventId))} type="button">
+          <button onClick={() => showRecord('internal-events', String(detail.eventId))} type="button">
             Topic 通知
           </button>
         </>
@@ -377,10 +378,10 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           </ul>
         </>
       )}
-      {['routing-deliveries', 'subscriptions', 'relations', 'internal-deliveries'].includes(kind) && (
+      {['routing-events', 'subscriptions', 'relations', 'internal-events'].includes(kind) && (
         <pre data-testid="routing-record">{JSON.stringify(detail, null, 2)}</pre>
       )}
-      {!['routing-deliveries', 'subscriptions', 'relations', 'internal-deliveries'].includes(kind) && (
+      {!['routing-events', 'subscriptions', 'relations', 'internal-events'].includes(kind) && (
         <details>
           <summary>原始字段和引用</summary>
           <pre>{JSON.stringify(detail, null, 2)}</pre>

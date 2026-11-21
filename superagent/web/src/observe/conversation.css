@@ -50,7 +50,7 @@
 .conversation-workspace [data-actor=router] { --actor: #c4a8ff }
 .conversation-workspace [data-actor=core] { --actor: #a8c9ff }
 .conversation-workspace [data-actor=topic] { --actor: var(--teal) }
-.conversation-workspace [data-actor=worker] { --actor: #f4ca80 }
+.conversation-workspace [data-actor=issue-session] { --actor: #f4ca80 }
 .conversation-thread {
   display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 0 5px;
   color: #b7d3fb; background: #152337; border: 1px solid #31455f; border-radius: 5px; overflow-wrap: anywhere;

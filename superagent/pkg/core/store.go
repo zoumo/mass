@@ -25,17 +25,18 @@ import (
 )
 
 const (
-	schemaVersion = 22
+	schemaVersion = 23
 	applicationID = 1398096210
 )
 
 type Store struct {
-	config            Config
-	db                *sql.DB
-	lock              *os.File
-	mu                sync.Mutex
-	telemetry         *coreTelemetry
-	queueRegistration metric.Registration
+	config               Config
+	db                   *sql.DB
+	lock                 *os.File
+	mu                   sync.Mutex
+	telemetry            *coreTelemetry
+	queueRegistration    metric.Registration
+	hasTraceAssociations bool
 }
 
 func Open(c Config) (*Store, error) {
@@ -125,21 +126,27 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 			return nil, storageError()
 		}
 	}
+	if _, err = tx.ExecContext(ctx, mcpUsageSchema+mcpMutationSchema); err != nil {
+		return nil, storageError()
+	}
 	if s.telemetry.tracesEnabled {
 		if _, err = tx.ExecContext(ctx, traceAssociationSchema); err != nil {
 			return nil, storageError()
 		}
 	}
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='trace_associations')`).Scan(&s.hasTraceAssociations); err != nil {
+		return nil, storageError()
+	}
 	if err := initializeRouter(ctx, tx, c); err != nil {
 		return nil, err
 	}
-	if err := recoverInternalDeliveries(ctx, tx); err != nil {
+	if err := recoverInternalEvents(ctx, tx); err != nil {
 		return nil, err
 	}
 	if err := recoverStops(ctx, tx); err != nil {
 		return nil, err
 	}
-	if err := recoverWorkerObservations(ctx, tx); err != nil {
+	if err := recoverIssueObservations(ctx, tx); err != nil {
 		return nil, err
 	}
 	for _, source := range c.Sources {
@@ -278,7 +285,7 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r Submi
 		return result, err
 	}
 	if m.Echo == nil {
-		m.EventID = newID("dlv")
+		m.EventID = newID("evt")
 	}
 	if err := upsertThread(ctx, tx, key, r.Message.ThreadRef, at, at); err != nil {
 		return Receipt{}, err
@@ -361,7 +368,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	var parentColumn, parent string
 	var relatedFilter string
 	switch {
-	case q.TopicID != "" && q.IssueID == "" && (kind == "issues" || kind == "timers" || kind == "pull-requests" || kind == "subscriptions" || kind == "relations" || kind == "routing-deliveries"):
+	case q.TopicID != "" && q.IssueID == "" && (kind == "issues" || kind == "timers" || kind == "pull-requests" || kind == "subscriptions" || kind == "relations" || kind == "routing-events"):
 		parentColumn, parent = "topic_id", q.TopicID
 		if kind == "pull-requests" {
 			relatedFilter = "topic_id=? AND issue_id IS NULL"
@@ -369,7 +376,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	case q.TopicID != "" && q.IssueID == "" && binding == nil && kind == "outbox":
 		parentColumn, parent = "related_topic", q.TopicID
 		relatedFilter = "message_id IN (SELECT message_id FROM topic_message_history WHERE topic_id=?)"
-	case q.IssueID != "" && q.TopicID == "" && binding == nil && source == nil && kind == "internal-deliveries":
+	case q.IssueID != "" && q.TopicID == "" && binding == nil && source == nil && kind == "internal-events":
 		parentColumn, parent = "referenced_issue", q.IssueID
 		relatedFilter = `EXISTS (SELECT 1 FROM json_each(refs) ref
  WHERE CASE json_extract(ref.value,'$.kind') WHEN 'issue' THEN json_extract(ref.value,'$.id') ELSE json_extract(ref.value,'$.issue_id') END=?)`
@@ -393,10 +400,10 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		table, timeCol, idCol = "thread_subscriptions", "created_at", "id"
 	case "relations":
 		table, timeCol, idCol = "routing_relations", "created_at", "id"
-	case "internal-deliveries":
-		table, timeCol, idCol = "(SELECT rowid AS seq,* FROM internal_deliveries)", "created_at", "id"
-	case "routing-deliveries":
-		table, timeCol, idCol = "routing_deliveries", "created_at", "id"
+	case "internal-events":
+		table, timeCol, idCol = "(SELECT rowid AS seq,* FROM internal_events)", "created_at", "event_id"
+	case "routing-events":
+		table, timeCol, idCol = "routing_events", "created_at", "event_id"
 	case "bindings":
 		table, timeCol, idCol = "session_bindings", "created_at", "id"
 	case "outbox":
@@ -415,7 +422,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	}
 	if q.MessageID != "" {
 		materialFilter := kind == "issues" && binding == nil && source == nil
-		if parent != "" || (!materialFilter && kind != "outbox" && kind != "relations" && kind != "routing-deliveries") {
+		if parent != "" || (!materialFilter && kind != "outbox" && kind != "relations" && kind != "routing-events") {
 			return p, problem("invalid_argument", "unsupported messageId filter; use only one parent")
 		}
 		parentColumn, parent, c.Parent = "message_id", q.MessageID, q.MessageID
@@ -424,6 +431,12 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		}
 	}
 	c.Filter = parentColumn
+	if q.search != "" {
+		c.Filter += "search:" + q.search
+	}
+	if q.status != "" {
+		c.Filter += "status:" + q.status
+	}
 	// One read transaction binds the high-water mark and first-page data to one snapshot.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -448,9 +461,12 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 	}
 	if q.preview {
 		projection = observerListProjection(kind, projection)
-		if q.MessageID != "" && (kind == "issues" || kind == "routing-deliveries") {
+		if q.MessageID != "" && (kind == "issues" || kind == "routing-events") {
 			projection = "json_set(" + projection + ",'$.topicTitle',(SELECT json_extract(t.body,'$.title') FROM topics t WHERE t.id=" + table + ".topic_id))"
 		}
+	}
+	if q.observerTrace && s.hasTraceAssociations && binding == nil && source == nil {
+		projection = observerTraceProjection(kind, idCol, projection)
 	}
 	query := "SELECT " + projection + "," + timeCol + "," + idCol + " FROM " + table + " WHERE seq<=?"
 	args := append(projectionArgs(kind, binding), c.Upper)
@@ -476,6 +492,14 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Binding
 		}
 		query += " AND " + relatedFilter
 		args = append(args, parent)
+	}
+	if q.search != "" {
+		query += ` AND (instr(lower(id),lower(?))>0 OR instr(lower(json_extract(body,'$.title')),lower(?))>0)`
+		args = append(args, q.search, q.search)
+	}
+	if q.status != "" {
+		query += ` AND json_extract(body,'$.status')=?`
+		args = append(args, q.status)
 	}
 	query += scope
 	args = append(args, scopeArgs...)
@@ -543,10 +567,10 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Binding
 		table = "thread_subscriptions"
 	case "relations":
 		table = "routing_relations"
-	case "internal-deliveries":
-		table = "internal_deliveries"
-	case "routing-deliveries":
-		table = "routing_deliveries"
+	case "internal-events":
+		table, idCol = "internal_events", "event_id"
+	case "routing-events":
+		table, idCol = "routing_events", "event_id"
 	case "bindings":
 		table = "session_bindings"
 	case "topics", "issues", "executions", "reports", "outbox":
@@ -577,15 +601,19 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Binding
 		scope += channelOutboxScope
 		args = append(args, source.Source, source.AccountID)
 	}
+	if observerTrace && s.hasTraceAssociations && binding == nil && source == nil {
+		if kind == "issues" {
+			project = observerIssueActivityTraces(observerTraceProjection(kind, "issues.id", project), "issues.id")
+		} else {
+			project = observerTraceProjection(kind, idCol, project)
+		}
+	}
 	err = tx.QueryRowContext(ctx, "SELECT "+project+" FROM "+table+" WHERE "+idCol+"=?"+scope, args...).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, problem("not_found", "resource not found in current scope")
 	}
 	if err != nil {
 		return nil, storageError()
-	}
-	if observerTrace && binding == nil && source == nil {
-		return observeTraceAssociations(ctx, tx, kind, id, body), nil
 	}
 	return body, nil
 }

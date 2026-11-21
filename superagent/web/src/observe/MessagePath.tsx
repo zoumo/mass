@@ -1,22 +1,24 @@
 import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { ArrowDownRight, ArrowRight, CheckCheck, CircuitBoard, CornerDownRight, FileCheck2, GitBranch, Inbox, Layers, Mail, Route, X } from 'lucide-react'
-import { routingDeliveryLabel, sourceLabel, stateLabel, type WorkbenchRow } from '../workbench'
+import { eventStatusLabel, sourceLabel, stateLabel, type WorkbenchRow } from '../workbench'
 import { usePages, useRecord, viewHref, type MessageRecord } from './observer'
+import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './message-path.css'
 
 type Party = { kind: string, topic_id?: string }
-type Delivery = {
-  id: string, kind: string, createdAt: string, sentAt?: string, status: string,
-  sender: Party, recipient: Party, topicId?: string, topicTitle?: string, returnedDeliveryId?: string,
+type InternalEvent = {
+  event_id: string, kind: string, createdAt: string, sentAt?: string, status: string,
+  sender: Party, recipient: Party, topicId?: string, topicTitle?: string, returnedEventId?: string,
+  traceAssociations?: TraceAssociation[]
   body?: string, refs?: { kind: string, id: string }[]
 }
 type Issue = WorkbenchRow & { id: string, topicId: string, topicTitle?: string }
-type Reply = { id: string, status: string, preview: string, receipt?: { messageId?: string, conversationId?: string, taskId?: string, errorCode?: string } }
-type Selection = { kind: 'channel' | 'core' | 'router' | 'topic' | 'issue' | 'delivery', id: string }
+type Reply = { traceAssociations?: TraceAssociation[]; createdAt?: string; id: string, status: string, preview: string, receipt?: { messageId?: string, conversationId?: string, taskId?: string, errorCode?: string } }
+type Selection = { kind: 'channel' | 'core' | 'router' | 'topic' | 'issue' | 'event', id: string }
 type Toggle = (event: MouseEvent<HTMLButtonElement>, kind: Selection['kind'], id?: string) => void
 
-function action(row: Delivery) {
-  if (row.returnedDeliveryId) return '退回'
+function action(row: InternalEvent) {
+  if (row.returnedEventId) return '退回'
   if (row.kind === 'route_request') return '请求路由'
   return row.sender.kind === 'core' ? '直投' : '分发'
 }
@@ -32,7 +34,7 @@ function PageStatus({ page, name }: { page: ReturnType<typeof usePages>, name: s
     {page.next && <button className="path-more" onClick={page.more} disabled={page.loading}>加载更多{name}</button>}</>
 }
 function Node({ kind, id = '', label, selected, toggle }: {
-  kind: Exclude<Selection['kind'], 'delivery'>, id?: string, label: string, selected: Selection | null, toggle: Toggle
+  kind: Exclude<Selection['kind'], 'event'>, id?: string, label: string, selected: Selection | null, toggle: Toggle
 }) {
   const icons = { channel: Mail, core: CircuitBoard, router: Route, topic: Layers, issue: FileCheck2 }
   const Icon = icons[kind]
@@ -42,17 +44,17 @@ function Node({ kind, id = '', label, selected, toggle }: {
     <Icon size={16} aria-hidden="true"/><span>{(kind === 'topic' || kind === 'issue') && <small>{kind === 'topic' ? 'Topic ' : 'Issue '}</small>}{label}</span>
   </button>
 }
-function Edge({ row, selected, toggle }: { row: Delivery, selected: Selection | null, toggle: Toggle }) {
-  return <button type="button" className="path-edge" data-delivery-id={row.id}
-    aria-controls="path-selection" aria-expanded={selected?.kind === 'delivery' && selected.id === row.id}
-    onClick={e => toggle(e, 'delivery', row.id)}>
-    <span>{action(row)}<ArrowRight size={15}/></span><small>{routingDeliveryLabel(row.status)}</small>
-  </button>
+function Edge({ row, selected, toggle }: { row: InternalEvent, selected: Selection | null, toggle: Toggle }) {
+  return <div className="path-edge-trace"><button type="button" className="path-edge" data-event-id={row.event_id}
+    aria-controls="path-selection" aria-expanded={selected?.kind === 'event' && selected.id === row.event_id}
+    onClick={e => toggle(e, 'event', row.event_id)}>
+    <span>{action(row)}<ArrowRight size={15}/></span><small>{eventStatusLabel(row.status)}</small>
+  </button>{!!row.traceAssociations?.length && <TraceLinks associations={row.traceAssociations} at={row.createdAt}/>}</div>
 }
 
 export default function MessagePath({ message }: { message: MessageRecord }) {
-  const query = '?messageId=' + encodeURIComponent(message.id) + '&preview=true'
-  const deliveries = usePages<Delivery>('routing-deliveries' + query + '&limit=20')
+  const query = '?messageId=' + encodeURIComponent(message.id) + '&preview=true&trace=true'
+  const internalEvents = usePages<InternalEvent>('routing-events' + query + '&limit=20')
   const issues = usePages<Issue>('issues' + query + '&limit=6')
   const replies = usePages<Reply>('outbox' + query + '&limit=6')
   const [selected, select] = useState<Selection | null>(null)
@@ -69,21 +71,21 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
     trigger.current = event.currentTarget
     select({ kind, id })
   }
-  const node = (kind: Exclude<Selection['kind'], 'delivery'>, label: string, id = '') =>
+  const node = (kind: Exclude<Selection['kind'], 'event'>, label: string, id = '') =>
     <Node kind={kind} id={id} label={label} selected={selected} toggle={toggle}/>
-  const edge = (row: Delivery) => <Edge row={row} selected={selected} toggle={toggle}/>
-  const rows = deliveries.data || []
+  const edge = (row: InternalEvent) => <Edge row={row} selected={selected} toggle={toggle}/>
+  const rows = internalEvents.data || []
   const initial = rows.find(d => d.kind === 'route_request' && d.sender.kind === 'core')
   const targets = rows.filter(row => row.kind === 'routed_message')
-  const batches: { sender: string, targets: Delivery[] }[] = []
+  const batches: { sender: string, targets: InternalEvent[] }[] = []
   const latestTarget = new Map<string, string>()
   for (const target of targets) {
     const previous = batches[batches.length - 1]
     if (previous?.sender === target.sender.kind) previous.targets.push(target)
     else batches.push({ sender: target.sender.kind, targets: [target] })
-    if (target.topicId) latestTarget.set(target.topicId, target.id)
+    if (target.topicId) latestTarget.set(target.topicId, target.event_id)
   }
-  const returnByOrigin = new Map(rows.filter(row => row.returnedDeliveryId).map(row => [row.returnedDeliveryId!, row]))
+  const returnByOrigin = new Map(rows.filter(row => row.returnedEventId).map(row => [row.returnedEventId!, row]))
   const issuesByTopic = new Map<string, Issue[]>()
   for (const issue of issues.data || []) {
     const group = issuesByTopic.get(issue.topicId) || []
@@ -100,9 +102,9 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
         aria-expanded={selected?.kind === 'issue' && selected.id === issue.id}><CornerDownRight size={14}/>引用本消息</button>
       {node('issue', issue.title || issue.id, issue.id)}</li>)}</ul>
   }
-  function returned(row: Delivery) {
-    return <div className="path-return" data-origin-id={row.returnedDeliveryId}>
-      <CornerDownRight size={17} aria-label="原投递退回"/>{edge(row)}{node('router', 'Router')}
+  function returned(row: InternalEvent) {
+    return <div className="path-return" data-origin-id={row.returnedEventId}>
+      <CornerDownRight size={17} aria-label="原事件退回"/>{edge(row)}{node('router', 'Router')}
     </div>
   }
   const inlet = <div className="path-trunk">{node('channel', source)}
@@ -118,25 +120,25 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
     <div className="path-canvas">
       {batches[0]?.sender !== inletSender && inlet}
       {message.echo && <div className="path-echo"><Inbox size={15}/>回声 · {stateLabel(message.echo.status)}{message.echo.match && <a href={'/observer/?view=outbox&id=' + encodeURIComponent(message.echo.match.outboxId)}>查看匹配回执</a>}</div>}
-      {batches.map((batch, index) => <div className="path-batch" key={batch.targets[0].id}>
+      {batches.map((batch, index) => <div className="path-batch" key={batch.targets[0].event_id}>
         <div className="path-sender">{index === 0 && batch.sender === inletSender ? inlet :
           batch.sender === 'router' ? node('router', 'Router') : node('core', 'Core')}</div>
         <ol className="path-branches">{batch.targets.map(row => {
           const topicID = row.recipient.topic_id
-          const refs = topicID && latestTarget.get(topicID) === row.id && issuesByTopic.get(topicID)
-          const back = returnByOrigin.get(row.id)
-          return <li key={row.id} data-target-delivery={row.id}>
+          const refs = topicID && latestTarget.get(topicID) === row.event_id && issuesByTopic.get(topicID)
+          const back = returnByOrigin.get(row.event_id)
+          return <li key={row.event_id} data-target-event={row.event_id}>
             <div className="path-leg">{edge(row)}{topicID && node('topic', row.topicTitle || topicID, topicID)}</div>
             {back && returned(back)}
             {refs && references(refs)}
           </li>
         })}</ol>
       </div>)}
-      {rows.filter(row => row.returnedDeliveryId && !targets.some(target => target.id === row.returnedDeliveryId)).map(row =>
-        <div className="path-leg" key={row.id}>{row.sender.topic_id && node('topic', row.topicTitle || row.sender.topic_id, row.sender.topic_id)}{returned(row)}</div>)}
-      <PageStatus page={deliveries} name="路由投递"/>
-      {deliveries.data?.length === 0 && !deliveries.next && !deliveries.error && !message.echo && <p className="path-muted">暂无路由投递记录</p>}
-      {deliveries.data && !deliveries.next && !deliveries.error && materialOnly.length > 0 && <section className="path-materials"><h3>材料引用 · 缺少对应 Topic 投递记录</h3>
+      {rows.filter(row => row.returnedEventId && !targets.some(target => target.event_id === row.returnedEventId)).map(row =>
+        <div className="path-leg" key={row.event_id}>{row.sender.topic_id && node('topic', row.topicTitle || row.sender.topic_id, row.sender.topic_id)}{returned(row)}</div>)}
+      <PageStatus page={internalEvents} name="路由事件"/>
+      {internalEvents.data?.length === 0 && !internalEvents.next && !internalEvents.error && !message.echo && <p className="path-muted">暂无路由事件记录</p>}
+      {internalEvents.data && !internalEvents.next && !internalEvents.error && materialOnly.length > 0 && <section className="path-materials"><h3>材料引用 · 缺少对应 Topic 事件记录</h3>
         {materialOnly.map(([id, items]) => <div key={id}>{node('topic', items[0].topicTitle || id, id)}{references(items)}</div>)}</section>}
       <PageStatus page={issues} name="Issue 引用"/>
       {issues.data?.length === 0 && !issues.error && !issues.next && <p className="path-muted">尚无 Issue 材料引用本消息</p>}
@@ -144,10 +146,10 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
     <div className="path-tools"><button onClick={e => toggle(e, 'core')} aria-controls="path-selection" aria-expanded={selected?.kind === 'core'}><CheckCheck size={16}/>Core 接收记录</button></div>
     {selected && <section id="path-selection" className="path-selection" role="region" aria-label="路径详情" tabIndex={-1} ref={detail}
       onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close() } }}>
-      <div className="path-detail-title"><h3>{{ core: 'Core 接收记录', channel: '来源渠道', router: 'Router 处理记录', issue: 'Issue 材料引用', topic: '目标 Topic', delivery: '投递详情' }[selected.kind]}</h3>
+      <div className="path-detail-title"><h3>{{ core: 'Core 接收记录', channel: '来源渠道', router: 'Router 处理记录', issue: 'Issue 材料引用', topic: '目标 Topic', event: '事件详情' }[selected.kind]}</h3>
         <button onClick={close} aria-label="收起路径详情"><X size={17}/></button></div>
-      {selected.kind === 'delivery' && <DeliveryDetail id={selected.id}/>}
-      {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadKey]]}/>}
+      {selected.kind === 'event' && <InternalEventDetail id={selected.id}/>}
+      {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadKey], ['Trace', <TraceLinks associations={message.traceAssociations} at={message.receivedAt}/>]]}/>}
       {selected.kind === 'channel' && <Fields fields={[['渠道', source], ['发送者', message.actor], ['渠道消息 ID', message.sourceMessageId], ['原文', message.text]]}/>}
       {selected.kind === 'router' && <><Fields fields={[['本消息路由状态', result === 'pending' ? '待决策' : result === 'ignored' ? '已忽略 · 原因未记录' : stateLabel(result)], ['当前轮次', message.routing?.round]]}/>
         <a className="path-link" href={viewHref('router', message.id)}>查看 Router<ArrowRight size={14}/></a></>}
@@ -155,21 +157,21 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
     </section>}
     {(replies.data?.length || replies.next || replies.error) ? <section className="path-outbox"><h3><ArrowDownRight size={16}/>渠道回执 · {source}</h3>
       {replies.data?.map(row => <details key={row.id}><summary><span>{row.preview}</span><b>{row.status === 'sent' ? '渠道已发送' : '渠道 · ' + stateLabel(row.status)}</b></summary>
-        <Fields fields={[['Outbox ID', row.id], ['渠道消息 ID', row.receipt?.messageId], ['会话 ID', row.receipt?.conversationId], ['任务 ID', row.receipt?.taskId], ['错误码', row.receipt?.errorCode]]}/>
+        <Fields fields={[['Outbox ID', row.id], ['渠道消息 ID', row.receipt?.messageId], ['会话 ID', row.receipt?.conversationId], ['任务 ID', row.receipt?.taskId], ['错误码', row.receipt?.errorCode], ['Trace', <TraceLinks associations={row.traceAssociations} at={row.createdAt}/>]]}/>
         <a className="path-link" href={'/observer/?view=outbox&id=' + encodeURIComponent(row.id)}>查看渠道回执<ArrowRight size={14}/></a>
       </details>)}<PageStatus page={replies} name="渠道回执"/></section> : null}
   </section>
 }
 
-function DeliveryDetail({ id }: { id: string }) {
-  const read = useRecord<Delivery>('routing-deliveries/' + encodeURIComponent(id))
+function InternalEventDetail({ id }: { id: string }) {
+  const read = useRecord<InternalEvent>('routing-events/' + encodeURIComponent(id) + '?trace=true')
   const row = read.data
   return <>{read.error && <p className="path-error">{read.error}{row && ' · 快照已过时'}</p>}
-    {row ? <Fields fields={[['投递 ID', row.id], ['发送方', partyLabel(row.sender)], ['接收方', partyLabel(row.recipient)],
-      ['动作', action(row)], ['状态', routingDeliveryLabel(row.status)], ['登记时间', row.createdAt], ['受理时间', row.sentAt],
-      [row.returnedDeliveryId ? '退回理由' : row.kind === 'routed_message' ? '投递理由' : '内容', row.body],
+    {row ? <Fields fields={[['事件 ID', row.event_id], ['发送方', partyLabel(row.sender)], ['接收方', partyLabel(row.recipient)],
+      ['Trace', <TraceLinks associations={row.traceAssociations} at={row.createdAt}/>], ['动作', action(row)], ['状态', eventStatusLabel(row.status)], ['登记时间', row.createdAt], ['受理时间', row.sentAt],
+      [row.returnedEventId ? '退回理由' : row.kind === 'routed_message' ? '路由依据' : '内容', row.body],
       ['内容引用', row.refs?.map(ref => <p key={ref.kind + ref.id}>{ref.kind} · {ref.id}</p>)],
-      ...(row.returnedDeliveryId ? [['原投递 ID', row.returnedDeliveryId] as [string, string]] : [])]}/> : !read.error && <p className="path-muted">正在读取投递…</p>}</>
+      ...(row.returnedEventId ? [['原事件 ID', row.returnedEventId] as [string, string]] : [])]}/> : !read.error && <p className="path-muted">正在读取事件…</p>}</>
 }
 
 function ObjectDetail({ kind, id, messageID, references = [], incomplete }: {

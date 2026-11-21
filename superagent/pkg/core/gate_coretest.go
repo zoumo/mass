@@ -11,31 +11,31 @@ import (
 	"time"
 )
 
-// This fixture plays a Core delivery producer using the production
+// This fixture plays a Core internal event producer using the production
 // transactional queue API. It is never compiled into the released binary.
 func (s *Server) testDispatch(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodPost || r.URL.Path != "/_test/internal-deliveries" {
+	if r.Method != http.MethodPost || r.URL.Path != "/_test/internal-events" {
 		return false
 	}
 	token := os.Getenv("SUPERAGENT_TEST_EVENTS")
 	if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 		return false
 	}
-	var deliveries []internalDelivery
+	var internalEvents []internalEvent
 	data, err := io.ReadAll(r.Body)
-	if err != nil || decodeStrict(data, &deliveries) != nil || len(deliveries) == 0 {
-		s.fail(w, problem("invalid_argument", "expected test deliveries"))
+	if err != nil || decodeStrict(data, &internalEvents) != nil || len(internalEvents) == 0 {
+		s.fail(w, problem("invalid_argument", "expected test events"))
 		return true
 	}
-	if err := s.enqueueTestDeliveries(r, deliveries); err != nil {
+	if err := s.enqueueTestEvents(r, internalEvents); err != nil {
 		s.fail(w, err)
 	} else {
-		s.write(w, http.StatusOK, deliveries)
+		s.write(w, http.StatusOK, internalEvents)
 	}
 	return true
 }
 
-func (s *Server) enqueueTestDeliveries(r *http.Request, items []internalDelivery) error {
+func (s *Server) enqueueTestEvents(r *http.Request, items []internalEvent) error {
 	ctx := r.Context()
 	tx, err := s.store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -43,7 +43,7 @@ func (s *Server) enqueueTestDeliveries(r *http.Request, items []internalDelivery
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, d := range items {
-		if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
+		if err := enqueueInternalEvent(ctx, tx, d); err != nil {
 			return err
 		}
 	}

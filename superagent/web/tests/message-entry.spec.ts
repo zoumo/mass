@@ -51,7 +51,7 @@ test('Message entry reads the selected record, its full text and Core receipt', 
   await context.setOffline(true)
   await expect(page.getByRole('alert')).toContainText('快照已过时')
   await expect(article.getByTestId('message-body')).toHaveText(body)
-  const fresh = page.waitForResponse(r => r.url().endsWith('/messages/' + record.id) && r.ok())
+  const fresh = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/messages/' + record.id) && r.ok())
   await context.setOffline(false)
   await fresh
   await expect(page.getByRole('alert')).toHaveCount(0)
@@ -76,7 +76,7 @@ test('Message entry reads the selected record, its full text and Core receipt', 
   await page.reload()
   await expect(last).toHaveAttribute('aria-current', 'true')
   await page.getByRole('link', { name: '诊断', exact: true }).click()
-  await expect(page.getByRole('button', { name: '内部投递', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '内部事件', exact: true })).toBeVisible()
   expect(new Set(methods)).toEqual(new Set(['GET']))
 })
 

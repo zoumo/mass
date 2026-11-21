@@ -66,14 +66,11 @@ func contentStringSchema() map[string]any {
 }
 
 func structuredContentInputSchema() map[string]any {
-	types := make([]string, 0, len(contentSchemas))
+	variants := make([]map[string]any, 0, len(contentSchemas))
 	for _, schema := range contentSchemas {
-		types = append(types, schema.Type)
+		variants = append(variants, objectSchema(map[string]any{"type": map[string]any{"type": "string", "const": schema.Type}, "data": schema.Schema}, "type", "data"))
 	}
-	return objectSchema(map[string]any{
-		"type": map[string]any{"type": "string", "enum": types},
-		"data": map[string]any{"type": "object", "description": "Use message_content_schema_get for the fields of this content type."},
-	}, "type", "data")
+	return map[string]any{"type": "object", "oneOf": variants}
 }
 
 func contentSchemaByType(name string) (contentSchema, bool) {

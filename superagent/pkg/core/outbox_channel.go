@@ -231,7 +231,7 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 }
 
 func enqueueOutboxFailure(ctx context.Context, tx *sql.Tx, item OutboxItem) error {
-	var recipient deliveryIdentity
+	var recipient eventIdentity
 	err := tx.QueryRowContext(ctx, `SELECT b.role,b.owner_id FROM outbox JOIN session_bindings b
  ON b.id=`+outboxAuthorID+` WHERE outbox.id=?`, item.ID).Scan(&recipient.Kind, &recipient.TopicID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -244,9 +244,9 @@ func enqueueOutboxFailure(ctx context.Context, tx *sql.Tx, item OutboxItem) erro
 	if err != nil {
 		return storageError()
 	}
-	return enqueueInternalDelivery(ctx, tx, internalDelivery{
-		ID: newID("dlv"), Kind: "outbox_failed", Sender: deliveryIdentity{Kind: "core"}, Recipient: recipient,
-		Body: body, Refs: []deliveryReference{
+	return enqueueInternalEvent(ctx, tx, internalEvent{
+		ID: newID("evt"), Kind: "outbox_failed", Sender: eventIdentity{Kind: "core"}, Recipient: recipient,
+		Body: body, Refs: []eventReference{
 			{Kind: "outbox", ID: item.ID}, {Kind: messageRefKind, ID: item.MessageID},
 		},
 	})

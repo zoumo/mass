@@ -10,28 +10,28 @@ import (
 // that was already present when the first page was read.
 const routerMessagePage = `
 WITH ranked AS (
- SELECT d.message_id,d.id,d.created_at,
+ SELECT d.message_id,d.event_id,d.created_at,
  row_number() OVER (PARTITION BY d.message_id ORDER BY d.created_at DESC,d.seq DESC) AS position
- FROM routing_deliveries d
+ FROM routing_events d
  WHERE d.seq<=?1 AND (json_extract(d.recipient,'$.kind')='router' OR json_extract(d.sender,'$.kind')='router')
  %s
 ), page AS (
- SELECT r.message_id,r.id,r.created_at,m.source,m.routing_state,substr(json_extract(m.body,'$.text'),1,240) AS preview
+ SELECT r.message_id,r.event_id,r.created_at,m.source,m.routing_state,substr(json_extract(m.body,'$.text'),1,240) AS preview
  FROM ranked r JOIN trigger_messages m ON m.id=r.message_id
  WHERE position=1 AND (?2='' OR (r.created_at,r.message_id)<(?2,?3))
  ORDER BY r.created_at DESC,r.message_id DESC LIMIT ?4
 )
 SELECT json_object(
  'id',p.message_id,'text',p.preview,'source',p.source,'state',p.routing_state,
- 'activityAt',p.created_at,'activityId',p.id,'activityKind',a.kind,'returnedDeliveryId',a.returned_id,
+ 'activityAt',p.created_at,'activityId',p.event_id,'activityKind',a.kind,'returnedEventId',a.returned_event_id,
  'activityReason',substr(json_extract(a.body,'$'),1,240),'activityTopicId',a.topic_id,
  'activityTopicTitle',json_extract(t.body,'$.title'),
- 'targets',json((SELECT json_group_array(json_object('id',d.id,'topicId',d.topic_id,
+ 'targets',json((SELECT json_group_array(json_object('id',d.event_id,'topicId',d.topic_id,
  'title',json_extract(target.body,'$.title'),'reason',substr(json_extract(d.body,'$'),1,240)) ORDER BY d.created_at,d.seq)
- FROM routing_deliveries d LEFT JOIN topics target ON target.id=d.topic_id
+ FROM routing_events d LEFT JOIN topics target ON target.id=d.topic_id
  WHERE d.message_id=p.message_id AND ` + activeRoute + `))),
  p.created_at,p.message_id
-FROM page p JOIN routing_deliveries a ON a.id=p.id
+FROM page p JOIN routing_events a ON a.event_id=p.event_id
 LEFT JOIN topics t ON t.id=a.topic_id
 ORDER BY p.created_at DESC,p.message_id DESC`
 
@@ -46,7 +46,7 @@ func (s *Store) observerRouterMessages(ctx context.Context, q QueryRequest) (Pag
 	}
 	defer func() { _ = tx.Rollback() }()
 	if q.Cursor == "" {
-		if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(rowid),0) FROM internal_deliveries").Scan(&c.Upper); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(rowid),0) FROM internal_events").Scan(&c.Upper); err != nil {
 			return Page{}, storageError()
 		}
 	} else if err := c.resume(q.Cursor); err != nil {

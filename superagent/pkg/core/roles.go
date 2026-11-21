@@ -9,12 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
 	"strings"
-	"time"
-
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 func decodeStrict(data []byte, v any) error {
@@ -47,189 +42,93 @@ func (s *Store) authenticateRole(ctx context.Context, header string) (Binding, e
 	return b, nil
 }
 
-func (s *Server) role(w http.ResponseWriter, r *http.Request, deferredTrace bool) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	start := time.Now()
-	tool := strings.TrimPrefix(r.URL.Path, "/v1/role/")
-	b, raw, err := s.roleInput(r, tool)
-	var parent trace.SpanContext
-	if err == nil && traceRoleTool(tool) {
-		raw, parent, err = s.store.roleTraceInput(r.Context(), b, raw, tool)
-	}
-	if deferredTrace {
-		observed, request := s.store.telemetry.startHTTPWithParent(w, r, start, parent)
-		defer observed.finishRequest()
-		w, r = observed, request
-		trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("superagent.tool", tool))
-		if b.Role != "" {
-			trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("superagent.role", b.Role))
-		}
-	}
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
+func (s *Server) callRoleTool(ctx context.Context, b Binding, tool string, raw []byte) (any, error) {
 	var result any
+	var err error
 	switch tool {
-	case "binding_get":
-		var args struct{}
-		if err = decodeStrict(raw, &args); err == nil {
-			// The stdio handshake proves startup identity, including for historical Workers.
-			identity := map[string]any{"id": b.ID, "role": b.Role, "ownerId": b.OwnerID, "generation": b.Generation}
-			if b.TopicID != "" {
-				identity["topicId"] = b.TopicID
-			}
-			if b.IssueID != "" {
-				identity["issueId"] = b.IssueID
-			}
-			result = identity
-		}
-	case "execution_template_query":
-		if b.Role != "topic" {
-			err = problem("forbidden", "only Topic can query Worker templates")
-			break
-		}
-		var args struct{}
-		if err = decodeStrict(raw, &args); err == nil {
-			result = map[string]any{"items": s.config.Execution.WorkerTemplates}
-		}
-	case "issue_create", "issue_start", "issue_update_requirements", "issue_update_blockers", "issue_worker_update",
-		"issue_complete", "issue_cancel", "issue_reopen", "topic_complete", "topic_cancel", "topic_reopen",
-		"timer_set", "timer_update", "timer_cancel":
-		result, err = s.store.workCommand(r.Context(), b, tool, raw)
-	case "issue_get_current", "issue_material_get":
-		result, err = s.store.workerQuery(r.Context(), b, tool, raw)
-	case "report_submit":
-		result, err = s.store.workerReport(r.Context(), b, raw)
-	case "pr_register":
-		result, err = s.store.registerPR(r.Context(), b, raw)
-	case "route_decide":
+	case "get_message", "list_messages", "list_topics", "get_topic", "get_issue", "list_issues", "get_report":
+		result, err = s.mcpQuery(ctx, b, tool, raw)
+	case "update_topic":
+		result, err = s.store.updateMCPTopic(ctx, b, raw)
+	case "update_issue":
+		result, err = s.store.updateMCPIssue(ctx, b, raw)
+	case "create_issue", "start_issue":
+		result, err = s.store.workCommand(ctx, b, tool, raw)
+	case "schedule_followup", "update_followup", "cancel_followup":
+		result, err = s.store.followupCommand(ctx, b, tool, raw)
+	case "submit_report":
+		result, err = s.store.submitIssueReport(ctx, b, raw)
+	case "route_messages":
 		var args RouteRequest
 		err = decodeStrict(raw, &args)
 		if err == nil {
-			result, err = s.store.Route(r.Context(), b, args)
+			result, err = s.store.Route(ctx, b, args)
 		}
-	case "message_return":
-		var args ReturnRequest
+	case "decline_message":
+		var args DeclineMessageRequest
 		err = decodeStrict(raw, &args)
 		if err == nil {
-			result, err = s.store.Return(r.Context(), b, args)
+			result, err = s.store.DeclineMessage(ctx, b, args)
 		}
-	case "message_content_schema_list", "message_content_schema_get":
-		if b.Role != "router" && b.Role != "topic" {
-			err = problem("forbidden", "only Router and Topic can query message content schemas")
-			break
-		}
-		if tool == "message_content_schema_list" {
-			var args struct{}
-			if err = decodeStrict(raw, &args); err == nil {
-				items := make([]contentSchemaSummary, 0, len(contentSchemas))
-				for _, schema := range contentSchemas {
-					items = append(items, schema.contentSchemaSummary)
-				}
-				result = map[string]any{"items": items}
-			}
-			break
-		}
+	case "send_reply":
 		var args struct {
-			Type string `json:"type"`
+			OperationID string            `json:"operationId"`
+			MessageID   string            `json:"messageId"`
+			Content     StructuredContent `json:"content"`
+			BlockerRef  *BlockerRef       `json:"blockerRef,omitempty"`
 		}
-		if err = decodeStrict(raw, &args); err == nil {
-			if schema, ok := contentSchemaByType(args.Type); ok {
-				result = schema
-			} else {
-				err = problem("invalid_argument", "type must identify a supported message content schema")
-			}
-		}
-	case "outbox_message_reply_structured":
-		var args ReplyRequest
 		err = decodeStrict(raw, &args)
-		if err == nil {
-			result, err = s.store.reply(r.Context(), b, args)
+		if err == nil && args.MessageID == "" {
+			err = problem("invalid_argument", "messageId is required")
 		}
-	case "delivery_get":
+		if err == nil && b.Role != "topic" && args.BlockerRef != nil {
+			err = problem("forbidden", "only Topic can attach a blocker")
+		}
+		if err == nil {
+			result, err = s.store.reply(ctx, b, ReplyRequest{OperationID: args.OperationID, MessageID: args.MessageID, Content: args.Content, BlockerRef: args.BlockerRef})
+		}
+	case "get_internal_event":
 		var args struct {
-			ID string `json:"delivery_id"`
+			ID string `json:"event_id"`
 		}
 		err = decodeStrict(raw, &args)
 		if err == nil && args.ID == "" {
-			err = problem("invalid_argument", "delivery_id is required")
+			err = problem("invalid_argument", "event_id is required")
 		}
 		if err == nil {
-			var delivery internalDelivery
-			delivery, err = s.store.getInternalDelivery(r.Context(), b, args.ID)
+			var internalEvent internalEvent
+			internalEvent, err = s.store.getInternalEvent(ctx, b, args.ID)
 			if err == nil {
 				if b.AgentPromptVersion == 0 {
-					result = delivery
+					result = internalEvent
 				} else {
 					var raw []byte
-					delivery.promptVersion = b.AgentPromptVersion
-					raw, err = delivery.MarshalAgentPromptJSON()
+					internalEvent.promptVersion = b.AgentPromptVersion
+					raw, err = internalEvent.MarshalAgentPromptJSON()
 					result = json.RawMessage(raw)
 				}
 			}
 		}
-	case "source_query", "topic_query", "work_query":
-		var args QueryRequest
-		err = decodeStrict(raw, &args)
-		if err == nil {
-			if tool == "source_query" && args.Collection != "messages" && args.Collection != "threads" && args.Collection != "outbox" && args.Collection != "routing-deliveries" {
-				err = problem("forbidden", "source queries expose only Messages, Threads, routing deliveries and own replies")
-			}
-			if tool == "topic_query" && args.Collection != "topics" {
-				err = problem("forbidden", "Topic query exposes only Topic summaries/current Topic")
-			}
-			if tool == "work_query" && (b.Role != "topic" || args.Collection != "issues" && args.Collection != "executions" && args.Collection != "reports" && args.Collection != "timers" && args.Collection != "pull-requests") {
-				err = problem("forbidden", "work query exposes only the bound Topic's Issues, Executions, Reports, Timers and PR associations")
-			}
-		}
-		if err == nil {
-			result, err = s.store.RoleQuery(r.Context(), b, args)
-		}
-		if raw, ok := result.(json.RawMessage); err == nil && ok && tool == "work_query" && args.Collection == "issues" {
-			result = s.observeIssue(r.Context(), raw)
-		}
 	default:
 		err = problem("forbidden", "tool is outside current role capability")
 	}
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.write(w, http.StatusOK, map[string]any{"result": result})
-}
-
-func (s *Server) roleInput(r *http.Request, tool string) (Binding, []byte, error) {
-	b, err := s.store.authenticateRole(r.Context(), r.Header.Get("Authorization"))
-	if err != nil {
-		return b, nil, err
-	}
-	historicalWorker := b.Role == "worker" && (tool == "report_submit" || tool == "binding_get")
-	if b.State == "revoked" && !historicalWorker {
-		return b, nil, problem("stale_binding", "binding was revoked")
-	}
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		return b, nil, problem("invalid_argument", "cannot read tool request")
-	}
-	return b, raw, nil
+	return result, err
 }
 
 type QueryRequest struct {
-	Collection string `json:"collection"`
-	ID         string `json:"id,omitempty"`
-	ThreadKey  string `json:"threadKey,omitempty"`
-	TopicID    string `json:"topicId,omitempty"`
-	IssueID    string `json:"issueId,omitempty"`
-	MessageID  string `json:"messageId,omitempty"`
-	Cursor     string `json:"cursor,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	preview    bool
-	newest     bool
+	Collection    string `json:"collection"`
+	ID            string `json:"id,omitempty"`
+	ThreadKey     string `json:"threadKey,omitempty"`
+	TopicID       string `json:"topicId,omitempty"`
+	IssueID       string `json:"issueId,omitempty"`
+	MessageID     string `json:"messageId,omitempty"`
+	Cursor        string `json:"cursor,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	preview       bool
+	observerTrace bool
+	newest        bool
+	search        string
+	status        string
 }
 
 func (s *Store) RoleQuery(ctx context.Context, b Binding, q QueryRequest) (any, error) {
@@ -254,7 +153,7 @@ func scopeSQL(kind string, b *Binding) (string, []any, error) {
 	}
 	if b.Role == "router" {
 		switch kind {
-		case "messages", "threads", "topics", "routing-deliveries":
+		case "messages", "threads", "topics", "routing-events":
 			return "", nil, nil
 		default:
 			return "", nil, problem("forbidden", "Router can query only sources and Topic summaries")
@@ -266,7 +165,7 @@ func scopeSQL(kind string, b *Binding) (string, []any, error) {
 	switch kind {
 	case "messages":
 		return " AND id IN (SELECT message_id FROM topic_message_history WHERE topic_id=?)", []any{b.OwnerID}, nil
-	case "routing-deliveries":
+	case "routing-events":
 		return " AND topic_id=?", []any{b.OwnerID}, nil
 	case "threads":
 		return " AND key IN (SELECT thread_key FROM thread_subscriptions WHERE topic_id=?)", []any{b.OwnerID}, nil
@@ -283,13 +182,13 @@ func scopeSQL(kind string, b *Binding) (string, []any, error) {
 
 func projection(kind string, b *Binding) string {
 	switch kind {
-	case "internal-deliveries":
-		return internalDeliveryProjection
-	case "routing-deliveries":
-		return `json_patch(json_object('id',id,'delivery_id',id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
- 'messageId',message_id,'topicId',topic_id,'returnedDeliveryId',returned_id,'sender',json(sender),
+	case "internal-events":
+		return internalEventProjection
+	case "routing-events":
+		return `json_patch(json_object('event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
+ 'messageId',message_id,'topicId',topic_id,'returnedEventId',returned_event_id,'sender',json(sender),
  'recipient',json(recipient),'refs',json(refs),'returned',json(CASE WHEN EXISTS(
- SELECT 1 FROM internal_deliveries r WHERE r.kind='route_request' AND ` + returnedDeliveryID + `=routing_deliveries.id
+ SELECT 1 FROM internal_events r WHERE r.kind='route_request' AND ` + returnedEventID + `=routing_events.event_id
  ) THEN 'true' ELSE 'false' END)),json_object('content',json(content),'body',json(body)))`
 	case "threads":
 		if b != nil && b.Role == "topic" {
@@ -309,7 +208,7 @@ func projection(kind string, b *Binding) string {
  THEN json_object('round',` + routingRound + `,'state',` + routingState + `) END),
  '$.relations',json((SELECT json_group_array(json(relation)) FROM (
  SELECT json_patch(
- json_object('topicId',topic_id,'action',body->>'$.action','deliveryId',body->>'$.deliveryId'),
+ json_object('topicId',topic_id,'action',body->>'$.action','eventId',body->>'$.eventId'),
  json_object('reason',CASE WHEN body->>'$.action'='returned' THEN body->>'$.reason' END)) AS relation
  FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))`
 		}
@@ -349,8 +248,8 @@ func projection(kind string, b *Binding) string {
 	case "timers":
 		return `json_patch(scheduled_tasks.body,coalesce((
  SELECT json_object('triggerMessageId',m.id,'threadKey',m.thread_key,'followup',
- json_object('id',d.id,'kind',d.kind,'status',d.status,'sentAt',d.sent_at,'messageId',d.message_id,'topicId',d.topic_id))
- FROM trigger_messages m JOIN routing_deliveries d ON d.id=json_extract(m.body,'$.eventId')
+ json_object('event_id',d.event_id,'kind',d.kind,'status',d.status,'sentAt',d.sent_at,'messageId',d.message_id,'topicId',d.topic_id))
+ FROM trigger_messages m JOIN routing_events d ON d.event_id=json_extract(m.body,'$.eventId')
  WHERE m.id=scheduled_tasks.trigger_message_id
  ),'{}'))`
 	}

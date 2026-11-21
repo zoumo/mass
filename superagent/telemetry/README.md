@@ -52,7 +52,7 @@ to shorten the export interval for a smoke test.
 In **Traces**, search by the Message's `trace_id` across services. A Message
 submission produces `POST /v1/channel/messages` and its `superagent.message.admit`
 child span. A single-source workflow continues through role input, routing, Issue
-creation, Worker Session preparation and the Report. To include massd's RPC,
+creation, Issue Session preparation and the Report. To include massd's RPC,
 Service and SDK spans, run a matching massd build with traces enabled and send
 its OTLP data to the same Collector.
 
@@ -66,7 +66,41 @@ sum by (superagent_outcome) (superagent_core_operation_duration_count{service_na
 The first expression groups HTTP requests by route template. The second shows
 each admission outcome separately.
 
+To count authenticated MCP tool attempts over the selected interval, group the
+tool duration histogram by role, tool, and result.
+
+```promql
+sum by (superagent_role, superagent_tool, superagent_outcome) (
+  increase(superagent_mcp_tool_duration_count{service_name="superagent-core"}[1h])
+)
+```
+
+Each `tools/call` attempt received by Core contributes one observation, including
+business errors and retries. Initialization and tool discovery are HTTP requests
+and do not contribute to the tool histogram.
+
+Core stores one call record for each authenticated tool attempt. Query
+`/v1/observer/mcp-tool-usage?role=topic&callerId=TOPIC_ID` for the Topic's own
+counts. Query `?topicId=TOPIC_ID` for the Topic and its Issue Agents together.
+Use `?role=issue&callerId=ISSUE_ID` for one Issue Agent. Filter by `tool` and
+RFC3339 `from` and `until` to compare runs. The `/calls` endpoint adds individual
+attempts and their trace and span IDs.
+
+In OpenObserve, filter `POST /mcp` spans by `superagent.caller.id` and
+`superagent.role`. Issue spans include the owning `superagent.topic.id` and
+`superagent.execution.id`. When a Topic acts on a verified Issue, its span
+includes `superagent.target.issue.id`. Supported event-driven actions carry
+`superagent.event.id` and can continue that event's trace. Metric labels use
+role, tool, outcome, and bounded action values. Core counts remain available if
+trace sampling or export omits a span.
+
 ## Query process and Go runtime metrics
+
+Set `observerTrace` in the Core configuration to enable **Metrics → 系统性能**
+in Observer. The charts show CPU cores, resident memory, goroutines, and open
+file descriptors for Core and massd. Each line represents one process instance.
+CPU uses a five-minute rate. Each point for the other metrics uses the
+latest sample within the chart step or 90 seconds, whichever is longer.
 
 With `OTEL_METRICS_EXPORTER=otlp`, `massd`, `superagent serve`, and
 `superagent compose` report measurements even when idle. Use
@@ -123,13 +157,14 @@ sum by (superagent_observer_view) (superagent_observer_view_duration_count{servi
 
 ## Find a trace from a Core record
 
-Open a Message, Internal Delivery, Scheduled Task, Execution, or Outbox record
-in Observer Diagnostics. Copy its trace ID and search for that ID in OpenObserve.
+Open a Message, Internal Event, Scheduled Task, Execution, or Outbox record
+in Observer Diagnostics. Select its Trace ID to open the waterfall in Observer
+when `observerTrace` is configured.
 With Core tracing enabled, the database records W3C Trace Context in one
 `trace_associations` table. The association commits with the business record.
 Each dispatch has a span. A singleton dispatch inherits its source context.
-A batch uses Span Links for its sources. Role tools use `triggerDeliveryId` to
-continue from the validated input delivery. Legacy and proactive calls may omit it.
+A batch uses Span Links for its sources. Role tools use `triggerEventId` to
+continue from the validated input event. Legacy and proactive calls may omit it.
 Core can read existing associations when tracing is disabled. Sampling and
 OpenObserve retention determine whether a trace is still queryable.
 

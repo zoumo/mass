@@ -3,20 +3,22 @@ import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow
 import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUpRight, ChevronDown, ChevronRight, GitBranch, List, Undo2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { formatTime, messageTitle, routingDeliveryLabel, sourceLabel, type Page } from '../workbench'
+import { formatTime, messageTitle, eventStatusLabel, sourceLabel, type Page } from '../workbench'
 import { navigate, usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { TraceLinks, type TraceAssociation } from './TraceLinks'
+import { metricsHref } from './MetricsView'
 import './router.css'
 
 type RouterMessage = {
   id: string; text: string; source: string; state: string
   activityAt: string; activityId: string; activityKind: string; activityReason?: string
-  returnedDeliveryId?: string; activityTopicId?: string; activityTopicTitle?: string
+  returnedEventId?: string; activityTopicId?: string; activityTopicTitle?: string
   targets: { id: string; topicId: string; title?: string; reason?: string }[]
 }
-type Delivery = {
-  id: string; kind: string; status: string; createdAt: string; sentAt?: string
+type InternalEvent = {
+  event_id: string; kind: string; status: string; createdAt: string; sentAt?: string
   sender: { kind: string }; recipient: { kind: string }; topicId?: string
-  returnedDeliveryId?: string; returned: boolean; body?: string
+  returnedEventId?: string; returned: boolean; body?: string; traceAssociations?: TraceAssociation[]
 }
 const outcomes: Record<string, string> = { pending: '待决策', routed: '已分发', ignored: '已忽略' }
 
@@ -30,46 +32,47 @@ function TopicLink({ id, title }: { id: string; title?: string }) {
   return <a className="router-topic" href={viewHref('topic', id)}>{title || id}<ArrowUpRight size={12}/></a>
 }
 
-function DeliveryFacts({ row }: { row: Delivery }) {
+function EventFacts({ row }: { row: InternalEvent }) {
   return <dl className="router-facts">
-    <dt>投递 ID</dt><dd>{row.id}</dd>
+    <dt>事件 ID</dt><dd>{row.event_id}</dd>
+    <dt>Trace</dt><dd><TraceLinks associations={row.traceAssociations} at={row.createdAt} label={false}/></dd>
     <dt>登记时间</dt><dd><time dateTime={row.createdAt}>{row.createdAt}</time></dd>
     {row.sentAt && <><dt>Session 受理时间</dt><dd><time dateTime={row.sentAt}>{row.sentAt}</time></dd></>}
-    {(row.kind === 'routed_message' || row.returnedDeliveryId) && <>
-      <dt>{row.returnedDeliveryId ? '退回理由' : row.sender.kind === 'core' ? '直投依据' : '分发理由'}</dt><dd className="router-full-reason">{row.body || '原因未记录'}</dd>
+    {(row.kind === 'routed_message' || row.returnedEventId) && <>
+      <dt>{row.returnedEventId ? '退回理由' : row.sender.kind === 'core' ? '直投依据' : '分发理由'}</dt><dd className="router-full-reason">{row.body || '原因未记录'}</dd>
     </>}
   </dl>
 }
 
-function OriginalDelivery({ id }: { id: string }) {
+function OriginalRoutingEvent({ id }: { id: string }) {
   const [open, setOpen] = useState(false)
-  const record = useRecord<Delivery>(open ? 'routing-deliveries/' + encodeURIComponent(id) : '')
+  const record = useRecord<InternalEvent>(open ? 'routing-events/' + encodeURIComponent(id) + '?trace=true' : '')
   return <div className="router-original">
-    <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}><Undo2 size={13}/>原投递 {id}{open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>
+    <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}><Undo2 size={13}/>原事件 {id}{open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>
     {open && <div>{record.error && <p role="alert" className="read-error">{record.error}{record.data && ' · 快照已过时'}</p>}
-      {record.data ? <DeliveryFacts row={record.data}/> : !record.error && <p>正在读取原投递…</p>}</div>}
+      {record.data ? <EventFacts row={record.data}/> : !record.error && <p>正在读取原事件…</p>}</div>}
   </div>
 }
 
 function RouterHistory({ message }: { message: RouterMessage }) {
-  const list = usePages<Delivery>('routing-deliveries?' + new URLSearchParams({ messageId: message.id, limit: '20' }))
-  return <section className="router-history" aria-label="路由投递记录">
-    <div className="router-history-heading"><h3>路由投递记录</h3><CopyLink href={location.pathname+location.search}/><a href={viewHref('message', message.id)}>查看消息路径<ArrowUpRight size={14}/></a></div>
+  const list = usePages<InternalEvent>('routing-events?' + new URLSearchParams({ messageId: message.id, limit: '20', trace: 'true' }))
+  return <section className="router-history" aria-label="路由事件记录">
+    <div className="router-history-heading"><h3>路由事件记录</h3><a href={metricsHref('router')}>Router 用量</a><CopyLink href={location.pathname+location.search}/><a href={viewHref('message', message.id)}>查看消息路径<ArrowUpRight size={14}/></a></div>
     {list.error && <p role="alert" className="read-error">{list.error}{list.data && ' · 快照已过时'}</p>}
-    {!list.data && !list.error && <p className="empty">正在读取投递…</p>}
-    {list.data?.length === 0 && <p className="empty">投递记录缺失</p>}
+    {!list.data && !list.error && <p className="empty">正在读取事件…</p>}
+    {list.data?.length === 0 && <p className="empty">事件记录缺失</p>}
     <ol>{list.data?.map(row => {
-      const action = activity(row.kind, row.returnedDeliveryId, row.sender.kind)
+      const action = activity(row.kind, row.returnedEventId, row.sender.kind)
       const title = message.targets.find(t => t.topicId === row.topicId)?.title || (message.activityTopicId === row.topicId ? message.activityTopicTitle : undefined)
       const topic = row.topicId && <TopicLink id={row.topicId} title={title}/>
       const label = (kind: string) => kind === 'topic' ? topic || 'Topic' : kind === 'router' ? 'Router' : kind === 'core' ? 'Core' : kind
-      return <li key={row.id}>
-        <div className="router-event"><strong>{action}</strong><span>{label(row.sender.kind)} → {label(row.recipient.kind)}</span><span className="router-status">{routingDeliveryLabel(row.status)}{row.returned && ' · 已退回'}</span></div>
-        <DeliveryFacts row={row}/>
-        {row.returnedDeliveryId && <OriginalDelivery id={row.returnedDeliveryId}/>}
+      return <li key={row.event_id}>
+        <div className="router-event"><strong>{action}</strong><span>{label(row.sender.kind)} → {label(row.recipient.kind)}</span><span className="router-status">{eventStatusLabel(row.status)}{row.returned && ' · 已退回'}</span></div>
+        <EventFacts row={row}/>
+        {row.returnedEventId && <OriginalRoutingEvent id={row.returnedEventId}/>}
       </li>
     })}</ol>
-    {list.next && <Button variant="ghost" size="sm" onClick={list.more} disabled={list.loading}>加载更多投递<ChevronDown/></Button>}
+    {list.next && <Button variant="ghost" size="sm" onClick={list.more} disabled={list.loading}>加载更多事件<ChevronDown/></Button>}
   </section>
 }
 
@@ -81,7 +84,7 @@ function routerLanes(row: RouterMessage, limit: string): FlowLane[] {
   function evidence(id: string, reason?: string) {
     return <div className="router-flow-evidence">
       {reason && <p>{reason}</p>}
-      <a href={'/observer/?' + new URLSearchParams({ view: 'routing-deliveries', id })}>投递记录 · {id}<ArrowUpRight size={13}/></a>
+      <a href={'/observer/?' + new URLSearchParams({ view: 'routing-events', id })}>事件记录 · {id}<ArrowUpRight size={13}/></a>
     </div>
   }
   function edge(action: string, reason?: string) {
@@ -89,10 +92,10 @@ function routerLanes(row: RouterMessage, limit: string): FlowLane[] {
     const chars = Array.from(text)
     return action + ' · ' + (chars.length > 24 ? chars.slice(0, 24).join('') + '…' : text)
   }
-  if (row.returnedDeliveryId && row.activityTopicId) {
+  if (row.returnedEventId && row.activityTopicId) {
     const topic: FlowNode = { kind: 'topic', label: row.activityTopicTitle || row.activityTopicId, href: viewHref('topic', row.activityTopicId) }
-    lanes.push({ id: row.activityId, nodes: [message, topic, router], edges: ['原投递目标', edge('退回', row.activityReason)],
-      detail: <>{evidence(row.activityId, row.activityReason)}<OriginalDelivery id={row.returnedDeliveryId}/></> })
+    lanes.push({ id: row.activityId, nodes: [message, topic, router], edges: ['原事件目标', edge('退回', row.activityReason)],
+      detail: <>{evidence(row.activityId, row.activityReason)}<OriginalRoutingEvent id={row.returnedEventId}/></> })
   }
   for (const target of row.targets) {
     lanes.push({ id: target.id, nodes: [message, router, { kind: 'topic', label: target.title || target.topicId, href: viewHref('topic', target.topicId) }],
@@ -101,9 +104,9 @@ function routerLanes(row: RouterMessage, limit: string): FlowLane[] {
   // A Message can be pending again while another branch still has an active target.
   if (!row.targets.length || row.state !== 'routed') {
     const outcome = row.state === 'ignored' ? '已忽略 · 原因未记录'
-      : row.state === 'routed' && !row.targets.length ? '已分发 · 目标投递记录缺失' : state
+      : row.state === 'routed' && !row.targets.length ? '已分发 · 目标事件记录缺失' : state
     lanes.push({ id: row.id + '-outcome', nodes: [message, router, { kind: 'state', label: outcome }], edges: ['进入路由', '当前结果'],
-      detail: <div className="router-flow-evidence"><p>最后可核实活动 · {activity(row.activityKind, row.returnedDeliveryId)}登记 <time dateTime={row.activityAt}>{row.activityAt}</time></p>{evidence(row.activityId)}</div> })
+      detail: <div className="router-flow-evidence"><p>最后可核实活动 · {activity(row.activityKind, row.returnedEventId)}登记 <time dateTime={row.activityAt}>{row.activityAt}</time></p>{evidence(row.activityId)}</div> })
   }
   return lanes
 }
@@ -121,7 +124,7 @@ function RouterFlow({ messages, selected, limit }: { messages: RouterMessage[]; 
 }
 
 function RouterRow({ row, open, toggle }: { row: RouterMessage; open: boolean; toggle: () => void }) {
-  const action = activity(row.activityKind, row.returnedDeliveryId)
+  const action = activity(row.activityKind, row.returnedEventId)
   return <article className={'router-row' + (open ? ' expanded' : '')} data-message-id={row.id}>
     <div className="router-grid">
       <button className="router-toggle" aria-expanded={open} onClick={toggle}>
@@ -130,10 +133,10 @@ function RouterRow({ row, open, toggle }: { row: RouterMessage; open: boolean; t
       <div><span className={'router-outcome ' + row.state}>{outcomes[row.state] || '状态未记录'}</span></div>
       <div className="router-reasons">
         {row.state === 'ignored' && <span>原因未记录</span>}
-        {row.returnedDeliveryId && <div className="router-brief"><small>退回{row.activityTopicId && <> · <TopicLink id={row.activityTopicId} title={row.activityTopicTitle}/></>}</small><span>{row.activityReason || '原因未记录'}</span></div>}
+        {row.returnedEventId && <div className="router-brief"><small>退回{row.activityTopicId && <> · <TopicLink id={row.activityTopicId} title={row.activityTopicTitle}/></>}</small><span>{row.activityReason || '原因未记录'}</span></div>}
         {row.targets.map(target => <div key={target.id} className="router-brief"><TopicLink id={target.topicId} title={target.title}/><span>{target.reason || '原因未记录'}</span></div>)}
-        {!row.targets.length && row.state === 'routed' && <span className="router-muted">目标投递记录缺失</span>}
-        {!row.targets.length && !row.returnedDeliveryId && row.state === 'pending' && <span className="router-muted">等待 Router 选择目标</span>}
+        {!row.targets.length && row.state === 'routed' && <span className="router-muted">目标事件记录缺失</span>}
+        {!row.targets.length && !row.returnedEventId && row.state === 'pending' && <span className="router-muted">等待 Router 选择目标</span>}
       </div>
       <div className="router-time"><small>{action}登记</small><time dateTime={row.activityAt} title={row.activityAt}>{formatTime(row.activityAt)}</time></div>
     </div>

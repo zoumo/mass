@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 const endpoint = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}`
-type Event = { id: string; kind: string; issueId?: string; messageId?: string; deliveryId?: string; at: string; status?: string; title?: string; summary?: string; bindingId?: string }
+type Event = { id: string; kind: string; issueId?: string; messageId?: string; eventId?: string; at: string; status?: string; title?: string; summary?: string; bindingId?: string }
 
 test('Topic activity opens source facts, pages both categories and restores the filter', async ({ page, request }, info) => {
   const topics = await (await request.get(endpoint + '/v1/observer/topics')).json()
@@ -38,7 +38,7 @@ test('Topic activity opens source facts, pages both categories and restores the 
   await expect(returned.getByText('Original input observer-routing', {exact:true}).last()).toBeVisible()
   const messageId = all.find(e=>e.kind==='route_request')!.messageId
   await expect(returned.getByRole('link',{name:'查看此消息'})).toHaveAttribute('href',new RegExp(messageId!))
-  await expect(returned.getByRole('link',{name:'查看原投递'})).toBeVisible()
+  await expect(returned.getByRole('link',{name:'查看原事件'})).toBeVisible()
   await page.screenshot({path:info.outputPath('topic-return.png'),fullPage:true,animations:'disabled'})
   await expect(rows.filter({hasText:'Session 已受理'}).first()).toBeVisible()
   await page.getByRole('button',{name:'刷新',exact:true}).click()
@@ -48,7 +48,7 @@ test('Topic activity opens source facts, pages both categories and restores the 
   await feed.getByRole('button', {name:'加载更多活动'}).click()
   const report = feed.locator('li[data-kind=report_submitted]').filter({hasText:'Sample build verified'})
   await report.locator('summary').click()
-  await expect(report.getByText('Worker',{exact:true})).toBeVisible()
+  await expect(report.getByText('Issue Session',{exact:true})).toBeVisible()
   await expect(report.getByText('Build exited with code 0.')).toBeVisible()
   await expect(report.getByRole('link',{name:'查看此消息'})).toHaveCount(0)
   const acceptance = feed.locator('li[data-kind=completion]').first()
@@ -139,7 +139,7 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
     await expect(lane(returned).locator('.flow-issue')).toHaveCount(0)
     expect(observed).toEqual(new Set(['all','message','issue']))
     await graph.getByRole('button',{name:/再看/}).click()
-    await expect(lane(report).locator('.flow-execution')).toContainText('Worker')
+    await expect(lane(report).locator('.flow-execution')).toContainText('Issue Session')
     await expect(lane(report).locator('.flow-report')).toContainText(report.summary!)
     await expect(lane(report).locator('.flow-issue')).toHaveAttribute('href',new RegExp(report.issueId!))
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)

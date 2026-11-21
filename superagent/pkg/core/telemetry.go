@@ -29,6 +29,7 @@ type coreTelemetry struct {
 	tracer            trace.Tracer
 	httpDuration      metric.Float64Histogram
 	operationDuration metric.Float64Histogram
+	mcpToolDuration   metric.Float64Histogram
 	queueDepth        metric.Int64ObservableGauge
 	queueDuration     metric.Float64Histogram
 	previewActive     metric.Int64UpDownCounter
@@ -53,6 +54,8 @@ func newCoreTelemetry(options TelemetryOptions) *coreTelemetry {
 		metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10))
 	t.operationDuration, _ = meter.Float64Histogram("superagent.core.operation.duration",
 		metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(0.005, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30))
+	t.mcpToolDuration, _ = meter.Float64Histogram("superagent.mcp.tool.duration",
+		metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.025, 0.1, 0.5, 1, 5, 10, 30))
 	t.queueDepth, _ = meter.Int64ObservableGauge("superagent.core.queue.depth", metric.WithUnit("{item}"))
 	t.queueDuration, _ = meter.Float64Histogram("superagent.core.queue.duration",
 		metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300))
@@ -201,7 +204,8 @@ func telemetryRoute(path string) string {
 	switch path {
 	case "/v1/channel/messages", "/v1/channel/outbox", "/v1/channel/outbox/result",
 		"/v1/operator/input-recovery", "/v1/operator/echo-release", "/v1/observer/health",
-		"/v1/observer/topic-activity", "/observer", "/observer/":
+		"/v1/observer/topic-activity", observerPerformancePath, mcpUsagePath, mcpUsagePath + "/calls", mcpUsagePath + "/metrics",
+		"/observer", "/observer/", mcpPath:
 		return path
 	}
 	switch {
@@ -209,8 +213,8 @@ func telemetryRoute(path string) string {
 		return "/v1/channel/outbox/items/{id}"
 	case strings.HasPrefix(path, "/v1/operator/bindings/"):
 		return "/v1/operator/bindings/{id}"
-	case strings.HasPrefix(path, "/v1/role/"):
-		return "/v1/role/{tool}"
+	case strings.HasPrefix(path, observerTracePath):
+		return observerTracePath + "{id}"
 	case strings.HasPrefix(path, "/v1/observer/session-preview/"):
 		_, view, _ := strings.Cut(strings.TrimPrefix(path, "/v1/observer/session-preview/"), "/")
 		if view == "history" || view == "live" {
@@ -219,8 +223,8 @@ func telemetryRoute(path string) string {
 	case strings.HasPrefix(path, "/v1/observer/"):
 		collection, _, detail := strings.Cut(strings.TrimPrefix(path, "/v1/observer/"), "/")
 		switch collection {
-		case "messages", "threads", "internal-deliveries", "topics", "issues", "executions", "reports", "timers",
-			"pull-requests", "router-messages", "routing-deliveries", "subscriptions", "relations", "bindings", "outbox":
+		case "messages", "threads", "internal-events", "topics", "issues", "executions", "reports", "timers",
+			"pull-requests", "router-messages", "routing-events", "subscriptions", "relations", "bindings", "outbox":
 			if detail {
 				return "/v1/observer/" + collection + "/{id}"
 			}
@@ -247,14 +251,14 @@ func (t *coreTelemetry) registerQueueDepth(provider metric.MeterProvider, store 
 	registration, _ := provider.Meter("superagent.core").RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
 		ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		defer cancel()
-		var deliveries, outbox int64
+		var internalEvents, outbox int64
 		err := store.db.QueryRowContext(ctx, `SELECT
- (SELECT count(*) FROM internal_deliveries WHERE status IN ('pending','dispatching')),
- (SELECT count(*) FROM outbox WHERE status='pending')`).Scan(&deliveries, &outbox)
+ (SELECT count(*) FROM internal_events WHERE status IN ('pending','dispatching')),
+ (SELECT count(*) FROM outbox WHERE status='pending')`).Scan(&internalEvents, &outbox)
 		if err != nil {
 			return nil
 		}
-		observer.ObserveInt64(t.queueDepth, deliveries, metric.WithAttributes(attribute.String("superagent.queue", "internal_delivery")))
+		observer.ObserveInt64(t.queueDepth, internalEvents, metric.WithAttributes(attribute.String("superagent.queue", "internal_event")))
 		observer.ObserveInt64(t.queueDepth, outbox, metric.WithAttributes(attribute.String("superagent.queue", "outbox")))
 		return nil
 	}, t.queueDepth)

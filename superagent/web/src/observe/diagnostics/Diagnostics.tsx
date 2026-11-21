@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '../../components/ui/button'
-import { stateLabel, routingDeliveryLabel } from '../../workbench'
+import { stateLabel, eventStatusLabel } from '../../workbench'
 import { navigate, usePages, useRecord, useRefresh, viewHref } from '../observer'
 import RecordDetail from './RecordDetail'
+import { TraceLinks } from '../TraceLinks'
 import {
   followupLabel,
   identity,
@@ -23,7 +24,7 @@ type Health = {
   router: string
   topicStates: Counts
   issueStates: Counts
-  deliveryStates: Counts
+  eventStates: Counts
   outboxStates: Counts
   unknownStops: number
   unknownEchoes: number
@@ -51,7 +52,8 @@ function nameOf(kind: Kind, row: DiagnosticRow) {
     (row.role || row.action || row.kind ? stateLabel(row.role || row.action || row.kind) : identity(row))
   )
 }
-type Column = [string, (row: DiagnosticRow) => string | number | undefined]
+type Column = [string, (row: DiagnosticRow) => ReactNode]
+const internalEventTrace: Column = ['Trace ID', row => <TraceLinks associations={row.traceAssociations} at={row.createdAt} label={false}/>]
 function columns(kind: Kind, rows: DiagnosticRow[]): Column[] {
   switch (kind) {
     case 'messages': {
@@ -78,7 +80,7 @@ function columns(kind: Kind, rows: DiagnosticRow[]): Column[] {
         ['定时器状态', (r) => stateLabel(r.status)],
         ['计划触发时间 (UTC)', (r) => r.dueAt],
         ['版本', (r) => r.revision],
-        ['跟进通知投递', (r) => followupLabel(r.followup)],
+        ['跟进通知事件', (r) => followupLabel(r.followup)],
       ]
     case 'executions':
       return [
@@ -92,15 +94,16 @@ function columns(kind: Kind, rows: DiagnosticRow[]): Column[] {
         ['执行来源', (r) => (r.historical ? '历史执行' : '提交时为当前执行')],
       ]
     case 'relations':
-    case 'routing-deliveries':
+    case 'routing-events':
       return [
         ['Topic', (r) => r.topicId],
-        ['Session 投递', (r) => r.status && routingDeliveryLabel(r.status)],
+        ['Session 投递', (r) => r.status && eventStatusLabel(r.status)],
+        ...(kind === 'routing-events' ? [internalEventTrace] : []),
       ]
     case 'subscriptions':
       return [['Topic', (r) => r.topicId]]
-    case 'internal-deliveries':
-      return [['Session 投递', (r) => routingDeliveryLabel(r.status)]]
+    case 'internal-events':
+      return [['Session 投递', (r) => eventStatusLabel(r.status)], internalEventTrace]
     default:
       return []
   }
@@ -122,9 +125,9 @@ function Overview({ health }: { health: Health }) {
       </dl>
       <dl>
         <dt>待处理输入</dt>
-        <dd>{(health.deliveryStates.pending || 0) + (health.deliveryStates.dispatching || 0)}</dd>
+        <dd>{(health.eventStates.pending || 0) + (health.eventStates.dispatching || 0)}</dd>
         <dt>Session 已受理</dt>
-        <dd>{health.deliveryStates.sent || 0}</dd>
+        <dd>{health.eventStates.sent || 0}</dd>
         <dt>回执</dt>
         <dd>{statusCounts(health.outboxStates)}</dd>
       </dl>
@@ -145,6 +148,7 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   const filter = scope ? query.get(scope) || '' : ''
   const params = new URLSearchParams({ limit: '50', preview: 'true' })
   if (scope && filter) params.set(scope, filter)
+  if (kind === 'internal-events' || kind === 'routing-events') params.set('trace', 'true')
   const list = usePages<DiagnosticRow>(kind + '?' + params)
   const detail = useRecord<DiagnosticRow>(id ? kind + '/' + encodeURIComponent(id) + '?trace=true' : '')
   const health = useRecord<Health>('health')

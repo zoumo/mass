@@ -8,7 +8,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 
-type workerSessionObservation struct {
+type issueSessionObservation struct {
 	ExecutionID    string `json:"executionId"`
 	State          string `json:"state"`
 	ObservedAt     string `json:"observedAt,omitempty"`
@@ -24,11 +24,11 @@ func (s *Server) observeIssue(ctx context.Context, raw json.RawMessage) json.Raw
 	if json.Unmarshal(fields["currentExecutionId"], &executionID) != nil || executionID == "" {
 		return raw
 	}
-	state, err := json.Marshal(s.observeWorkerSession(ctx, executionID))
+	state, err := json.Marshal(s.observeIssueSession(ctx, executionID))
 	if err != nil {
 		return raw
 	}
-	fields["workerSession"] = state
+	fields["issueSession"] = state
 	data, err := json.Marshal(fields)
 	if err != nil {
 		return raw
@@ -36,8 +36,8 @@ func (s *Server) observeIssue(ctx context.Context, raw json.RawMessage) json.Raw
 	return data
 }
 
-func (s *Server) observeWorkerSession(ctx context.Context, executionID string) workerSessionObservation {
-	observation := workerSessionObservation{ExecutionID: executionID, State: "unknown", ObservationGap: "worker_session_unavailable"}
+func (s *Server) observeIssueSession(ctx context.Context, executionID string) issueSessionObservation {
+	observation := issueSessionObservation{ExecutionID: executionID, State: "unknown", ObservationGap: "issue_session_unavailable"}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	var b Binding
@@ -59,7 +59,7 @@ func (s *Server) observeWorkerSession(ctx context.Context, executionID string) w
 	}
 	if session.Metadata.UID != b.SessionUID || session.Status.SessionID != b.SessionID ||
 		session.Metadata.Namespace != b.Namespace || session.Metadata.Name != b.Name {
-		observation.ObservationGap = "worker_session_identity_mismatch"
+		observation.ObservationGap = "issue_session_identity_mismatch"
 		return observation
 	}
 	if session.Status.State != "" {

@@ -31,7 +31,7 @@ test('committed lists, full original text, Thread navigation and safe rendering'
 })
 
 test('read-only API, source isolation, cursor validation and HEAD', async ({ request }) => {
- for (const collection of ['messages', 'threads', 'internal-deliveries', 'routing-deliveries', 'health']) {
+ for (const collection of ['messages', 'threads', 'internal-events', 'routing-events', 'health']) {
   const read = await request.get(`/v1/observer/${collection}`)
   expect(read.status()).toBe(200)
   const head = await request.head(`/v1/observer/${collection}`)
@@ -45,7 +45,7 @@ test('read-only API, source isolation, cursor validation and HEAD', async ({ req
  expect((await request.post('/v1/channel/messages', { data: {} })).status()).toBe(401)
  expect((await request.get('/v1/observer/messages?cursor=invalid')).status()).toBe(400)
  expect((await request.get('/v1/observer/messages', { headers: { Origin: 'https://foreign.example' } })).status()).toBe(403)
- const event = (await (await request.get('/v1/observer/routing-deliveries')).json()).items[0]
+ const event = (await (await request.get('/v1/observer/routing-events')).json()).items[0]
  expect(event.status).toBe('pending')
  expect(event.kind).toBe('route_request')
 })
@@ -67,7 +67,7 @@ test('copies the persisted trace ID from a selected record', async ({ page, cont
 test('retired collections are absent from Observer', async ({ page, request }) => {
  await page.goto('/observer/')
  await page.getByText('诊断', { exact: true }).click()
- await expect(page.getByRole('button', { name: '内部投递', exact: true })).toBeVisible()
+ await expect(page.getByRole('button', { name: '内部事件', exact: true })).toBeVisible()
  await expect(page.getByRole('button', { name: '渠道健康状态', exact: true })).toHaveCount(0)
  for (const collection of ['channel-health', 'events', 'decisions', 'deliveries', 'batches', 'attempts', 'recoveries']) {
   expect((await request.get(`/v1/observer/${collection}`)).status()).toBe(404)

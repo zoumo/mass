@@ -99,7 +99,7 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (_ json.
 	}
 	key := creationKey("outbox_"+b.ID+".reply", b.ID, req.OperationID)
 	id := creationID(key, req)
-	if existing, err := existingCreation(ctx, tx, "outbox", key, id); err != nil {
+	if existing, err := existingCreation(ctx, tx, "outbox", "id", key, id); err != nil {
 		return nil, err
 	} else if existing {
 		outcome = "duplicate"
@@ -107,6 +107,7 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (_ json.
 		if err := readJSON(ctx, tx, "SELECT "+outboxProjection+" FROM outbox WHERE id=?", &item, id); err != nil {
 			return nil, err
 		}
+		markMCPMutation(ctx, true, false)
 		return json.Marshal(item)
 	}
 	if req.BlockerRef != nil {
@@ -153,6 +154,7 @@ func (s *Store) reply(ctx context.Context, b Binding, req ReplyRequest) (_ json.
 	if err = tx.Commit(); err != nil {
 		return nil, storageError()
 	}
+	markMCPMutation(ctx, false, true)
 	return json.Marshal(item)
 }
 

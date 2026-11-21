@@ -234,9 +234,9 @@ const fixtureExecutionProfiles = `  roles:
     topic:
       runtimeRef: agent
       model: topic-model
-  workerTemplates:
+  issueTemplates:
     - runtimeRef: agent
-      model: worker-model
+      model: issue-model
       effort: medium
       description: Implement changes
     - runtimeRef: agent
@@ -308,7 +308,7 @@ func testCapabilityPath(f *fixture, b core.Binding) string {
 
 func roleCall(t *testing.T, p *process, token, tool string, args any) json.RawMessage {
 	t.Helper()
-	status, data := request(t, http.MethodPost, p.endpoint, "/v1/role/"+tool, token, args)
+	status, data := requestMCPTool(t, p.endpoint, tool, token, args)
 	require.Equal(t, http.StatusOK, status, string(data))
 	var result struct {
 		Result json.RawMessage `json:"result"`
@@ -327,14 +327,14 @@ func newRoute(op string, ids []string, workspace string) core.RouteRequest {
 
 func decide(t *testing.T, p *process, token string, r core.RouteRequest) core.RouteDecision {
 	t.Helper()
-	data := roleCall(t, p, token, "route_decide", r)
+	data := roleCall(t, p, token, "route_messages", r)
 	var result core.RouteDecision
 	require.NoError(t, json.Unmarshal(data, &result))
 	return result
 }
 
-type observedRouteDelivery struct {
-	ID     string `json:"id"`
+type observedRoutingEvent struct {
+	ID     string `json:"event_id"`
 	Kind   string `json:"kind"`
 	Status string `json:"status"`
 	Sender struct {
@@ -345,14 +345,14 @@ type observedRouteDelivery struct {
 		Kind    string `json:"kind"`
 		TopicID string `json:"topic_id"`
 	} `json:"recipient"`
-	Body               string `json:"body"`
-	Returned           bool   `json:"returned"`
-	ReturnedDeliveryID string `json:"returnedDeliveryId"`
+	Body            string `json:"body"`
+	Returned        bool   `json:"returned"`
+	ReturnedEventID string `json:"returnedEventId"`
 }
 
-func routingDeliveries(t *testing.T, p *process, messageID string) []observedRouteDelivery {
+func routingEvents(t *testing.T, p *process, messageID string) []observedRoutingEvent {
 	t.Helper()
-	records := readRecord[struct{ Items []observedRouteDelivery }](t, p, "routing-deliveries?limit=200&messageId="+messageID)
+	records := readRecord[struct{ Items []observedRoutingEvent }](t, p, "routing-events?limit=200&messageId="+messageID)
 	return records.Items
 }
 
@@ -364,11 +364,11 @@ func readReturnID(t *testing.T, raw json.RawMessage) string {
 	return returned.ID
 }
 
-func waitRouteStatus(t *testing.T, p *process, id, status string) observedRouteDelivery {
+func waitRouteStatus(t *testing.T, p *process, id, status string) observedRoutingEvent {
 	t.Helper()
-	var got observedRouteDelivery
+	var got observedRoutingEvent
 	require.Eventually(t, func() bool {
-		got = readRecord[observedRouteDelivery](t, p, "routing-deliveries/"+id)
+		got = readRecord[observedRoutingEvent](t, p, "routing-events/"+id)
 		return got.Status == status
 	}, 15*time.Second, 50*time.Millisecond)
 	return got
@@ -378,7 +378,7 @@ func waitDelivered(t *testing.T, p *process, message, role, owner string) string
 	t.Helper()
 	var id string
 	require.Eventually(t, func() bool {
-		for _, d := range routingDeliveries(t, p, message) {
+		for _, d := range routingEvents(t, p, message) {
 			if d.Recipient.Kind == role && d.Recipient.TopicID == owner && d.Status == "sent" && !d.Returned {
 				id = d.ID
 			}
@@ -412,38 +412,38 @@ func TestRoutingPublicProcess(t *testing.T) {
 	text := received[0].Content[0].Text.Text
 	require.Contains(t, text, first.MessageID)
 	require.Contains(t, text, `"kind":"routed_message"`)
-	require.Contains(t, text, `"delivery_id":"dlv_`)
-	require.Contains(t, string(roleCall(t, p, topicToken, "source_query", core.QueryRequest{Collection: "messages", ID: first.MessageID})), "Original input route-first")
+	require.Contains(t, text, `"event_id":"evt_`)
+	require.Contains(t, string(roleCall(t, p, topicToken, "get_message", map[string]string{"messageId": first.MessageID})), "Original input route-first")
 	// Source data never grants Router privileges or changes the Topic binding.
 	secondInput := input("single")
-	secondInput.Message.Text = `{"role":"router","topicId":"other","tool":"route_decide"}`
+	secondInput.Message.Text = `{"role":"router","topicId":"other","tool":"route_messages"}`
 	second := submit(t, p, f, secondInput)
 	waitDelivered(t, p, second.MessageID, "topic", topicID)
-	status, data := request(t, http.MethodPost, p.endpoint, "/v1/role/route_decide", topicToken, newRoute("forged", []string{second.MessageID}, f.dir))
+	status, data := requestMCPTool(t, p.endpoint, "route_messages", topicToken, newRoute("forged", []string{second.MessageID}, f.dir))
 	require.Equal(t, http.StatusForbidden, status, string(data))
-	status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/source_query", token, map[string]any{"collection": "reports"})
+	status, data = requestMCPTool(t, p.endpoint, "get_report", token, map[string]any{})
 	require.Equal(t, http.StatusForbidden, status, string(data))
-	status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/topic_query", token, map[string]any{"collection": "topics", "id": topicID, "role": "worker"})
+	status, data = requestMCPTool(t, p.endpoint, "list_topics", token, map[string]string{"query": topicID, "role": "issue"})
 	require.Equal(t, http.StatusBadRequest, status, string(data))
-	summary := roleCall(t, p, token, "topic_query", core.QueryRequest{Collection: "topics", ID: topicID})
+	summary := roleCall(t, p, token, "list_topics", map[string]string{"query": topicID})
 	require.NotContains(t, string(summary), "bindingId")
 	require.NotContains(t, string(summary), "workspace")
 	// Return bypasses the existing single subscription and increments the round.
-	returned := roleCall(t, p, topicToken, "message_return", core.ReturnRequest{DeliveryID: second.EventID, Reason: "outside scope"})
+	returned := roleCall(t, p, topicToken, "decline_message", core.DeclineMessageRequest{EventID: second.EventID, Reason: "outside scope"})
 	require.Contains(t, string(returned), second.EventID)
-	routeRequest := readRecord[observedRouteDelivery](t, p, "routing-deliveries/"+readReturnID(t, returned))
+	routeRequest := readRecord[observedRoutingEvent](t, p, "routing-events/"+readReturnID(t, returned))
 	waitRouteStatus(t, p, routeRequest.ID, "sent")
-	require.Equal(t, second.EventID, routeRequest.ReturnedDeliveryID)
+	require.Equal(t, second.EventID, routeRequest.ReturnedEventID)
 	require.Equal(t, "outside scope", routeRequest.Body)
-	require.Equal(t, "sent", readRecord[observedRouteDelivery](t, p, "routing-deliveries/"+second.EventID).Status)
+	require.Equal(t, "sent", readRecord[observedRoutingEvent](t, p, "routing-events/"+second.EventID).Status)
 	retry := core.RouteRequest{OperationID: "redeliver", MessageIDs: []string{second.MessageID}, Rounds: map[string]int{second.MessageID: 2}, Kind: "route", Reason: "reconsider", Targets: []core.RouteTarget{{TopicID: topicID, MessageIDs: []string{second.MessageID}}}}
 	rerouted := decide(t, p, token, retry)
-	newID := rerouted.Targets[0].DeliveryIDs[second.MessageID]
+	newID := rerouted.Targets[0].EventIDs[second.MessageID]
 	require.NotEqual(t, second.EventID, newID)
 	waitRouteStatus(t, p, newID, "sent")
 	retry.OperationID = "redeliver-deduplicated"
-	require.Equal(t, newID, decide(t, p, token, retry).Targets[0].DeliveryIDs[second.MessageID])
-	require.Len(t, routingDeliveries(t, p, second.MessageID), 3)
+	require.Equal(t, newID, decide(t, p, token, retry).Targets[0].EventIDs[second.MessageID])
+	require.Len(t, routingEvents(t, p, second.MessageID), 3)
 	// Create a second independent Topic from another Thread, then explicitly associate the shared Thread.
 	otherInput := input("other")
 	otherInput.Message.ThreadRef.ID = "other-thread"
@@ -453,24 +453,24 @@ func TestRoutingPublicProcess(t *testing.T) {
 	otherID := otherDecision.Targets[0].TopicID
 	otherBinding := waitBinding(t, p, "topic", otherID, "ready")
 	otherToken := roleToken(t, f, otherBinding)
-	status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/source_query", otherToken, core.QueryRequest{Collection: "messages", ID: first.MessageID})
+	status, data = requestMCPTool(t, p.endpoint, "get_message", otherToken, map[string]string{"messageId": first.MessageID})
 	require.Equal(t, http.StatusNotFound, status, string(data))
-	status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/topic_query", topicToken, core.QueryRequest{Collection: "topics", ID: otherID})
-	require.Equal(t, http.StatusNotFound, status, string(data))
+	status, data = requestMCPTool(t, p.endpoint, "get_topic", topicToken, map[string]string{"topicId": otherID})
+	require.Equal(t, http.StatusBadRequest, status, string(data))
 	shared := submit(t, p, f, input("shared"))
-	roleCall(t, p, topicToken, "message_return", core.ReturnRequest{DeliveryID: shared.EventID, Reason: "contains two independent requests"})
+	roleCall(t, p, topicToken, "decline_message", core.DeclineMessageRequest{EventID: shared.EventID, Reason: "contains two independent requests"})
 	many := core.RouteRequest{OperationID: "many", MessageIDs: []string{shared.MessageID}, Rounds: map[string]int{shared.MessageID: 2}, Kind: "route", Reason: "explicit independent scopes", Targets: []core.RouteTarget{{TopicID: topicID, MessageIDs: []string{shared.MessageID}}, {TopicID: otherID, MessageIDs: []string{shared.MessageID}}}}
 	decide(t, p, token, many)
 	waitDelivered(t, p, shared.MessageID, "topic", topicID)
 	waitDelivered(t, p, shared.MessageID, "topic", otherID)
 	multi := submit(t, p, f, input("multi"))
 	waitDelivered(t, p, multi.MessageID, "router", "")
-	require.Len(t, routingDeliveries(t, p, multi.MessageID), 1)
-	require.Equal(t, "router", routingDeliveries(t, p, multi.MessageID)[0].Recipient.Kind)
+	require.Len(t, routingEvents(t, p, multi.MessageID), 1)
+	require.Equal(t, "router", routingEvents(t, p, multi.MessageID)[0].Recipient.Kind)
 	// Router source query exposes rounds; Topic queries remain restricted even on a shared Thread.
-	source := roleCall(t, p, token, "source_query", core.QueryRequest{Collection: "messages", ID: multi.MessageID})
+	source := roleCall(t, p, token, "get_message", map[string]any{"messageId": multi.MessageID, "include": []string{"routing"}})
 	require.Contains(t, string(source), `"round":1`)
-	status, data = request(t, http.MethodPost, p.endpoint, "/v1/role/source_query", topicToken, core.QueryRequest{Collection: "messages", ID: multi.MessageID})
+	status, data = requestMCPTool(t, p.endpoint, "get_message", topicToken, map[string]string{"messageId": multi.MessageID})
 	require.Equal(t, http.StatusNotFound, status, string(data))
 	runRoleMCP(t, f, p, router, topic, topicID, otherID)
 	// Commit/restart preserves Router identity, Topic bindings, decisions, subscriptions and delivered inputs.
@@ -479,7 +479,7 @@ func TestRoutingPublicProcess(t *testing.T) {
 	p.stop(t, true)
 	p = f.start()
 	require.Equal(t, router.ID, waitBinding(t, p, "router", "", "ready").ID)
-	require.Empty(t, liveMCP.call("tools/call", map[string]any{"name": "topic_query", "arguments": core.QueryRequest{Collection: "topics", ID: topicID}})["error"])
+	require.Empty(t, liveMCP.call("tools/call", map[string]any{"name": "list_topics", "arguments": map[string]string{"query": topicID}})["error"])
 	require.Len(t, bindings(t, p), len(before))
 	require.Equal(t, decision.ID, decide(t, p, token, r).ID)
 	_, data = request(t, http.MethodGet, p.endpoint, "/v1/observer/subscriptions", "", nil)
@@ -548,41 +548,39 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Binding
 	s := startRoleMCP(t, f, topic)
 	listed := r.call("tools/list", map[string]any{"_meta": map[string]any{"progressToken": 1}})
 	require.Empty(t, listed["error"], "MCP client metadata must not prevent scoped tool discovery")
-	require.Contains(t, string(listed["result"]), "route_decide")
-	require.NotContains(t, string(listed["result"]), "message_return")
+	require.Contains(t, string(listed["result"]), "route_messages")
+	require.NotContains(t, string(listed["result"]), "decline_message")
 	require.NotContains(t, string(listed["result"]), "binding_get")
 	invalidList := r.call("tools/list", map[string]any{"role": "topic"})
 	require.Contains(t, string(invalidList["error"]), "Invalid params")
 	listed = s.call("tools/list", map[string]any{})
-	require.Contains(t, string(listed["result"]), "message_return")
-	require.NotContains(t, string(listed["result"]), "route_decide")
+	require.Contains(t, string(listed["result"]), "decline_message")
+	require.NotContains(t, string(listed["result"]), "route_messages")
 	require.NotContains(t, string(listed["result"]), "binding_get")
 	mcpWorkError(t, r, "binding_get", "forbidden", struct{}{})
 	mcpWorkError(t, s, "binding_get", "forbidden", struct{}{})
 	for _, binding := range []core.Binding{router, topic} {
-		identity := roleCall(t, p, roleToken(t, f, binding), "binding_get", struct{}{})
+		identity := initializeMCP(t, p.endpoint, roleToken(t, f, binding))
 		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"role":%q,"ownerId":%q,"generation":%d}`,
 			binding.ID, binding.Role, binding.OwnerID, binding.Generation), string(identity))
 	}
-	got := r.call("tools/call", map[string]any{"name": "topic_query", "arguments": map[string]any{"collection": "topics", "id": topicID}})
+	got := r.call("tools/call", map[string]any{"name": "list_topics", "arguments": map[string]string{"query": topicID}})
 	require.Empty(t, got["error"])
 	require.NotContains(t, string(got["result"]), "bindingId")
-	denied := s.call("tools/call", map[string]any{"name": "topic_query", "arguments": map[string]any{"collection": "topics", "id": otherID}})
-	require.Contains(t, string(denied["error"]), "not_found")
-	denied = s.call("tools/call", map[string]any{"name": "route_decide", "arguments": map[string]any{}})
-	require.Contains(t, string(denied["error"]), "forbidden")
+	mcpWorkError(t, s, "get_topic", "invalid_argument", map[string]string{"topicId": otherID})
+	mcpWorkError(t, s, "route_messages", "forbidden", struct{}{})
 	incoming := input("mcp-ignore")
 	incoming.Message.ThreadRef.ID = "mcp-thread"
 	incoming.Message.Channel = nil
 	receipt := submit(t, p, f, incoming)
-	ignored := r.call("tools/call", map[string]any{"name": "route_decide", "arguments": core.RouteRequest{OperationID: "mcp-ignore", MessageIDs: []string{receipt.MessageID}, Rounds: map[string]int{receipt.MessageID: 1}, Kind: "ignore", Reason: "explicitly not actionable"}})
+	ignored := r.call("tools/call", map[string]any{"name": "route_messages", "arguments": core.RouteRequest{OperationID: "mcp-ignore", MessageIDs: []string{receipt.MessageID}, Rounds: map[string]int{receipt.MessageID: 1}, Kind: "ignore", Reason: "explicitly not actionable"}})
 	require.Empty(t, ignored["error"])
 
 	business := input("mcp-create")
 	business.Message.ThreadRef.ID = "mcp-create-thread"
 	business.Message.Channel = nil
 	m := submit(t, p, f, business)
-	routed := r.call("tools/call", map[string]any{"name": "route_decide", "arguments": newRoute("mcp-create", []string{m.MessageID}, f.dir)})
+	routed := r.call("tools/call", map[string]any{"name": "route_messages", "arguments": newRoute("mcp-create", []string{m.MessageID}, f.dir)})
 	require.Empty(t, routed["error"])
 	var result struct {
 		StructuredContent core.RouteDecision `json:"structuredContent"`
@@ -591,13 +589,12 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Binding
 	bound := waitBinding(t, p, "topic", result.StructuredContent.Targets[0].TopicID, "ready")
 	waitDelivered(t, p, m.MessageID, "topic", bound.OwnerID)
 	topicMCP := startRoleMCP(t, f, bound)
-	returned := topicMCP.call("tools/call", map[string]any{"name": "message_return", "arguments": core.ReturnRequest{DeliveryID: result.StructuredContent.Targets[0].DeliveryIDs[m.MessageID], Reason: "explicit stdio return"}})
+	returned := topicMCP.call("tools/call", map[string]any{"name": "decline_message", "arguments": core.DeclineMessageRequest{EventID: result.StructuredContent.Targets[0].EventIDs[m.MessageID], Reason: "explicit stdio return"}})
 	require.Empty(t, returned["error"])
-	require.Contains(t, string(returned["result"]), result.StructuredContent.Targets[0].DeliveryIDs[m.MessageID])
+	require.Contains(t, string(returned["result"]), result.StructuredContent.Targets[0].EventIDs[m.MessageID])
 	waitDelivered(t, p, m.MessageID, "router", "")
 	// Capability scope cannot be supplied as an argument, even by native inherited callers.
-	denied = s.call("tools/call", map[string]any{"name": "source_query", "arguments": map[string]any{"collection": "messages", "role": "router"}})
-	require.Contains(t, string(denied["error"]), "invalid_argument")
+	mcpWorkError(t, s, "list_messages", "invalid_argument", map[string]string{"role": "router"})
 }
 
 func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
@@ -615,7 +612,7 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, r := range requests {
 		wg.Go(func() {
-			code, _ := request(t, http.MethodPost, p.endpoint, "/v1/role/route_decide", token, r)
+			code, _ := requestMCPTool(t, p.endpoint, "route_messages", token, r)
 			codes <- code
 		})
 	}
@@ -640,7 +637,7 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 	m := submit(t, p, f, fresh)
 	r := newRoute("rollback", []string{m.MessageID}, f.dir)
 	r.Targets = append(r.Targets, core.RouteTarget{TopicID: "missing-topic", MessageIDs: []string{m.MessageID}})
-	status, data := request(t, http.MethodPost, p.endpoint, "/v1/role/route_decide", token, r)
+	status, data := requestMCPTool(t, p.endpoint, "route_messages", token, r)
 	require.Equal(t, 404, status, string(data))
 	_, data = request(t, http.MethodGet, p.endpoint, "/v1/observer/topics", "", nil)
 	require.NoError(t, json.Unmarshal(data, &page))
@@ -735,7 +732,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	decision := decide(t, p, token, r)
 	topic := waitBinding(t, p, "topic", decision.Targets[0].TopicID, "ready")
 	waitDelivered(t, p, m.MessageID, "topic", topic.OwnerID)
-	roleCall(t, p, roleToken(t, f, topic), "message_return", core.ReturnRequest{DeliveryID: decision.Targets[0].DeliveryIDs[m.MessageID], Reason: "Observer return reason"})
+	roleCall(t, p, roleToken(t, f, topic), "decline_message", core.DeclineMessageRequest{EventID: decision.Targets[0].EventIDs[m.MessageID], Reason: "Observer return reason"})
 	waitDelivered(t, p, m.MessageID, "router", "")
 	decide(t, p, token, core.RouteRequest{
 		OperationID: "observer-ignore", MessageIDs: []string{m.MessageID}, Rounds: map[string]int{m.MessageID: 2},
@@ -755,37 +752,36 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	boundary.driver.mu.Lock()
 	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}
 	boundary.driver.mu.Unlock()
-	queueInternal(t, p, newInternalEvent("browser-accepted", "context_supplement", deliveryParty{Kind: "router"}))
-	waitWorkDelivery(t, p, "browser-accepted", "sent")
+	queueInternal(t, p, newInternalEvent("browser-accepted", "context_supplement", eventParty{Kind: "router"}))
+	waitWorkEvent(t, p, "browser-accepted", "sent")
 	topicToken := roleToken(t, f, topic)
 	timerRequest := timerInput("observer-timer", timerFuture)
 	timerRequest.Materials = []core.Material{{Label: "Archive checklist", URI: "artifacts/archive-checklist.md"}}
-	timer := roleWork[core.Timer](t, p, topicToken, "timer_set", timerRequest)
+	timer := roleWork[core.Timer](t, p, topicToken, "schedule_followup", timerRequest)
 	roleWork[core.Timer](t, p, topicToken, "timer_update", core.UpdateTimerRequest{
 		CancelTimerRequest: cancelTimerInput("observer-timer-update", timer),
 		DueAt:              timerPast, Content: "Review the archived build.", Materials: timerRequest.Materials,
 	})
 	firedTimer := waitTimer(t, p, timer.ID, "fired")
-	waitTimerDelivery(t, p, firedTimer.Followup.ID, "sent")
+	waitTimerEvent(t, p, firedTimer.Followup.ID, "sent")
 	create := issueInput(f.dir, "observer-issue")
 	create.Title = "Verify sample build"
 	create.Goal = "Run the sample build and inspect its exit code."
 	create.Materials = []core.Material{{Label: "Build notes", URI: "artifacts/build-notes.md"}}
 	create.Start = true
-	work := roleWork[core.WorkReceipt](t, p, topicToken, "issue_create", create)
-	worker := waitBinding(t, p, "worker", work.Execution.ID, "ready")
-	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
-	roleWork[core.PullRequest](t, p, topicToken, "pr_register",
-		core.RegisterPRRequest{OperationID: "observer-pr-without-input", URL: internalPR})
-	roleWork[core.PullRequest](t, p, roleToken(t, f, worker), "pr_register",
-		core.RegisterPRRequest{OperationID: "observer-pr-with-input", URL: firstPRAlias})
+	work := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
+	issue := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+	roleWork[core.Topic](t, p, topicToken, "update_topic", prUpdate("observer-pr-without-input", 1, internalPR))
+	work.Issue = roleWork[core.WorkReceipt](t, p, roleToken(t, f, issue), "update_issue",
+		prUpdate("observer-pr-with-input", work.Issue.Revision, firstPRAlias)).Issue
 	acceptPRMessage(t, p, prToken, prMessage("observer-pr", firstPR, "Synthetic PR review arrived."))
-	report := roleWork[core.Report](t, p, roleToken(t, f, worker), "report_submit",
+	report := roleWork[core.Report](t, p, roleToken(t, f, issue), "submit_report",
 		core.ReportRequest{
 			OperationID: "observer-report", Kind: "ready", Summary: "Sample build verified",
 			Details: "Build exited with code 0.", Evidence: []string{"artifacts/build.log"}, GoalRevision: work.Execution.Revision,
 		})
-	waitWorkDelivery(t, p, report.EventID, "sent")
+	waitWorkEvent(t, p, report.EventID, "sent")
 	roleWork[core.WorkReceipt](t, p, topicToken, "issue_complete", core.CompleteIssueRequest{
 		IssueID: work.Issue.ID,
 		CompleteRequest: core.CompleteRequest{
@@ -795,38 +791,38 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	})
 	create.OperationID = "observer-blocked"
 	create.Title = "Review blocked build"
-	blocked := roleWork[core.WorkReceipt](t, p, topicToken, "issue_create", create)
-	waitWorkDelivery(t, p, blocked.Execution.StartEventID, "sent")
-	blockedWorker := waitBinding(t, p, "worker", blocked.Execution.ID, "ready")
-	roleWork[core.Report](t, p, roleToken(t, f, blockedWorker), "report_submit", core.ReportRequest{
+	blocked := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
+	waitWorkEvent(t, p, blocked.Execution.StartEventID, "sent")
+	blockedIssue := waitBinding(t, p, "issue", blocked.Execution.ID, "ready")
+	roleWork[core.Report](t, p, roleToken(t, f, blockedIssue), "submit_report", core.ReportRequest{
 		OperationID: "observer-blocked-report", Kind: "progress", Summary: "Archive review in progress",
 		GoalRevision: blocked.Execution.Revision,
 	})
 	updated := roleWork[core.WorkReceipt](t, p, topicToken, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "observer-update-requirements", IssueID: blocked.Issue.ID, ExpectedRevision: blocked.Issue.Revision,
-		Goal: "Inspect the archived build output.", NotifyWorker: true,
+		Goal: "Inspect the archived build output.", NotifyIssueSession: true,
 	})
-	waitWorkDelivery(t, p, updated.NotificationEventID, "sent")
+	waitWorkEvent(t, p, updated.NotificationEventID, "sent")
 	markdown := core.StructuredContent{Type: "markdown", Data: json.RawMessage(`{"text":"### Archive review checklist\n\nThe **current build** is ready for review.\n\n- Check the build log\n- Compare the manifest with the previous build\n\nRun ` + "`" + `make verify` + "`" + ` before approving."}`)}
-	checklist := roleWork[core.WorkReceipt](t, p, topicToken, "issue_worker_update", core.WorkerUpdateRequest{
+	checklist := roleWork[core.WorkReceipt](t, p, topicToken, "issue_session_input", core.IssueSessionInputRequest{
 		OperationID: "observer-archive-checklist", IssueID: blocked.Issue.ID, ExpectedRevision: updated.Issue.Revision,
 		Mode: "context_supplement", Content: &markdown,
 	})
-	waitWorkDelivery(t, p, checklist.NotificationEventID, "sent")
+	waitWorkEvent(t, p, checklist.NotificationEventID, "sent")
 	card := core.StructuredContent{Type: "options", Data: json.RawMessage(`{"prompt":"**Which archive should we review?**","options":[{"id":"current","label":"Current build"},{"id":"previous","label":"Previous build"}]}`)}
-	supplement := roleWork[core.WorkReceipt](t, p, topicToken, "issue_worker_update", core.WorkerUpdateRequest{
-		OperationID: "observer-supplement", IssueID: blocked.Issue.ID, ExpectedRevision: updated.Issue.Revision,
+	supplement := roleWork[core.WorkReceipt](t, p, topicToken, "issue_session_input", core.IssueSessionInputRequest{
+		OperationID: "observer-supplement", IssueID: blocked.Issue.ID, ExpectedRevision: checklist.Issue.Revision,
 		Mode: "context_supplement", Content: &card,
 	})
-	waitWorkDelivery(t, p, supplement.NotificationEventID, "sent")
+	waitWorkEvent(t, p, supplement.NotificationEventID, "sent")
 	_ = roleWork[core.WorkReceipt](t, p, topicToken, "issue_update_blockers", core.UpdateBlockersRequest{
-		OperationID: "observer-add-blockers", IssueID: blocked.Issue.ID, ExpectedRevision: updated.Issue.Revision,
+		OperationID: "observer-add-blockers", IssueID: blocked.Issue.ID, ExpectedRevision: supplement.Issue.Revision,
 		Add: []core.BlockerInput{human("Confirm the archive with the reviewer"), dependency(work.Issue)},
 	})
 
 	create.OperationID, create.Title = "observer-canceled", "Canceled sample validation"
-	canceled := roleWork[core.WorkReceipt](t, p, topicToken, "issue_create", create)
-	waitWorkDelivery(t, p, canceled.Execution.StartEventID, "sent")
+	canceled := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
+	waitWorkEvent(t, p, canceled.Execution.StartEventID, "sent")
 	cancel := issueLifecycle("observer-cancel", canceled.Issue)
 	cancel.Reason = "The sample build was withdrawn"
 	stopped := roleWork[core.WorkReceipt](t, p, topicToken, "issue_cancel", cancel)
@@ -869,11 +865,8 @@ func TestRoutingCrashAtomicRoute(t *testing.T) {
 			token := roleToken(t, f, router)
 			m := submit(t, p, f, input(stage))
 			r := newRoute(stage, []string{m.MessageID}, f.dir)
-			data, err := json.Marshal(r)
+			req, err := newMCPToolRequest(t.Context(), p.endpoint, token, "route_messages", r)
 			require.NoError(t, err)
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.endpoint+"/v1/role/route_decide", bytes.NewReader(data))
-			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer "+token)
 			finished := make(chan struct{})
 			go func() {
 				defer close(finished)
@@ -924,15 +917,15 @@ func TestRoutingOperationAndCapabilityFences(t *testing.T) {
 	require.Equal(t, d.ID, decide(t, p, token, r).ID)
 	changed := r
 	changed.Reason = "different request"
-	status, body := request(t, http.MethodPost, p.endpoint, "/v1/role/route_decide", token, changed)
+	status, body := requestMCPTool(t, p.endpoint, "route_messages", token, changed)
 	require.Equal(t, http.StatusConflict, status, string(body))
 	submit(t, p, f, input("fence-b"))
 	submit(t, p, f, input("fence-c"))
-	raw := roleCall(t, p, topicToken, "source_query", core.QueryRequest{Collection: "messages", Limit: 1})
+	raw := roleCall(t, p, topicToken, "list_messages", map[string]any{"limit": 1})
 	var got core.Page
 	require.NoError(t, json.Unmarshal(raw, &got))
 	require.NotEmpty(t, got.NextCursor)
-	status, body = request(t, http.MethodPost, p.endpoint, "/v1/role/source_query", token, core.QueryRequest{Collection: "messages", Limit: 1, Cursor: got.NextCursor})
+	status, body = requestMCPTool(t, p.endpoint, "list_messages", token, map[string]any{"limit": 1, "cursor": got.NextCursor})
 	require.Equal(t, http.StatusBadRequest, status, string(body))
 	// The file's role/owner/generation must agree with the credential's persisted identity.
 	capPath := filepath.Join(f.data, "capabilities", topic.ID+".json")
@@ -973,12 +966,9 @@ func TestRoutingCrashAtomicReturn(t *testing.T) {
 			topic := waitBinding(t, p, "topic", d.Targets[0].TopicID, "ready")
 			token := roleToken(t, f, topic)
 			waitDelivered(t, p, m.MessageID, "topic", topic.OwnerID)
-			r := core.ReturnRequest{DeliveryID: d.Targets[0].DeliveryIDs[m.MessageID], Reason: "outside current scope"}
-			data, err := json.Marshal(r)
+			r := core.DeclineMessageRequest{EventID: d.Targets[0].EventIDs[m.MessageID], Reason: "outside current scope"}
+			req, err := newMCPToolRequest(t.Context(), p.endpoint, token, "decline_message", r)
 			require.NoError(t, err)
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.endpoint+"/v1/role/message_return", bytes.NewReader(data))
-			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer "+token)
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
@@ -996,7 +986,7 @@ func TestRoutingCrashAtomicReturn(t *testing.T) {
 				expectedRound = 2
 				expectedRelations = 2
 			}
-			raw := roleCall(t, p, routerToken, "source_query", core.QueryRequest{Collection: "messages", ID: m.MessageID})
+			raw := roleCall(t, p, routerToken, "get_message", map[string]any{"messageId": m.MessageID, "include": []string{"routing"}})
 			var current struct {
 				Routing struct {
 					Round int `json:"round"`
@@ -1006,8 +996,8 @@ func TestRoutingCrashAtomicReturn(t *testing.T) {
 			require.Equal(t, expectedRound, current.Routing.Round)
 			require.Len(t, page(t, p, "relations").Items, expectedRelations)
 			require.Len(t, page(t, p, "subscriptions").Items, 1)
-			original := roleCall(t, p, token, "message_return", r)
-			require.JSONEq(t, string(original), string(roleCall(t, p, token, "message_return", r)))
+			original := roleCall(t, p, token, "decline_message", r)
+			require.JSONEq(t, string(original), string(roleCall(t, p, token, "decline_message", r)))
 			waitDelivered(t, p, m.MessageID, "router", "")
 			require.Len(t, page(t, p, "relations").Items, 2)
 			require.Len(t, page(t, p, "subscriptions").Items, 1)
@@ -1023,7 +1013,7 @@ func TestRoutingPreviousSchemaRefused(t *testing.T) {
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	// This fixture sets only the previous schema header; no business records are manufactured.
-	_, err = db.ExecContext(t.Context(), "PRAGMA application_id=1398096210; PRAGMA user_version=1;")
+	_, err = db.ExecContext(t.Context(), "PRAGMA application_id=1398096210; PRAGMA user_version=22;")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	before, err := os.ReadFile(path)
@@ -1032,7 +1022,7 @@ func TestRoutingPreviousSchemaRefused(t *testing.T) {
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, sha256.Sum256(before), sha256.Sum256(after))
-	t.Log("schema 1 refused; previous database bytes unchanged")
+	t.Log("schema 22 refused; previous database bytes unchanged")
 }
 
 func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
@@ -1061,22 +1051,22 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	p = f.start()
 	require.Equal(t, router.ID, waitBinding(t, p, "router", "", "ready").ID)
 	require.Len(t, page(t, p, "messages").Items, 1)
-	require.Len(t, routingDeliveries(t, p, m.MessageID), 1)
+	require.Len(t, routingEvents(t, p, m.MessageID), 1)
 	t.Log("intake delivery resumed with its original ID; massd endpoint came from startup configuration and the existing binding identity was retained")
 }
 
 func TestRoutedMessageAgentPromptView(t *testing.T) {
 	t.Parallel()
-	peer := newNativeDeliveryPeer(t)
-	endpoint, massd := startDeliveryMassd(t, peer)
-	f, _ := deliveryFixture(t, endpoint)
+	peer := newNativeSubmitPeer(t)
+	endpoint, massd := startEventTestMassd(t, peer)
+	f, _ := eventFixture(t, endpoint)
 	configureOutboxSource(t, f)
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
 	var routerSession resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: routerBinding.SessionID}, &routerSession))
-	require.Contains(t, routerSession.Spec.SystemPrompt, "deduplicate by delivery_id")
+	require.Contains(t, routerSession.Spec.SystemPrompt, "deduplicate by event_id")
 	require.Contains(t, routerSession.Spec.SystemPrompt, "routing.round")
 	require.Contains(t, routerSession.Spec.SystemPrompt, "content.data.text")
 	require.NotContains(t, routerSession.Spec.SystemPrompt, "eventId")
@@ -1085,7 +1075,7 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	msg := submit(t, p, f, short)
 	route := peer.next(t, "turn/start")
 	require.Equal(t, routerBinding.SessionID, route.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":%q}},"threadKey":%q,"routing":{"round":1,"state":"pending"}}]}`, msg.EventID, msg.MessageID, short.Message.Text, msg.ThreadKey), route.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":%q}},"threadKey":%q,"routing":{"round":1,"state":"pending"}}]}`, msg.EventID, msg.MessageID, short.Message.Text, msg.ThreadKey), route.text)
 	var payload struct {
 		Events []struct {
 			Refs    []struct{ ID string }
@@ -1094,21 +1084,24 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(route.text), &payload))
 	messageID := payload.Events[0].Refs[0].ID
-	route.answer <- nativeDeliveryAnswer{complete: true}
+	route.answer <- nativeSubmitAnswer{complete: true}
 	req := newRoute("short-topic", []string{messageID}, f.dir)
 	req.Rounds[messageID] = payload.Events[0].Routing.Round
-	decision := mcpWork[core.RouteDecision](t, router, "route_decide", req)
+	decision := mcpWork[core.RouteDecision](t, router, "route_messages", req)
 	target := decision.Targets[0]
 	binding := waitBinding(t, p, "topic", target.TopicID, "ready")
 	topic := startRoleMCP(t, f, binding)
 	var topicSession resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: binding.SessionID}, &topicSession))
 	require.Contains(t, topicSession.Spec.SystemPrompt, "content.data.text")
-	require.Contains(t, topicSession.Spec.SystemPrompt, "source_query")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "get_message")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "bound Topic snapshot at dispatch")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "Core pushes report_submitted to this Session")
 	delivered := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, delivered.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":%q}}}]}`, target.DeliveryIDs[msg.MessageID], msg.MessageID, short.Message.Text), delivered.text)
-	delivered.answer <- nativeDeliveryAnswer{complete: true}
+	topicView := fmt.Sprintf(`{"id":%q,"title":"Topic short-topic","workspace":%q,"status":"active","revision":1}`, target.TopicID, f.dir)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"content":{"type":"markdown","data":{"text":%q}}}]}`, target.EventIDs[msg.MessageID], msg.MessageID, topicView, short.Message.Text), delivered.text)
+	delivered.answer <- nativeSubmitAnswer{complete: true}
 
 	for _, req := range []core.SubmitRequest{input("long"), input("quoted")} {
 		if req.Message.SourceMessageID == "long" {
@@ -1119,23 +1112,22 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 		receipt := submit(t, p, f, req)
 		call := peer.next(t, "turn/start")
 		require.Equal(t, binding.SessionID, call.session)
-		require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}]}]}`, receipt.EventID, receipt.MessageID), call.text)
-		call.answer <- nativeDeliveryAnswer{complete: true}
+		require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s}]}`, receipt.EventID, receipt.MessageID, topicView), call.text)
+		call.answer <- nativeSubmitAnswer{complete: true}
 
-		lookup := core.QueryRequest{Collection: "messages", ID: receipt.MessageID}
-		item := mcpWork[json.RawMessage](t, topic, "source_query", lookup)
+		item := mcpWork[json.RawMessage](t, topic, "get_message", map[string]string{"messageId": receipt.MessageID})
 		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"source":"dws","text":%q,"threadKey":%q,"actor":"sender-1"}`, receipt.MessageID, req.Message.Text, receipt.ThreadKey), string(item))
-		items := mcpWork[core.Page](t, topic, "source_query", core.QueryRequest{Collection: "messages", ThreadKey: receipt.ThreadKey})
+		items := mcpWork[core.Page](t, topic, "list_messages", map[string]any{"threadKey": receipt.ThreadKey})
 		require.JSONEq(t, string(item), string(items.Items[len(items.Items)-1]))
 		original := readRecord[core.Message](t, p, "messages/"+receipt.MessageID)
 		require.Equal(t, req.Message.SourceMessageID, original.SourceMessageID)
 		require.Equal(t, req.Message.Channel, original.Channel)
 	}
 
-	issue := mcpWork[core.WorkReceipt](t, topic, "issue_create", issueInput(f.dir, "quoted-work")).Issue
+	issue := mcpWork[core.WorkReceipt](t, topic, "create_issue", issueInput(f.dir, "quoted-work")).Issue
 	issue = blockers(t, topic, issue, "wait-for-date", human("Confirm the release date"))
 	blocker := core.BlockerRef{IssueID: issue.ID, BlockerID: issue.Blockers[0].ID}
-	question := mcpWork[core.OutboxItem](t, topic, "outbox_message_reply_structured", core.ReplyRequest{
+	question := mcpWork[core.OutboxItem](t, topic, "send_reply", core.ReplyRequest{
 		OperationID: "ask-date", MessageID: msg.MessageID, Content: markdownReply("Which date?"), BlockerRef: &blocker,
 	})
 	sent := outboxResult(question, "sent", "", "native-release-date")
@@ -1148,11 +1140,11 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	answer := submit(t, p, f, reply)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, call.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":"Tuesday UTC"}},"quotedReply":{"outboxId":%q,"blockerRef":{"issueId":%q,"blockerId":%q}},"issue":{"id":%q,"revision":%d,"status":"blocked","blockers":[{"id":%q,"kind":"human","reason":"Confirm the release date"}]}}]}`, answer.EventID, answer.MessageID, question.ID, issue.ID, blocker.BlockerID, issue.ID, issue.Revision, blocker.BlockerID), call.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"content":{"type":"markdown","data":{"text":"Tuesday UTC"}},"quotedReply":{"outboxId":%q,"blockerRef":{"issueId":%q,"blockerId":%q}},"issue":{"id":%q,"revision":%d,"status":"blocked","blockers":[{"id":%q,"kind":"human","reason":"Confirm the release date"}]}}]}`, answer.EventID, answer.MessageID, topicView, question.ID, issue.ID, blocker.BlockerID, issue.ID, issue.Revision, blocker.BlockerID), call.text)
 	view := decodeInternalBatch(t, call, answer.EventID)[0]
 	var quotedIssue core.Issue
 	require.NoError(t, json.Unmarshal(view.Issue, &quotedIssue))
-	call.answer <- nativeDeliveryAnswer{complete: true}
+	call.answer <- nativeSubmitAnswer{complete: true}
 	resolved := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", core.UpdateBlockersRequest{
 		OperationID: "resolve-date", IssueID: quotedIssue.ID, ExpectedRevision: quotedIssue.Revision, UnblockedStatus: "pending",
 		Resolve: []core.BlockerResolution{{BlockerID: quotedIssue.Blockers[0].ID, Reason: reply.Message.Text, MessageID: answer.MessageID}},
@@ -1165,22 +1157,22 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	longReceipt := submit(t, p, f, long)
 	longInput := peer.next(t, "turn/start")
 	require.Equal(t, routerBinding.SessionID, longInput.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"delivery_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}]}]}`, longReceipt.EventID, longReceipt.MessageID), longInput.text)
-	longInput.answer <- nativeDeliveryAnswer{complete: true}
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}]}]}`, longReceipt.EventID, longReceipt.MessageID), longInput.text)
+	longInput.answer <- nativeSubmitAnswer{complete: true}
 	type messageReadback struct {
 		Text    string
 		Routing struct{ Round int }
 	}
-	longReadback := mcpWork[messageReadback](t, router, "source_query", core.QueryRequest{Collection: "messages", ID: longReceipt.MessageID})
+	longReadback := mcpWork[messageReadback](t, router, "get_message", map[string]any{"messageId": longReceipt.MessageID, "include": []string{"routing"}})
 	require.Equal(t, long.Message.Text, longReadback.Text)
 	require.Equal(t, 1, longReadback.Routing.Round)
 }
 
 func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	t.Parallel()
-	peer := newNativeDeliveryPeer(t)
-	endpoint, _ := startDeliveryMassd(t, peer)
-	f, _ := deliveryFixture(t, endpoint)
+	peer := newNativeSubmitPeer(t)
+	endpoint, _ := startEventTestMassd(t, peer)
+	f, _ := eventFixture(t, endpoint)
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
 	routerToken := roleToken(t, f, router)
@@ -1221,12 +1213,12 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	require.JSONEq(t, unconfirmed.text, replayed.text)
 	waitRouteStatus(t, p, bID, "dispatching")
 	aToken, bToken := roleToken(t, f, a), roleToken(t, f, b)
-	ret := core.ReturnRequest{DeliveryID: bID, Reason: "The second scope needs Router review"}
-	status, raw := request(t, http.MethodPost, p.endpoint, "/v1/role/message_return", aToken, ret)
+	ret := core.DeclineMessageRequest{EventID: bID, Reason: "The second scope needs Router review"}
+	status, raw := requestMCPTool(t, p.endpoint, "decline_message", aToken, ret)
 	errorCode(t, status, raw, http.StatusForbidden, "forbidden")
-	returned := roleCall(t, p, bToken, "message_return", ret)
+	returned := roleCall(t, p, bToken, "decline_message", ret)
 	returnID := readReturnID(t, returned)
-	require.JSONEq(t, string(returned), string(roleCall(t, p, bToken, "message_return", ret)))
+	require.JSONEq(t, string(returned), string(roleCall(t, p, bToken, "decline_message", ret)))
 	waitRouteStatus(t, p, bID, "superseded")
 	replayed.accept()
 	routerInput := peer.next(t, "turn/start")
@@ -1235,9 +1227,8 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	require.Equal(t, "route_request", event.Kind)
 	require.Nil(t, event.Content)
 	require.JSONEq(t, fmt.Sprintf(`{"kind":"trigger_message","id":%q}`, m.MessageID), string(event.Refs[0]))
-	require.JSONEq(t, fmt.Sprintf(`{"kind":"internal_delivery","id":%q}`, bID), string(event.Refs[1]))
-	lookup := core.QueryRequest{Collection: "messages", ID: m.MessageID}
-	value := roleCall(t, p, routerToken, "source_query", lookup)
+	require.JSONEq(t, fmt.Sprintf(`{"kind":"internal_event","id":%q}`, bID), string(event.Refs[1]))
+	value := roleCall(t, p, routerToken, "get_message", map[string]any{"messageId": m.MessageID, "include": []string{"routing"}})
 	var detail struct {
 		Routing   struct{ Round int }
 		Relations []struct{ Reason string }
@@ -1264,23 +1255,23 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 		{TopicID: b.OwnerID, MessageIDs: req.MessageIDs},
 	}
 	rerouted := decide(t, p, routerToken, req)
-	require.Equal(t, aID, rerouted.Targets[0].DeliveryIDs[m.MessageID])
-	newID := rerouted.Targets[1].DeliveryIDs[m.MessageID]
+	require.Equal(t, aID, rerouted.Targets[0].EventIDs[m.MessageID])
+	newID := rerouted.Targets[1].EventIDs[m.MessageID]
 	require.NotEqual(t, bID, newID)
 	replacement := peer.next(t, "turn/start")
 	require.Equal(t, b.SessionID, replacement.session)
 	decodeInternalBatch(t, replacement, newID)
 	replacement.accept()
 	waitRouteStatus(t, p, newID, "sent")
-	require.JSONEq(t, string(returned), string(roleCall(t, p, bToken, "message_return", ret)))
+	require.JSONEq(t, string(returned), string(roleCall(t, p, bToken, "decline_message", ret)))
 
 	var own core.Page
-	raw = roleCall(t, p, bToken, "source_query", core.QueryRequest{Collection: "messages"})
+	raw = roleCall(t, p, bToken, "list_messages", map[string]any{})
 	require.NoError(t, json.Unmarshal(raw, &own))
 	require.Len(t, own.Items, 1)
-	raw = roleCall(t, p, bToken, "source_query", core.QueryRequest{Collection: "routing-deliveries", MessageID: m.MessageID})
-	require.NoError(t, json.Unmarshal(raw, &own))
-	require.Len(t, own.Items, 3)
+	own = page(t, p, "routing-events?topicId="+b.OwnerID)
+	require.NotEmpty(t, own.Items)
+	require.Contains(t, string(own.Items[0]), m.MessageID)
 	_, raw = request(t, http.MethodGet, p.endpoint, "/v1/observer/threads/"+url.PathEscape(m.ThreadKey), "", nil)
 	require.Contains(t, string(raw), a.OwnerID)
 	require.Contains(t, string(raw), b.OwnerID)

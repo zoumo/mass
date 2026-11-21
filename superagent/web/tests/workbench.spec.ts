@@ -44,7 +44,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   const issue = page.getByRole('article', { name: '当前 Issue' })
   await expect(issue).toContainText('Run the sample build and inspect its exit code.')
   const profile = issue.getByRole('region', { name: '执行配置' })
-  await expect(profile.locator('dd')).toHaveText(['agent', 'worker-model', 'medium'])
+  await expect(profile.locator('dd')).toHaveText(['agent', 'issue-model', 'medium'])
   await issue.getByRole('button', { name: '启动第 1 轮执行' }).click()
   await expect(issue.getByRole('link', { name: 'Sample build verified', exact:true })).toBeVisible()
   const issueID = new URL(page.url()).searchParams.get('id')
@@ -62,11 +62,11 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await expect(binding.getByText('模型', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('topic-model')
   await expect(binding.getByText('推理强度', { exact: true })).toHaveCount(0)
   expect(errors).toEqual([])
-  const topicDeliveries = `${routingURL}/v1/observer/routing-deliveries?topicId=${topicID}`
-  const first = await (await request.get(`${topicDeliveries}&limit=1&order=newest`)).json()
+  const topicEvents = `${routingURL}/v1/observer/routing-events?topicId=${topicID}`
+  const first = await (await request.get(`${topicEvents}&limit=1&order=newest`)).json()
   expect(first.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
   const cursor = encodeURIComponent(first.nextCursor)
-  const next = await (await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${cursor}`)).json()
+  const next = await (await request.get(`${topicEvents}&limit=1&order=newest&cursor=${cursor}`)).json()
   expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
   const timerMessage = await (
     await request.get(`${routingURL}/v1/observer/messages/${next.items[0].messageId}`)
@@ -74,14 +74,14 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   expect(timerMessage.meta.type).toBe('timer.followup')
   expect(next.nextCursor).toBeTruthy()
   const third = await (
-    await request.get(`${topicDeliveries}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)
+    await request.get(`${topicEvents}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)
   ).json()
   expect(third.items.map((row: { kind: string }) => row.kind)).toEqual(['route_request'])
-  expect((await request.get(`${topicDeliveries}&limit=1&cursor=${cursor}`)).status()).toBe(400)
+  expect((await request.get(`${topicEvents}&limit=1&cursor=${cursor}`)).status()).toBe(400)
   expect(
     (
       await request.get(
-        `${routingURL}/v1/observer/routing-deliveries?topicId=unrelated&order=newest&cursor=${cursor}`,
+        `${routingURL}/v1/observer/routing-events?topicId=unrelated&order=newest&cursor=${cursor}`,
       )
     ).status(),
   ).toBe(400)

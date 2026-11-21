@@ -147,7 +147,7 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 	retired := b.State == "revoked"
 	if retired {
 		if req.Mode == "retry" || b.Role == "router" {
-			return r, b, spec, problem("failed_precondition", "retired bindings permit only Worker or Topic settlement")
+			return r, b, spec, problem("failed_precondition", "retired bindings permit only Issue Session or Topic settlement")
 		}
 		stopping := b.Stop != nil && (b.Stop.Status == "requested" || b.Stop.Status == "dispatching")
 		if stopping {
@@ -170,7 +170,7 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 	if !known {
 		if req.Mode == "retry" {
 			var blocked bool
-			err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM internal_deliveries WHERE "+deliveryRecipientKind+"=? AND "+deliveryRecipientOwner+"=? AND status='dispatching')", b.Role, b.OwnerID).Scan(&blocked)
+			err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM internal_events WHERE "+eventRecipientKind+"=? AND "+eventRecipientOwner+"=? AND status='dispatching')", b.Role, b.OwnerID).Scan(&blocked)
 			if err != nil {
 				return r, b, spec, storageError()
 			}
@@ -396,9 +396,9 @@ func (s *Store) completeRecovery(ctx context.Context, b Binding, r Recovery) (Re
 		if err := saveRelatedReleases(ctx, tx, r.RelatedReleases); err != nil {
 			return r, err
 		}
-		if b.Role == "worker" {
+		if b.Role == "issue" {
 			if b.State != "revoked" {
-				if err := s.replaceWorker(ctx, tx, b, &r); err != nil {
+				if err := s.replaceIssue(ctx, tx, b, &r); err != nil {
 					return r, err
 				}
 			}
@@ -443,7 +443,7 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 			return storageError()
 		}
 	}
-	recipient := deliveryIdentity{Kind: b.Role, TopicID: b.OwnerID}
+	recipient := eventIdentity{Kind: b.Role, TopicID: b.OwnerID}
 	kind := "binding_recovered"
 	if b.Role == "topic" {
 		var t Topic
@@ -458,13 +458,13 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 	if err != nil {
 		return storageError()
 	}
-	return enqueueInternalDelivery(ctx, tx, internalDelivery{
-		ID: newID("dlv"), Kind: kind, Sender: deliveryIdentity{Kind: "core"}, Recipient: recipient,
+	return enqueueInternalEvent(ctx, tx, internalEvent{
+		ID: newID("evt"), Kind: kind, Sender: eventIdentity{Kind: "core"}, Recipient: recipient,
 		Body: payload,
 	})
 }
 
-func (s *Store) replaceUnrecoverableWorker(ctx context.Context, b Binding, session resource.Session) error {
+func (s *Store) replaceUnrecoverableIssue(ctx context.Context, b Binding, session resource.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -476,23 +476,23 @@ func (s *Store) replaceUnrecoverableWorker(ctx context.Context, b Binding, sessi
 	if err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE id=? AND state='pending'`, &current, b.ID); err != nil {
 		return err
 	}
-	if current.Role != "worker" || current.Generation != b.Generation || current.PreviousOwnerUnknown ||
+	if current.Role != "issue" || current.Generation != b.Generation || current.PreviousOwnerUnknown ||
 		current.SessionID != session.Status.SessionID || current.SessionUID != session.Metadata.UID ||
 		!resumeRecoveryMissing(session) {
-		return problem("stale_binding", "Worker recovery evidence no longer matches the binding")
+		return problem("stale_binding", "Issue Session recovery evidence no longer matches the binding")
 	}
 	settlement := BindingClose{At: now(), ResourceVersion: session.Metadata.ResourceVersion, Method: resource.SessionReasonRecoveryMissing}
 	if err := putJSON(ctx, tx, "UPDATE session_bindings SET body=json_set(body,'$.close',json(?2)) WHERE id=?1", settlement, current.ID); err != nil {
 		return err
 	}
-	if err := s.replaceWorker(ctx, tx, current, &Recovery{}); err != nil {
+	if err := s.replaceIssue(ctx, tx, current, &Recovery{}); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) replaceWorker(ctx context.Context, tx *sql.Tx, b Binding, r *Recovery) error {
-	issue, x, err := currentWorkerIssue(ctx, tx, b)
+func (s *Store) replaceIssue(ctx context.Context, tx *sql.Tx, b Binding, r *Recovery) error {
+	issue, x, err := currentBoundIssue(ctx, tx, b)
 	if err != nil {
 		return err
 	}
@@ -506,7 +506,7 @@ func (s *Store) replaceWorker(ctx context.Context, tx *sql.Tx, b Binding, r *Rec
 		issue.UpdatedAt = at
 		return saveIssue(ctx, tx, issue)
 	}
-	next, err := s.scheduleIssue(ctx, tx, issue, deliveryIdentity{Kind: "core"})
+	next, err := s.scheduleIssue(ctx, tx, issue, eventIdentity{Kind: "core"})
 	if err != nil {
 		return err
 	}

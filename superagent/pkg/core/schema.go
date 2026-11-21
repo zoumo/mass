@@ -80,4 +80,4 @@ CREATE VIEW work_pull_requests AS
  SELECT CAST(json_extract(p.value,'$.sequence') AS INTEGER), json_extract(p.value,'$.id'),
  i.topic_id, i.id, json_extract(p.value,'$.createdAt'), json_remove(p.value,'$.sequence')
  FROM issues i,json_each(i.body,'$.pullRequests') p;
-` + internalDeliverySchema + routingViews
+` + internalEventSchema + routingViews

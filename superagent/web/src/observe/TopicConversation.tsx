@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowDown, Hash, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { formatTime, routingDeliveryLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
+import { formatTime, eventStatusLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import CopyLink from './CopyLink'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { ObjectAvatar, ConversationCard, type Participant } from './ConversationCard'
 import { navigate, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
+import { TraceLinks, type TraceAssociation } from './TraceLinks'
+import { metricsHref } from './MetricsView'
 import './conversation.css'
 
 const view = 'topic-conversation'
@@ -14,28 +16,28 @@ const activity = (params: Record<string, string>) =>
 const recordHref = (view: string, id: string) => '/observer/?' + new URLSearchParams({ view, id })
 const labels = {
   all: '全部', router_routed: 'Router 路由入群', thread_direct: 'Core Thread 直投',
-  issue_created: '创建 Issue', worker_dispatch: '任务派发', report: 'Worker Report',
+  issue_created: '创建 Issue', issue_session_dispatch: '任务派发', report: 'Issue Report',
 } as const
 type Filter = keyof typeof labels
 
 type Topic = { id: string; title: string; status: string; createdAt: string; lastMessageAt?: string }
-type EventIdentity = { id: string; topicId: string; at: string }
+type EventIdentity = { id: string; topicId: string; at: string; traceAssociations?: TraceAssociation[] }
 type IngressEvent = EventIdentity & {
   kind: 'router_routed' | 'thread_direct'; actor: 'router' | 'core'; summary?: string; status: string
-  messageId: string; deliveryId: string; threadKey?: string
+  messageId: string; eventId: string; threadKey?: string
 }
 type IssueCreated = EventIdentity & { kind: 'issue_created'; issueId: string; title: string }
-type WorkerDispatch = EventIdentity & {
-  kind: 'worker_dispatch'; issueId: string; title: string; executionId: string; generation: number
-  deliveryId: string; dispatchKind: keyof typeof dispatchLabels; summary?: string; status: string; content?: StructuredBody
+type IssueSessionDispatch = EventIdentity & {
+  kind: 'issue_session_dispatch'; issueId: string; title: string; executionId: string; generation: number
+  eventId: string; dispatchKind: keyof typeof dispatchLabels; summary?: string; status: string; content?: StructuredBody
 }
-type WorkerReport = EventIdentity & {
+type IssueReport = EventIdentity & {
   kind: 'report'; issueId: string; title: string; executionId: string; generation: number
-  reportId: string; reportKind: keyof typeof reportLabels; summary: string; deliveryId: string
+  reportId: string; reportKind: keyof typeof reportLabels; summary: string; eventId: string
 }
-type ConversationEvent = IngressEvent | IssueCreated | WorkerDispatch | WorkerReport
-type RoutingDelivery = { status: string; body?: string }
-type WorkerDelivery = {
+type ConversationEvent = IngressEvent | IssueCreated | IssueSessionDispatch | IssueReport
+type RoutingEvent = { status: string; body?: string }
+type IssueEvent = {
   status: string
   content?: StructuredBody
   body?: { instruction?: string; materials?: WorkbenchRow['materials'] }
@@ -50,7 +52,7 @@ type Report = { summary: string; details?: string; evidence?: string[]; question
 type Execution = { startEventId?: string }
 
 const dispatchLabels = {
-  worker_started: '启动 Execution', worker_update: '继续执行',
+  issue_session_started: '启动 Execution', issue_session_update: '继续执行',
   context_supplement: '补充上下文', goal_notification: '目标更新',
 } as const
 const reportLabels = { progress: '进展', ready: '申请验收', blocked: '受阻', failed: '失败' } as const
@@ -155,7 +157,7 @@ function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
       </header>
       {eventId ? <>
         {event.error && <ReadError error={event.error} stale={!!event.data}/>}
-        {focused ? <EventDetails key={focused.id} event={focused}/>
+        {focused ? <div key={focused.id}><div className="conversation-section"><TraceLinks associations={focused.traceAssociations} at={focused.at}/></div><EventDetails event={focused}/></div>
           : !event.error && <p className="empty">正在读取消息…</p>}
       </> : <GroupInfo topicId={topicId}/>}
     </aside>
@@ -234,7 +236,7 @@ function Timeline({ timeline, eventId, eventHref }: {
 }
 
 function topicParticipant(id: string): Participant {
-  return { kind: 'topic', label: 'Topic', href: viewHref('topic', id), title: '查看 Topic · ' + id }
+  return { kind: 'topic', label: 'Topic Session', href: viewHref('topic', id), title: '查看 Topic · ' + id }
 }
 
 function issueParticipant(id: string, title: string): Participant {
@@ -243,14 +245,14 @@ function issueParticipant(id: string, title: string): Participant {
 
 function EventCard({ event, href, selected }: { event: ConversationEvent; href: string; selected: boolean }) {
   const topic = topicParticipant(event.topicId)
-  const common = { href, selected, at: event.at, time: clock.format(new Date(event.at)) }
+  const common = { href, selected, at: event.at, time: clock.format(new Date(event.at)), traceAssociations: event.traceAssociations }
   if (event.kind === 'issue_created') {
     return <ConversationCard {...common} kind={labels.issue_created} recordId={event.issueId} preview={event.title}
       sender={topic} recipient={issueParticipant(event.issueId, event.title)} facts={[]}/>
   }
-  if (event.kind === 'worker_dispatch' || event.kind === 'report') {
-    const worker: Participant = { kind: 'worker', label: 'Worker' }
-    const dispatch = event.kind === 'worker_dispatch'
+  if (event.kind === 'issue_session_dispatch' || event.kind === 'report') {
+    const issue: Participant = { kind: 'issue-session', label: 'Issue Session' }
+    const dispatch = event.kind === 'issue_session_dispatch'
     const content = dispatch ? event.content : undefined
     const facts: { label: string; value: ReactNode }[] = [
       { label: 'Issue', value: <span className="conversation-card-issue">
@@ -258,17 +260,17 @@ function EventCard({ event, href, selected }: { event: ConversationEvent; href: 
       </span> },
       { label: 'Execution', value: `第 ${event.generation} 次` },
     ]
-    if (dispatch) facts.push({ label: '投递', value: routingDeliveryLabel(event.status) })
+    if (dispatch) facts.push({ label: '投递', value: eventStatusLabel(event.status) })
     return <ConversationCard {...common}
-      kind={dispatch ? dispatchLabels[event.dispatchKind] : `Worker Report · ${reportLabels[event.reportKind]}`}
+      kind={dispatch ? dispatchLabels[event.dispatchKind] : `Issue Report · ${reportLabels[event.reportKind]}`}
       recordId={dispatch ? event.executionId : event.reportId}
       preview={event.summary || event.title} content={content}
-      sender={dispatch ? topic : worker} recipient={dispatch ? worker : topic} facts={facts}/>
+      sender={dispatch ? topic : issue} recipient={dispatch ? issue : topic} facts={facts}/>
   }
   const sender: Participant = event.kind === 'router_routed'
-    ? { kind: 'router', label: 'Router', href: viewHref('router', event.messageId), title: '查看 Router · ' + event.messageId }
+    ? { kind: 'router', label: 'Router Session', href: viewHref('router', event.messageId), title: '查看 Router · ' + event.messageId }
     : { kind: 'core', label: 'Core' }
-  const facts: { label: string; value: ReactNode }[] = [{ label: '投递', value: routingDeliveryLabel(event.status) }]
+  const facts: { label: string; value: ReactNode }[] = [{ label: '投递', value: eventStatusLabel(event.status) }]
   if (event.threadKey) facts.push({
     label: '来源',
     value: <a href={recordHref('threads', event.threadKey)} title={event.threadKey} aria-label={`查看 Thread · ${event.threadKey}`}>查看 Thread</a>,
@@ -283,30 +285,30 @@ function ThreadLink({ threadKey }: { threadKey: string }) {
 
 function EventDetails({ event }: { event: ConversationEvent }) {
   if (event.kind === 'issue_created') return <IssueCreatedDetails event={event}/>
-  if (event.kind === 'worker_dispatch') return <DispatchDetails event={event}/>
+  if (event.kind === 'issue_session_dispatch') return <DispatchDetails event={event}/>
   if (event.kind === 'report') return <ReportDetails event={event}/>
   return <IngressDetails event={event}/>
 }
 
 function IngressDetails({ event }: { event: IngressEvent }) {
-  const delivery = useRecord<RoutingDelivery>('routing-deliveries/' + encodeURIComponent(event.deliveryId))
+  const internalEvent = useRecord<RoutingEvent>('routing-events/' + encodeURIComponent(event.eventId))
   const message = useRecord<WorkbenchRow>('messages/' + encodeURIComponent(event.messageId))
   return <>
-    {[delivery, message].map((result, i) => result.error && <ReadError key={i} error={result.error} stale={!!result.data}/>)}
+    {[internalEvent, message].map((result, i) => result.error && <ReadError key={i} error={result.error} stale={!!result.data}/>)}
     <section className="conversation-section">
       <h3>{labels[event.kind]}</h3><p className="conversation-original">{message.data?.text || event.summary || event.messageId}</p>
     </section>
     <section className="conversation-section">
       <dl>
         <Fact label="登记时间"><time dateTime={event.at}>{formatTime(event.at)}</time></Fact>
-        <Fact label="投递状态">{routingDeliveryLabel(delivery.data?.status || event.status)}</Fact>
-        {delivery.data?.body && <Fact label="投递理由">{delivery.data.body}</Fact>}
+        <Fact label="发送状态">{eventStatusLabel(internalEvent.data?.status || event.status)}</Fact>
+        {internalEvent.data?.body && <Fact label="路由依据">{internalEvent.data.body}</Fact>}
         {message.data && <Fact label="来源">{sourceLabel(message.data.source)}{message.data.actor && ` · ${message.data.actor}`}</Fact>}
         {event.threadKey && <Fact label="来源 Thread"><ThreadLink threadKey={event.threadKey}/></Fact>}
       </dl>
       <div className="conversation-links">
         <a href={viewHref('message', event.messageId)}>查看原始消息 →</a>
-        <a href={recordHref('routing-deliveries', event.deliveryId)}>查看投递记录 →</a>
+        <a href={recordHref('routing-events', event.eventId)}>查看事件记录 →</a>
       </div>
     </section>
   </>
@@ -323,17 +325,17 @@ function IssueCreatedDetails({ event }: { event: IssueCreated }) {
   </section>
 }
 
-function DispatchDetails({ event }: { event: WorkerDispatch }) {
-  const delivery = useRecord<WorkerDelivery>('internal-deliveries/' + encodeURIComponent(event.deliveryId))
-  const content = delivery.data?.content
-  const body = delivery.data?.body
-  const refs = delivery.data?.refs
+function DispatchDetails({ event }: { event: IssueSessionDispatch }) {
+  const internalEvent = useRecord<IssueEvent>('internal-events/' + encodeURIComponent(event.eventId))
+  const content = internalEvent.data?.content
+  const body = internalEvent.data?.body
+  const refs = internalEvent.data?.refs
   const revision = refs?.find(ref => ref.kind === 'issue' && ref.id === event.issueId)?.goal_revision
   const materials = body?.materials || []
   const messageIds = new Set(refs?.filter(ref => ref.kind === 'trigger_message').map(ref => ref.id))
   for (const material of materials) if (material.messageId) messageIds.add(material.messageId)
   return <>
-    {delivery.error && <ReadError error={delivery.error} stale={!!delivery.data}/>}
+    {internalEvent.error && <ReadError error={internalEvent.error} stale={!!internalEvent.data}/>}
     <section className="conversation-section">
       <h3>{dispatchLabels[event.dispatchKind]}</h3>
       <p>{event.title}</p>
@@ -343,14 +345,14 @@ function DispatchDetails({ event }: { event: WorkerDispatch }) {
     <section className="conversation-section">
       <dl>
         <Fact label="登记时间"><time dateTime={event.at}>{formatTime(event.at)}</time></Fact>
-        <Fact label="投递状态">{routingDeliveryLabel(delivery.data?.status || event.status)}</Fact>
+        <Fact label="发送状态">{eventStatusLabel(internalEvent.data?.status || event.status)}</Fact>
         <Fact label="Execution"><code>{event.executionId}</code> · 第 {event.generation} 次执行</Fact>
         {revision && <Fact label="目标修订">{revision}</Fact>}
       </dl>
       <div className="conversation-links">
         <a href={viewHref('issue', event.issueId)}>查看 Issue →</a>
         <a href={recordHref('executions', event.executionId)}>查看 Execution →</a>
-        <a href={recordHref('internal-deliveries', event.deliveryId)}>查看投递记录 →</a>
+        <a href={recordHref('internal-events', event.eventId)}>查看事件记录 →</a>
       </div>
     </section>
     {(materials.some(material => material.uri) || messageIds.size > 0) && <section className="conversation-section">
@@ -365,7 +367,7 @@ function DispatchDetails({ event }: { event: WorkerDispatch }) {
   </>
 }
 
-function ReportDetails({ event }: { event: WorkerReport }) {
+function ReportDetails({ event }: { event: IssueReport }) {
   const report = useRecord<Report>('reports/' + encodeURIComponent(event.reportId))
   const issue = useRecord<Issue>('issues/' + encodeURIComponent(event.issueId))
   const execution = useRecord<Execution>('executions/' + encodeURIComponent(event.executionId))
@@ -374,7 +376,7 @@ function ReportDetails({ event }: { event: WorkerReport }) {
     {[report, issue, execution].map((result, index) =>
       result.error && <ReadError key={index} error={result.error} stale={!!result.data}/>)}
     <section className="conversation-section">
-      <h3>Worker Report · {reportLabels[event.reportKind]}</h3>
+      <h3>Issue Report · {reportLabels[event.reportKind]}</h3>
       <p className="conversation-original">{report.data?.summary || event.summary}</p>
       {report.data?.details && <p className="conversation-original">{report.data.details}</p>}
     </section>
@@ -390,8 +392,8 @@ function ReportDetails({ event }: { event: WorkerReport }) {
         <a href={viewHref('issue', event.issueId)}>查看 Issue →</a>
         <a href={recordHref('executions', event.executionId)}>查看 Execution →</a>
         <a href={recordHref('reports', event.reportId)}>查看 Report →</a>
-        <a href={recordHref('internal-deliveries', event.deliveryId)}>查看通知投递 →</a>
-        {execution.data?.startEventId && <a href={recordHref('internal-deliveries', execution.data.startEventId)}>查看启动投递 →</a>}
+        <a href={recordHref('internal-events', event.eventId)}>查看通知事件 →</a>
+        {execution.data?.startEventId && <a href={recordHref('internal-events', execution.data.startEventId)}>查看启动事件 →</a>}
       </div>
     </section>
     <DetailList title="Report 证据" items={report.data?.evidence}/>
@@ -442,7 +444,7 @@ function GroupInfo({ topicId }: { topicId: string }) {
       {issues.next && <Button size="sm" variant="ghost" disabled={!online || issues.loading}
         onClick={() => void issues.more()}>加载更多 Issue</Button>}
     </section>
-    <section className="conversation-section"><a href={viewHref('topic', topicId)}>查看 Topic 记录 →</a></section>
+    <section className="conversation-section observable-actions"><a href={viewHref('topic', topicId)}>查看 Topic 记录 →</a><a href={metricsHref('topic', topicId)}>工具用量 →</a></section>
   </>
 }
 

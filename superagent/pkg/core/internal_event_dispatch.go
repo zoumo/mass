@@ -23,21 +23,21 @@ type inputBatch struct {
 
 const inlineMessageBytes = 2 * 1024
 
-type internalDeliveryBatch struct {
-	workerIssueRevision int
-	wire                []byte
-	items               []internalDelivery
-	queuedAt            time.Time
-	method              string
-	links               []trace.Link
+type internalEventBatch struct {
+	boundIssueRevision int
+	wire               []byte
+	items              []internalEvent
+	queuedAt           time.Time
+	method             string
+	links              []trace.Link
 }
 
-// businessDeliveryCurrent is evaluated in both the selection and final admission
+// businessEventCurrent is evaluated in both the selection and final admission
 // transactions. Extend it with kind-specific checks against the referenced facts
 // when moving a producer whose events can expire (for example by Goal revision).
-func businessDeliveryCurrent(ctx context.Context, tx *sql.Tx, d internalDelivery) (bool, error) {
-	if d.Recipient.Kind == "worker" {
-		return workDeliveryCurrent(ctx, tx, d)
+func businessEventCurrent(ctx context.Context, tx *sql.Tx, d internalEvent) (bool, error) {
+	if d.Recipient.Kind == "issue" {
+		return workEventCurrent(ctx, tx, d)
 	}
 	if d.Recipient.Kind != "topic" || d.Kind == routedMessageKind || d.Kind == contextSupplement {
 		return true, nil
@@ -49,17 +49,17 @@ func businessDeliveryCurrent(ctx context.Context, tx *sql.Tx, d internalDelivery
 	return !terminal(topic.Status), nil
 }
 
-func encodeLegacyInternalDelivery(d internalDelivery) (json.RawMessage, error) {
+func encodeLegacyInternalEvent(d internalEvent) (json.RawMessage, error) {
 	event := struct {
-		internalDelivery
-		BodyPreview    string             `json:"body_preview,omitempty"`
-		ContentPreview string             `json:"content_preview,omitempty"`
-		Truncated      bool               `json:"truncated,omitempty"`
-		ContentRef     *deliveryReference `json:"content_ref,omitempty"`
-	}{internalDelivery: d}
+		internalEvent
+		BodyPreview    string          `json:"body_preview,omitempty"`
+		ContentPreview string          `json:"content_preview,omitempty"`
+		Truncated      bool            `json:"truncated,omitempty"`
+		ContentRef     *eventReference `json:"content_ref,omitempty"`
+	}{internalEvent: d}
 	truncate := func() {
 		event.Truncated = true
-		event.ContentRef = &deliveryReference{Kind: "internal_delivery", ID: d.ID}
+		event.ContentRef = &eventReference{Kind: "internal_event", ID: d.ID}
 	}
 	if len(d.Body) > previewBytes {
 		event.BodyPreview = truncatePreview(string(d.Body))
@@ -85,7 +85,7 @@ func encodeLegacyInternalDelivery(d internalDelivery) (json.RawMessage, error) {
 	if err != nil || len(raw) <= batchBytes-512 {
 		return raw, err
 	}
-	// Unabridged content and references remain available through delivery_get.
+	// Unabridged content and references remain available through get_internal_event.
 	event.Content = nil
 	event.ContentPreview = ""
 	event.Refs = nil
@@ -93,8 +93,8 @@ func encodeLegacyInternalDelivery(d internalDelivery) (json.RawMessage, error) {
 	return json.Marshal(event)
 }
 
-func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDeliveryBatch, error) {
-	var batch internalDeliveryBatch
+func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEventBatch, error) {
+	var batch internalEventBatch
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return batch, err
@@ -103,8 +103,8 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	if err := checkBinding(ctx, tx, b); err != nil {
 		return batch, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+internalDeliveryColumns+`
- FROM internal_deliveries WHERE `+deliveryRecipientKind+`=? AND `+deliveryRecipientOwner+`=?
+	rows, err := tx.QueryContext(ctx, `SELECT `+internalEventColumns+`
+ FROM internal_events WHERE `+eventRecipientKind+`=? AND `+eventRecipientOwner+`=?
  AND status IN ('pending','dispatching')
 
  ORDER BY rowid LIMIT ?`, b.Role, b.OwnerID, batchLimit)
@@ -113,13 +113,13 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	}
 	defer func() { _ = rows.Close() }()
 	type queued struct {
-		item internalDelivery
+		item internalEvent
 		at   string
 	}
 	var queue []queued
 	for rows.Next() {
 		var q queued
-		if err := scanInternalDelivery(rows, &q.item, &q.at); err != nil {
+		if err := scanInternalEvent(rows, &q.item, &q.at); err != nil {
 			return batch, err
 		}
 		queue = append(queue, q)
@@ -131,7 +131,8 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 		return batch, err
 	}
 	var deadline time.Time
-	var workerIssue *Issue
+	var boundTopic *Topic
+	var boundIssue *Issue
 	batch.method = "inject"
 	var envelope inputBatch
 	if b.AgentPromptVersion == 0 {
@@ -139,12 +140,12 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	}
 	at, full := time.Now(), false
 	for _, q := range queue {
-		current, err := businessDeliveryCurrent(ctx, tx, q.item)
+		current, err := businessEventCurrent(ctx, tx, q.item)
 		if err != nil {
 			return batch, err
 		}
 		if !current {
-			if err := supersedeInternalDelivery(ctx, tx, q.item.ID); err != nil {
+			if err := supersedeInternalEvent(ctx, tx, q.item.ID); err != nil {
 				return batch, err
 			}
 			continue
@@ -161,7 +162,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 		}
 		var raw, referenceOnly json.RawMessage
 		if b.AgentPromptVersion == 0 {
-			raw, err = encodeLegacyInternalDelivery(q.item)
+			raw, err = encodeLegacyInternalEvent(q.item)
 		} else {
 			view := q.item
 			view.promptVersion = b.AgentPromptVersion
@@ -173,7 +174,17 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 			inlineTopic := b.Role == "topic" && view.Kind == routedMessageKind
 			inlineRouter := b.Role == "router" && b.AgentPromptVersion >= agentPromptVersion && view.Kind == routeRequestKind
 			maxViewBytes := min(previewBytes, batchBytes-len(batch.wire)-1)
-			workerContext := false
+			issueContext := false
+			if err == nil && !view.truncated && inlineTopic && b.AgentPromptVersion >= agentPromptVersion {
+				if boundTopic == nil {
+					var topic Topic
+					if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
+						return batch, err
+					}
+					boundTopic = &topic
+				}
+				view.topic = boundTopic
+			}
 			if err == nil && !view.truncated && view.Content == nil && len(view.Refs) == 1 &&
 				view.Refs[0].Kind == messageRefKind && (inlineTopic || inlineRouter) {
 				err = view.loadInlineTriggerMessage(ctx, tx, b)
@@ -181,25 +192,25 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 				switch {
 				case b.Role == "topic" && view.Kind == reportSubmittedKind:
 					err = view.loadInlineReport(ctx, tx, b)
-				case b.Role == "worker" && (view.Kind == workerStarted || view.Kind == workerUpdateKind || view.Kind == contextSupplement):
-					if workerIssue == nil {
-						issue, _, readErr := currentWorkerIssue(ctx, tx, b)
+				case b.Role == "issue" && (view.Kind == issueSessionStarted || view.Kind == issueSessionUpdateKind || view.Kind == contextSupplement):
+					if boundIssue == nil {
+						issue, _, readErr := currentBoundIssue(ctx, tx, b)
 						if readErr != nil {
 							return batch, readErr
 						}
-						workerIssue = &issue
+						boundIssue = &issue
 					}
-					err = view.loadInlineWorkerContext(ctx, tx, workerIssue, maxViewBytes)
-					workerContext = view.issue != nil || len(view.messages) != 0
+					err = view.loadInlineIssueContext(ctx, tx, boundIssue, maxViewBytes)
+					issueContext = view.issue != nil || len(view.messages) != 0
 				}
 			}
-			if err == nil && (view.Content != q.item.Content || view.issue != nil || len(view.messages) != 0) {
+			if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0) {
 				var enriched json.RawMessage
 				enriched, err = view.MarshalAgentPromptJSON()
 				if err == nil && (b.AgentPromptVersion < agentPromptVersion || len(enriched) <= maxViewBytes) {
 					referenceOnly, raw = raw, enriched
-					if workerContext {
-						batch.workerIssueRevision = workerIssue.Revision
+					if issueContext {
+						batch.boundIssueRevision = boundIssue.Revision
 					}
 				}
 			}
@@ -233,7 +244,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 		}
 	}
 	if len(batch.items) == 0 || !full && len(batch.items) < batchLimit && at.Before(deadline) {
-		batch = internalDeliveryBatch{}
+		batch = internalEventBatch{}
 	}
 	if s.telemetry.tracesEnabled {
 		for _, item := range batch.items {
@@ -243,15 +254,16 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalDel
 	return batch, tx.Commit()
 }
 
-// loadInlineTriggerMessage uses the same scope as source_query. A matched Topic
+// loadInlineTriggerMessage uses the same scope as get_trigger_message. A matched Topic
 // quote carries the open blocker snapshot from the same transaction.
-func (d *internalDelivery) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx, b Binding) error {
+func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx, b Binding) error {
 	scope, args, err := scopeSQL("messages", &b)
 	if err != nil {
 		return err
 	}
 	var text, threadKey string
 	var routing []byte
+	var followup []byte
 	var hasQuote bool
 	var quotedReply []byte
 	columns := "body->>'$.text'"
@@ -268,10 +280,16 @@ func (d *internalDelivery) loadInlineTriggerMessage(ctx context.Context, tx *sql
 		dest = append(dest, &hasQuote, &quotedReply)
 		filter = ""
 	}
+	sourceFilter := " AND source<>? AND (body->>'$.meta' IS NULL OR body->>'$.meta'='{}')"
+	if b.Role == "topic" {
+		columns += ",CASE WHEN source=? THEN body->'$.meta' END"
+		projectionArgs = append(projectionArgs, timerSource)
+		dest = append(dest, &followup)
+		sourceFilter = " AND (source=? OR body->>'$.meta' IS NULL OR body->>'$.meta'='{}')"
+	}
 	queryArgs := append(projectionArgs, d.Refs[0].ID, timerSource, pullRequestSource, pullRequestSource, inlineMessageBytes)
 	err = tx.QueryRowContext(ctx, `SELECT `+columns+` FROM trigger_messages
- WHERE id=? AND source<>? AND source<>'github' AND source<>? AND body->>'$.threadRef.source'<>?
- AND (body->>'$.meta' IS NULL OR body->>'$.meta'='{}')
+ WHERE id=?`+sourceFilter+` AND source<>'github' AND source<>? AND body->>'$.threadRef.source'<>?
  AND length(CAST(body->>'$.text' AS BLOB))<=?`+filter+scope, append(queryArgs, args...)...).Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -315,11 +333,14 @@ func (d *internalDelivery) loadInlineTriggerMessage(ctx context.Context, tx *sql
 		}
 		d.quotedReply, d.issue = quotedReply, &issue
 	}
+	if len(followup) != 0 && string(followup) != "null" {
+		d.followup = agentFollowupMeta(followup)
+	}
 	d.Content, d.threadKey, d.routing = &content, threadKey, routing
 	return nil
 }
 
-func (d *internalDelivery) loadInlineReport(ctx context.Context, tx *sql.Tx, b Binding) error {
+func (d *internalEvent) loadInlineReport(ctx context.Context, tx *sql.Tx, b Binding) error {
 	if len(d.Refs) != 1 || d.Refs[0].Kind != "report" {
 		return nil
 	}
@@ -342,10 +363,10 @@ func (d *internalDelivery) loadInlineReport(ctx context.Context, tx *sql.Tx, b B
 	return nil
 }
 
-func (d *internalDelivery) loadInlineWorkerContext(ctx context.Context, tx *sql.Tx, issue *Issue, maxBytes int) error {
+func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, issue *Issue, maxBytes int) error {
 	if d.Kind != contextSupplement {
-		// A durable startup still reaches the Worker after a new blocker.
-		// Without an inline Issue the Worker must read the current state.
+		// A durable startup still reaches the Issue Session after a new blocker.
+		// Without an inline Issue the Issue Session must read the current state.
 		if !canContinueIssue(*issue) {
 			return nil
 		}
@@ -364,7 +385,7 @@ func (d *internalDelivery) loadInlineWorkerContext(ctx context.Context, tx *sql.
 		if material.MessageID == "" {
 			continue
 		}
-		if d.Kind == contextSupplement && !slices.ContainsFunc(d.Refs, func(ref deliveryReference) bool {
+		if d.Kind == contextSupplement && !slices.ContainsFunc(d.Refs, func(ref eventReference) bool {
 			return ref.Kind == messageRefKind && ref.ID == material.MessageID
 		}) {
 			continue
@@ -410,7 +431,7 @@ func (d *internalDelivery) loadInlineWorkerContext(ctx context.Context, tx *sql.
 	return rows.Err()
 }
 
-func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch internalDeliveryBatch, watch *workerWatch) (bool, error) {
+func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch internalEventBatch, watch *issueWatch) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -429,30 +450,30 @@ func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch interna
 	if !ready {
 		return false, problem("stale_binding", "Session binding changed before submission")
 	}
-	if batch.workerIssueRevision != 0 {
-		issue, _, err := currentWorkerIssue(ctx, tx, b)
+	if batch.boundIssueRevision != 0 {
+		issue, _, err := currentBoundIssue(ctx, tx, b)
 		if err != nil {
 			return false, err
 		}
-		if issue.Revision != batch.workerIssueRevision {
-			return false, problem("conflict", "Issue changed before Worker input submission")
+		if issue.Revision != batch.boundIssueRevision {
+			return false, problem("conflict", "Issue changed before Issue Session input submission")
 		}
 	}
 	for _, item := range batch.items {
-		current, err := businessDeliveryCurrent(ctx, tx, item)
+		current, err := businessEventCurrent(ctx, tx, item)
 		if err != nil {
 			return false, err
 		}
 		if !current {
-			return false, problem("stale_binding", "internal delivery is no longer current")
+			return false, problem("stale_binding", "internal event is no longer current")
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE internal_deliveries SET status='dispatching'
- WHERE id=? AND status IN ('pending','dispatching')`, item.ID)
+		res, err := tx.ExecContext(ctx, `UPDATE internal_events SET status='dispatching'
+ WHERE event_id=? AND status IN ('pending','dispatching')`, item.ID)
 		if err != nil {
 			return false, err
 		}
 		if n, err := res.RowsAffected(); err != nil || n != 1 {
-			return false, problem("stale_binding", "internal delivery was settled or superseded")
+			return false, problem("stale_binding", "internal event was settled or superseded")
 		}
 		if err := internalDispatch.save(ctx, tx, item.ID, b.Generation); err != nil {
 			return false, err
@@ -460,7 +481,7 @@ func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch interna
 	}
 	var armed bool
 	if watch != nil {
-		armed, err = beginWorkerObservation(ctx, tx, b, watch.evidence)
+		armed, err = beginIssueObservation(ctx, tx, b, watch.evidence)
 		if err != nil {
 			return false, err
 		}
@@ -468,7 +489,7 @@ func (s *Store) admitInternalBatch(ctx context.Context, b Binding, batch interna
 	return armed, tx.Commit()
 }
 
-func (s *Store) finishInternalBatch(ctx context.Context, batch internalDeliveryBatch, a Attempt, watch *workerWatch) error {
+func (s *Store) finishInternalBatch(ctx context.Context, batch internalEventBatch, a Attempt, watch *issueWatch) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -484,22 +505,22 @@ func (s *Store) finishInternalBatch(ctx context.Context, batch internalDeliveryB
 	}
 	if status != "dispatching" {
 		for _, item := range batch.items {
-			if _, err := tx.ExecContext(ctx, `UPDATE internal_deliveries SET status=?,sent_at=?
- WHERE id=? AND status='dispatching'`, status, at, item.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE internal_events SET status=?,sent_at=?
+ WHERE event_id=? AND status='dispatching'`, status, at, item.ID); err != nil {
 				return err
 			}
 		}
 	}
 	if watch != nil {
-		if err := settleWorkerObservation(ctx, tx, watch.evidence); err != nil {
+		if err := settleIssueObservation(ctx, tx, watch.evidence); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func (s *Server) coordinateInternalDelivery(life, call context.Context, b Binding, spec resource.SessionSpec) bool {
-	if retry, ok := s.internalDeliveryRetries.Load(b.ID); ok && time.Now().Before(retry.(time.Time)) {
+func (s *Server) coordinateInternalEvents(life, call context.Context, b Binding, spec resource.SessionSpec) bool {
+	if retry, ok := s.internalEventDispatchRetries.Load(b.ID); ok && time.Now().Before(retry.(time.Time)) {
 		return false
 	}
 	batch, err := s.store.selectInternalBatch(life, b)
@@ -510,18 +531,18 @@ func (s *Server) coordinateInternalDelivery(life, call context.Context, b Bindin
 		call = trace.ContextWithRemoteSpanContext(call, batch.links[0].SpanContext)
 		batch.links = nil
 	}
-	call, finish := s.store.telemetry.startOperation(call, "internal_delivery.dispatch", b.Role, trace.WithSpanKind(trace.SpanKindConsumer), trace.WithLinks(batch.links...))
-	s.store.telemetry.recordQueueDuration(call, "internal_delivery", batch.queuedAt)
+	call, finish := s.store.telemetry.startOperation(call, "internal_event.dispatch", b.Role, trace.WithSpanKind(trace.SpanKindConsumer), trace.WithLinks(batch.links...))
+	s.store.telemetry.recordQueueDuration(call, "internal_event", batch.queuedAt)
 	trace.SpanFromContext(call).SetAttributes(
-		attribute.Int("superagent.delivery.batch.size", len(batch.items)),
-		attribute.String("superagent.delivery.method", batch.method),
+		attribute.Int("superagent.event.batch.size", len(batch.items)),
+		attribute.String("superagent.event.dispatch.method", batch.method),
 	)
 	if len(batch.items) == 1 {
-		trace.SpanFromContext(call).SetAttributes(attribute.String("superagent.delivery.id", batch.items[0].ID))
+		trace.SpanFromContext(call).SetAttributes(attribute.String("superagent.event.id", batch.items[0].ID))
 	}
 	a := Attempt{ID: newID("attempt")}
 	admitted := false
-	a, watch := s.dispatchSessionInput(call, b, spec, a, batch.method, batch.wire, func(watch *workerWatch) (bool, error) {
+	a, watch := s.dispatchSessionInput(call, b, spec, a, batch.method, batch.wire, func(watch *issueWatch) (bool, error) {
 		armed, err := s.store.admitInternalBatch(call, b, batch, watch)
 		admitted = err == nil
 		return armed, err
@@ -534,7 +555,7 @@ func (s *Server) coordinateInternalDelivery(life, call context.Context, b Bindin
 		outcome = "failed"
 	}
 	if admitted {
-		commitGate("internal_delivery_before_settlement")
+		commitGate("internal_event_before_settlement")
 		settled := persistInputSettlement(life, batch.items[0].ID, func(ctx context.Context) error {
 			return s.store.finishInternalBatch(trace.ContextWithSpan(ctx, trace.SpanFromContext(call)), batch, a, watch)
 		})
@@ -542,13 +563,13 @@ func (s *Server) coordinateInternalDelivery(life, call context.Context, b Bindin
 			outcome = "unknown"
 		}
 		if watch != nil {
-			s.startWorkerWatch(life, b, watch, settled)
+			s.startIssueWatch(life, b, watch, settled)
 		}
 	}
 	if a.Status != "delivered" {
-		s.internalDeliveryRetries.Store(b.ID, time.Now().Add(time.Second))
+		s.internalEventDispatchRetries.Store(b.ID, time.Now().Add(time.Second))
 	}
-	s.updateBindingAfterDelivery(life, b, a)
+	s.updateBindingAfterDispatch(life, b, a)
 	finish(outcome)
 	return true
 }

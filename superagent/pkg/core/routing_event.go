@@ -12,19 +12,19 @@ import (
 )
 
 const (
-	routeRequestKind   = "route_request"
-	routedMessageKind  = "routed_message"
-	messageRefKind     = "trigger_message"
-	returnedRefKind    = "internal_delivery"
-	routingMessageID   = "json_extract(refs,'$[0].id')"
-	returnedDeliveryID = "json_extract(refs,'$[1].id')"
+	routeRequestKind  = "route_request"
+	routedMessageKind = "routed_message"
+	messageRefKind    = "trigger_message"
+	returnedRefKind   = "internal_event"
+	routingMessageID  = "json_extract(refs,'$[0].id')"
+	returnedEventID   = "json_extract(refs,'$[1].id')"
 )
 
 const routingViews = `
-CREATE INDEX internal_deliveries_route_message ON internal_deliveries(` + routingMessageID + `)
+CREATE INDEX internal_events_route_message ON internal_events(` + routingMessageID + `)
  WHERE kind IN ('routed_message','route_request');
-CREATE UNIQUE INDEX internal_deliveries_return ON internal_deliveries(` + returnedDeliveryID + `)
- WHERE kind='route_request' AND ` + returnedDeliveryID + ` IS NOT NULL;
+CREATE UNIQUE INDEX internal_events_return ON internal_events(` + returnedEventID + `)
+ WHERE kind='route_request' AND ` + returnedEventID + ` IS NOT NULL;
 
 CREATE VIEW thread_subscriptions AS
  SELECT t.seq, t.key AS thread_key, json_extract(sub.value,'$.id') AS id,
@@ -32,27 +32,27 @@ CREATE VIEW thread_subscriptions AS
  json_extract(sub.value,'$.createdAt') AS created_at, sub.value AS body
  FROM threads t,json_each(t.subscriptions) sub;
 
-CREATE VIEW routing_deliveries AS
- SELECT rowid AS seq, id, kind, created_at, status, sent_at, sender, recipient, content, body, refs,
- ` + routingMessageID + ` AS message_id, ` + returnedDeliveryID + ` AS returned_id,
+CREATE VIEW routing_events AS
+ SELECT rowid AS seq, event_id, kind, created_at, status, sent_at, sender, recipient, content, body, refs,
+ ` + routingMessageID + ` AS message_id, ` + returnedEventID + ` AS returned_event_id,
  coalesce(json_extract(recipient,'$.topic_id'),json_extract(sender,'$.topic_id')) AS topic_id
- FROM internal_deliveries WHERE kind IN ('routed_message','route_request');
+ FROM internal_events WHERE kind IN ('routed_message','route_request');
 
 CREATE VIEW routing_relations AS
- SELECT d.seq,d.id,d.message_id,d.topic_id,d.created_at,
- json_object('id',d.id,'messageId',d.message_id,'topicId',d.topic_id,'createdAt',d.created_at,
+ SELECT d.seq,d.event_id AS id,d.message_id,d.topic_id,d.created_at,
+ json_object('id',d.event_id,'messageId',d.message_id,'topicId',d.topic_id,'createdAt',d.created_at,
  'action',CASE d.kind WHEN 'routed_message' THEN 'received' ELSE 'returned' END,
- 'status',d.status,'deliveryId',coalesce(d.returned_id,d.id),'reason',json_extract(d.body,'$'),
- 'returned',json(CASE WHEN EXISTS(SELECT 1 FROM internal_deliveries r WHERE r.kind='route_request'
- AND ` + returnedDeliveryID + `=d.id) THEN 'true' ELSE 'false' END)) AS body
- FROM routing_deliveries d WHERE d.topic_id IS NOT NULL;
+ 'status',d.status,'eventId',coalesce(d.returned_event_id,d.event_id),'reason',json_extract(d.body,'$'),
+ 'returned',json(CASE WHEN EXISTS(SELECT 1 FROM internal_events r WHERE r.kind='route_request'
+ AND ` + returnedEventID + `=d.event_id) THEN 'true' ELSE 'false' END)) AS body
+ FROM routing_events d WHERE d.topic_id IS NOT NULL;
 
 CREATE VIEW topic_message_history AS
- SELECT message_id,topic_id FROM routing_deliveries WHERE kind='routed_message';`
+ SELECT message_id,topic_id FROM routing_events WHERE kind='routed_message';`
 
 const routingRound = `(1
- + (SELECT count(*) FROM routing_deliveries
- WHERE kind='route_request' AND message_id=trigger_messages.id AND returned_id IS NOT NULL))`
+ + (SELECT count(*) FROM routing_events
+ WHERE kind='route_request' AND message_id=trigger_messages.id AND returned_event_id IS NOT NULL))`
 
 const routingState = "routing_state"
 
@@ -67,7 +67,7 @@ func ensureSubscription(ctx context.Context, tx *sql.Tx, sub Subscription) (stri
 	}
 	sub.ID = newID("sub")
 	// Check logical references before embedding them in the Thread.
-	if err := checkDeliveryIdentity(ctx, tx, deliveryIdentity{Kind: "topic", TopicID: sub.TopicID}, true); err != nil {
+	if err := checkEventIdentity(ctx, tx, eventIdentity{Kind: "topic", TopicID: sub.TopicID}, true); err != nil {
 		return "", err
 	}
 	if err := putJSON(ctx, tx, `UPDATE threads SET subscriptions=json_insert(subscriptions,'$[#]',json(?2))
@@ -77,7 +77,7 @@ func ensureSubscription(ctx context.Context, tx *sql.Tx, sub Subscription) (stri
 	return sub.ID, nil
 }
 
-func acceptRoute(ctx context.Context, tx *sql.Tx, m Message, deliveryID, at string) error {
+func acceptRoute(ctx context.Context, tx *sql.Tx, m Message, eventID, at string) error {
 	var count int
 	var topicID string
 	err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(min(topic_id),'') FROM thread_subscriptions WHERE thread_key=?`, m.ThreadKey).Scan(&count, &topicID)
@@ -85,17 +85,17 @@ func acceptRoute(ctx context.Context, tx *sql.Tx, m Message, deliveryID, at stri
 		return storageError()
 	}
 	if count == 1 {
-		if _, err := recordRoutedMessage(ctx, tx, m.ID, m.ThreadKey, topicID, deliveryID, "single subscription", at, "core"); err != nil {
+		if _, err := recordRoutedMessage(ctx, tx, m.ID, m.ThreadKey, topicID, eventID, "single subscription", at, "core"); err != nil {
 			return err
 		}
 		return setRoutingState(ctx, tx, m.ID, "routed")
 	}
-	d := internalDelivery{
-		ID: deliveryID, Kind: routeRequestKind,
-		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "router"},
-		Refs: []deliveryReference{{Kind: messageRefKind, ID: m.ID}},
+	d := internalEvent{
+		ID: eventID, Kind: routeRequestKind,
+		Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "router"},
+		Refs: []eventReference{{Kind: messageRefKind, ID: m.ID}},
 	}
-	if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
+	if err := enqueueInternalEvent(ctx, tx, d); err != nil {
 		return err
 	}
 	return setRoutingState(ctx, tx, m.ID, "pending")
@@ -109,11 +109,11 @@ func setRoutingState(ctx context.Context, tx *sql.Tx, messageID, state string) e
 }
 
 const activeRoute = `d.kind='routed_message' AND d.status<>'superseded'
- AND NOT EXISTS(SELECT 1 FROM internal_deliveries WHERE kind='route_request' AND ` + returnedDeliveryID + `=d.id)`
+ AND NOT EXISTS(SELECT 1 FROM internal_events WHERE kind='route_request' AND ` + returnedEventID + `=d.event_id)`
 
 func activeRouteID(ctx context.Context, tx *sql.Tx, messageID, topicID string) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM routing_deliveries d WHERE message_id=? AND topic_id=? AND `+activeRoute,
+	err := tx.QueryRowContext(ctx, `SELECT event_id FROM routing_events d WHERE message_id=? AND topic_id=? AND `+activeRoute,
 		messageID, topicID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -124,7 +124,7 @@ func activeRouteID(ctx context.Context, tx *sql.Tx, messageID, topicID string) (
 	return id, nil
 }
 
-func recordRoutedMessage(ctx context.Context, tx *sql.Tx, messageID, threadKey, topicID, deliveryID, reason, at, sender string) (string, error) {
+func recordRoutedMessage(ctx context.Context, tx *sql.Tx, messageID, threadKey, topicID, eventID, reason, at, sender string) (string, error) {
 	existing, err := activeRouteID(ctx, tx, messageID, topicID)
 	if err != nil || existing != "" {
 		return existing, err
@@ -133,16 +133,16 @@ func recordRoutedMessage(ctx context.Context, tx *sql.Tx, messageID, threadKey, 
 	if err != nil {
 		return "", storageError()
 	}
-	d := internalDelivery{
-		ID: deliveryID, Kind: routedMessageKind,
-		Sender: deliveryIdentity{Kind: sender}, Recipient: deliveryIdentity{Kind: "topic", TopicID: topicID},
-		Body: body, Refs: []deliveryReference{{Kind: messageRefKind, ID: messageID}},
+	d := internalEvent{
+		ID: eventID, Kind: routedMessageKind,
+		Sender: eventIdentity{Kind: sender}, Recipient: eventIdentity{Kind: "topic", TopicID: topicID},
+		Body: body, Refs: []eventReference{{Kind: messageRefKind, ID: messageID}},
 	}
-	if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
+	if err := enqueueInternalEvent(ctx, tx, d); err != nil {
 		return "", err
 	}
 	_, err = ensureSubscription(ctx, tx, Subscription{TopicID: topicID, ThreadKey: threadKey, MessageID: messageID, CreatedAt: at})
-	return deliveryID, err
+	return eventID, err
 }
 
 type routeMessage struct {
@@ -171,6 +171,7 @@ func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (_ json.Ra
 	}
 
 	messages := make(map[string]routeMessage, len(r.MessageIDs))
+	changed := false
 	for _, id := range r.MessageIDs {
 		var m routeMessage
 		var round int
@@ -186,6 +187,7 @@ func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (_ json.Ra
 			return nil, problem("conflict", "Message routing round is stale or unavailable")
 		}
 		messages[id] = m
+		changed = changed || m.state == "pending"
 	}
 	if s.telemetry.tracesEnabled {
 		var links []trace.Link
@@ -218,6 +220,7 @@ func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (_ json.Ra
 	if err := tx.Commit(); err != nil {
 		return nil, storageError()
 	}
+	markMCPMutation(ctx, !changed, changed)
 	commitGate("route_after_commit")
 	return json.Marshal(result)
 }
@@ -248,25 +251,25 @@ func (s *Store) routeTargets(ctx context.Context, tx *sql.Tx, b Binding, result 
 			}
 			target.TopicID = id
 		}
-		target.DeliveryIDs = make(map[string]string, len(target.MessageIDs))
+		target.EventIDs = make(map[string]string, len(target.MessageIDs))
 		for _, id := range target.MessageIDs {
 			m := messages[id]
 			if m.state != "pending" {
-				deliveryID, err := activeRouteID(ctx, tx, id, target.TopicID)
+				eventID, err := activeRouteID(ctx, tx, id, target.TopicID)
 				if err != nil {
 					return err
 				}
-				if deliveryID == "" {
+				if eventID == "" {
 					return problem("conflict", "Message routing already decided")
 				}
-				target.DeliveryIDs[id] = deliveryID
+				target.EventIDs[id] = eventID
 				continue
 			}
-			deliveryID, err := recordRoutedMessage(ctx, tx, id, m.key, target.TopicID, newID("dlv"), result.Reason, result.CreatedAt, "router")
+			eventID, err := recordRoutedMessage(ctx, tx, id, m.key, target.TopicID, newID("evt"), result.Reason, result.CreatedAt, "router")
 			if err != nil {
 				return err
 			}
-			target.DeliveryIDs[id] = deliveryID
+			target.EventIDs[id] = eventID
 		}
 	}
 	return nil
@@ -274,7 +277,7 @@ func (s *Store) routeTargets(ctx context.Context, tx *sql.Tx, b Binding, result 
 
 func ignoreMessage(ctx context.Context, tx *sql.Tx, messageID string) error {
 	var active bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM routing_deliveries d WHERE message_id=? AND `+activeRoute+`)`, messageID).Scan(&active)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM routing_events d WHERE message_id=? AND `+activeRoute+`)`, messageID).Scan(&active)
 	if err != nil {
 		return storageError()
 	}
@@ -284,15 +287,15 @@ func ignoreMessage(ctx context.Context, tx *sql.Tx, messageID string) error {
 	return setRoutingState(ctx, tx, messageID, "ignored")
 }
 
-func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (_ json.RawMessage, retErr error) {
+func (s *Store) DeclineMessage(ctx context.Context, b Binding, r DeclineMessageRequest) (_ json.RawMessage, retErr error) {
 	ctx, finish := s.telemetry.startOperation(ctx, "routing.return", "topic")
 	outcome := "returned"
 	defer func() { finish(operationOutcome(retErr, outcome)) }()
 	if b.Role != "topic" {
-		return nil, problem("forbidden", "only a Topic can return its own delivery")
+		return nil, problem("forbidden", "only a Topic can decline a message routed to it")
 	}
-	if r.DeliveryID == "" || strings.TrimSpace(r.Reason) == "" {
-		return nil, problem("invalid_argument", "deliveryId and reason are required")
+	if r.EventID == "" || strings.TrimSpace(r.Reason) == "" {
+		return nil, problem("invalid_argument", "event_id and reason are required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -306,23 +309,27 @@ func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (_ json.
 	}
 
 	var messageID string
-	err = tx.QueryRowContext(ctx, `SELECT m.id FROM routing_deliveries d JOIN trigger_messages m ON m.id=d.message_id
- WHERE d.id=? AND d.kind='routed_message' AND d.topic_id=?`, r.DeliveryID, b.OwnerID).Scan(&messageID)
+	err = tx.QueryRowContext(ctx, `SELECT m.id FROM routing_events d JOIN trigger_messages m ON m.id=d.message_id
+ WHERE d.event_id=? AND d.kind='routed_message' AND d.topic_id=?`, r.EventID, b.OwnerID).Scan(&messageID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, problem("forbidden", "routed delivery is outside current Topic")
+		return nil, problem("forbidden", "routed event is outside current Topic")
 	}
 	if err != nil {
 		return nil, storageError()
 	}
+	if u := mcpUsageFrom(ctx); u != nil {
+		u.eventID = r.EventID
+	}
 	if s.telemetry.tracesEnabled {
-		links := internalEnqueue.links(ctx, tx, nil, r.DeliveryID, 0)
+		links := internalEnqueue.links(ctx, tx, nil, r.EventID, 0)
 		addTraceLinks(ctx, messageAdmission.links(ctx, tx, links, messageID, 0))
 	}
 	var result []byte
-	err = tx.QueryRowContext(ctx, `SELECT json_remove(rr.body,'$.status') FROM routing_deliveries d JOIN routing_relations rr ON rr.id=d.id
- WHERE d.kind='route_request' AND d.returned_id=?`, r.DeliveryID).Scan(&result)
+	err = tx.QueryRowContext(ctx, `SELECT json_remove(rr.body,'$.status') FROM routing_events d JOIN routing_relations rr ON rr.id=d.event_id
+ WHERE d.kind='route_request' AND d.returned_event_id=?`, r.EventID).Scan(&result)
 	if err == nil {
 		outcome = "duplicate"
+		markMCPMutation(ctx, true, false)
 		return result, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -333,17 +340,17 @@ func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (_ json.
 	if err != nil {
 		return nil, storageError()
 	}
-	d := internalDelivery{
-		ID: newID("dlv"), Kind: routeRequestKind,
-		Sender: deliveryIdentity{Kind: "topic", TopicID: b.OwnerID}, Recipient: deliveryIdentity{Kind: "router"},
-		Body: raw, Refs: []deliveryReference{
-			{Kind: messageRefKind, ID: messageID}, {Kind: returnedRefKind, ID: r.DeliveryID},
+	d := internalEvent{
+		ID: newID("evt"), Kind: routeRequestKind,
+		Sender: eventIdentity{Kind: "topic", TopicID: b.OwnerID}, Recipient: eventIdentity{Kind: "router"},
+		Body: raw, Refs: []eventReference{
+			{Kind: messageRefKind, ID: messageID}, {Kind: returnedRefKind, ID: r.EventID},
 		},
 	}
-	if err := enqueueInternalDelivery(ctx, tx, d); err != nil {
+	if err := enqueueInternalEvent(ctx, tx, d); err != nil {
 		return nil, err
 	}
-	if err := supersedeInternalDelivery(ctx, tx, r.DeliveryID); err != nil {
+	if err := supersedeInternalEvent(ctx, tx, r.EventID); err != nil {
 		return nil, err
 	}
 	if err := setRoutingState(ctx, tx, messageID, "pending"); err != nil {
@@ -356,6 +363,7 @@ func (s *Store) Return(ctx context.Context, b Binding, r ReturnRequest) (_ json.
 	if err := tx.Commit(); err != nil {
 		return nil, storageError()
 	}
+	markMCPMutation(ctx, false, true)
 	commitGate("return_after_commit")
 	return result, nil
 }

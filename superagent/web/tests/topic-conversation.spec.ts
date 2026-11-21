@@ -19,7 +19,7 @@ test('reads distinct Router and Core ingress with their own Thread and source li
   const filters = timeline.getByRole('navigation')
   await filters.getByRole('link', { name: 'Router 路由入群' }).click()
   const router = timeline.getByRole('article').filter({ hasText: routed })
-  const routerAvatar = router.getByRole('group', { name: '投递方' }).getByRole('link', { name: /查看 Router/ })
+  const routerAvatar = router.getByRole('group', { name: '发送方' }).getByRole('link', { name: /查看 Router/ })
   await expect(routerAvatar).toHaveAttribute('href', /perspective=router&id=/)
   await expect(router.getByRole('group', { name: '收件方' }).getByRole('link', { name: /查看 Topic/ })).toHaveAttribute('href', /perspective=topic&id=/)
   await expect(router.getByRole('link', { name: /查看 Thread · dws:/ })).toHaveAttribute('href', /view=threads/)
@@ -29,7 +29,7 @@ test('reads distinct Router and Core ingress with their own Thread and source li
   await expect(details.getByText(routed, { exact: true })).toBeVisible()
   await expect(details.getByText('independent requested work', { exact: true })).toBeVisible()
   await expect(details.getByRole('link', { name: '查看原始消息 →' })).toHaveAttribute('href', /perspective=message&id=/)
-  await expect(details.getByRole('link', { name: '查看投递记录 →' })).toHaveAttribute('href', /view=routing-deliveries&id=/)
+  await expect(details.getByRole('link', { name: '查看事件记录 →' })).toHaveAttribute('href', /view=routing-events&id=/)
   await page.reload()
   await expect(details.getByText('independent requested work', { exact: true })).toBeVisible()
 
@@ -63,7 +63,7 @@ test('search follows browser history and a narrow viewport reveals the selected 
   await expect(details.getByRole('heading', { name: '消息详情' })).toBeInViewport()
 })
 
-test('reads Issue creation and Worker dispatch separately, with real group records and delivery references', async ({ page }) => {
+test('reads Issue creation and Issue Session dispatch separately, with real group records and delivery references', async ({ page }) => {
   await page.goto(observer)
   const timeline = page.getByRole('region', { name: '群聊时间线' })
   await expect(timeline.getByRole('heading', { name: 'Observer routing Topic' })).toBeVisible()
@@ -86,15 +86,15 @@ test('reads Issue creation and Worker dispatch separately, with real group recor
   await filters.getByRole('link', { name: '任务派发' }).click()
   await expect(timeline.getByText(direct)).toHaveCount(0)
   const startup = timeline.getByRole('article').filter({ hasText: 'Verify sample build' })
-  await expect(startup.getByRole('group', { name: '投递方' })).toHaveText('Topic')
-  await expect(startup.getByRole('group', { name: '收件方' })).toHaveText('Worker')
+  await expect(startup.getByRole('group', { name: '发送方' })).toHaveText('Topic Session')
+  await expect(startup.getByRole('group', { name: '收件方' })).toHaveText('Issue Session')
   await expect(startup.locator('header code')).toHaveText('mass-t1-i1-e1')
   await expect(startup.getByText('第 1 次', { exact: true })).toBeVisible()
   await startup.getByRole('link', { name: /启动 Execution/ }).click()
   await expect(details.getByText('Session 已受理', { exact: true })).toBeVisible()
   await expect(details.getByText('artifacts/build-notes.md', { exact: true })).toBeVisible()
   await expect(details.getByRole('link', { name: '查看 Execution →' })).toHaveAttribute('href', /view=executions&id=/)
-  await expect(details.getByRole('link', { name: '查看投递记录 →' })).toHaveAttribute('href', /view=internal-deliveries&id=/)
+  await expect(details.getByRole('link', { name: '查看事件记录 →' })).toHaveAttribute('href', /view=internal-events&id=/)
 
   await timeline.getByRole('link', { name: /目标更新/ }).click()
   await expect(details.getByText('目标修订', { exact: true })).toBeVisible()
@@ -171,9 +171,9 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   await expect(milestones).toHaveText([
     /Router.+Original input conversation-routed/,
     /Topic.*Issue.*创建 Issue.*Verify conversation build/,
-    /Topic.*Worker.*启动 Execution.*Verify conversation build/,
+    /Topic.*Issue Session.*启动 Execution.*Verify conversation build/,
     /Core.+Original input conversation-direct/,
-    /Worker.*Topic.*申请验收.*Conversation build verified/,
+    /Issue Session.*Topic.*申请验收.*Conversation build verified/,
   ])
   await reading.getByRole('button', { name: /有新消息 · 跳到最新/ }).click()
   const report = timeline.getByRole('link', { name: /申请验收.+Conversation build verified/ })
@@ -186,7 +186,7 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   await expect(details.getByRole('link', { name: '查看 Issue →' })).toHaveAttribute('href', /perspective=issue&id=/)
   await expect(details.getByRole('link', { name: '查看 Execution →' })).toHaveAttribute('href', /view=executions&id=/)
   await expect(details.getByRole('link', { name: '查看 Report →' })).toHaveAttribute('href', /view=reports&id=/)
-  await expect(details.getByRole('link', { name: '查看启动投递 →' })).toHaveAttribute('href', /view=internal-deliveries&id=/)
+  await expect(details.getByRole('link', { name: '查看启动事件 →' })).toHaveAttribute('href', /view=internal-events&id=/)
   await reading.reload()
   await expect(details.getByText('artifacts/conversation.log')).toBeVisible()
   await reading.screenshot({ path: testInfo.outputPath('topic-conversation.png') })
@@ -196,14 +196,51 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   await expect(reading.getByRole('heading', { name: 'Conversation pipeline' })).toBeVisible()
 })
 
-test('reads Issue acceptance from the saved completion alongside its Worker Report', async ({ page }) => {
+test('reads Issue acceptance from the saved completion alongside its Issue Report', async ({ page }) => {
   await page.goto('/observer/')
   const timeline = page.getByRole('region', { name: '群聊时间线' })
-  await timeline.getByRole('link', { name: 'Worker Report', exact: true }).click()
+  await timeline.getByRole('link', { name: 'Issue Report', exact: true }).click()
   await expect(timeline.getByRole('article')).toHaveCount(2)
   await timeline.getByRole('link', { name: /Sample build verified/ }).click()
   const details = page.getByRole('complementary', { name: '消息详情' })
   await expect(details.getByText('Build exited with code 0.')).toBeVisible()
   await expect(details.getByRole('heading', { name: 'Issue 已验收' })).toBeVisible()
   await expect(details.getByText('Reviewed the sample build log')).toBeVisible()
+})
+
+test('opens event Trace in the observer and returns to the conversation', async ({ page }) => {
+  const traceId = 'db64663e60fb444b8a93ea9c06c24413'
+  const start = '5b147a1058d5e09f'
+  await page.route(url => url.pathname.endsWith('/topic-activity') && url.searchParams.has('topicId'), async route => {
+    const response = await route.fetch()
+    const result = await response.json()
+    for (const event of result.items) event.traceAssociations = [{ traceId, phase: 'enqueue' }, { traceId, phase: 'dispatch' }]
+    await route.fulfill({ response, json: result })
+  })
+  await page.route(url => url.pathname.endsWith('/traces/' + traceId), route => route.fulfill({ json: {
+    traceId, startedAt: '2026-11-20T00:00:00Z', truncated: false, spans: [
+      { id: start, name: 'root request', service: 'core', offsetUs: 0, durationUs: 4200, status: 0 },
+      { id: '6a147a1058d5e09f', parentId: start, name: 'mcp handler', tool: 'update_issue', role: 'issue', service: 'core', offsetUs: 130, durationUs: 610, status: 0 },
+    ],
+  } }))
+  await page.goto(observer + '&id=mass-t1')
+  const card = page.getByRole('article').filter({ hasText: routed })
+  const header = card.locator('header')
+  await expect(header.locator('.conversation-card-type + .conversation-card-record-id')).toHaveText('mass-m1')
+  const link = header.getByRole('link', { name: '查看 Trace', exact: true })
+  await expect(link).toHaveText('Trace')
+  await expect(link).toHaveAttribute('href', new RegExp(traceId))
+  await expect(card).not.toContainText(traceId)
+  await link.click()
+  await expect(page).toHaveURL(/perspective=trace/)
+  await expect(page.getByRole('region', { name: 'Trace 瀑布图' })).toBeVisible()
+  await page.getByRole('button', { name: /update_issue/ }).click()
+  const detail = page.getByRole('complementary', { name: 'Span 详情' })
+  await expect(detail).toContainText('610 µs')
+  await detail.getByRole('button', { name: '跳转父 Span' }).click()
+  await expect(detail).toContainText('root request')
+  await page.reload()
+  await expect(page.getByText('2 spans', { exact: true })).toBeVisible()
+  await page.goBack()
+  await expect(link).toBeVisible()
 })

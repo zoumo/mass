@@ -167,7 +167,7 @@ func revokeBinding(ctx context.Context, tx *sql.Tx, id string) error {
 	return nil
 }
 
-func previousWorker(ctx context.Context, tx *sql.Tx, issueID string) (Binding, error) {
+func previousIssue(ctx context.Context, tx *sql.Tx, issueID string) (Binding, error) {
 	var b Binding
 	err := readJSON(ctx, tx, `SELECT b.body FROM executions e JOIN session_bindings b ON b.id=e.binding_id
  WHERE e.issue_id=? ORDER BY e.generation DESC LIMIT 1`, &b, issueID)
@@ -179,7 +179,7 @@ func previousWorker(ctx context.Context, tx *sql.Tx, issueID string) (Binding, e
 		return b, err
 	}
 	if b.State != "revoked" || b.PreparationStarted && b.Close == nil {
-		return b, &Error{Code: "failed_precondition", Message: "Previous Worker Session release is unconfirmed; inspect and recover the retired binding", Resource: b.ID}
+		return b, &Error{Code: "failed_precondition", Message: "Previous Issue Session release is unconfirmed; inspect and recover the retired binding", Resource: b.ID}
 	}
 	return b, nil
 }

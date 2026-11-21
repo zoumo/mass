@@ -10,7 +10,7 @@ test('Outbound echo links to its Outbox receipt in read-only reply history', asy
  await page.getByRole('button', { name: 'Original input observer-actual-message', exact: true }).click()
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByRole('heading', { name: '自身回声', exact: true })).toBeVisible()
- await expect(dialog.getByRole('button', { name: /^(放行|回声放行后的投递)$/ })).toHaveCount(0)
+ await expect(dialog.getByRole('button', { name: /^(放行|回声放行后的路由事件)$/ })).toHaveCount(0)
  await dialog.getByRole('button', { name: /^outbox_/ }).click()
  await expect(dialog.getByText('observer-actual-message', { exact: true })).toBeVisible()
  await expect(dialog.getByText('actual:conversation', { exact: true })).toBeVisible()

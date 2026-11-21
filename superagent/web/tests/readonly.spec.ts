@@ -63,6 +63,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  page.on('pageerror', error => errors.push(error.message))
  page.on('request', r => {
   const path = new URL(r.url()).pathname
+  expect(path).not.toBe('/mcp')
   if (!path.startsWith('/v1/')) return
   expect(path).toMatch(/^\/v1\/observer\//)
   expect(r.method()).toBe('GET')
@@ -111,9 +112,12 @@ test('Session reconnect rereads durable history while browsing produces no depen
   expect(result.status()).toBe(405)
   expect(result.headers()['allow']).toBe('GET, HEAD')
  }
- for (const path of ['/v1/role/report_submit', '/v1/channel/outbox/result']) {
-  expect((await request.post(path, { data: {} })).ok()).toBeFalsy()
- }
+ const toolCall = await request.post('/mcp', {
+  headers: { Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-11-25' },
+  data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'report_submit', arguments: {} } },
+ })
+ expect(toolCall.status()).toBe(401)
+ expect((await request.post('/v1/channel/outbox/result', { data: {} })).ok()).toBeFalsy()
  const after = await state()
  const methods = Object.fromEntries(Object.entries(after.rpc)
   .map(([method, count]) => [method, count - (before.rpc[method] ?? 0)] as const)

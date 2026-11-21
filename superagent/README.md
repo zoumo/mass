@@ -4,9 +4,9 @@
 module owns a single local SQLite database. The delivered slice accepts native
 messages, routes them through one global Router and independent Topics, prepares
 fixed massd Sessions, batches durable inputs and exposes read-only observation.
-Topics can schedule Issue Workers, receive Reports, accept, cancel and reopen work.
+Topics can schedule Issue Sessions, receive Reports, accept, cancel and reopen work.
 Topics can schedule one-time followups via Timer tools. Router and Topic can
-reply to a source Message through a durable Outbox. Topic and current Worker
+reply to a source Message through a durable Outbox. Topic and current Issue bindings
 roles can explicitly register PRs and subscribe their Topic to the resource Thread.
 Execution is opt-in through configuration; intake-only operation starts no Agent.
 
@@ -17,8 +17,8 @@ make build-superagent
 bin/superagent serve --config /absolute/run/core.yaml
 bin/superagent observe messages --endpoint http://127.0.0.1:24370
 bin/superagent observe threads --endpoint http://127.0.0.1:24370
-bin/superagent observe routing-deliveries --endpoint http://127.0.0.1:24370
-bin/superagent observe internal-deliveries --endpoint http://127.0.0.1:24370
+bin/superagent observe routing-events --endpoint http://127.0.0.1:24370
+bin/superagent observe internal-events --endpoint http://127.0.0.1:24370
 bin/superagent observe issues --topic-id TOPIC_ID
 bin/superagent observe reports --issue-id ISSUE_ID
 bin/superagent observe timers --topic-id TOPIC_ID
@@ -27,7 +27,7 @@ bin/superagent observe outbox --message-id MESSAGE_ID
 ```
 
 The default data directory is `./superagent-core-data`, relative to the YAML
-file. Use an empty directory for your first schema 22 startup. Startup rejects
+file. Use an empty directory for your first schema 23 startup. Startup rejects
 earlier SQLite schemas and JSON v4 state directories while preserving the original files.
 Set `dataDir` to another empty directory if the configured path contains
 earlier data. Use the original executable to inspect retained MVP history.
@@ -60,7 +60,7 @@ it only to trusted readers when explicitly binding a wider interface.
 
 Open `/observer/` for Topic conversations. The sidebar lists Topics by their
 latest conversation message. Select a Topic to follow Router routing, Core
-Thread delivery, Issue creation and dispatch, and Worker Reports. The Message,
+Thread delivery, Issue creation and dispatch, and Issue Reports. The Message,
 Router, Topic and Issue views provide read-only links to the related records.
 Diagnostics provides Thread, Timer, PR, Outbox and
 Session records. Existing `?view=messages|topics|issues` links open the
@@ -77,11 +77,11 @@ The [Outbox contract](API.md#trigger-outbox) covers task recovery and result
 writeback.
 
 Optional `execution` config sets the massd endpoint, Router workspace,
-namespace, fixed Router and Topic profiles, and the ordered Worker template
+namespace, fixed Router and Topic profiles, and the ordered Issue template
 list. Each profile has a `runtimeRef`, `model` and optional `effort`.
 Set those values to the literal names supported by your massd and its drivers.
-Topic uses `execution_template_query` to choose a Runtime and model when
-creating an Issue. Core copies the template's effort into the Issue and Worker
+Topic uses `get_topic` with `include: ["executionTemplates"]` to choose a Runtime and model when
+creating an Issue. Core copies the template's effort into the Issue and Issue Session
 binding. A later `issue_start` can use the saved profile or select a new
 pair for an Issue without a current Execution. Changing the Router profile
 requires a new Core data directory. See the [execution configuration](API.md#execution-configuration-and-fixed-session-preparation).
@@ -93,7 +93,7 @@ The private capabilities directory is never returned by Observer. Core batches
 each Session's input, delivers context through Inject and uses StartOrSteer
 when a batch contains an action. Input delivery leaves Topic business state
 unchanged. See [Issue scheduling, reports and acceptance](API.md#issue-execution-report-and-acceptance)
-for the Topic and Worker role tools.
+for the Topic and Issue role tools.
 See [Topic Timers](API.md#topic-timers) for one-shot scheduling, lifecycle fences
 and followup delivery through normal Message intake.
 See [PR registration](API.md#pull-request-registration-and-subscriptions) for
@@ -154,15 +154,15 @@ Observer previews, and automated tests.
 ## Ingress and queries
 
 See [API.md](API.md) for exact payloads, errors, retry and cursor semantics.
-Core commits the Message and its applicable internal delivery before returning
+Core commits the Message and its applicable internal event before returning
 an acceptance receipt. Retry a lost response with the same native message
 identity and business content. Session acceptance, business completion and
 channel delivery have separate states.
 When execution is configured, accepted input is automatically dispatched through
 massd after fixed-identity Session preparation. No DWS call is made by Core.
 
-Open the printed `/observer/` URL and select Topic for its recent deliveries,
-returns and Issue activity. The Issue view shows goals, the saved execution profile, Worker executions,
+Open the printed `/observer/` URL and select Topic for its recent events,
+returns and Issue activity. The Issue view shows goals, the saved execution profile, Executions,
 Reports and explicit business acceptance. Session binding details show the
 runtime, model and configured effort for the selected binding generation. Message shows the channel original,
 Thread and routing or echo history. Diagnostics opens collection lists and
@@ -172,7 +172,7 @@ they follow and their subscriptions.
 The PR details link to Thread history. A newly registered Thread shows when it
 has received no source input.
 The diagnostics list Topics, subscriptions, routing history, Session bindings
-and internal delivery acceptance. Issue
+and internal event acceptance. Issue
 drawers link to their Execution history, startup evidence and Report timeline.
 Message and Thread drawers link to reply history. Outbox details show the
 target, blocker reference, status, channel task and native send results.
