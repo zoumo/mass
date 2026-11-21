@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,7 +137,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
 		expectedHost = local.String()
 	}
-	if r.Host != expectedHost {
+	observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
+	observerUI := r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/")
+	allowedObserverHost := (observerAPI || observerUI) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
+	if r.Host != expectedHost && !allowedObserverHost {
 		s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 		return
 	}
@@ -202,12 +206,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.releaseEcho(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/operator/session-bindings/"):
 		s.inspectBinding(w, r)
-	case strings.HasPrefix(r.URL.Path, "/v1/observer/"):
+	case observerAPI:
 		if !readOnly(w, r) {
 			return
 		}
 		s.query(w, r)
-	case r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/"):
+	case observerUI:
 		if !readOnly(w, r) {
 			return
 		}
@@ -220,12 +224,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func readOnly(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+	if !isReadMethod(r.Method) {
 		w.Header().Set("Allow", "GET, HEAD")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return false
 	}
 	return true
+}
+
+func isReadMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
 }
 
 func (s *Server) authenticate(r *http.Request) (Source, bool) {

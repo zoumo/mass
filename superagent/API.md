@@ -263,10 +263,18 @@ health. COLLECTION is any collection listed above. The read-only CLI never loads
 Use `observe topic-activity --topic-id ID --filter message` for Topic receipts and returns. The filter also accepts `issue` or `all`.
 Only a numeric HTTP origin is accepted; redirects are not followed.
 
-All Observer writes return 405 with Allow: GET, HEAD. Host must match the
-connection's actual numeric local endpoint; foreign Origin and cross-site Fetch
-Metadata are rejected. No query parameter grants write authority. No CORS
-credentials or browser-side write token is configured. Cache-Control is no-store.
+By default, `Host` must match the connection's numeric local endpoint.
+`observerAllowedHosts` also accepts exact `Host` values for `GET` and `HEAD`
+requests to the Observer UI and `/v1/observer/` API. Each entry is a DNS name
+with a port when clients include one. All other routes retain the numeric
+endpoint requirement. `externalURL` independently sets the Session MCP address.
+
+Core rejects foreign Origins and cross-site Fetch Metadata. Observer reads do
+not require authentication. Limit access to trusted readers at the network
+boundary. Observer requests with write methods return `405` on the numeric
+endpoint and `403` through an allowed DNS name. No query parameter grants write
+authority. No CORS credentials or browser-side write token is configured.
+`Cache-Control` is `no-store`.
 Reads preserve Core business state.
 
 Session preview resolves a recorded SessionBinding, then verifies the Session
