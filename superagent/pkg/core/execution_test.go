@@ -74,14 +74,17 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 
 func TestRouterInitializationKeepsLegacySessionSpec(t *testing.T) {
 	t.Run("version 0", func(t *testing.T) {
-		testRouterInitializationKeepsSessionSpec(t, 0, "deduplicate by event_id")
+		testRouterInitializationKeepsSessionSpec(t, 0)
 	})
 	t.Run("version 1", func(t *testing.T) {
-		testRouterInitializationKeepsSessionSpec(t, 1, "On route_request")
+		testRouterInitializationKeepsSessionSpec(t, 1)
+	})
+	t.Run("current version with a previous prompt", func(t *testing.T) {
+		testRouterInitializationKeepsSessionSpec(t, agentPromptVersion)
 	})
 }
 
-func testRouterInitializationKeepsSessionSpec(t *testing.T, version int, prompt string) {
+func testRouterInitializationKeepsSessionSpec(t *testing.T, version int) {
 	t.Helper()
 	config := Config{DataDir: t.TempDir(), Execution: &ExecutionConfig{
 		Roles:           ExecutionRoles{Router: ExecutionProfile{RuntimeRef: "agent", Model: "model"}},
@@ -100,8 +103,7 @@ func testRouterInitializationKeepsSessionSpec(t *testing.T, version int, prompt 
 	require.Equal(t, 2, binding.AgentPromptVersion)
 	require.Contains(t, spec.SystemPrompt, "deduplicate by event_id")
 	binding.AgentPromptVersion = version
-	spec.SystemPrompt = makeSpec(config, binding).SystemPrompt
-	require.Contains(t, spec.SystemPrompt, prompt)
+	spec.SystemPrompt = "Previously persisted Router instructions."
 	require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET body=?2 WHERE id=?1", binding, binding.ID))
 	require.NoError(t, enqueueInternalEvent(t.Context(), tx, internalEvent{
 		ID: "legacy-id", Kind: routeRequestKind,

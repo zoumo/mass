@@ -25,11 +25,11 @@ const inlineMessageBytes = 2 * 1024
 
 type internalEventBatch struct {
 	boundIssueRevision int
-	wire                []byte
-	items               []internalEvent
-	queuedAt            time.Time
-	method              string
-	links               []trace.Link
+	wire               []byte
+	items              []internalEvent
+	queuedAt           time.Time
+	method             string
+	links              []trace.Link
 }
 
 // businessEventCurrent is evaluated in both the selection and final admission
@@ -131,6 +131,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEve
 		return batch, err
 	}
 	var deadline time.Time
+	var boundTopic *Topic
 	var boundIssue *Issue
 	batch.method = "inject"
 	var envelope inputBatch
@@ -174,6 +175,16 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEve
 			inlineRouter := b.Role == "router" && b.AgentPromptVersion >= agentPromptVersion && view.Kind == routeRequestKind
 			maxViewBytes := min(previewBytes, batchBytes-len(batch.wire)-1)
 			issueContext := false
+			if err == nil && !view.truncated && inlineTopic && b.AgentPromptVersion >= agentPromptVersion {
+				if boundTopic == nil {
+					var topic Topic
+					if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
+						return batch, err
+					}
+					boundTopic = &topic
+				}
+				view.topic = boundTopic
+			}
 			if err == nil && !view.truncated && view.Content == nil && len(view.Refs) == 1 &&
 				view.Refs[0].Kind == messageRefKind && (inlineTopic || inlineRouter) {
 				err = view.loadInlineTriggerMessage(ctx, tx, b)
@@ -193,7 +204,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b Binding) (internalEve
 					issueContext = view.issue != nil || len(view.messages) != 0
 				}
 			}
-			if err == nil && (view.Content != q.item.Content || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0) {
+			if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0) {
 				var enriched json.RawMessage
 				enriched, err = view.MarshalAgentPromptJSON()
 				if err == nil && (b.AgentPromptVersion < agentPromptVersion || len(enriched) <= maxViewBytes) {

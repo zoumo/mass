@@ -66,6 +66,7 @@ type internalEvent struct {
 	threadKey     string
 	routing       json.RawMessage
 	quotedReply   json.RawMessage
+	topic         *Topic
 	issue         *Issue
 	report        *Report
 	followup      json.RawMessage
@@ -132,6 +133,12 @@ func (d internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 	}
 	if len(d.quotedReply) != 0 {
 		event["quotedReply"] = d.quotedReply
+	}
+	if d.topic != nil {
+		event["topic"] = map[string]any{
+			"id": d.topic.ID, "title": d.topic.Title, "workspace": d.topic.Workspace,
+			"status": d.topic.Status, "revision": d.topic.Revision,
+		}
 	}
 	if d.issue != nil {
 		issue := *d.issue

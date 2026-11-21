@@ -296,9 +296,9 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	waitWorkEvent(t, p, x.StartEventID, "sent")
 	var session resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: issueBinding.SessionID}, &session))
-	require.Contains(t, session.Spec.SystemPrompt, "verify your result")
+	require.Contains(t, session.Spec.SystemPrompt, "Verify the result against the goal you used.")
 	require.Contains(t, session.Spec.SystemPrompt, "deduplicate by event_id")
-	require.Contains(t, session.Spec.SystemPrompt, "A final response, ACK or idle does not submit a Report")
+	require.Contains(t, session.Spec.SystemPrompt, "submit_report records a result against the goalRevision you worked on.")
 	require.NotNil(t, session.Spec.MCPServers)
 	require.Contains(t, (*session.Spec.MCPServers)[0].Args, filepath.Join(f.data, "capabilities", issueBinding.ID+".json"))
 	t.Log("same and different concurrent start operations produced one Execution, stable Event and actual StartOrSteer receipt")

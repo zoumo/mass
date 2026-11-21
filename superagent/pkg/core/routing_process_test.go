@@ -1095,9 +1095,12 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: binding.SessionID}, &topicSession))
 	require.Contains(t, topicSession.Spec.SystemPrompt, "content.data.text")
 	require.Contains(t, topicSession.Spec.SystemPrompt, "get_message")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "bound Topic snapshot at dispatch")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "Core pushes report_submitted to this Session")
 	delivered := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, delivered.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":%q}}}]}`, target.EventIDs[msg.MessageID], msg.MessageID, short.Message.Text), delivered.text)
+	topicView := fmt.Sprintf(`{"id":%q,"title":"Topic short-topic","workspace":%q,"status":"active","revision":1}`, target.TopicID, f.dir)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"content":{"type":"markdown","data":{"text":%q}}}]}`, target.EventIDs[msg.MessageID], msg.MessageID, topicView, short.Message.Text), delivered.text)
 	delivered.answer <- nativeSubmitAnswer{complete: true}
 
 	for _, req := range []core.SubmitRequest{input("long"), input("quoted")} {
@@ -1109,7 +1112,7 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 		receipt := submit(t, p, f, req)
 		call := peer.next(t, "turn/start")
 		require.Equal(t, binding.SessionID, call.session)
-		require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}]}]}`, receipt.EventID, receipt.MessageID), call.text)
+		require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s}]}`, receipt.EventID, receipt.MessageID, topicView), call.text)
 		call.answer <- nativeSubmitAnswer{complete: true}
 
 		item := mcpWork[json.RawMessage](t, topic, "get_message", map[string]string{"messageId": receipt.MessageID})
@@ -1137,7 +1140,7 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	answer := submit(t, p, f, reply)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, call.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":"Tuesday UTC"}},"quotedReply":{"outboxId":%q,"blockerRef":{"issueId":%q,"blockerId":%q}},"issue":{"id":%q,"revision":%d,"status":"blocked","blockers":[{"id":%q,"kind":"human","reason":"Confirm the release date"}]}}]}`, answer.EventID, answer.MessageID, question.ID, issue.ID, blocker.BlockerID, issue.ID, issue.Revision, blocker.BlockerID), call.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"content":{"type":"markdown","data":{"text":"Tuesday UTC"}},"quotedReply":{"outboxId":%q,"blockerRef":{"issueId":%q,"blockerId":%q}},"issue":{"id":%q,"revision":%d,"status":"blocked","blockers":[{"id":%q,"kind":"human","reason":"Confirm the release date"}]}}]}`, answer.EventID, answer.MessageID, topicView, question.ID, issue.ID, blocker.BlockerID, issue.ID, issue.Revision, blocker.BlockerID), call.text)
 	view := decodeInternalBatch(t, call, answer.EventID)[0]
 	var quotedIssue core.Issue
 	require.NoError(t, json.Unmarshal(view.Issue, &quotedIssue))
