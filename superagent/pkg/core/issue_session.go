@@ -189,9 +189,6 @@ func (s *Store) submitIssueReport(ctx context.Context, b SessionBinding, raw []b
 		if id != "" {
 			var report Report
 			err := readJSON(ctx, tx, "SELECT body FROM reports WHERE id=?", &report, id)
-			if err == nil {
-				markMCPMutation(ctx, true, false)
-			}
 			return report, err
 		}
 		upper := issue.RequirementsRevision
@@ -232,9 +229,6 @@ func (s *Store) submitIssueReport(ctx context.Context, b SessionBinding, raw []b
 			Recipient: eventIdentity{Kind: "topic", TopicID: issue.TopicID},
 			Refs:      []eventReference{{Kind: "report", ID: report.ID, IssueID: issue.ID, GoalRevision: r.GoalRevision}},
 		})
-		if err == nil {
-			markMCPMutation(ctx, false, true)
-		}
 		return report, err
 	})
 }

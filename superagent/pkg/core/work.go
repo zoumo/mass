@@ -144,13 +144,13 @@ func (s *Store) workCommand(ctx context.Context, b SessionBinding, tool string, 
 		if err := decodeStrict(raw, &r); err != nil {
 			return nil, err
 		}
-		return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, s.createIssue(r))
+		return s.commitWork(ctx, b, tool, r.OperationID, s.createIssue(r))
 	case "start_issue":
 		var r StartIssueRequest
 		if err := decodeStrict(raw, &r); err != nil {
 			return nil, err
 		}
-		return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, s.startIssue(r))
+		return s.commitWork(ctx, b, tool, r.OperationID, s.startIssue(r))
 	case "issue_update_requirements":
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r UpdateRequirementsRequest) string { return r.OperationID }, updateRequirements)
 	case "issue_session_input":

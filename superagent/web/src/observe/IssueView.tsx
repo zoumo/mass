@@ -9,7 +9,6 @@ import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow
 import { usePages, useRecord, viewHref, type ViewProps } from './observer'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
-import { metricsHref } from './MetricsView'
 import './issue.css'
 
 type Report = {
@@ -138,7 +137,7 @@ function IssueDetail({ id, scope }: { id: string; scope: string }) {
     <section className="panel issue-overview">
       <div className="source-line"><span className="issue-status"><CircleDot size={14}/>{stateLabel(issue.status)}</span>
         <a href={viewHref('topic', issue.topicId)}>{topic.data?.title || issue.topicId}<ChevronRight size={14}/></a></div>
-      <div className="observable-actions"><a href={metricsHref('issue', id)}>工具用量</a><CopyLink href={viewHref('issue',id,{topicId:scope})}/></div>
+      <div className="observable-actions"><CopyLink href={viewHref('issue',id,{topicId:scope})}/></div>
       <h2>{issue.title}</h2><p className="issue-goal">{issue.goal || '目标未记录'}</p>
       {issue.currentSessionBindingId && <div className="issue-links">
         <a href={recordLink('session-bindings', issue.currentSessionBindingId)}>查看当前会话 →</a>

@@ -24,7 +24,7 @@ func (s *Store) followupCommand(ctx context.Context, b SessionBinding, tool stri
 		if err := decodeStrict(raw, &r); err != nil {
 			return nil, err
 		}
-		return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, setTimer(r))
+		return s.commitWork(ctx, b, tool, r.OperationID, setTimer(r))
 	}
 	var r updateFollowupArgs
 	if tool == "cancel_followup" {
@@ -39,7 +39,7 @@ func (s *Store) followupCommand(ctx context.Context, b SessionBinding, tool stri
 			return nil, problem("invalid_argument", "provide at least one followup update")
 		}
 	}
-	return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
+	return s.commitWork(ctx, b, tool, r.OperationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		if r.FollowupID == "" {
 			return nil, problem("invalid_argument", "followupId is required")
 		}

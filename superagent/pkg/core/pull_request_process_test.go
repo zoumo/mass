@@ -101,7 +101,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	var sub core.Subscription
 	require.NoError(t, json.Unmarshal(before.Items[0], &sub))
 	require.Equal(t, sub.ID, association.SubscriptionID)
-	require.Equal(t, registered, mcpWork[core.Topic](t, primary, "update_topic", prUpdate("first-register", 1, firstPR)))
+	mcpWorkError(t, primary, "update_topic", "conflict", prUpdate("first-register", 1, firstPR))
 	require.Equal(t, registered, mcpWork[core.Topic](t, primary, "update_topic", prUpdate("same-association", registered.Revision, firstPR)))
 	require.Len(t, page(t, p, "threads").Items, 1)
 
@@ -260,6 +260,6 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	p = f.start()
 	require.Equal(t, issuePR, readRecord[core.PullRequest](t, p, "pull-requests/"+issuePR.ID))
 	require.Equal(t, issuePR, readRecord[core.Issue](t, p, "issues/"+current.Issue.ID).PullRequests[0].PullRequest)
-	require.Equal(t, registered, mcpWork[core.Topic](t, primary, "update_topic", register))
+	mcpWorkError(t, primary, "update_topic", "conflict", register)
 	t.Log("Public Message and stdio MCP agreed on both arrival orders, scoped deduplication, issue authority and shared-Thread routing.")
 }

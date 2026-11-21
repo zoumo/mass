@@ -75,31 +75,27 @@ sum by (superagent_role, superagent_tool, superagent_outcome) (
 )
 ```
 
-Each `tools/call` attempt received by Core contributes one observation, including
-business errors and retries. Initialization and tool discovery are HTTP requests
-and do not contribute to the tool histogram.
-
-Core stores one call record for each authenticated tool attempt. Query
-`/v1/observer/mcp-tool-usage?role=topic&callerId=TOPIC_ID` for the Topic's own
-counts. Query `?topicId=TOPIC_ID` for the Topic and its Issue Agents together.
-Use `?role=issue&callerId=ISSUE_ID` for one Issue Agent. Filter by `tool` and
-RFC3339 `from` and `until` to compare runs. The `/calls` endpoint adds individual
-attempts and their trace and span IDs. Use `?sessionBindingId=SESSION_BINDING_ID`
-to inspect calls made under one binding.
+Each authenticated `tools/call` attempt contributes one observation, including
+business errors and retries. Initialization and tool discovery contribute to
+the HTTP request metrics.
 
 In OpenObserve, filter `POST /mcp` spans by `superagent.caller.id` and
 `superagent.role`. Issue spans include the owning `superagent.topic.id` and
 `superagent.session_binding.id`. When a Topic acts on a verified Issue, its span
 includes `superagent.target.issue.id`. Supported event-driven actions carry
 `superagent.event.id` and can continue that event's trace. Metric labels use
-role, tool, outcome, and bounded action values. Core counts remain available if
-trace sampling or export omits a span.
+role, tool, outcome, and bounded action values. The histogram counts attempts
+independently of Trace sampling or export.
 
 ## Query process and Go runtime metrics
 
-Set `observerTrace` in the Core configuration to enable **Metrics → 系统性能**
-in Observer. The charts show CPU cores, resident memory, goroutines, and open
-file descriptors for Core and massd. Each line represents one process instance.
+Set `observerTrace` in the Core configuration to enable **Metrics** in
+Observer. Select a process metric or view all process charts. Filter by service
+and instance and group by service, instance or the total. The MCP metrics use
+the exported histogram to show call rate, failure rate and P95 handling time.
+Select a role, tool, action or outcome filter and group by an available
+dimension. Failure rate groups and filters by role, tool or action so the
+denominator includes all outcomes.
 CPU uses a five-minute rate. Each point for the other metrics uses the
 latest sample within the chart step or 90 seconds, whichever is longer.
 

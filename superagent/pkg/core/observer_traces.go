@@ -21,7 +21,7 @@ const (
 	observerTraceWindow = 7 * 24 * time.Hour
 )
 
-// ObserverTraceConfig configures OpenObserve reads for traces and process metrics.
+// ObserverTraceConfig configures OpenObserve reads for traces and metrics.
 type ObserverTraceConfig struct {
 	Endpoint       string `mapstructure:"endpoint"`
 	Organization   string `mapstructure:"organization"`

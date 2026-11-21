@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"database/sql"
+	encodingbinary "encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,6 +32,119 @@ func TestCutoverDefaultAndSchema(t *testing.T) {
 	assertCutoverSchema(t, filepath.Join(f.dir, "superagent-core-data", "core.sqlite"))
 }
 
+func TestCutoverSchema24Upgrade(t *testing.T) {
+	f := fixtureAt(t)
+	boundary := newRouteBoundary(t)
+	f.execution(boundary)
+	p := f.start()
+	topic, token := workBoundaryTopic(t, f, p)
+	event := page(t, p, "internal-events").Items[0]
+	legacy := roleWork[core.WorkReceipt](t, p, token, "create_issue", issueInput(f.dir, "without-creation-trace")).Issue
+	p.stop(t, false)
+
+	p = f.start(traceTestEnv("http://127.0.0.1:0")...)
+	tracedRequest := issueInput(f.dir, "with-creation-trace")
+	traced := roleWork[core.WorkReceipt](t, p, token, "create_issue", tracedRequest).Issue
+	associations := observedTraces(t, p, "issues", traced.ID)
+	require.Len(t, associations, 1)
+	require.Equal(t, "creation", associations[0].Phase)
+	p.stop(t, false)
+
+	path := filepath.Join(f.data, "core.sqlite")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	// Restore the v24 schema identity and representative rows in the two
+	// retired tables. Core created the business rows through its public APIs.
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE mcp_mutation_receipts (
+ session_binding_id TEXT NOT NULL REFERENCES session_bindings(id), result BLOB NOT NULL);
+CREATE TABLE mcp_tool_calls (target_issue_id TEXT NOT NULL, trace_id TEXT NOT NULL);
+INSERT INTO mcp_mutation_receipts VALUES(?, '{}');
+INSERT INTO mcp_tool_calls VALUES(?, 'db64663e60fb444b8a93ea9c06c24413');
+PRAGMA user_version=24;`, topic.ID, legacy.ID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), "PRAGMA wal_checkpoint(TRUNCATE)")
+	require.NoError(t, err)
+	checkRawVersion := func(want uint32) {
+		t.Helper()
+		header, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, want, encodingbinary.BigEndian.Uint32(header[60:64]))
+	}
+	checkRawVersion(24)
+
+	f.configure(0, "different-account")
+	f.execution(boundary)
+	f.fails("configured source/account differs")
+	var liveVersion, count int
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&liveVersion))
+	require.Equal(t, 24, liveVersion)
+	for _, table := range []string{"mcp_mutation_receipts", "mcp_tool_calls"} {
+		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&count))
+		require.Equal(t, 1, count)
+	}
+
+	f.configure(0, "account-1")
+	f.execution(boundary)
+	// Keep a SQLite connection open until after restart so the main-file
+	// header can still be v24 when SQLite reads the committed v25 WAL.
+	p = f.start()
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&liveVersion))
+	require.Equal(t, 25, liveVersion)
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&count))
+	require.Equal(t, 9, count)
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM pragma_foreign_key_check").Scan(&count))
+	require.Zero(t, count)
+	p.stop(t, false)
+	checkRawVersion(24)
+	p = f.start()
+	require.Equal(t, legacy, readRecord[core.Issue](t, p, "issues/"+legacy.ID))
+	require.Equal(t, traced, roleWork[core.WorkReceipt](t, p, token, "create_issue", tracedRequest).Issue)
+	require.Contains(t, page(t, p, "internal-events").Items, event)
+	require.Empty(t, observedTraces(t, p, "issues", legacy.ID))
+	require.Equal(t, associations, observedTraces(t, p, "issues", traced.ID))
+	for _, mode := range []string{"&filter=issue", "&mode=conversation&filter=issue_created"} {
+		rows := page(t, p, "topic-activity?topicId="+topic.OwnerID+mode)
+		creationTraces := map[string][]observerTrace{}
+		for _, row := range rows.Items {
+			var item struct {
+				IssueID           string          `json:"issueId"`
+				Kind              string          `json:"kind"`
+				TraceAssociations []observerTrace `json:"traceAssociations"`
+			}
+			require.NoError(t, json.Unmarshal(row, &item))
+			if item.Kind == "issue_created" {
+				creationTraces[item.IssueID] = item.TraceAssociations
+			}
+		}
+		require.Len(t, creationTraces, 2)
+		require.Empty(t, creationTraces[legacy.ID])
+		require.Equal(t, associations, creationTraces[traced.ID])
+	}
+	for _, path := range []string{"mcp-tool-usage", "mcp-tool-usage/calls", "mcp-tool-usage/metrics"} {
+		status, body := request(t, http.MethodGet, p.endpoint, "/v1/observer/"+path, "", nil)
+		errorCode(t, status, body, http.StatusNotFound, "not_found")
+	}
+}
+
+func TestCutoverRejectsUnsupportedWALVersion(t *testing.T) {
+	f := fixtureAt(t)
+	p := f.start()
+	p.stop(t, false)
+	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), "PRAGMA user_version=999")
+	require.NoError(t, err)
+	header, err := os.ReadFile(filepath.Join(f.data, "core.sqlite"))
+	require.NoError(t, err)
+	require.EqualValues(t, 25, encodingbinary.BigEndian.Uint32(header[60:64]))
+	f.fails("unsupported")
+	var version int
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
+	require.Equal(t, 999, version)
+}
+
 func assertCutoverSchema(t *testing.T, path string) {
 	t.Helper()
 	require.FileExists(t, path)
@@ -39,7 +153,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 24, version)
+	require.Equal(t, 25, version)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
 		require.NoError(t, err)
@@ -55,14 +169,14 @@ func assertCutoverSchema(t *testing.T, path string) {
 		t.Logf("%s -> %v", query, values)
 	}
 	check("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-		[]string{"internal_events", "issues", "mcp_mutation_receipts", "mcp_tool_calls", "outbox", "scheduled_tasks", "session_bindings", "threads", "topics", "trigger_messages"})
+		[]string{"internal_events", "issues", "outbox", "scheduled_tasks", "session_bindings", "threads", "topics", "trigger_messages"})
 	check("SELECT name FROM pragma_table_info('outbox') ORDER BY cid", []string{"id", "message_id", "content", "status", "receipt", "blocker_ref"})
 	check("SELECT name FROM pragma_table_info('internal_events') ORDER BY cid",
 		[]string{"event_id", "kind", "sender", "recipient", "content", "body", "refs", "created_at", "status", "sent_at"})
 	check(`SELECT m.name||'.'||f."from"||' -> '||f."table"||'.'||f."to"
  FROM sqlite_schema m,pragma_foreign_key_list(m.name) f WHERE m.type='table' ORDER BY 1`,
 		[]string{
-			"issues.topic_id -> topics.id", "mcp_mutation_receipts.session_binding_id -> session_bindings.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.topic_id -> topics.id",
+			"issues.topic_id -> topics.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.topic_id -> topics.id",
 			"scheduled_tasks.trigger_message_id -> trigger_messages.id", "trigger_messages.thread_key -> threads.key",
 		})
 	check(`SELECT "table" FROM pragma_foreign_key_check`, nil)

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
@@ -186,6 +185,8 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	start := issueInput(f.dir, "http-mcp-issue")
 	start.Start = true
 	work := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", start)
+	retried := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", start)
+	require.Equal(t, work.Issue.ID, retried.Issue.ID)
 	issueBinding := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 	issueToken := roleToken(t, f, issueBinding)
 
@@ -295,7 +296,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 
 	wanted := map[[3]string]uint64{
 		{"router", "route_messages", "ok"}:         1,
-		{"topic", "create_issue", "ok"}:            1,
+		{"topic", "create_issue", "ok"}:            2,
 		{"topic", "get_message", "ok"}:             1,
 		{"topic", "get_topic", "ok"}:               1,
 		{"issue", "get_issue", "ok"}:               1,
@@ -344,22 +345,31 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 			} else {
 				assert.Equal(c, topicID, gotID.AsString())
 			}
+			if labels[1] == "create_issue" {
+				issue, _ := attrs.Value("superagent.target.issue.id")
+				assert.Equal(c, work.Issue.ID, issue.AsString())
+			}
 			spans[labels]++
 		}
 		assert.Equal(c, wanted, spans)
 	}, time.Second, time.Millisecond)
 }
 
-func TestMCPToolUsageByAuthenticatedCaller(t *testing.T) {
+func TestMCPMutationTelemetryByAuthenticatedCaller(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f := fixtureAt(t)
 	f.execution(boundary)
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	t.Cleanup(func() { require.NoError(t, traces.Shutdown(context.Background())) })
+	reader := sdkmetric.NewManualReader()
+	metrics := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() {
+		require.NoError(t, traces.Shutdown(context.Background()))
+		require.NoError(t, metrics.Shutdown(context.Background()))
+	})
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	server, err := core.StartWithTelemetry(cfg, core.TelemetryOptions{Traces: traces})
+	server, err := core.StartWithTelemetry(cfg, core.TelemetryOptions{Traces: traces, Metrics: metrics})
 	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve() }()
@@ -392,75 +402,74 @@ func TestMCPToolUsageByAuthenticatedCaller(t *testing.T) {
 	}
 	issueEdit := roleWork[core.WorkReceipt](t, p, issueToken, "update_issue", issueArgs)
 	require.Equal(t, "Edited by Issue Agent", issueEdit.Issue.Title)
-	type usageRow struct {
-		Role, CallerID, Outcome  string
-		Count, Replayed, Changed int64
-	}
-	type usagePage struct {
-		Count int64
-		Items []usageRow
-	}
-	const usage = "mcp-tool-usage?tool=update_issue"
-	topicRow := usageRow{Role: "topic", CallerID: topicID, Outcome: "ok", Count: 1, Changed: 1}
-	issueRow := usageRow{Role: "issue", CallerID: issue.ID, Outcome: "ok", Count: 1, Changed: 1}
-	require.Equal(t, usagePage{Count: 1, Items: []usageRow{topicRow}}, readRecord[usagePage](t, p, usage+"&role=topic&callerId="+topicID))
-	require.Equal(t, usagePage{Count: 1, Items: []usageRow{issueRow}}, readRecord[usagePage](t, p, usage+"&role=issue&callerId="+issue.ID))
-	rollup := usagePage{Count: 2, Items: []usageRow{issueRow, topicRow}}
-	require.Equal(t, rollup, readRecord[usagePage](t, p, usage+"&topicId="+topicID))
-	require.Equal(t, rollup, readRecord[usagePage](t, p, usage+"&issueId="+issue.ID))
-	bindingFilter := "&sessionBindingId=" + issueBinding.ID
-	require.Equal(t, usagePage{Count: 1, Items: []usageRow{issueRow}}, readRecord[usagePage](t, p, usage+bindingFilter))
-
-	require.Equal(t, topicEdit.Issue, roleWork[core.WorkReceipt](t, p, topicToken, "update_issue", topicArgs).Issue)
-	topicArgs["operationId"] = "stale-edit"
 	status, body := requestMCPTool(t, p.endpoint, "update_issue", topicToken, topicArgs)
 	errorCode(t, status, body, http.StatusConflict, "conflict")
-	type callRow struct {
-		Role, CallerID, IssueID, TargetIssueID, SessionBindingID, EventID, Outcome, TraceID, SpanID string
-		Replayed, Changed                                                                           bool
+	// Reusing an operation ID with the current revision runs the update again.
+	topicArgs["expectedRevision"] = issueEdit.Issue.Revision
+	current := roleWork[core.WorkReceipt](t, p, topicToken, "update_issue", topicArgs).Issue
+	require.Equal(t, "Edited by Topic", current.Title)
+	require.Equal(t, issueEdit.Issue.Revision+1, current.Revision)
+
+	labels := func(attrs attribute.Set) [3]string {
+		role, _ := attrs.Value("superagent.role")
+		outcome, _ := attrs.Value("superagent.outcome")
+		action, _ := attrs.Value("superagent.action")
+		return [3]string{role.AsString(), outcome.AsString(), action.AsString()}
 	}
-	type callPage struct {
-		Items      []callRow
-		NextBefore int64
+	wanted := map[[3]string]uint64{
+		{"topic", "ok", "edit"}:       2,
+		{"topic", "conflict", "edit"}: 1,
+		{"issue", "ok", "edit"}:       1,
 	}
-	const calls = "mcp-tool-usage/calls?tool=update_issue"
-	first := readRecord[callPage](t, p, calls+"&topicId="+topicID+"&limit=2")
-	require.Positive(t, first.NextBefore)
-	require.Len(t, first.Items, 2)
-	require.Equal(t, "conflict", first.Items[0].Outcome)
-	require.Equal(t, issue.ID, first.Items[0].TargetIssueID)
-	require.True(t, first.Items[1].Replayed)
-	require.False(t, first.Items[1].Changed)
-	second := readRecord[callPage](t, p, calls+"&before="+strconv.FormatInt(first.NextBefore, 10))
-	require.Len(t, second.Items, 2)
-	require.Zero(t, second.NextBefore)
-	require.Equal(t, issue.ID, second.Items[0].IssueID)
-	require.Equal(t, created.SessionBinding.ID, second.Items[0].SessionBindingID)
-	require.Empty(t, second.Items[0].TargetIssueID)
-	require.Equal(t, callPage{Items: []callRow{second.Items[0]}}, readRecord[callPage](t, p, calls+bindingFilter))
-	original := second.Items[1]
-	require.Equal(t, topicEvent, original.EventID)
-	require.Equal(t, issue.ID, original.TargetIssueID)
-	require.Empty(t, original.IssueID)
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		var parent trace.SpanContext
-		for _, span := range recorder.Ended() {
-			if span.SpanContext().SpanID().String() != original.SpanID {
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &collected))
+	recorded := map[[3]string]uint64{}
+	for _, scope := range collected.ScopeMetrics {
+		for _, sample := range scope.Metrics {
+			if sample.Name != "superagent.mcp.tool.duration" {
 				continue
 			}
-			parent = span.Parent()
-			assert.Equal(c, original.TraceID, span.SpanContext().TraceID().String())
-			attrs := attribute.NewSet(span.Attributes()...)
-			for key, want := range map[attribute.Key]string{
-				"superagent.caller.id": topicID, "superagent.role": "topic",
-				"superagent.event.id": topicEvent, "superagent.target.issue.id": issue.ID,
-			} {
-				got, ok := attrs.Value(key)
-				assert.True(c, ok)
-				assert.Equal(c, want, got.AsString())
+			for _, point := range sample.Data.(metricdata.Histogram[float64]).DataPoints {
+				tool, _ := point.Attributes.Value("superagent.tool")
+				if tool.AsString() == "update_issue" {
+					require.Positive(t, point.Sum)
+					require.Equal(t, 4, point.Attributes.Len())
+					recorded[labels(point.Attributes)] += point.Count
+				}
 			}
 		}
-		assert.True(c, parent.IsValid())
-		assert.Equal(c, original.TraceID, parent.TraceID().String())
+	}
+	require.Equal(t, wanted, recorded)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		recorded := map[[3]string]uint64{}
+		for _, span := range recorder.Ended() {
+			if span.Name() != "POST /mcp" {
+				continue
+			}
+			attrs := attribute.NewSet(span.Attributes()...)
+			tool, _ := attrs.Value("superagent.tool")
+			if tool.AsString() != "update_issue" {
+				continue
+			}
+			key := labels(attrs)
+			recorded[key]++
+			want := map[attribute.Key]string{"superagent.topic.id": topicID}
+			if key[0] == "topic" {
+				want["superagent.caller.id"] = topicID
+				want["superagent.event.id"] = topicEvent
+				want["superagent.target.issue.id"] = issue.ID
+				assert.True(c, span.Parent().IsValid())
+				assert.Equal(c, span.Parent().TraceID(), span.SpanContext().TraceID())
+			} else {
+				want["superagent.caller.id"] = issue.ID
+				want["superagent.issue.id"] = issue.ID
+				want["superagent.session_binding.id"] = issueBinding.ID
+			}
+			for key, value := range want {
+				got, _ := attrs.Value(key)
+				assert.Equal(c, value, got.AsString(), string(key))
+			}
+		}
+		assert.Equal(c, wanted, recorded)
 	}, time.Second, time.Millisecond)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,10 +47,11 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 				t.Error("CPU requires a counter rate")
 			}
 			_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"matrix","result":[
-{"metric":{"service_name":"massd","service_instance_id":"new","private_label":"secret"},"values":[[%d,"0.5"],[%d,"NaN"],[%d,"0.75"]]},
+{"metric":{"service_name":"superagent-core","service_instance_id":"first"},"values":[[%d,"1"]]},
 {"metric":{"service_name":"massd","service_instance_id":"old"},"values":[[%d,"0"]]},
+{"metric":{"service_name":"massd","service_instance_id":"new","private_label":"secret"},"values":[[%d,"0.5"],[%d,"NaN"],[%d,"0.75"]]},
 {"metric":{"service_name":"other","service_instance_id":"unrelated"},"values":[[%d,"10"]]}
-]}}`, start+15, start+30, start+45, start, start)
+]}}`, start, start, start+15, start+30, start+45, start)
 		}
 	}))
 	t.Cleanup(upstream.Close)
@@ -80,15 +82,75 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 	require.Equal(t, "cpu", cpu.ID)
 	require.False(t, cpu.Unavailable)
 	require.Equal(t, []performanceSeries{
-		{Service: "massd", Instance: "new", Points: [][2]float64{{float64(result.From + 15), 0.5}, {float64(result.From + 45), 0.75}}},
-		{Service: "massd", Instance: "old", Points: [][2]float64{{float64(result.From), 0}}},
+		{Dimensions: map[string]string{"service": "massd", "instance": "new"}, Points: [][2]float64{{float64(result.From + 15), 0.5}, {float64(result.From + 45), 0.75}}},
+		{Dimensions: map[string]string{"service": "massd", "instance": "old"}, Points: [][2]float64{{float64(result.From), 0}}},
+		{Dimensions: map[string]string{"service": "superagent-core", "instance": "first"}, Points: [][2]float64{{float64(result.From), 1}}},
 	}, cpu.Series)
 	require.NotNil(t, result.Metrics[2].Series)
 	require.Empty(t, result.Metrics[2].Series)
 	require.False(t, result.Metrics[2].Unavailable)
 	require.True(t, result.Metrics[3].Unavailable)
-	_, err = reader.performance(t.Context(), "unbounded")
+	_, err = reader.performance(t.Context(), url.Values{"window": {"unbounded"}})
 	require.ErrorContains(t, err, "invalid performance window")
-	_, err = (*observerTraceReader)(nil).performance(t.Context(), "")
+	_, err = (*observerTraceReader)(nil).performance(t.Context(), nil)
 	require.ErrorContains(t, err, "Performance query source is not configured")
+}
+
+func TestObserverPerformanceScopesOpenTelemetryQueries(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "metrics.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), schema)
+	require.NoError(t, err)
+	store := &Store{db: db}
+
+	const total = `sum by (superagent_role) (rate(superagent_mcp_tool_duration_count{service_name="superagent-core",superagent_tool="update_topic"}[5m]))`
+	const failed = `sum by (superagent_role) (rate(superagent_mcp_tool_duration_count{service_name="superagent-core",superagent_tool="update_topic",superagent_outcome!="ok"}[5m]))`
+	cases := []struct {
+		name, query, expression, id string
+		dimensions                  map[string]string
+	}{
+		{"cpu by service", "metric=cpu&groupBy=service&service=massd&instance=first", `sum by (service_name) (rate(process_cpu_time{service_name="massd",service_instance_id="first"}[5m]))`, "cpu", map[string]string{"service": "massd"}},
+		{"action rate", "metric=mcp_rate&groupBy=action&role=topic&tool=update_topic&outcome=ok", `sum by (superagent_action) (rate(superagent_mcp_tool_duration_count{service_name="superagent-core",superagent_role="topic",superagent_tool="update_topic",superagent_outcome="ok"}[5m]))`, "mcp_rate", map[string]string{"action": "edit"}},
+		{"failure denominator", "metric=mcp_failure_rate&groupBy=role&tool=update_topic", "(" + failed + " or (0 * " + total + ")) / (" + total + " > 0)", "mcp_failure_rate", map[string]string{"role": "topic"}},
+		{"histogram P95", "metric=mcp_p95&groupBy=outcome&action=edit", `histogram_quantile(0.95, sum by (le, superagent_outcome) (rate(superagent_mcp_tool_duration_bucket{service_name="superagent-core",superagent_action="edit"}[5m])))`, "mcp_p95", map[string]string{"outcome": "ok"}},
+		{"total", "metric=mcp_rate&groupBy=all", `sum(rate(superagent_mcp_tool_duration_count{service_name="superagent-core"}[5m]))`, "mcp_rate", map[string]string{}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if actual := r.URL.Query().Get("query"); actual != test.expression {
+					t.Errorf("query = %q, want %q", actual, test.expression)
+				}
+				start := r.URL.Query().Get("start")
+				_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"matrix","result":[
+{"metric":{"service_name":"massd","service_instance_id":"first","superagent_role":"topic","superagent_action":"edit","superagent_outcome":"ok","trace_id":"private"},"values":[[%s,"0.5"]]}
+]}}`, start)
+			}))
+			t.Cleanup(upstream.Close)
+			reader, err := newObserverTraceReader(&ObserverTraceConfig{Endpoint: upstream.URL})
+			require.NoError(t, err)
+			t.Cleanup(reader.client.CloseIdleConnections)
+			server := &Server{observerTraces: reader, store: store}
+			response := httptest.NewRecorder()
+			server.query(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, observerPerformancePath+"?"+test.query, http.NoBody))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var result observerPerformance
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+			require.Equal(t, []performanceMetric{{ID: test.id, Series: []performanceSeries{{
+				Dimensions: test.dimensions, Points: [][2]float64{{float64(result.From), 0.5}},
+			}}}}, result.Metrics)
+		})
+	}
+	for _, invalid := range []string{
+		"groupBy=outcome", "metric=arbitrary", "metric=cpu&metric=rss", "metric=mcp_rate&service=massd", "metric=mcp_rate&tool=%22%7D",
+		"metric=mcp_failure_rate&groupBy=outcome", "metric=mcp_failure_rate&outcome=ok", "query=arbitrary", "instance=", "service=other",
+	} {
+		t.Run(invalid, func(t *testing.T) {
+			server := &Server{store: store}
+			response := httptest.NewRecorder()
+			server.query(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, observerPerformancePath+"?"+invalid, http.NoBody))
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+		})
+	}
 }

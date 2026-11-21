@@ -132,7 +132,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 		Content: &structured, Materials: []core.Material{{MessageID: source.MessageID}},
 	}
 	supplement := mcpWork[core.WorkReceipt](t, topic, "issue_session_input", context)
-	require.Equal(t, supplement, mcpWork[core.WorkReceipt](t, topic, "issue_session_input", context))
+	mcpWorkError(t, topic, "issue_session_input", "conflict", context)
 	require.Equal(t, a.Revision+1, supplement.Issue.Revision)
 	require.Equal(t, a.Materials, supplement.Issue.Materials)
 	call := peer.next(t, "thread/inject_items")
@@ -204,7 +204,8 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 
 	complete := core.CompleteIssueRequest{IssueID: b.ID, CompleteRequest: acceptance("complete-b", b.Revision, "verified.txt")}
 	completed := mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete)
-	require.Equal(t, completed, mcpWork[core.WorkReceipt](t, topic, "issue_complete", complete))
+	require.Equal(t, "completed", completed.Issue.Status)
+	mcpWorkError(t, topic, "issue_complete", "conflict", complete)
 	facts := dependencyEvents(t, f)
 	require.Len(t, facts, 1)
 	factInput := peer.next(t, "thread/inject_items")
@@ -248,7 +249,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	mcpWorkError(t, topic, "issue_update_blockers", "invalid_argument", resolve)
 	resolve.UnblockedStatus, resolve.NotifyIssueSession = "active", true
 	resolved := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", resolve)
-	require.Equal(t, resolved, mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", resolve))
+	mcpWorkError(t, topic, "issue_update_blockers", "conflict", resolve)
 	require.Equal(t, "active", resolved.Issue.Status)
 	require.Empty(t, resolved.Issue.Blockers)
 	require.Len(t, resolved.Issue.ResolvedBlockers, 3)
@@ -322,7 +323,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	var updateResponse struct{ Result core.WorkReceipt }
 	require.NoError(t, json.Unmarshal(winner.body, &updateResponse))
 	updated := updateResponse.Result
-	require.Equal(t, updated, mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", winner.req))
+	mcpWorkError(t, topic, "issue_update_requirements", "conflict", winner.req)
 	require.Equal(t, winner.req.Goal, updated.Issue.Requirements)
 	require.Equal(t, a.RequirementsRevision+1, updated.Issue.RequirementsRevision)
 	require.NotEmpty(t, updated.NotificationEventID)
@@ -458,17 +459,16 @@ func TestIssueRequirementsCommitCrash(t *testing.T) {
 				require.Equal(t, beforeReplay.LatestRequirementsEventID, events[0].ID)
 			}
 			mcp := startRoleMCP(t, f, topic)
-			saved := mcpWork[core.WorkReceipt](t, mcp, "issue_update_requirements", r)
-			if stage == "requirements_after_commit" {
-				require.Equal(t, beforeReplay.Issue, saved.Issue)
-				require.Equal(t, beforeReplay.LatestRequirementsEventID, saved.NotificationEventID)
+			saved := core.WorkReceipt{Issue: beforeReplay.Issue, NotificationEventID: beforeReplay.LatestRequirementsEventID}
+			if stage == "requirements_before_notification" {
+				saved = mcpWork[core.WorkReceipt](t, mcp, "issue_update_requirements", r)
 			}
-			require.Equal(t, saved, mcpWork[core.WorkReceipt](t, mcp, "issue_update_requirements", r))
+			mcpWorkError(t, mcp, "issue_update_requirements", "conflict", r)
 			require.Equal(t, r.Goal, saved.Issue.Requirements)
 			require.Equal(t, work.Issue.RequirementsRevision+1, saved.Issue.RequirementsRevision)
 			require.Len(t, workEvents(t, p, "issue_session_update"), 1)
 			require.Equal(t, binding.ID, waitWorkEvent(t, p, saved.NotificationEventID, "sent").Recipient.SessionBindingID)
-			t.Logf("%s restart saw %d committed notifications and matching requirements; replay delivered one event", stage, len(events))
+			t.Logf("%s restart saw %d committed notifications and matching requirements; the committed update delivered one event", stage, len(events))
 		})
 	}
 }

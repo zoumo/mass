@@ -8,19 +8,24 @@ This document describes the current Core implementation.
 `dataDir`, opens `core.sqlite` and starts HTTP. The default directory is
 `./superagent-core-data` relative to the YAML file. Startup prints one JSON
 object with `endpoint`, `observerEndpoint`, and `status: ready`.
-Schema 24 uses SQLite WAL, FULL synchronous durability and foreign keys.
+Schema 25 uses SQLite WAL, FULL synchronous durability and foreign keys.
 
 The database has eight business tables. `threads` and `trigger_messages`
 record ingress and Thread subscriptions. `topics`, `issues`,
 `session_bindings` and `scheduled_tasks` record work, ownership and timing.
 `internal_events` records delivery to Sessions. `outbox` records
 external replies. Reports and PR associations are embedded and exposed
-through read views. Core also stores MCP mutation receipts and tool usage.
+through read views.
 When tracing is enabled, Core stores trace associations. `capabilities/`
 contains private role startup files.
 
-Choose a new empty `dataDir` when upgrading from earlier SQLite schemas or
-JSON v4 state. Startup rejects those directories and preserves their contents.
+Core upgrades schema 24 in one startup transaction. The upgrade drops
+`mcp_tool_calls` and `mcp_mutation_receipts`. It preserves business records,
+internal events and saved Trace associations. A failed startup validation
+rolls back both table removals and the schema version change.
+
+Choose a new empty `dataDir` for schema 23 or earlier, or for JSON v4 state.
+Startup rejects those directories and preserves their contents.
 Keep the old directory for access through its original version.
 If both directories use the same massd, configure a distinct
 `execution.namespace` for the new directory.
@@ -127,9 +132,7 @@ can be replayed after restart with its original native identity.
 No write credential is needed or sent by these trusted-reader endpoints:
 
 - GET/HEAD `/v1/observer/health`
-- GET/HEAD `/v1/observer/mcp-tool-usage`
-- GET/HEAD `/v1/observer/mcp-tool-usage/calls`
-- GET/HEAD `/v1/observer/mcp-tool-usage/metrics`
+- GET/HEAD `/v1/observer/performance`
 - GET/HEAD `/v1/observer/traces/{traceId}`
 - GET/HEAD `/v1/observer/messages[/{id}]`
 - GET/HEAD `/v1/observer/threads[/{escaped-key}]`
@@ -154,43 +157,35 @@ No write credential is needed or sent by these trusted-reader endpoints:
 Use `superagent observe session-bindings --issue-id ISSUE_ID` to list an
 Issue's SessionBindings, or `superagent observe session-bindings ID` to read one.
 
-The MCP usage summary returns `count` and rows grouped by authenticated
-`role`, `callerId`, `tool`, `action` and `outcome`. Rows include `count`,
-`replayed`, `changed`, and total `durationNs`. Filter MCP usage by `role`,
-`callerId`, `sessionBindingId`, `tool`, `topicId`, `issueId`, `messageId`, `from`
-or `until`. Filter by `sessionBindingId` to read calls made with one binding.
-`from` is inclusive and `until` is exclusive. Both accept RFC3339 timestamps.
-`messageId` includes calls with a matching routing event or Message admission
-trace. One call can be associated with more than one Message.
-
-Use `role=topic&callerId=ID` for a Topic's own calls, or `topicId=ID` for the
-Topic and its Issue Agents together. `issueId` matches calls made by that
-Issue Agent and Topic calls with that verified target. The `/calls` endpoint
-lists individual attempts newest first with `traceId`, `spanId`, and associated
-IDs when available. `limit` defaults to 50 and accepts 1–200. Pass `nextBefore`
-as `before` to read the following page.
-
-The `/metrics` endpoint reports the count, failed calls, replays, changes,
-total Core duration and nearest-rank P95. It returns totals, a breakdown by
-role and tool, and the nonempty buckets of a 24-bucket trend.
-`window` accepts `1h`, `24h`, `7d` and `30d`. Metrics defaults to `24h`.
-The same `window` can scope `/calls`. Timing measures Core tool handling.
-
 `trace=true` includes saved Trace associations in supported Observer record
 reads. Topic activity timelines include the associations with each event.
+An Issue has a creation Trace link when Core saved its creation association.
+
 `/traces/{traceId}` returns spans from the OpenObserve stream configured under
 `observerTrace`. Specify a 32-character hexadecimal Trace ID. Lookup covers
 the past seven days by default, or seven days on either side of an optional
 RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
 partial results. The Observer links to `/observer/?perspective=trace&id={traceId}`.
 
-`/performance` reads process and Go runtime metrics from the same OpenObserve
-organization. `window` accepts `15m`, `1h`, `6h` and `24h` and defaults to `1h`.
-The response includes `from`, `until` and `stepSeconds`. Each metric contains
-series grouped by service and process instance. Each point is a pair of Unix
-seconds and a value. The metrics are `cpu` in cores, `rss` in bytes, and
-`goroutines` and `file_descriptors` as counts. A metric with `unavailable: true`
-could not be read. An empty series list indicates no samples in the window.
+`GET /v1/observer/performance` queries OTel time series in OpenObserve. `window`
+accepts `15m`, `1h`, `6h` and `24h` and defaults to `1h`.
+
+- `metric=process` is the default and returns `cpu`, `rss`, `goroutines` and
+  `file_descriptors`. Select a single chart using one of those IDs. Filter by
+  `service` or `instance`. `groupBy` accepts `instance` (default), `service`
+  and `all`. Service totals sum the available process instances.
+- `metric=mcp_rate`, `mcp_failure_rate` and `mcp_p95` query the MCP tool duration
+  histogram. Filter by `role`, `tool`, `action` or `outcome` and group by one of
+  those dimensions, or use `groupBy=all`. The default group is `role`. Failure
+  rate supports grouping and filtering by `role`, `tool` or `action` and uses
+  all outcomes in the denominator.
+
+The response includes `from`, `until` and `stepSeconds`. Each series has a
+`dimensions` object and `points` containing `[unixSeconds, value]` pairs.
+Values are cores for `cpu`, bytes for `rss`, counts for `goroutines` and
+`file_descriptors`, calls per second for `mcp_rate`, a fraction from 0 to 1 for
+`mcp_failure_rate`, and seconds for `mcp_p95`. An empty series list indicates
+no samples. An `unavailable: true` metric indicates a query failure.
 
 Topic activity merges routing events and saved Issue facts in descending `(at, id)` order. The filter applies before pagination. `limit` defaults to 20 and accepts 1–200. `nextCursor` binds the Topic, filter and first-page watermark. Each row identifies its source record. An `issue_snapshot` describes the saved state at `updatedAt`. Lifecycle entries use the timestamp on the saved transition.
 
@@ -492,13 +487,17 @@ These IDs stay fixed after creation, including when an Issue or Topic is
 reopened. Each SessionBinding gets an opaque ID. Reports use their own IDs
 and reference their Topic notification with `eventId`.
 
-All changes require an `operationId` scoped to the authenticated SessionBinding and tool.
-Role MCP calls use the same Core transactions over either transport. Replaying an
-identical creation request returns the saved ID. Reusing its operation ID
+All changes require an `operationId`. Creation tools such as `create_issue`
+and `schedule_followup` use it within the authenticated SessionBinding to
+identify the same resource on an identical retry. Reusing a creation key
 with different parameters returns `conflict`.
-Revision-guarded updates return `conflict` when the expected revision is stale.
-After a lost response, read the current resource and any associated
-internal event before submitting another mutation.
+
+Revision-guarded writes check the current revision and business state on every
+attempt. A stale `expectedRevision` returns `conflict`, even when the operation
+ID matches an earlier successful request. Reusing the operation ID with the
+current revision can apply another change. After a lost response, read the
+current resource and any associated internal event before submitting another
+mutation.
 
 ### Topic tools
 
@@ -673,8 +672,7 @@ the same workspace, Runtime, model, effort and namespace.
 A canceled Topic still accepts new Messages through its subscriptions.
 Messages wait durably while the Topic has no current Session. After settlement,
 they reach the next Topic generation with the same IDs. The Topic stays
-canceled until that owner explicitly reopens it with `update_topic`. The previous Topic
-credential can replay its exact cancellation receipt.
+canceled until that owner explicitly reopens it with `update_topic`.
 
 ## Internal event dispatch
 
@@ -836,10 +834,10 @@ MCP clients call these tools through `/mcp` or the stdio adapter.
 `dueAt` accepts RFC3339 with `Z` or a numeric offset and up to nine fractional
 digits. The record stores the UTC instant. Content must be nonblank. Materials
 use the Issue material shape and the same Topic scope for Message references.
-Replaying the original `schedule_followup` request with the same binding and operation
-ID returns the original receipt. Reusing that operation ID with different
-parameters returns `conflict`. Updates and cancellations compare the current
-revision. A stale revision returns `conflict`.
+Replaying the original `schedule_followup` request with the same binding and
+operation ID returns the followup in its current state. Reusing that operation
+ID with different parameters returns `conflict`. Updates and cancellations
+compare the current revision. A stale revision returns `conflict`.
 Changes to a current `fired`, `canceled` or `invalidated` Timer
 fail with `failed_precondition`. Use a new `schedule_followup` for another followup.
 

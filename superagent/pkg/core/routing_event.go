@@ -171,7 +171,6 @@ func (s *Store) Route(ctx context.Context, b SessionBinding, r RouteRequest) (_ 
 	}
 
 	messages := make(map[string]routeMessage, len(r.MessageIDs))
-	changed := false
 	for _, id := range r.MessageIDs {
 		var m routeMessage
 		var round int
@@ -187,7 +186,6 @@ func (s *Store) Route(ctx context.Context, b SessionBinding, r RouteRequest) (_ 
 			return nil, problem("conflict", "Message routing round is stale or unavailable")
 		}
 		messages[id] = m
-		changed = changed || m.state == "pending"
 	}
 	if s.telemetry.tracesEnabled {
 		var links []trace.Link
@@ -220,7 +218,6 @@ func (s *Store) Route(ctx context.Context, b SessionBinding, r RouteRequest) (_ 
 	if err := tx.Commit(); err != nil {
 		return nil, storageError()
 	}
-	markMCPMutation(ctx, !changed, changed)
 	commitGate("route_after_commit")
 	return json.Marshal(result)
 }
@@ -317,7 +314,7 @@ func (s *Store) DeclineMessage(ctx context.Context, b SessionBinding, r DeclineM
 	if err != nil {
 		return nil, storageError()
 	}
-	if u := mcpUsageFrom(ctx); u != nil {
+	if u := mcpCallTelemetryFrom(ctx); u != nil {
 		u.eventID = r.EventID
 	}
 	if s.telemetry.tracesEnabled {
@@ -329,7 +326,6 @@ func (s *Store) DeclineMessage(ctx context.Context, b SessionBinding, r DeclineM
  WHERE d.kind='route_request' AND d.returned_event_id=?`, r.EventID).Scan(&result)
 	if err == nil {
 		outcome = "duplicate"
-		markMCPMutation(ctx, true, false)
 		return result, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -363,7 +359,6 @@ func (s *Store) DeclineMessage(ctx context.Context, b SessionBinding, r DeclineM
 	if err := tx.Commit(); err != nil {
 		return nil, storageError()
 	}
-	markMCPMutation(ctx, false, true)
 	commitGate("return_after_commit")
 	return result, nil
 }

@@ -8,7 +8,6 @@ import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow
 import { usePages, useRecord, viewHref, type ViewProps } from './observer'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
-import { metricsHref } from './MetricsView'
 import './topic.css'
 
 const actions = {
@@ -223,7 +222,7 @@ function TopicDetail({ id, filter }: {id: string; filter: keyof typeof categorie
       {t.completion && <details className="topic-acceptance"><summary>Topic 业务验收</summary>
         <p>{t.completion.reason}</p>{t.completion.evidence?.map((ref,i) => <p key={i}>{ref}</p>)}</details>}
       <nav className="topic-links" aria-label="Topic 关联记录">
-        <a href={viewHref('issue','',{ topicId:id })}>所属 Issue →</a><a href={metricsHref('topic', id)}>工具用量 →</a>
+        <a href={viewHref('issue','',{ topicId:id })}>所属 Issue →</a>
         {t.sessionBindingId && <a href={recordHref('session-bindings',{id:t.sessionBindingId})}>查看 Session →</a>}
         <a href={recordHref('subscriptions',{topicId:id})}>来源订阅 →</a>
         <a href={recordHref('pull-requests',{topicId:id})}>关联 PR →</a>
