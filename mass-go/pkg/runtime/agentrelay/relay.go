@@ -28,9 +28,6 @@ type Config struct {
 	// ExpectedEOF identifies a transport EOF requested by the Driver owner.
 	// A nil predicate treats EOF as a normal end of observation.
 	ExpectedEOF func() bool
-	// ObservationFailure identifies an SDK event that preserves a non-fatal
-	// provider session but loses observation coverage required by MASS.
-	ObservationFailure func(agent.Event) error
 }
 
 type Relay struct {
@@ -95,15 +92,6 @@ func (r *Relay) consume(ctx context.Context, config Config, stream agent.EventSt
 			r.setErr(err)
 			return
 		}
-		var failure error
-		if config.ObservationFailure != nil {
-			failure = config.ObservationFailure(event)
-			if failure != nil {
-				// Make the loss visible to concurrent operations before a
-				// backpressured sink has accepted the triggering SDK event.
-				r.setErr(failure)
-			}
-		}
 		if config.Interactions != nil {
 			var publish bool
 			mapped, publish, err = config.Interactions.observe(mapped)
@@ -120,9 +108,6 @@ func (r *Relay) consume(ctx context.Context, config Config, stream agent.EventSt
 				return
 			}
 			r.setErr(err)
-			return
-		}
-		if failure != nil {
 			return
 		}
 	}

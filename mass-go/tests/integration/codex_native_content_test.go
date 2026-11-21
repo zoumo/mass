@@ -1,11 +1,19 @@
 package integration_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
@@ -61,16 +69,21 @@ settled:
 }
 
 func (s *failureSuite) TestCodexUnsupportedNativeImage() {
-	s.codexUnsupportedNativeContent("native-image")
+	s.codexUnsupportedNativeContent("native-image", []string{"userMessage"})
 }
 
 func (s *failureSuite) TestCodexUnsupportedNativeFutureContent() {
-	s.codexUnsupportedNativeContent("native-unknown")
+	s.codexUnsupportedNativeContent("native-unknown", []string{"userMessage", "futureNativeItem"})
 }
 
-func (s *failureSuite) codexUnsupportedNativeContent(scenario string) {
+func (s *failureSuite) codexUnsupportedNativeContent(scenario string, itemTypes []string) {
+	recorder := tracetest.NewSpanRecorder()
+	traceProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	s.T().Cleanup(func() { s.NoError(traceProvider.Shutdown(context.Background())) })
+	s.reg = runtime.NewRegistry(map[string]runtime.Factory{
+		"codex": codex.Factory{RecoveryDir: s.T().TempDir(), TracerProvider: traceProvider},
+	})
 	s.start("codex", scenario, s.st)
-	s.unknown = true
 	ref := s.open("unsupported")
 	handler, err := transport.New(s.svc, withTestWriteTimeout(transport.Options{}))
 	s.Require().NoError(err)
@@ -82,28 +95,70 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string) {
 	defer observer.Close()
 	s.Require().NoError(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
 	observation := s.sessionObservation(ref)
-	select {
-	case <-observation.Done():
-	case <-ctx(s.T()).Done():
-		s.FailNow("unsupported native content did not fail its original observation")
-	}
-	var operation *runtime.OperationError
-	s.Require().ErrorAs(observation.Err(), &operation)
-	s.Equal("unavailable", operation.Code)
-	s.Equal("unsupported_native_item", operation.Reason)
+	diagnostics := 0
+	var answered bool
 	for {
 		e, err := observer.Next(ctx(s.T()))
 		s.Require().NoError(err)
 		s.Require().NotEqual("user.message", e.Type(), "a mixed supported/unsupported message must not be partially emitted")
-		if problem, ok := e.Payload().(events.SessionError); ok {
+		switch problem := e.Payload().(type) {
+		case events.SessionError:
 			s.Equal("unsupported_native_item", problem.Reason)
-			break
+			diagnostics++
+		case events.AgentMessage:
+			s.Equal([]events.ContentBlock{events.Text("complete answer")}, problem.Content)
+			answered = true
+		case events.StateUpdate:
+			meta, _ := e.Meta["codex"].(map[string]any)
+			if meta["method"] == "turn/completed" {
+				s.Require().NotNil(problem.State)
+				s.Equal(events.Idle, *problem.State)
+				goto settled
+			}
 		}
 	}
-	s.Require().Error(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must not resend")}}, nil))
+settled:
+	s.Equal(len(itemTypes), diagnostics)
+	s.True(answered)
+	select {
+	case <-observation.Done():
+		s.FailNow("unsupported item ended the original observation", "%v", observation.Err())
+	default:
+	}
+	s.Require().NoError(observation.Err())
+	s.Require().Eventually(func() bool {
+		var current resource.Session
+		return c.GetSession(ctx(s.T()), ref, &current) == nil && current.Status.State == events.Idle
+	}, time.Second, time.Millisecond)
+
+	var tracedTypes []string
+	for _, span := range recorder.Ended() {
+		if span.Name() != "codex.unsupported_native_item" {
+			continue
+		}
+		var itemType string
+		for _, attr := range span.Attributes() {
+			if attr.Key == "codex.item.type" {
+				itemType = attr.Value.AsString()
+			}
+		}
+		tracedTypes = append(tracedTypes, itemType)
+		s.ElementsMatch([]attribute.KeyValue{
+			attribute.String("reason", "unsupported_native_item"),
+			attribute.String("codex.method", "item/completed"),
+			attribute.String("codex.item.type", itemType),
+		}, span.Attributes())
+		s.Empty(span.Events())
+	}
+	s.Equal(itemTypes, tracedTypes)
+
 	var history store.HistoryPage
 	s.Require().NoError(c.History(ctx(s.T()), ref, store.HistoryQuery{}, &history))
 	for _, e := range history.Events {
 		s.NotEqual("user.message", e.Type(), "no lossy partial text in public history")
 	}
+	_, err = s.svc.CloseSession(ctx(s.T()), ref)
+	s.Require().NoError(err)
+	_, err = s.svc.StopRuntime(ctx(s.T()), "agent")
+	s.Require().NoError(err)
 }

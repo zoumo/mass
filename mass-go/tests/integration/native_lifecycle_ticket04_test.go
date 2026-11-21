@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -208,9 +209,11 @@ func TestTicket04DriverCloseWaitsForEventRouting(t *testing.T) {
 	}
 }
 
-func TestTicket04CodexCloseAndStopAfterObservationFailure(t *testing.T) {
+func TestTicket04CodexCloseAndStopAfterUnsupportedItem(t *testing.T) {
 	path, work := nativeScenario(t, "codex", "native-unknown")
-	d, err := (codex.Factory{RecoveryDir: t.TempDir()}).New("test", runtime.Config{"executable": mock, "scenario": path})
+	tracer := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { require.NoError(t, tracer.Shutdown(context.Background())) })
+	d, err := (codex.Factory{RecoveryDir: t.TempDir(), TracerProvider: tracer}).New("test", runtime.Config{"executable": mock, "scenario": path})
 	require.NoError(t, err)
 	stream, err := d.Events()
 	require.NoError(t, err)
@@ -234,6 +237,7 @@ func TestTicket04CodexCloseAndStopAfterObservationFailure(t *testing.T) {
 		<-readDone
 	})
 	failure := make(chan events.SessionError, 1)
+	completed := make(chan struct{}, 1)
 	go func() {
 		defer close(readDone)
 		for {
@@ -247,11 +251,17 @@ func TestTicket04CodexCloseAndStopAfterObservationFailure(t *testing.T) {
 				default:
 				}
 			}
+			if event.Source().WorkTerminal() {
+				select {
+				case completed <- struct{}{}:
+				default:
+				}
+			}
 		}
 	}()
 	_, err = d.Start(ctx(t))
 	require.NoError(t, err)
-	opened, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "failed-observation"}, runtime.SessionSpec{Cwd: work})
+	opened, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "unsupported-item"}, runtime.SessionSpec{Cwd: work})
 	require.NoError(t, err)
 
 	_, err = d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
@@ -260,16 +270,19 @@ func TestTicket04CodexCloseAndStopAfterObservationFailure(t *testing.T) {
 	case problem := <-failure:
 		require.Equal(t, "unsupported_native_item", problem.Reason)
 	case <-ctx(t).Done():
-		t.Fatal("unsupported native observation was not surfaced")
+		t.Fatal("unsupported native item diagnostic was not surfaced")
 	}
-	require.Eventually(t, func() bool {
-		_, sendErr := d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("must not send")}})
-		return sendErr != nil
-	}, time.Second, time.Millisecond)
+	select {
+	case <-completed:
+	case <-opened.Observation.Done():
+		t.Fatalf("observation ended before the Turn completed: %v", opened.Observation.Err())
+	case <-ctx(t).Done():
+		t.Fatal("Turn completion was not surfaced")
+	}
 
 	closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	require.NoError(t, d.CloseSession(closeCtx, opened.SessionID), "prior observation failure must not replace successful SDK close")
+	require.NoError(t, d.CloseSession(closeCtx, opened.SessionID))
 	require.NoError(t, d.Stop(closeCtx), "a settled session must not block provider stop")
 }
 

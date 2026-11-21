@@ -154,6 +154,17 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	peer.quiet(t, 300*time.Millisecond)
 	require.Empty(t, workEvents(t, p, reportReminder))
 
+	second.notify("item/completed", map[string]any{
+		"threadId":      b.SessionID,
+		"turnId":        "work-two",
+		"completedAtMs": time.Now().UnixMilli(),
+		"item":          map[string]string{"type": "futureNativeItem", "id": "future-1"},
+	})
+	ev = nextNativeMethod(t, sub, "item/completed")
+	require.Equal(t, "unsupported_native_item", ev.Payload().(events.SessionError).Reason)
+	require.Equal(t, b.SessionID, ev.SessionID)
+	require.Equal(t, "work-two", ev.Meta["codex"].(map[string]any)["turnId"])
+
 	second.idle()
 	ev = nextNativeMethod(t, sub, "thread/status/changed")
 	require.Equal(t, events.Idle, *ev.Payload().(events.StateUpdate).State)
@@ -165,6 +176,7 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	require.Equal(t, b.SessionUID, ended.WorkObservation.SessionUID)
 	require.Equal(t, b.SessionID, ended.WorkObservation.SessionID)
 	require.True(t, ended.WorkObservation.Continuous)
+	require.Empty(t, ended.WorkObservation.ObservationGap)
 	require.Equal(t, "already_scheduled", ended.ReminderEligibility)
 	reminder := checkReminderCall(t, peer, b, ended)
 	reminder.answer <- nativeSubmitAnswer{workID: "reminder-turn", complete: true}
@@ -183,7 +195,7 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	}
 	require.Equal(t, update.Issue, readRecord[core.Issue](t, p, "issues/"+work.Issue.ID))
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+topicBinding.OwnerID).Status)
-	t.Log("Initial idle, child completion and stale earlier work did not qualify. Current Session idle scheduled one reminder.")
+	t.Log("Issue observation continued after the unsupported item. Current Session idle scheduled one reminder.")
 }
 
 func TestReportReminderAfterCrashAndDuplicate(t *testing.T) {

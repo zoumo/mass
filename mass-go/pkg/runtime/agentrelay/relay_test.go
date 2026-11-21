@@ -277,52 +277,6 @@ func TestRelayUnexpectedEOFIsTerminal(t *testing.T) {
 	require.Equal(t, "session_observation_eof", operation.Reason)
 }
 
-func TestRelayObservationFailureForwardsOnlyGenuineEvent(t *testing.T) {
-	problem := agent.Event{
-		EventID:   "01234567-89ab-4cde-8fab-0123456789ab",
-		SessionID: "native-1",
-		Time:      time.Date(2026, 11, 10, 1, 2, 3, 0, time.UTC),
-		Payload:   agent.SessionErrorPayload{Message: "unsupported item", Reason: "unsupported_native_item"},
-	}
-	received := make(chan events.SessionEvent, 2)
-	relay, err := Start(context.Background(), Config{
-		Session:     &fakeSession{stream: &fakeStream{events: []agent.Event{problem}}},
-		Address:     runtime.Address{Namespace: "one", SessionName: "demo"},
-		Source:      events.NewSource(),
-		ExpectedEOF: func() bool { return true },
-		ObservationFailure: func(event agent.Event) error {
-			payload := event.Payload.(agent.SessionErrorPayload)
-			if payload.Reason != "unsupported_native_item" {
-				return nil
-			}
-			return &runtime.OperationError{
-				Code:    "unavailable",
-				Reason:  payload.Reason,
-				Message: payload.Message,
-			}
-		},
-		Sink: func(_ context.Context, event events.SessionEvent) error {
-			received <- event
-			return nil
-		},
-	})
-	require.NoError(t, err)
-	select {
-	case <-relay.Done():
-	case <-time.After(time.Second):
-		t.Fatal("relay did not stop after observation failure")
-	}
-
-	first := <-received
-	require.Equal(t, "unsupported_native_item", failureReason(t, first.Payload()))
-	select {
-	case event := <-received:
-		t.Fatalf("unexpected duplicate terminal event: %s", event.Type())
-	default:
-	}
-	require.Error(t, relay.Err())
-}
-
 func TestRelayCloseUnblocksSinkWithRelayContext(t *testing.T) {
 	entered := make(chan struct{})
 	relay, err := Start(context.Background(), Config{
@@ -417,13 +371,6 @@ func TestRelayDoesNotSynthesizeOnNormalEOF(t *testing.T) {
 		t.Fatalf("unexpected event on normal EOF: %s", event.Type())
 	default:
 	}
-}
-
-func failureReason(t *testing.T, payload events.Payload) string {
-	t.Helper()
-	failure, ok := payload.(events.SessionError)
-	require.True(t, ok)
-	return failure.Reason
 }
 
 func TestReceiptCapabilityAndErrorMapping(t *testing.T) {

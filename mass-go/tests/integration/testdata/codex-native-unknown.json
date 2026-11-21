@@ -103,6 +103,7 @@
       "wire": {
         "id": 93,
         "method": "turn/start",
+        "trace": {"traceparent": "$generated-sampled-traceparent"},
         "params": {
           "threadId": "codex-session",
           "input": [
@@ -235,6 +236,53 @@
       "ordinal": 10
     },
     {
+      "ordinal": 11,
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "futureNativeItem",
+            "id": "future-1",
+            "payload": {"text": "fixture-private"}
+          },
+          "completedAtMs": 1792458123000
+        }
+      }
+    },
+    {
+      "ordinal": 12,
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {"type": "agentMessage", "id": "message-1", "text": "complete answer"},
+          "completedAtMs": 1792458123000
+        }
+      }
+    },
+    {
+      "ordinal": 13,
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {"id": "turn-1", "status": "completed", "items": []}
+        }
+      }
+    },
+    {
       "direction": "c2s",
       "channel": "protocol",
       "epoch": 1,
@@ -245,7 +293,7 @@
           "threadId": "codex-session"
         }
       },
-      "ordinal": 11
+      "ordinal": 14
     },
     {
       "direction": "s2c",
@@ -257,7 +305,7 @@
           "status": "unsubscribed"
         }
       },
-      "ordinal": 12
+      "ordinal": 15
     },
     {
       "direction": "s2c",
@@ -269,10 +317,10 @@
           "threadId": "codex-session"
         }
       },
-      "ordinal": 13
+      "ordinal": 16
     },
     {
-      "ordinal": 14,
+      "ordinal": 17,
       "direction": "s2c",
       "epoch": 1,
       "channel": "protocol",

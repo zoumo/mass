@@ -182,7 +182,7 @@ func (w *issueWatch) consume(ctx context.Context, b SessionBinding) {
 		}
 		if problem, ok := event.Payload().(events.SessionError); ok {
 			switch problem.Reason {
-			case "unsupported_native_item", "session_delivery_overloaded", "session_state_missing", "session_state_unsupported":
+			case "session_delivery_overloaded", "session_state_missing", "session_state_unsupported":
 				o.loseContinuity("native_observation_interrupted")
 				return
 			}
