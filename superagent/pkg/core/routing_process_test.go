@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -535,7 +536,7 @@ func (c *roleMCPClient) call(method string, params any) map[string]json.RawMessa
 	require.NoError(c.t, err)
 	status, body := sendMCPRequest(c.t, req)
 	require.Equal(c.t, http.StatusOK, status, string(body))
-	decodeMCPResponse(c.t, body, fmt.Sprint(c.seq))
+	decodeMCPResponse(c.t, body, strconv.Itoa(c.seq))
 	var result map[string]json.RawMessage
 	require.NoError(c.t, json.Unmarshal(body, &result))
 	return result
