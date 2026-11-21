@@ -92,7 +92,7 @@ func (r *observerTraceReader) performanceRange(ctx context.Context, from, until,
 		"query": {query}, "start": {strconv.FormatInt(from, 10)},
 		"end": {strconv.FormatInt(until, 10)}, "step": {strconv.FormatInt(step, 10)},
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.metricsURL+"?"+params.Encode(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.metricsURL+"?"+params.Encode(), http.NoBody)
 	if err != nil {
 		return series, false
 	}
