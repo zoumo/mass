@@ -68,7 +68,7 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 	require.NoError(t, err)
 	server := &Server{observerTraces: reader, store: &Store{db: db}}
 	response := httptest.NewRecorder()
-	server.query(response, httptest.NewRequest(http.MethodGet, observerPerformancePath+"?window=15m", http.NoBody))
+	server.query(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, observerPerformancePath+"?window=15m", http.NoBody))
 	require.Equal(t, http.StatusOK, response.Code)
 	var result observerPerformance
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
