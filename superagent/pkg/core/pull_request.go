@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"net/url"
 	"regexp"
 	"slices"
@@ -54,12 +53,6 @@ func canonicalPullRequestURL(raw string) (string, error) {
 	return "https://github.com/" + strings.ToLower(path[1]+"/"+path[2]) + "/pull/" + number, nil
 }
 
-type RegisterPRRequest struct {
-	OperationID string `json:"operationId"`
-	URL         string `json:"url"`
-	IssueID     string `json:"issueId,omitempty"`
-}
-
 type PullRequest struct {
 	ID               string `json:"id"`
 	CanonicalURL     string `json:"canonicalUrl"`
@@ -76,59 +69,14 @@ type pullRequestLink struct {
 	Sequence int64 `json:"sequence"`
 }
 
-func (s *Store) registerPR(ctx context.Context, b SessionBinding, raw []byte) (json.RawMessage, error) {
-	if b.Role != "topic" && b.Role != "issue" {
-		return nil, problem("forbidden", "only Topic and current Issue Session can register a PR")
-	}
-	var r RegisterPRRequest
-	if b.Role == "issue" {
-		var args struct {
-			OperationID string `json:"operationId"`
-			URL         string `json:"url"`
-		}
-		if err := decodeStrict(raw, &args); err != nil {
-			return nil, err
-		}
-		r.OperationID, r.URL = args.OperationID, args.URL
-	} else if err := decodeStrict(raw, &r); err != nil {
-		return nil, err
-	}
-	canonical, err := canonicalPullRequestURL(r.URL)
-	if err != nil {
-		return nil, err
-	}
-	r.URL = canonical
-	return s.commitWork(ctx, b, "pr_register", r.OperationID, func(ctx context.Context, tx *sql.Tx, binding SessionBinding) (any, error) {
-		topicID := binding.OwnerID
-		var issue Issue
-		var sessionBindingID string
-		var err error
-		if binding.Role == "issue" {
-			var current SessionBinding
-			issue, current, err = currentBoundIssue(ctx, tx, binding)
-			topicID, sessionBindingID = issue.TopicID, current.ID
-		} else if r.IssueID != "" {
-			issue, err = topicIssue(ctx, tx, binding, r.IssueID)
-		}
-		if err != nil {
-			return nil, err
-		}
-		var topic Topic
-		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, topicID); err != nil {
-			return nil, err
-		}
-		return registerWorkPullRequest(ctx, tx, topic, issue, canonical, sessionBindingID)
-	})
-}
-
-func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonical, sessionBindingID string) (PullRequest, error) {
+func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonical, sessionBindingID string) error {
 	matches := func(link pullRequestLink) bool { return link.CanonicalURL == canonical }
 	topicIndex := slices.IndexFunc(topic.PullRequests, matches)
 	if issue.ID == "" && topicIndex >= 0 {
-		return topic.PullRequests[topicIndex].PullRequest, nil
+		return nil
 	}
 	if i := slices.IndexFunc(issue.PullRequests, matches); i >= 0 {
-		return issue.PullRequests[i].PullRequest, nil
+		return nil
 	}
 
 	ref := ThreadRef{Source: pullRequestSource, ID: canonical}
@@ -136,23 +84,23 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 		CanonicalURL: canonical, TopicID: topic.ID, ThreadKey: ThreadKey(ref), CreatedAt: now(),
 	}}
 	if err := upsertThread(ctx, tx, link.ThreadKey, ref, link.CreatedAt, ""); err != nil {
-		return PullRequest{}, err
+		return err
 	}
 	subID, err := ensureSubscription(ctx, tx, Subscription{
 		TopicID: topic.ID, ThreadKey: link.ThreadKey, CreatedAt: link.CreatedAt,
 	})
 	if err != nil {
-		return PullRequest{}, err
+		return err
 	}
 	link.SubscriptionID = subID
 	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0)+1 FROM work_pull_requests").Scan(&link.Sequence); err != nil {
-		return PullRequest{}, storageError()
+		return storageError()
 	}
 	if topicIndex < 0 {
 		link.ID = newID("pr")
 		topic.PullRequests = append(topic.PullRequests, link)
 		if err := putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", topic, topic.ID); err != nil {
-			return PullRequest{}, err
+			return err
 		}
 		link.Sequence++
 	}
@@ -160,8 +108,8 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 		link.ID, link.IssueID, link.SessionBindingID = newID("pr"), issue.ID, sessionBindingID
 		issue.PullRequests = append(issue.PullRequests, link)
 		if err := saveIssue(ctx, tx, issue); err != nil {
-			return PullRequest{}, err
+			return err
 		}
 	}
-	return link.PullRequest, nil
+	return nil
 }

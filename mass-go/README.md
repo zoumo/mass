@@ -352,10 +352,10 @@ MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordCodexBasic$'
 ```
 
-The permission case uses an explicit native `on-request` approval policy and a
-read-only sandbox. Its prompt requests a harmless project-local write, and the
-test answers the allow option actually offered by Codex; it never auto-approves
-or invents an option.
+The permission case selects `manualReview` in `SessionSpec.Config`. It requests
+approval to write a proof file beside the project in the test's private
+scratch directory, outside the workspace-write sandbox. The test selects the
+allow-once option offered by Codex and verifies the file contents.
 
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
@@ -391,8 +391,9 @@ Set `MASS_RECORD_CLAUDE_BASIC_OUTPUT` or
 `MASS_RECORD_CLAUDE_PERMISSION_OUTPUT` to publish to another absolute path.
 Claude opens with `--await-claim`; MASS does not pass `--session-id` and takes
 the native identity returned by `claim_session`.
-The permission wrapper supplies only the inline `permissions.ask: ["Bash"]`
-setting and answers the offered `allow-once` option through MASS. Testify
+The permission case selects `manualReview` and writes settings in the temporary
+project to require Bash approval and disable automatic approval for sandboxed
+Bash. It answers the offered `allow-once` option through MASS. Testify
 isolates `HOME` during `prepare`; if Claude authentication is stored in
 `~/.claude/settings.json` environment values, expose the configured
 `ANTHROPIC_BASE_URL` and token only in the recording process environment. Do not

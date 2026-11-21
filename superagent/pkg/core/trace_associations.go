@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"slices"
+	"strings"
 
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -141,14 +142,12 @@ func issueLifecycleTraces(id, at string) string {
 
 func observerIssueActivityTraces(body, id string) string {
 	// The activity uses the transition timestamp stored in the same transaction.
-	projection := "json_set(" + body + ",'$.lifecycleTraces',json_object("
-	for index, transition := range []struct{ kind, at string }{{"completion", "completedAt"}, {"cancellation", "at"}, {"reopening", "at"}} {
-		if index != 0 {
-			projection += ","
-		}
+	var lifecycle []string
+	for _, transition := range []struct{ kind, at string }{{"completion", "completedAt"}, {"cancellation", "at"}, {"reopening", "at"}} {
 		at := "json_extract(" + body + ",'$." + transition.kind + "." + transition.at + "')"
-		projection += "'" + transition.kind + "',json(" + issueLifecycleTraces(id, at) + ")"
+		lifecycle = append(lifecycle, "'"+transition.kind+"',json("+issueLifecycleTraces(id, at)+")")
 	}
-	return projection + `),'$.reports',json((SELECT json_group_array(json(` + observerTraceProjection("reports", "", "report.value") + `))
+	return "json_set(" + body + ",'$.lifecycleTraces',json_object(" + strings.Join(lifecycle, ",") +
+		`),'$.reports',json((SELECT json_group_array(json(` + observerTraceProjection("reports", "", "report.value") + `))
  FROM json_each(issues.body,'$.reports') report)))`
 }

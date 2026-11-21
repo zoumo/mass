@@ -84,7 +84,7 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.ID == nil {
 		observe()
-		if request.Method != "notifications/initialized" && request.Method != "notifications/cancelled" {
+		if request.Method != "notifications/initialized" && request.Method != "notifications/cancelled" { //nolint:misspell // MCP wire method.
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}

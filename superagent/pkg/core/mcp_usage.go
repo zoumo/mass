@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	rpc2 "github.com/sourcegraph/jsonrpc2"
@@ -178,7 +179,8 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 	metrics := mode == "metrics"
 	window := 24 * time.Hour
 	limit := 50
-	where := " WHERE 1=1"
+	var where strings.Builder
+	where.WriteString(" WHERE 1=1")
 	var args []any
 	for key, values := range q {
 		if len(values) != 1 || values[0] == "" {
@@ -190,13 +192,13 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 			if value != "router" && value != "topic" && value != "issue" {
 				return nil, problem("invalid_argument", "role must be router, topic or issue")
 			}
-			where += " AND caller_role=?"
+			where.WriteString(" AND caller_role=?")
 		case "callerId":
-			where += " AND caller_id=?"
+			where.WriteString(" AND caller_id=?")
 		case "sessionBindingId":
-			where += " AND session_binding_id=?"
+			where.WriteString(" AND session_binding_id=?")
 		case "tool":
-			where += " AND tool=?"
+			where.WriteString(" AND tool=?")
 		case "window":
 			switch value {
 			case "1h":
@@ -212,16 +214,16 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 			}
 			continue
 		case "messageId":
-			where += ` AND (event_id IN (SELECT event_id FROM routing_events WHERE message_id=?)`
+			where.WriteString(` AND (event_id IN (SELECT event_id FROM routing_events WHERE message_id=?)`)
 			if s.hasTraceAssociations {
-				where += ` OR (trace_id<>'' AND trace_id IN (SELECT substr(traceparent,4,32) FROM trace_associations WHERE collection='messages' AND object_id=?))`
+				where.WriteString(` OR (trace_id<>'' AND trace_id IN (SELECT substr(traceparent,4,32) FROM trace_associations WHERE collection='messages' AND object_id=?))`)
 				args = append(args, value)
 			}
-			where += ")"
+			where.WriteByte(')')
 		case "topicId":
-			where += " AND topic_id=?"
+			where.WriteString(" AND topic_id=?")
 		case "issueId":
-			where += " AND (issue_id=? OR target_issue_id=?)"
+			where.WriteString(" AND (issue_id=? OR target_issue_id=?)")
 			args = append(args, value)
 		case "limit", "before":
 			n, err := strconv.ParseInt(value, 10, 64)
@@ -232,7 +234,7 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 				limit = int(n)
 				continue
 			}
-			where += " AND seq<?"
+			where.WriteString(" AND seq<?")
 		case "from", "until":
 			at, err := time.Parse(time.RFC3339Nano, value)
 			if err != nil {
@@ -240,9 +242,9 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 			}
 			value = at.UTC().Format(utcTimestamp)
 			if key == "from" {
-				where += " AND at>=?"
+				where.WriteString(" AND at>=?")
 			} else {
-				where += " AND at<?"
+				where.WriteString(" AND at<?")
 			}
 		default:
 			return nil, problem("invalid_argument", "unknown usage filter")
@@ -252,18 +254,18 @@ func (s *Store) mcpToolUsage(ctx context.Context, q url.Values, mode string) (an
 	end := time.Now().UTC().Truncate(time.Second).Add(time.Second)
 	start := end.Add(-window)
 	if metrics || q.Has("window") {
-		where += " AND at>=? AND at<?"
+		where.WriteString(" AND at>=? AND at<?")
 		args = append(args, start.Format(utcTimestamp), end.Format(utcTimestamp))
 	}
 	if metrics {
-		return s.mcpToolMetrics(ctx, where, args, start, end)
+		return s.mcpToolMetrics(ctx, where.String(), args, start, end)
 	}
 	if calls {
-		return s.mcpToolCalls(ctx, where, args, limit)
+		return s.mcpToolCalls(ctx, where.String(), args, limit)
 	}
 	page := mcpUsagePage{Items: []mcpUsageRow{}}
 	rows, err := s.db.QueryContext(ctx, `SELECT caller_role,caller_id,tool,action,outcome,COUNT(*),SUM(replayed),SUM(changed),SUM(duration_ns)
- FROM mcp_tool_calls`+where+` GROUP BY caller_role,caller_id,tool,action,outcome ORDER BY 1,2,3,4,5`, args...)
+ FROM mcp_tool_calls`+where.String()+` GROUP BY caller_role,caller_id,tool,action,outcome ORDER BY 1,2,3,4,5`, args...)
 	if err != nil {
 		return page, storageError()
 	}

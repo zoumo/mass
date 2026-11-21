@@ -110,8 +110,9 @@ The JSON array accepts native provider selection/configuration overrides only.
 The model itself still goes through public SessionSpec.Config. The overrides
 do not change personal configuration or approve tools. Credentials stay in
 testify's private session staging and are excluded from published materials.
-Permission alone uses `approval_policy=on-request` and `sandbox_mode=read-only`.
-There is no global auto-approval.
+The permission case selects `manualReview` through `SessionSpec.Config` and
+requests approval to write a proof file outside the workspace, inside the
+test's scratch directory.
 
 Recheck CLI executable/version/hash, authentication, provider route and the
 actual served DeepSeek model before a new formal recording. A default ChatGPT

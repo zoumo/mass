@@ -77,9 +77,9 @@ type AgentPromptView interface {
 	MarshalAgentPromptJSON() ([]byte, error)
 }
 
-var _ AgentPromptView = internalEvent{}
+var _ AgentPromptView = (*internalEvent)(nil)
 
-func (d internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
+func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 	event := map[string]any{"event_id": d.ID, "kind": d.Kind}
 	var refKind string
 	var bodyKeys []string

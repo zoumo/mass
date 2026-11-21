@@ -43,7 +43,8 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 		{name: "namespace", modify: func(b *SessionBinding) { b.Namespace = "other" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spec := makeSpec(config, previous)
+			spec, err := makeSpec(config, previous)
+			require.NoError(t, err)
 			spec.Config.PermissionPreset = tc.saved
 			spec.Features = tc.features
 			require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET spec=?2 WHERE id=?1", spec, previous.ID))
