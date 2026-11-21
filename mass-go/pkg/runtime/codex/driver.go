@@ -110,6 +110,7 @@ type session struct {
 	controlMu    sync.Mutex
 
 	activeWork    string
+	observedTurn  string // root Turn identified by native events or an input receipt
 	lastFinished  string
 	cancelWork    string
 	cancelReceipt runtime.CancelReceipt
@@ -453,6 +454,9 @@ func (d *Driver) sendPrompt(ctx context.Context, id string, input runtime.Input)
 	}
 	if mapped.Result != agent.InputNotApplied && mapped.Submission != "" {
 		s.controlMu.Lock()
+		if mapped.Work != "" {
+			s.observedTurn = mapped.Work
+		}
 		if mapped.Submission != s.lastFinished {
 			s.setActiveWorkLocked(mapped.Submission)
 		}
@@ -553,6 +557,13 @@ func (s *session) observeWork(event events.SessionEvent, work string) {
 	}
 	s.controlMu.Lock()
 	defer s.controlMu.Unlock()
+	meta, _ := event.Meta["codex"].(map[string]any)
+	if _, child := meta["sourceThreadId"]; !child {
+		method, _ := meta["method"].(string)
+		if method == "turn/started" || (method == "turn/completed" && s.observedTurn == "") {
+			s.observedTurn = work
+		}
+	}
 	if *state.State == events.Idle {
 		s.lastFinished = work
 		if s.activeWork == "" || s.activeWork == work {

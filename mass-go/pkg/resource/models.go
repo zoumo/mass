@@ -48,6 +48,7 @@ const (
 
 type SessionStatus struct {
 	HistoryLoad       *HistoryLoadStatus       `json:"historyLoad,omitempty"`
+	ReconciledTurn    *ReconciledTurn          `json:"reconciledTurn,omitempty"`
 	SessionID         string                   `json:"sessionId"`
 	State             events.SessionState      `json:"state"`
 	Reason            string                   `json:"reason,omitempty"`
@@ -56,6 +57,14 @@ type SessionStatus struct {
 	Capabilities      runtime.Capabilities     `json:"capabilities,omitempty"`
 	EffectiveFeatures *runtime.SessionFeatures `json:"effectiveFeatures,omitempty"`
 }
+
+// ReconciledTurn is historical evidence from a native query. It remains
+// available after the binding is released and is cleared on successful resume.
+type ReconciledTurn struct {
+	TurnID string `json:"turnId"`
+	Status string `json:"status" enum:"completed,failed,interrupted"`
+}
+
 type SessionLoad struct {
 	Config     *runtime.InitialSessionConfig `json:"config,omitempty"`
 	Metadata   Metadata                      `json:"metadata"`
