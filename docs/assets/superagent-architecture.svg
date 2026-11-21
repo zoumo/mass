@@ -960,7 +960,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         </g>
         <g data-graph-role="automatic-crossover" style="--step:6">
           <path data-graph-role="automatic-crossover-underlay" d="M 723 341 L 834 341" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="topics" data-edge-to="workers" data-edge-label="Schedule Issues" data-edge-key="6" data-edge-id="topics-workers" data-composition-points="723,341;834,341" data-composition-crossover="halo" data-composition-independent="true" d="M 723 341 L 834 341" class="a-emphasis" data-animate="edge" style="--step: 6;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-edge-from="topics" data-edge-to="issue-sessions" data-edge-label="Schedule Issues" data-edge-key="6" data-edge-id="topics-issue-sessions" data-composition-points="723,341;834,341" data-composition-crossover="halo" data-composition-independent="true" d="M 723 341 L 834 341" class="a-emphasis" data-animate="edge" style="--step: 6;" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
 
         <!-- Components -->
@@ -1047,14 +1047,14 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="631" y="355" class="t-muted" font-size="9" text-anchor="middle">Issue scheduling and acceptance</text>
         </g>
 
-        <g id="node-workers" data-node-id="workers" data-node-label="Issue Workers" tabindex="0" role="button" aria-label="Focus Issue Workers, Execution and Reports, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Execution and Reports" data-node-context="Architecture component">
-          <title>Issue Workers · Execution and Reports · Architecture component</title>
+        <g id="node-issue-sessions" data-node-id="issue-sessions" data-node-label="Issue Sessions" tabindex="0" role="button" aria-label="Focus Issue Sessions, Execution and Reports, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Execution and Reports" data-node-context="Architecture component">
+          <title>Issue Sessions · Execution and Reports · Architecture component</title>
           <rect x="834" y="308" width="175" height="66" rx="8" class="c-mask"/>
           <rect x="834" y="308" width="175" height="66" rx="8" class="c-backend" data-animate="node" style="--step: 7; --flow-node-name: archify-relay-node-7;" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(840 314) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" x="921.5" y="339" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Issue Workers</text>
+          <text data-node-label="" x="921.5" y="339" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Issue Sessions</text>
         <text x="921.5" y="355" class="t-muted" font-size="9" text-anchor="middle">Execution and Reports</text>
         </g>
 
@@ -1083,7 +1083,7 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
           <rect x="448.9" y="321" width="77.2" height="14" rx="3" class="c-mask"/>
           <text x="487.5" y="331" class="t-edge-emphasis" font-size="8" text-anchor="middle">Route messages</text>
         </g>
-        <g data-edge-from="topics" data-edge-to="workers" data-edge-label="Schedule Issues" data-edge-key="6" data-edge-id="topics-workers">
+        <g data-edge-from="topics" data-edge-to="issue-sessions" data-edge-label="Schedule Issues" data-edge-key="6" data-edge-id="topics-issue-sessions">
           <rect x="737.5" y="321" width="82" height="14" rx="3" class="c-mask"/>
           <text x="778.5" y="331" class="t-edge-emphasis" font-size="8" text-anchor="middle">Schedule Issues</text>
         </g>

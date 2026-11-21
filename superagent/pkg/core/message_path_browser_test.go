@@ -16,7 +16,7 @@ import (
 func seedMessagePathObserver(t *testing.T) string {
 	t.Helper()
 	boundary := newRouteBoundary(t)
-	f, _ := deliveryFixture(t, boundary.url)
+	f, _ := eventFixture(t, boundary.url)
 	p := f.start()
 	router := roleToken(t, f, waitBinding(t, p, "router", "", "ready"))
 	setup := submit(t, p, f, input("observer-path-setup"))
@@ -35,7 +35,7 @@ func seedMessagePathObserver(t *testing.T) string {
 		boundary.driver.mu.Lock()
 		defer boundary.driver.mu.Unlock()
 		msg := submit(t, p, f, r)
-		roleCall(t, p, firstToken, "message_return", core.ReturnRequest{DeliveryID: msg.EventID, Reason: "需要值班同学一起确认"})
+		roleCall(t, p, firstToken, "decline_message", core.DeclineMessageRequest{EventID: msg.EventID, Reason: "需要值班同学一起确认"})
 		return msg
 	}()
 	ids := []string{m.MessageID}
@@ -59,11 +59,11 @@ func seedMessagePathObserver(t *testing.T) string {
 		if i == 0 || i == 7 {
 			token = secondToken
 		}
-		roleWork[core.WorkReceipt](t, p, token, "issue_create", create)
+		roleWork[core.WorkReceipt](t, p, token, "create_issue", create)
 	}
 	unrelated := issueInput(f.dir, "path-unrelated")
 	unrelated.Title = "归档旧版本日志"
-	roleWork[core.WorkReceipt](t, p, firstToken, "issue_create", unrelated)
+	roleWork[core.WorkReceipt](t, p, firstToken, "create_issue", unrelated)
 
 	partial := submit(t, p, f, input("observer-path-partial-return"))
 	partialIDs := []string{partial.MessageID}
@@ -73,8 +73,8 @@ func seedMessagePathObserver(t *testing.T) string {
 	}
 	dispatched := decide(t, p, router, pass)
 	waitDelivered(t, p, partial.MessageID, "topic", second)
-	roleCall(t, p, secondToken, "message_return", core.ReturnRequest{
-		DeliveryID: dispatched.Targets[1].DeliveryIDs[partial.MessageID], Reason: "值班安排待澄清",
+	roleCall(t, p, secondToken, "decline_message", core.DeclineMessageRequest{
+		EventID: dispatched.Targets[1].EventIDs[partial.MessageID], Reason: "值班安排待澄清",
 	})
 	pass.OperationID, pass.Reason, pass.Rounds[partial.MessageID] = "path-second-pass", "值班安排已明确", 2
 	pass.Targets = []core.RouteTarget{{TopicID: second, MessageIDs: partialIDs}}
@@ -93,11 +93,11 @@ func seedMessagePathObserver(t *testing.T) string {
 	material := issueInput(f.dir, "path-history-gap")
 	material.Title = "留存材料核对"
 	material.Materials = []core.Material{{MessageID: gap.MessageID}}
-	roleWork[core.WorkReceipt](t, p, secondToken, "issue_create", material)
+	roleWork[core.WorkReceipt](t, p, secondToken, "create_issue", material)
 	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite")+"?_pragma=busy_timeout(5000)")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
-	result, err := db.ExecContext(t.Context(), "DELETE FROM internal_deliveries WHERE id=?", gapDecision.Targets[0].DeliveryIDs[gap.MessageID])
+	result, err := db.ExecContext(t.Context(), "DELETE FROM internal_events WHERE event_id=?", gapDecision.Targets[0].EventIDs[gap.MessageID])
 	require.NoError(t, err)
 	deleted, err := result.RowsAffected()
 	require.NoError(t, err)

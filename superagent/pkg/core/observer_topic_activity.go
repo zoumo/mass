@@ -13,23 +13,23 @@ import (
 // and blocker resolutions live inside mutable Issue snapshots and have their
 // own action timestamps. Capture both fences in the first read transaction.
 type topicActivityCursor struct {
-	Topic      string `json:"topic"`
-	Filter     string `json:"filter"`
-	Cutoff     string `json:"cutoff"`
-	Issues     int64  `json:"issues"`
-	Executions int64  `json:"executions"`
-	Deliveries int64  `json:"deliveries"`
-	Reports    int64  `json:"reports"`
-	At         string `json:"at"`
-	ID         string `json:"id"`
+	Topic          string `json:"topic"`
+	Filter         string `json:"filter"`
+	Cutoff         string `json:"cutoff"`
+	Issues         int64  `json:"issues"`
+	Executions     int64  `json:"executions"`
+	InternalEvents int64  `json:"internalEvents"`
+	Reports        int64  `json:"reports"`
+	At             string `json:"at"`
+	ID             string `json:"id"`
 }
 
 const topicMessageEvents = `
- SELECT d.kind, d.created_at, d.id, NULL, json_extract(d.sender,'$.kind'),
+ SELECT d.kind, d.created_at, d.event_id, NULL, json_extract(d.sender,'$.kind'),
  json_object('messageId',d.message_id,'title',substr(json_extract(m.body,'$.text'),1,120),
-  'status',d.status,'deliveryId',d.id,'returnedDeliveryId',d.returned_id)
- FROM routing_deliveries d LEFT JOIN trigger_messages m ON m.id=d.message_id
- WHERE d.topic_id=:topic AND d.seq<=:deliveries`
+  'status',d.status,'eventId',d.event_id,'returnedEventId',d.returned_event_id)
+ FROM routing_events d LEFT JOIN trigger_messages m ON m.id=d.message_id
+ WHERE d.topic_id=:topic AND d.seq<=:internalEvents`
 
 const topicIssueEvents = `
  SELECT 'issue_created', i.created_at, i.id AS ref, i.id AS issue_id, 'topic', '{}'
@@ -37,21 +37,22 @@ const topicIssueEvents = `
  UNION ALL
  SELECT 'execution_started', x.created_at, x.id, x.issue_id, json_extract(d.sender,'$.kind'),
  json_object('executionId',x.id,'generation',x.generation,'goalRevision',json_extract(x.body,'$.goalRevision'),
-  'deliveryId',d.id)
- FROM owned i JOIN executions x ON x.issue_id=i.id LEFT JOIN internal_deliveries d ON d.id=json_extract(x.body,'$.startEventId')
+  'eventId',d.event_id)
+ FROM owned i JOIN executions x ON x.issue_id=i.id LEFT JOIN internal_events d ON d.event_id=json_extract(x.body,'$.startEventId')
  WHERE x.seq<=:executions
  UNION ALL
- SELECT CASE WHEN d.id=json_extract(i.body,'$.latestRequirementsEventId') OR d.id GLOB 'goal-update_*'
-  THEN 'goal_notification' ELSE d.kind END, d.created_at,d.id,i.id,json_extract(d.sender,'$.kind'),
- json_object('goalRevision',json_extract(d.refs,'$[0].goal_revision'),'deliveryId',d.id,
+ SELECT CASE WHEN d.event_id=json_extract(i.body,'$.latestRequirementsEventId') OR d.event_id GLOB 'goal-update_*'
+  THEN 'goal_notification' ELSE d.kind END, d.created_at,d.event_id,i.id,json_extract(d.sender,'$.kind'),
+ json_object('goalRevision',json_extract(d.refs,'$[0].goal_revision'),'eventId',d.event_id,
   'executionId',json_extract(d.recipient,'$.execution_id'),'status',d.status)
- FROM internal_deliveries d JOIN owned i ON i.id=json_extract(d.refs,'$[0].id')
- WHERE d.rowid<=:deliveries AND d.kind IN ('worker_update','context_supplement')
-  AND json_extract(d.refs,'$[0].kind')='issue' AND json_extract(d.recipient,'$.kind')='worker'
+ FROM internal_events d JOIN owned i ON i.id=json_extract(d.refs,'$[0].id')
+ WHERE d.rowid<=:internalEvents AND d.kind IN ('issue_session_update','context_supplement')
+  AND json_extract(d.refs,'$[0].kind')='issue' AND json_extract(d.recipient,'$.kind')='issue'
  UNION ALL
- SELECT 'report_submitted', json_extract(r.value,'$.createdAt'),json_extract(r.value,'$.id'),i.id,'worker',
+ SELECT 'report_submitted', json_extract(r.value,'$.createdAt'),json_extract(r.value,'$.id'),i.id,'issue',
  json_object('reportId',json_extract(r.value,'$.id'),'bindingId',json_extract(r.value,'$.bindingId'),
   'executionId',json_extract(r.value,'$.executionId'),'goalRevision',json_extract(r.value,'$.goalRevision'),
+  'eventId',json_extract(r.value,'$.eventId'),
   'summary',substr(json_extract(r.value,'$.summary'),1,160))
  FROM owned i,json_each(i.body,'$.reports') r WHERE json_extract(r.value,'$.sequence')<=:reports
  UNION ALL
@@ -111,8 +112,8 @@ func (s *Store) topicActivity(ctx context.Context, q url.Values) (Page, error) {
 		err = tx.QueryRowContext(ctx, `SELECT
  (SELECT coalesce(max(seq),0) FROM issues WHERE topic_id=?1),
  (SELECT coalesce(max(seq),0) FROM executions),
- (SELECT coalesce(max(rowid),0) FROM internal_deliveries),
- (SELECT coalesce(max(json_extract(r.value,'$.sequence')),0) FROM issues i,json_each(i.body,'$.reports') r WHERE i.topic_id=?1)`, topic).Scan(&c.Issues, &c.Executions, &c.Deliveries, &c.Reports)
+ (SELECT coalesce(max(rowid),0) FROM internal_events),
+ (SELECT coalesce(max(json_extract(r.value,'$.sequence')),0) FROM issues i,json_each(i.body,'$.reports') r WHERE i.topic_id=?1)`, topic).Scan(&c.Issues, &c.Executions, &c.InternalEvents, &c.Reports)
 		if err != nil {
 			return p, storageError()
 		}
@@ -124,15 +125,24 @@ func (s *Store) topicActivity(ctx context.Context, q url.Values) (Page, error) {
 	case "message":
 		events = topicMessageEvents
 	}
+	const body = `json_patch(json_object('id',event_id,'kind',kind,'at',at,'actor',actor,'issueId',issue_id,
+  'title',title),extra)`
+	projection := body
+	if s.hasTraceAssociations {
+		projection = `json_set(` + body + `,'$.traceAssociations',json(CASE
+ WHEN kind='issue_created' THEN ` + issueCreationTraces("page.ref") + `
+ WHEN kind='execution_started' AND json_extract(extra,'$.eventId') IS NULL THEN ` + observerTraceList("executions", "page.ref") + `
+ WHEN kind IN ('completion','cancellation','reopening') THEN ` + issueLifecycleTraces("page.issue_id", "page.at") + `
+ ELSE ` + observerTraceList("internal-events", "json_extract(page.extra,'$.eventId')") + ` END))`
+	}
 	query := `WITH owned AS (SELECT id,body,created_at FROM issues WHERE topic_id=:topic AND seq<=:issues),
  events(kind,at,ref,issue_id,actor,extra) AS (` + events + `),
- activity AS (SELECT *,kind||'/'||ref||'/'||at AS event_id FROM events)
- SELECT event_id,at,json_patch(json_object('id',event_id,'kind',kind,'at',at,'actor',actor,'issueId',issue_id,
-  'title',json_extract(i.body,'$.title')),extra)
- FROM activity LEFT JOIN owned i ON i.id=activity.issue_id
+ activity AS (SELECT *,kind||'/'||ref||'/'||at AS event_id FROM events),
+ page AS (SELECT activity.*,json_extract(i.body,'$.title') AS title FROM activity LEFT JOIN owned i ON i.id=activity.issue_id
  WHERE at IS NOT NULL AND at<>'' AND at<=:cutoff AND (:afterAt='' OR (at,event_id)<(:afterAt,:afterID))
- ORDER BY at DESC,event_id DESC LIMIT :limit`
-	args := []any{sql.Named("topic", topic), sql.Named("issues", c.Issues), sql.Named("cutoff", c.Cutoff), sql.Named("afterAt", c.At), sql.Named("afterID", c.ID), sql.Named("limit", limit+1), sql.Named("deliveries", c.Deliveries)}
+ ORDER BY at DESC,event_id DESC LIMIT :limit)
+ SELECT event_id,at,` + projection + ` FROM page ORDER BY at DESC,event_id DESC`
+	args := []any{sql.Named("topic", topic), sql.Named("issues", c.Issues), sql.Named("cutoff", c.Cutoff), sql.Named("afterAt", c.At), sql.Named("afterID", c.ID), sql.Named("limit", limit+1), sql.Named("internalEvents", c.InternalEvents)}
 	if filter != "message" {
 		args = append(args, sql.Named("executions", c.Executions), sql.Named("reports", c.Reports))
 	}

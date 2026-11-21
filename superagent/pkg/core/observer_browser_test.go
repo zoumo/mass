@@ -138,7 +138,7 @@ func serveObserverBrowserAudit(t *testing.T, audit *observerBrowserAudit, bounda
 		_ = json.NewEncoder(w).Encode(map[string]string{"endpoint": conversation.process.endpoint})
 	})
 	mux.HandleFunc("POST /topic-conversation-fixture/report", func(w http.ResponseWriter, r *http.Request) {
-		if err := postReport(r.Context(), conversation.process, conversation.workerToken, conversation.report); err != nil {
+		if err := postReport(r.Context(), conversation.process, conversation.issueToken, conversation.report); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -56,12 +56,13 @@ func (i Issue) MarshalAgentPromptJSON() ([]byte, error) {
 	case routedMessageKind:
 		view["revision"] = i.Revision
 	case reportSubmittedKind:
-		view["revision"] = i.Revision
+		view["title"] = i.Title
 		if i.CurrentExecutionID != "" {
 			view["currentExecutionId"] = i.CurrentExecutionID
 		}
 	}
 	if i.promptEventKind != routedMessageKind {
+		view["revision"] = i.Revision
 		view["goal"], view["goalRevision"] = i.Requirements, i.RequirementsRevision
 	}
 	if i.promptEventKind != reportSubmittedKind && len(i.Blockers) != 0 {
@@ -160,14 +161,22 @@ func (s *Store) workCommand(ctx context.Context, b Binding, tool string, raw []b
 		return nil, problem("forbidden", "only Topic can manage its work")
 	}
 	switch tool {
-	case "issue_create":
-		return decodeWorkCommand(ctx, s, b, tool, raw, func(r CreateIssueRequest) string { return r.OperationID }, s.createIssue)
-	case "issue_start":
-		return decodeWorkCommand(ctx, s, b, tool, raw, func(r StartIssueRequest) string { return r.OperationID }, s.startIssue)
+	case "create_issue":
+		var r CreateIssueRequest
+		if err := decodeStrict(raw, &r); err != nil {
+			return nil, err
+		}
+		return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, s.createIssue(r))
+	case "start_issue":
+		var r StartIssueRequest
+		if err := decodeStrict(raw, &r); err != nil {
+			return nil, err
+		}
+		return s.commitMCPMutation(ctx, b, tool, r.OperationID, r, s.startIssue(r))
 	case "issue_update_requirements":
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r UpdateRequirementsRequest) string { return r.OperationID }, updateRequirements)
-	case "issue_worker_update":
-		return decodeWorkCommand(ctx, s, b, tool, raw, func(r WorkerUpdateRequest) string { return r.OperationID }, workerUpdate)
+	case "issue_session_input":
+		return decodeWorkCommand(ctx, s, b, tool, raw, func(r IssueSessionInputRequest) string { return r.OperationID }, issueSessionInput)
 	case "issue_update_blockers":
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r UpdateBlockersRequest) string { return r.OperationID }, updateBlockers)
 	case "issue_complete":
@@ -219,7 +228,7 @@ func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID str
 	if strings.TrimSpace(operationID) == "" {
 		return nil, problem("invalid_argument", "operationId is required")
 	}
-	if kind != "report_submit" {
+	if kind != "submit_report" {
 		if err := checkBinding(ctx, tx, b); err != nil {
 			return nil, err
 		}
@@ -232,7 +241,7 @@ func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID str
 		return nil, storageError()
 	}
 	switch kind {
-	case "report_submit":
+	case "submit_report":
 		commitGate("report_after_commit")
 	case "issue_update_requirements":
 		commitGate("requirements_after_commit")
@@ -244,12 +253,16 @@ func (s *Store) commitWork(ctx context.Context, b Binding, kind, operationID str
 
 func workTraceOperation(tool string) string {
 	switch tool {
-	case "issue_create":
+	case "create_issue":
 		return "issue.create"
-	case "issue_start":
+	case "start_issue":
 		return "issue.start"
-	case "report_submit":
+	case "submit_report":
 		return "report.submit"
+	case "update_issue":
+		return "issue.update"
+	case "update_topic":
+		return "topic.update"
 	case "issue_complete":
 		return "issue.complete"
 	case "topic_complete":
@@ -276,6 +289,9 @@ func topicIssue(ctx context.Context, tx *sql.Tx, b Binding, id string) (Issue, e
 		return issue, problem("invalid_argument", "issueId is required")
 	}
 	err := readJSON(ctx, tx, "SELECT body FROM issues WHERE id=? AND topic_id=?", &issue, id, b.OwnerID)
+	if err == nil {
+		markMCPIssueTarget(ctx, issue.ID)
+	}
 	return issue, err
 }
 
@@ -343,7 +359,7 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		if !filepath.IsAbs(workspace) {
 			return nil, problem("invalid_argument", "workspace must be an absolute path")
 		}
-		profile, err := s.config.Execution.workerProfile(r.RuntimeRef, r.Model)
+		profile, err := s.config.Execution.issueProfile(r.RuntimeRef, r.Model)
 		if err != nil {
 			return nil, err
 		}
@@ -367,8 +383,12 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
  VALUES(?,?,?,'{}',?,?) RETURNING id`, t.ID, number, at, key, digest).Scan(&issue.ID); err != nil {
 			return nil, storageError()
 		}
+		if err := issueCreation.save(ctx, tx, issue.ID, 1); err != nil {
+			return nil, err
+		}
+		markMCPIssueTarget(ctx, issue.ID)
 		if r.Start {
-			return s.scheduleIssue(ctx, tx, issue, deliveryIdentity{Kind: "topic", TopicID: b.OwnerID})
+			return s.scheduleIssue(ctx, tx, issue, eventIdentity{Kind: "topic", TopicID: b.OwnerID})
 		}
 		return WorkReceipt{Issue: issue}, saveIssue(ctx, tx, issue)
 	}
@@ -397,7 +417,7 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 			return nil, problem("conflict", "Issue already has a current Execution")
 		}
 		if r.RuntimeRef != nil {
-			issue.ExecutionProfile, err = s.config.Execution.workerProfile(*r.RuntimeRef, *r.Model)
+			issue.ExecutionProfile, err = s.config.Execution.issueProfile(*r.RuntimeRef, *r.Model)
 			if err != nil {
 				return nil, err
 			}
@@ -405,18 +425,18 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 		if err := resolveBlockers(ctx, tx, &issue, r.Resolve); err != nil {
 			return nil, err
 		}
-		return s.scheduleIssue(ctx, tx, issue, deliveryIdentity{Kind: "topic", TopicID: b.OwnerID})
+		return s.scheduleIssue(ctx, tx, issue, eventIdentity{Kind: "topic", TopicID: b.OwnerID})
 	}
 }
 
-func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, sender deliveryIdentity) (WorkReceipt, error) {
+func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, sender eventIdentity) (WorkReceipt, error) {
 	if issue.CurrentExecutionID != "" {
 		return WorkReceipt{}, problem("conflict", "Issue already has a current Execution")
 	}
 	if len(issue.Blockers) != 0 {
 		return WorkReceipt{}, problem("failed_precondition", "starting an Execution requires resolving the Issue's blockers")
 	}
-	previous, err := previousWorker(ctx, tx, issue.ID)
+	previous, err := previousIssue(ctx, tx, issue.ID)
 	if err != nil {
 		return WorkReceipt{}, err
 	}
@@ -424,9 +444,9 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, send
 	generation := previous.Generation + 1
 	x := Execution{
 		ID: issue.ID + "-e" + strconv.Itoa(generation), IssueID: issue.ID, TopicID: issue.TopicID, Generation: generation,
-		CreatedAt: at, StartEventID: newID("delivery"), Authority: "current",
+		CreatedAt: at, StartEventID: newID("evt"), Authority: "current",
 	}
-	b, err := createWorkerBinding(ctx, tx, s.config, x, issue, previous)
+	b, err := createIssueBinding(ctx, tx, s.config, x, issue, previous)
 	if err != nil {
 		return WorkReceipt{}, err
 	}
@@ -447,16 +467,16 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, send
 	payload, err := json.Marshal(map[string]any{
 		"topicId": issue.TopicID, "issueId": issue.ID, "executionId": x.ID,
 		"previousExecutionId": previous.OwnerID, "materials": issue.Materials, "completion": issue.Completion,
-		"instruction": "Read issue_get_current for current requirements and materials. Check retained workspace results before repeating work. Verify and submit a Report.",
+		"instruction": "Use get_issue as needed to read current goals for current requirements and materials. Check retained workspace results before repeating work. Verify and submit a Report.",
 	})
 	if err != nil {
 		return WorkReceipt{}, err
 	}
-	err = enqueueInternalDelivery(ctx, tx, internalDelivery{
-		ID: x.StartEventID, Kind: workerStarted,
+	err = enqueueInternalEvent(ctx, tx, internalEvent{
+		ID: x.StartEventID, Kind: issueSessionStarted,
 		Sender:    sender,
-		Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
-		Body:      payload, Refs: []deliveryReference{issueGoalRef(issue)},
+		Recipient: eventIdentity{Kind: "issue", ExecutionID: x.ID},
+		Body:      payload, Refs: []eventReference{issueGoalRef(issue)},
 	})
 	return WorkReceipt{Issue: issue, Execution: &x}, err
 }

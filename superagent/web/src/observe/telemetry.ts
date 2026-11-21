@@ -10,7 +10,7 @@ const apiPrefix = '/v1/observer/'
 const apiCollections = new Set([
   'bindings',
   'executions',
-  'internal-deliveries',
+  'internal-events',
   'issues',
   'messages',
   'outbox',
@@ -18,7 +18,7 @@ const apiCollections = new Set([
   'relations',
   'reports',
   'router-messages',
-  'routing-deliveries',
+  'routing-events',
   'subscriptions',
   'threads',
   'timers',

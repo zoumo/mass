@@ -6,16 +6,16 @@ import (
 )
 
 type observerHealth struct {
-	Status         string         `json:"status"`
-	Ingress        string         `json:"ingress"`
-	SchemaVersion  int            `json:"schemaVersion"`
-	Router         string         `json:"router"`
-	TopicStates    map[string]int `json:"topicStates"`
-	IssueStates    map[string]int `json:"issueStates"`
-	DeliveryStates map[string]int `json:"deliveryStates"`
-	OutboxStates   map[string]int `json:"outboxStates"`
-	UnknownStops   int            `json:"unknownStops"`
-	UnknownEchoes  int            `json:"unknownEchoes"`
+	Status        string         `json:"status"`
+	Ingress       string         `json:"ingress"`
+	SchemaVersion int            `json:"schemaVersion"`
+	Router        string         `json:"router"`
+	TopicStates   map[string]int `json:"topicStates"`
+	IssueStates   map[string]int `json:"issueStates"`
+	EventStates   map[string]int `json:"eventStates"`
+	OutboxStates  map[string]int `json:"outboxStates"`
+	UnknownStops  int            `json:"unknownStops"`
+	UnknownEchoes int            `json:"unknownEchoes"`
 }
 
 func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
@@ -39,7 +39,7 @@ func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
 	}{
 		{&health.TopicStates, `SELECT json_extract(body,'$.status') AS state,count(*) FROM topics GROUP BY state`},
 		{&health.IssueStates, `SELECT json_extract(body,'$.status') AS state,count(*) FROM issues GROUP BY state`},
-		{&health.DeliveryStates, `SELECT status,count(*) FROM internal_deliveries GROUP BY status`},
+		{&health.EventStates, `SELECT status,count(*) FROM internal_events GROUP BY status`},
 		{&health.OutboxStates, `SELECT status AS state,count(*) FROM outbox GROUP BY status`},
 	} {
 		*group.counts, err = observerCounts(ctx, tx, group.query)
@@ -80,8 +80,8 @@ func observerListProjection(kind, full string) string {
 		return `json_remove(` + full + `,'$.goal','$.materials','$.reports','$.resolvedBlockers')`
 	case "executions":
 		return `json_remove(` + full + `,'$.startup.payload','$.startup.receipt','$.startup.content','$.reminder.payload','$.reminder.receipt','$.reminder.content')`
-	case "internal-deliveries":
-		return `json_set(json_remove(` + full + `,'$.body','$.content'),'$.goalUpdate',json(CASE WHEN kind='worker_update' AND id GLOB 'goal-update_*' THEN 'true' ELSE 'false' END))`
+	case "internal-events":
+		return `json_set(json_remove(` + full + `,'$.body','$.content'),'$.goalUpdate',json(CASE WHEN kind='issue_session_update' AND event_id GLOB 'goal-update_*' THEN 'true' ELSE 'false' END))`
 	case "reports":
 		return `json_remove(body,'$.details','$.evidence','$.questions')`
 	case "timers":
@@ -91,12 +91,12 @@ func observerListProjection(kind, full string) string {
 	}
 }
 
-const internalDeliveryProjection = `json_patch(json_object(
- 'id',id,'delivery_id',id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
+const internalEventProjection = `json_patch(json_object(
+ 'event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
  'sender',json(sender),'recipient',json(recipient),'refs',json(refs),
  'revision',json_extract(refs,'$[0].goal_revision')),
  json_object('content',json(content),'body',json(body)))`
 
 func workNotificationProjection(table, field string) string {
-	return "(SELECT " + internalDeliveryProjection + " FROM internal_deliveries WHERE id=json_extract(" + table + ".body,'$." + field + "'))"
+	return "(SELECT " + internalEventProjection + " FROM internal_events WHERE event_id=json_extract(" + table + ".body,'$." + field + "'))"
 }

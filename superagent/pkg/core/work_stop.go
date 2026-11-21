@@ -38,11 +38,11 @@ func retireExecution(ctx context.Context, tx *sql.Tx, id, at string, cancel bool
 	}
 	var dispatched bool
 	if err := tx.QueryRowContext(ctx, `SELECT json_type(b.body,'$.close') IS NULL AND
- (? OR EXISTS (SELECT 1 FROM internal_deliveries WHERE `+deliveryRecipientKind+`='worker' AND `+deliveryRecipientOwner+`=b.owner_id
+ (? OR EXISTS (SELECT 1 FROM internal_events WHERE `+eventRecipientKind+`='issue' AND `+eventRecipientOwner+`=b.owner_id
  AND status IN ('dispatching','sent'))) FROM session_bindings b WHERE b.id=?`, cancel, x.BindingID).Scan(&dispatched); err != nil {
 		return x, storageError()
 	}
-	if err := supersedeExecutionDeliveries(ctx, tx, x.ID); err != nil {
+	if err := supersedeExecutionEvents(ctx, tx, x.ID); err != nil {
 		return x, err
 	}
 	if dispatched {

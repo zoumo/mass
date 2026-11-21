@@ -120,7 +120,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	routerToken := roleToken(t, f, router)
 	routerMCP := startRoleMCP(t, f, router)
-	require.Contains(t, string(routerMCP.call("tools/list", map[string]any{})["result"]), "outbox_message_reply_structured")
+	require.Contains(t, string(routerMCP.call("tools/list", map[string]any{})["result"]), "send_reply")
 
 	addressless := input("addressless")
 	addressless.Message.Channel = nil
@@ -148,51 +148,50 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 		http  int
 	}{
 		{routerToken, core.ReplyRequest{OperationID: "empty", Content: markdownReply("no current range")}, "invalid_argument", 400},
-		{routerToken, core.ReplyRequest{OperationID: "no-address-router", Content: markdownReply("no fallback"), MessageIDs: []string{second.MessageID, first.MessageID}}, "failed_precondition", 409},
-		{routerToken, core.ReplyRequest{OperationID: "missing", Content: markdownReply("require every supplied Message"), MessageIDs: []string{second.MessageID, "absent"}}, "not_found", 404},
-		{topicToken, core.ReplyRequest{OperationID: "no-address-topic", Content: markdownReply("no fallback")}, "failed_precondition", 409},
+		{routerToken, core.ReplyRequest{OperationID: "no-address-router", Content: markdownReply("no fallback"), MessageID: first.MessageID}, "failed_precondition", 409},
+		{routerToken, core.ReplyRequest{OperationID: "missing", Content: markdownReply("require every supplied Message"), MessageID: "absent"}, "not_found", 404},
+		{topicToken, core.ReplyRequest{OperationID: "no-address-topic", MessageID: first.MessageID, Content: markdownReply("no fallback")}, "failed_precondition", 409},
 		{topicToken, core.ReplyRequest{OperationID: "outside", Content: markdownReply("out of Topic"), MessageID: unrelated.MessageID}, "forbidden", 403},
 	} {
-		code, raw = request(t, "POST", p.endpoint, "/v1/role/outbox_message_reply_structured", tc.token, tc.req)
+		code, raw = requestMCPTool(t, p.endpoint, "send_reply", tc.token, tc.req)
 		errorCode(t, code, raw, tc.http, tc.code)
 	}
 	topicMCP := startRoleMCP(t, f, topic)
 	args := core.ReplyRequest{OperationID: "explicit", Content: markdownReply("From the owning Topic"), MessageID: second.MessageID}
-	mcpReply := topicMCP.call("tools/call", map[string]any{"name": "outbox_message_reply_structured", "arguments": args})
+	mcpReply := topicMCP.call("tools/call", map[string]any{"name": "send_reply", "arguments": args})
 	var mcpResult struct {
 		StructuredContent core.OutboxItem
 	}
 	require.NoError(t, json.Unmarshal(mcpReply["result"], &mcpResult))
-	reply := roleWork[core.OutboxItem](t, p, topicToken, "outbox_message_reply_structured", args)
+	reply := roleWork[core.OutboxItem](t, p, topicToken, "send_reply", args)
 	require.Equal(t, mcpResult.StructuredContent, reply)
 	require.Equal(t, second.MessageID, reply.MessageID)
 	require.Equal(t, "pending", reply.Status)
 	require.Nil(t, reply.Receipt)
 	args.Content = markdownReply("changed payload")
-	code, raw = request(t, "POST", p.endpoint, "/v1/role/outbox_message_reply_structured", topicToken, args)
+	code, raw = requestMCPTool(t, p.endpoint, "send_reply", topicToken, args)
 	errorCode(t, code, raw, 409, "conflict")
 
-	topicReply := roleWork[core.OutboxItem](t, p, roleToken(t, f, otherTopic), "outbox_message_reply_structured", core.ReplyRequest{OperationID: "default", Content: markdownReply("Own oldest Message")})
+	topicReply := roleWork[core.OutboxItem](t, p, roleToken(t, f, otherTopic), "send_reply", core.ReplyRequest{OperationID: "own-message", MessageID: unrelated.MessageID, Content: markdownReply("Own Message")})
 	require.Equal(t, unrelated.MessageID, topicReply.MessageID)
-	rangeArgs := core.ReplyRequest{OperationID: "router-default", Content: markdownReply("Current range oldest"), MessageIDs: []string{unrelated.MessageID, second.MessageID}}
-	routerReply := roleWork[core.OutboxItem](t, p, routerToken, "outbox_message_reply_structured", rangeArgs)
+	routerArgs := core.ReplyRequest{OperationID: "router-reply", Content: markdownReply("Router reply"), MessageID: second.MessageID}
+	routerReply := roleWork[core.OutboxItem](t, p, routerToken, "send_reply", routerArgs)
 	require.Equal(t, second.MessageID, routerReply.MessageID)
-	rangeArgs.MessageIDs[0], rangeArgs.MessageIDs[1] = rangeArgs.MessageIDs[1], rangeArgs.MessageIDs[0]
-	require.Equal(t, routerReply, roleWork[core.OutboxItem](t, p, routerToken, "outbox_message_reply_structured", rangeArgs))
+	require.Equal(t, routerReply, roleWork[core.OutboxItem](t, p, routerToken, "send_reply", routerArgs))
 
-	create := issueInput(f.dir, "outbox-worker")
+	create := issueInput(f.dir, "outbox-issue")
 	create.Start = true
-	work := roleWork[core.WorkReceipt](t, p, topicToken, "issue_create", create)
-	worker := waitBinding(t, p, "worker", work.Execution.ID, "ready")
-	workerMCP := startRoleMCP(t, f, worker)
-	require.NotContains(t, string(workerMCP.call("tools/list", map[string]any{})["result"]), "outbox_message_reply_structured")
-	code, raw = request(t, "POST", p.endpoint, "/v1/role/outbox_message_reply_structured", roleToken(t, f, worker), args)
+	work := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
+	issue := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	issueMCP := startRoleMCP(t, f, issue)
+	require.NotContains(t, string(issueMCP.call("tools/list", map[string]any{})["result"]), "send_reply")
+	code, raw = requestMCPTool(t, p.endpoint, "send_reply", roleToken(t, f, issue), args)
 	errorCode(t, code, raw, 403, "forbidden")
-	code, raw = request(t, "POST", p.endpoint, "/v1/role/source_query", topicToken, map[string]string{"collection": "outbox", "id": topicReply.ID})
-	errorCode(t, code, raw, 404, "not_found")
-	own := roleWork[core.Page](t, p, topicToken, "source_query", map[string]string{"collection": "outbox", "threadKey": second.ThreadKey})
-	require.Len(t, own.Items, 1)
-	require.Contains(t, string(own.Items[0]), reply.ID)
+	own := roleWork[struct{ Replies []core.OutboxItem }](t, p, topicToken, "get_message", map[string]any{
+		"messageId": second.MessageID, "include": []string{"replies"},
+	})
+	require.Len(t, own.Replies, 1)
+	require.Equal(t, reply.ID, own.Replies[0].ID)
 	require.Len(t, page(t, p, "outbox?messageId="+second.MessageID).Items, 2)
 	require.Len(t, page(t, p, "outbox?threadKey="+url.QueryEscape(second.ThreadKey)).Items, 2)
 
@@ -229,7 +228,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	require.Equal(t, 200, code, "%s", raw)
 	var passive core.Receipt
 	require.NoError(t, json.Unmarshal(raw, &passive))
-	roleWork[core.OutboxItem](t, p, routerToken, "outbox_message_reply_structured",
+	roleWork[core.OutboxItem](t, p, routerToken, "send_reply",
 		core.ReplyRequest{OperationID: "reply-on-account", Content: markdownReply("Send via configured consumer"), MessageID: passive.MessageID})
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 4)
 	code, raw = request(t, "GET", p.endpoint, channelOutbox, "", nil)
@@ -253,7 +252,7 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	token := roleToken(t, f, router)
 	message := submit(t, p, f, input("durable-reply"))
-	item := roleWork[core.OutboxItem](t, p, token, "outbox_message_reply_structured", core.ReplyRequest{
+	item := roleWork[core.OutboxItem](t, p, token, "send_reply", core.ReplyRequest{
 		OperationID: "reply", MessageID: message.MessageID, Content: markdownReply("Reply in progress"),
 	})
 	enqueued := observedTraces(t, p, "outbox", item.ID)
@@ -330,26 +329,28 @@ func TestOutboxStructuredContentDiscoveryAndValidation(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	client := startRoleMCP(t, f, router)
 	tools := client.call("tools/list", map[string]any{})
-	require.Contains(t, string(tools["result"]), `"name":"outbox_message_reply_structured"`)
+	require.Contains(t, string(tools["result"]), `"name":"send_reply"`)
 	require.NotContains(t, string(tools["result"]), `"name":"message_reply"`)
-	list := mcpWork[struct {
-		Items []struct {
-			Type        string
-			Description string
-		}
-	}](t, client, "message_content_schema_list", map[string]any{})
-	require.Len(t, list.Items, 2)
-	require.Equal(t, "markdown", list.Items[0].Type)
-	require.Equal(t, "options", list.Items[1].Type)
-	for _, item := range list.Items {
-		require.NotEmpty(t, item.Description)
+	var result struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
 	}
-	options := mcpWork[struct {
-		Schema  struct{ Required []string }
-		Example core.StructuredContent
-	}](t, client, "message_content_schema_get", map[string]any{"type": "options"})
-	require.Equal(t, []string{"prompt", "options"}, options.Schema.Required)
-	require.Equal(t, "options", options.Example.Type)
+	require.NoError(t, json.Unmarshal(tools["result"], &result))
+	var contentSchema json.RawMessage
+	for _, tool := range result.Tools {
+		if tool.Name == "send_reply" {
+			contentSchema = tool.InputSchema.Properties["content"]
+			break
+		}
+	}
+	require.NotEmpty(t, contentSchema)
+	require.Contains(t, string(contentSchema), `"const":"markdown"`)
+	require.Contains(t, string(contentSchema), `"const":"options"`)
+	require.Contains(t, string(contentSchema), `"required":["prompt","options"]`)
 	message := submit(t, p, f, input("structured-reply"))
 	call := func(content any) map[string]any {
 		return map[string]any{"operationId": "structured", "messageId": message.MessageID, "content": content}
@@ -359,18 +360,18 @@ func TestOutboxStructuredContentDiscoveryAndValidation(t *testing.T) {
 		`{"type":"options","data":{"prompt":"Prompt"}}`,
 		`{"type":"options","data":{"prompt":"Prompt","options":[{"id":"same","label":"A"},{"id":"same","label":"B"}]}}`,
 	} {
-		mcpWorkError(t, client, "outbox_message_reply_structured", "invalid_argument", call(json.RawMessage(invalid)))
+		mcpWorkError(t, client, "send_reply", "invalid_argument", call(json.RawMessage(invalid)))
 	}
 	require.Empty(t, listOutbox(t, p.endpoint, f.token, "").Items)
 	content := core.StructuredContent{Type: "options", Data: json.RawMessage(`{"options":[{"label":"Continue","id":"yes"},{"label":"Pause","id":"no"}],"prompt":"**First line**\n\nSecond line"}`)}
-	item := mcpWork[core.OutboxItem](t, client, "outbox_message_reply_structured", call(content))
+	item := mcpWork[core.OutboxItem](t, client, "send_reply", call(content))
 	reordered := core.StructuredContent{Type: "options", Data: json.RawMessage(`{"prompt":"**First line**\n\nSecond line","options":[{"id":"yes","label":"Continue"},{"id":"no","label":"Pause"}]}`)}
-	require.Equal(t, item, mcpWork[core.OutboxItem](t, client, "outbox_message_reply_structured", call(reordered)))
+	require.Equal(t, item, mcpWork[core.OutboxItem](t, client, "send_reply", call(reordered)))
 	changed := core.StructuredContent{Type: "options", Data: json.RawMessage(`{"prompt":"**First line**\n\nSecond line","options":[{"id":"no","label":"Pause"},{"id":"yes","label":"Continue"}]}`)}
-	mcpWorkError(t, client, "outbox_message_reply_structured", "conflict", call(changed))
+	mcpWorkError(t, client, "send_reply", "conflict", call(changed))
 	require.JSONEq(t, string(content.Data), string(item.Content.Data))
 	markdown := markdownReply("**First line**\n\nSecond line")
-	markdownItem := mcpWork[core.OutboxItem](t, client, "outbox_message_reply_structured", core.ReplyRequest{
+	markdownItem := mcpWork[core.OutboxItem](t, client, "send_reply", core.ReplyRequest{
 		OperationID: "markdown", MessageID: message.MessageID, Content: markdown,
 	})
 	require.Equal(t, markdown, markdownItem.Content)
@@ -394,7 +395,7 @@ func TestOutboxStructuredContentDiscoveryAndValidation(t *testing.T) {
 	require.Equal(t, item, channelItem)
 }
 
-func TestOutboxPermanentFailureDelivery(t *testing.T) {
+func TestOutboxPermanentFailureEvent(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
 	configureOutboxSource(t, f)
@@ -403,7 +404,7 @@ func TestOutboxPermanentFailureDelivery(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	token := roleToken(t, f, router)
 	target := submit(t, p, f, input("failed-reply"))
-	item := roleWork[core.OutboxItem](t, p, token, "outbox_message_reply_structured", core.ReplyRequest{
+	item := roleWork[core.OutboxItem](t, p, token, "send_reply", core.ReplyRequest{
 		OperationID: "reply", MessageID: target.MessageID, Content: markdownReply("Cannot reach this peer"),
 	})
 	cmd := outboxResult(item, "permanent_failure", "permission_denied", "")
@@ -414,10 +415,10 @@ func TestOutboxPermanentFailureDelivery(t *testing.T) {
 	p = f.start()
 	require.Equal(t, failed, resultOutbox(t, p, f.token, cmd))
 	require.Empty(t, listOutbox(t, p.endpoint, f.token, "").Items)
-	items := workDeliveries(t, p, "outbox_failed")
+	items := workEvents(t, p, "outbox_failed")
 	require.Len(t, items, 1)
 	require.Equal(t, "router", items[0].Recipient.Kind)
-	require.NotEmpty(t, waitWorkDelivery(t, p, items[0].ID, "sent").SentAt)
+	require.NotEmpty(t, waitWorkEvent(t, p, items[0].ID, "sent").SentAt)
 }
 
 func seedObserverOutbox(t *testing.T, p *process, f *fixture, routerToken, channel string) {
@@ -427,7 +428,7 @@ func seedObserverOutbox(t *testing.T, p *process, f *fixture, routerToken, chann
 	m := submit(t, p, f, source)
 	for _, outcome := range []string{"pending", "task", "unknown", "permanent_failure", "sent"} {
 		op := "browser-outbox-" + outcome
-		item := roleWork[core.OutboxItem](t, p, routerToken, "outbox_message_reply_structured", core.ReplyRequest{OperationID: op, Content: markdownReply("Observer reply " + outcome), MessageID: m.MessageID})
+		item := roleWork[core.OutboxItem](t, p, routerToken, "send_reply", core.ReplyRequest{OperationID: op, Content: markdownReply("Observer reply " + outcome), MessageID: m.MessageID})
 		if outcome == "pending" {
 			continue
 		}
@@ -445,11 +446,11 @@ func seedObserverOutbox(t *testing.T, p *process, f *fixture, routerToken, chann
 		}
 		resultOutbox(t, p, f.token, req)
 	}
-	roleWork[core.OutboxItem](t, p, routerToken, "outbox_message_reply_structured", core.ReplyRequest{
+	roleWork[core.OutboxItem](t, p, routerToken, "send_reply", core.ReplyRequest{
 		OperationID: "browser-outbox-markdown", MessageID: m.MessageID,
 		Content: markdownReply("**Formatted reply**"),
 	})
-	roleWork[core.OutboxItem](t, p, routerToken, "outbox_message_reply_structured", core.ReplyRequest{
+	roleWork[core.OutboxItem](t, p, routerToken, "send_reply", core.ReplyRequest{
 		OperationID: "browser-outbox-options", MessageID: m.MessageID,
 		Content: core.StructuredContent{Type: "options", Data: json.RawMessage(`{"prompt":"**Choose what to do.**\n\n![Do not fetch](https://example.invalid/outbox-image.png)\n\n<span data-marker=\"outbox-raw-html\">raw HTML</span>","options":[{"id":"pause","label":"Pause"},{"id":"continue","label":"Continue"}]}`)},
 	})

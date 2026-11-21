@@ -77,11 +77,11 @@ type pullRequestLink struct {
 }
 
 func (s *Store) registerPR(ctx context.Context, b Binding, raw []byte) (json.RawMessage, error) {
-	if b.Role != "topic" && b.Role != "worker" {
-		return nil, problem("forbidden", "only Topic and current Worker can register a PR")
+	if b.Role != "topic" && b.Role != "issue" {
+		return nil, problem("forbidden", "only Topic and current Issue Session can register a PR")
 	}
 	var r RegisterPRRequest
-	if b.Role == "worker" {
+	if b.Role == "issue" {
 		var args struct {
 			OperationID string `json:"operationId"`
 			URL         string `json:"url"`
@@ -103,9 +103,9 @@ func (s *Store) registerPR(ctx context.Context, b Binding, raw []byte) (json.Raw
 		var issue Issue
 		var executionID string
 		var err error
-		if binding.Role == "worker" {
+		if binding.Role == "issue" {
 			var execution Execution
-			issue, execution, err = currentWorkerIssue(ctx, tx, binding)
+			issue, execution, err = currentBoundIssue(ctx, tx, binding)
 			topicID, executionID = issue.TopicID, execution.ID
 		} else if r.IssueID != "" {
 			issue, err = topicIssue(ctx, tx, binding, r.IssueID)

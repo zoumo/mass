@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 import { Bot, ChevronRight, ClipboardList, GitBranch, Hash, Network } from 'lucide-react'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
+import { TraceLink, type TraceAssociation } from './TraceLinks'
 import './conversation-card.css'
 
-const icons = { router: GitBranch, topic: Hash, issue: ClipboardList, core: Network, worker: Bot }
+const icons = { router: GitBranch, topic: Hash, issue: ClipboardList, core: Network, "issue-session": Bot }
 export type Participant = { kind: keyof typeof icons; label: string; href?: string; title?: string }
 
 export function ObjectAvatar({ kind, href, title }: Participant) {
@@ -25,19 +26,18 @@ type CardProps = {
   facts: { label: string; value: ReactNode }[]
   href: string
   selected: boolean
+  traceAssociations?: TraceAssociation[]
 }
 
-export function ConversationCard({ kind, recordId, preview, content, at, time, sender, recipient, facts, href, selected }: CardProps) {
+export function ConversationCard({ kind, recordId, preview, content, at, time, sender, recipient, facts, href, selected, traceAssociations }: CardProps) {
   const excerptText = Array.from(preview.trim())
   const description = excerptText.length > 200 ? excerptText.slice(0, 200).join('') + '…' : preview
+  const traceId = traceAssociations?.[0]?.traceId
 
   return <article className="conversation-chat-row" data-actor={sender.kind}>
-    <div className="conversation-card-party conversation-card-sender" role="group" aria-label="投递方">
+    <div className="conversation-card-party conversation-card-sender" role="group" aria-label="发送方">
       <ObjectAvatar {...sender}/>
       <span>{sender.label}</span>
-    </div>
-    <div className="conversation-card-delivery-route" aria-hidden="true">
-      <ChevronRight className="conversation-card-delivery-arrow" size={12}/>
     </div>
     <div className="conversation-card-party conversation-card-recipient" role="group" aria-label="收件方">
       <ObjectAvatar {...recipient}/>
@@ -45,8 +45,11 @@ export function ConversationCard({ kind, recordId, preview, content, at, time, s
     </div>
     <div className="conversation-card" data-selected={selected}>
       <header>
-        <strong className="conversation-card-type">{kind}</strong>
-        <code className="conversation-card-record-id">{recordId}</code>
+        <div className="conversation-card-heading">
+          <strong className="conversation-card-type">{kind}</strong>
+          <code className="conversation-card-record-id">{recordId}</code>
+        </div>
+        {traceId && <TraceLink id={traceId} at={at} compact/>}
       </header>
       <div className="conversation-card-content" data-content-type={content?.type}>
         {content ? <StructuredContent content={content} previewOptions/>

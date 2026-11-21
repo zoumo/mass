@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// WorkObservation ties the latest observed Worker input to a particular
+// WorkObservation ties the latest observed Issue Session input to a particular
 // subscription and attempt. It does not express business or stop status.
 type WorkObservation struct {
 	ExecutionID    string   `json:"executionId"`
@@ -47,7 +47,7 @@ func (o *WorkObservation) loseContinuity(reason string) {
 	o.State, o.ObservedAt, o.Continuous, o.ObservationGap = "unknown", now(), false, reason
 }
 
-func recoverWorkerObservations(ctx context.Context, tx *sql.Tx) error {
+func recoverIssueObservations(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `UPDATE executions SET body=json_set(body,
  '$.workObservation.state','unknown','$.workObservation.observedAt',?,'$.workObservation.continuous',json('false'),
  '$.workObservation.observationGap','core_observation_interrupted')
@@ -55,8 +55,8 @@ func recoverWorkerObservations(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
-func beginWorkerObservation(ctx context.Context, tx *sql.Tx, b Binding, observation WorkObservation) (bool, error) {
-	_, x, err := currentWorkerIssue(ctx, tx, b)
+func beginIssueObservation(ctx context.Context, tx *sql.Tx, b Binding, observation WorkObservation) (bool, error) {
+	_, x, err := currentBoundIssue(ctx, tx, b)
 	if err != nil || x.ReminderEventID != "" {
 		return false, err
 	}
@@ -64,7 +64,7 @@ func beginWorkerObservation(ctx context.Context, tx *sql.Tx, b Binding, observat
 	return true, saveExecution(ctx, tx, x)
 }
 
-func settleWorkerObservation(ctx context.Context, tx *sql.Tx, observation WorkObservation) error {
+func settleIssueObservation(ctx context.Context, tx *sql.Tx, observation WorkObservation) error {
 	var x Execution
 	if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=?", &x, observation.ExecutionID); err != nil {
 		return err
@@ -76,15 +76,15 @@ func settleWorkerObservation(ctx context.Context, tx *sql.Tx, observation WorkOb
 	return saveExecution(ctx, tx, x)
 }
 
-type workerWatch struct {
+type issueWatch struct {
 	evidence     WorkObservation
 	sub          *client.Subscription
 	dispatchedAt time.Time
 	steered      bool
 }
 
-func (s *Server) prepareWorkerWatch(ctx context.Context, b Binding, a Attempt) *workerWatch {
-	w := &workerWatch{evidence: WorkObservation{
+func (s *Server) prepareIssueWatch(ctx context.Context, b Binding, a Attempt) *issueWatch {
+	w := &issueWatch{evidence: WorkObservation{
 		ExecutionID: b.OwnerID, BindingID: b.ID, Generation: b.Generation,
 		SessionID: b.SessionID, SessionUID: b.SessionUID, AttemptID: a.ID,
 		State: "awaiting_receipt", ObservedAt: now(), Provider: b.RuntimeType,
@@ -102,7 +102,7 @@ func (s *Server) prepareWorkerWatch(ctx context.Context, b Binding, a Attempt) *
 	return w
 }
 
-func (w *workerWatch) recordReceipt(a Attempt, result agent.InputResult, submission string) {
+func (w *issueWatch) recordReceipt(a Attempt, result agent.InputResult, submission string) {
 	o := &w.evidence
 	if a.Status != "delivered" {
 		o.loseContinuity("input_work_unconfirmed")
@@ -121,37 +121,37 @@ func (w *workerWatch) recordReceipt(a Attempt, result agent.InputResult, submiss
 	}
 }
 
-func (w *workerWatch) close() {
+func (w *issueWatch) close() {
 	if w != nil && w.sub != nil {
 		_ = w.sub.Close()
 	}
 }
 
-func (s *Server) stopWorkerWatch(bindingID string) {
-	if value, ok := s.workerWatches.LoadAndDelete(bindingID); ok {
-		value.(*workerWatch).close()
+func (s *Server) stopIssueWatch(bindingID string) {
+	if value, ok := s.issueWatches.LoadAndDelete(bindingID); ok {
+		value.(*issueWatch).close()
 	}
 }
 
-func (s *Server) startWorkerWatch(life context.Context, b Binding, w *workerWatch, settled bool) {
+func (s *Server) startIssueWatch(life context.Context, b Binding, w *issueWatch, settled bool) {
 	if !settled || w.evidence.State != "observing" || life.Err() != nil {
 		w.close()
 		return
 	}
-	s.workerWatches.Store(b.ID, w)
-	s.workerWatchGroup.Go(func() {
-		defer s.workerWatches.CompareAndDelete(b.ID, w)
+	s.issueWatches.Store(b.ID, w)
+	s.issueWatchGroup.Go(func() {
+		defer s.issueWatches.CompareAndDelete(b.ID, w)
 		defer w.close()
 		w.consume(life, b)
 		if life.Err() != nil {
 			return
 		}
 		for {
-			err := s.store.recordWorkerObservation(life, b, w.evidence)
+			err := s.store.recordIssueObservation(life, b, w.evidence)
 			if err == nil || life.Err() != nil {
 				return
 			}
-			slog.Error("Core could not persist Worker observation", "executionId", b.OwnerID, "attemptId", w.evidence.AttemptID)
+			slog.Error("Core could not persist Issue Session observation", "executionId", b.OwnerID, "attemptId", w.evidence.AttemptID)
 			select {
 			case <-life.Done():
 				return
@@ -161,7 +161,7 @@ func (s *Server) startWorkerWatch(life context.Context, b Binding, w *workerWatc
 	})
 }
 
-func (w *workerWatch) consume(ctx context.Context, b Binding) {
+func (w *issueWatch) consume(ctx context.Context, b Binding) {
 	o := &w.evidence
 	active := w.steered
 	for {
@@ -178,7 +178,7 @@ func (w *workerWatch) consume(ctx context.Context, b Binding) {
 		case event.Type() == "session.history_replay":
 			o.loseContinuity("session_history_reload")
 			return
-		case !inWorkerDispatchWindow(event.Time, w.dispatchedAt):
+		case !inIssueDispatchWindow(event.Time, w.dispatchedAt):
 			continue
 		}
 		if problem, ok := event.Payload().(events.SessionError); ok {
@@ -211,7 +211,7 @@ func (w *workerWatch) consume(ctx context.Context, b Binding) {
 	}
 }
 
-func inWorkerDispatchWindow(at, dispatchedAt time.Time) bool {
+func inIssueDispatchWindow(at, dispatchedAt time.Time) bool {
 	// Some providers supply whole-second event timestamps. The live, ordered
 	// subscription and activity transition still gate those events.
 	if at.Nanosecond() == 0 {
@@ -220,13 +220,13 @@ func inWorkerDispatchWindow(at, dispatchedAt time.Time) bool {
 	return !at.Before(dispatchedAt)
 }
 
-func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence WorkObservation) (retErr error) {
+func (s *Store) recordIssueObservation(ctx context.Context, b Binding, evidence WorkObservation) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	issue, x, err := currentWorkerIssue(ctx, tx, b)
+	issue, x, err := currentBoundIssue(ctx, tx, b)
 	switch {
 	case errorCode(err) == "not_found" || errorCode(err) == "stale_binding":
 		return nil
@@ -244,7 +244,7 @@ func (s *Store) recordWorkerObservation(ctx context.Context, b Binding, evidence
 	}
 	if !current {
 		evidence.End = nil
-		evidence.loseContinuity("worker_session_changed")
+		evidence.loseContinuity("issue_session_changed")
 	}
 	x.WorkObservation = &evidence
 	if evidence.End != nil && x.ReminderEventID == "" && !issueHasExecutionReport(issue, x.ID) {
@@ -273,16 +273,16 @@ func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *Execution, issue 
 		Instruction string   `json:"instruction"`
 	}{
 		ExecutionID: x.ID, IssueID: x.IssueID, WorkID: x.WorkObservation.WorkID, End: x.WorkObservation.End,
-		Instruction: "Use report_submit to summarize only results, progress, or blockers from work already done on this Execution. Use an operationId stable for this delivery_id and the goalRevision you actually used. Do not run the Issue again.",
+		Instruction: "Use submit_report to summarize only results, progress, or blockers from work already done on this Execution. Use an operationId stable for this event_id and the goalRevision you actually used. Do not run the Issue again.",
 	})
 	if err != nil {
 		return err
 	}
-	x.ReminderEventID = newID("delivery")
-	return enqueueInternalDelivery(ctx, tx, internalDelivery{
+	x.ReminderEventID = newID("evt")
+	return enqueueInternalEvent(ctx, tx, internalEvent{
 		ID: x.ReminderEventID, Kind: reportReminderKind,
-		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
-		Body: payload, Refs: []deliveryReference{issueGoalRef(issue)},
+		Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "issue", ExecutionID: x.ID},
+		Body: payload, Refs: []eventReference{issueGoalRef(issue)},
 	})
 }
 

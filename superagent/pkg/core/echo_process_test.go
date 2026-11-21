@@ -21,7 +21,7 @@ func TestEchoUsesActualSourceConversationAndMessage(t *testing.T) {
 	target := submit(t, p, f, input("echo-original"))
 	var sentIDs []string
 	for _, native := range []string{"native-exact", "native-other-conversation"} {
-		item := roleWork[core.OutboxItem](t, p, roleToken(t, f, router), "outbox_message_reply_structured", core.ReplyRequest{
+		item := roleWork[core.OutboxItem](t, p, roleToken(t, f, router), "send_reply", core.ReplyRequest{
 			OperationID: "echo-reply-" + native, MessageID: target.MessageID, Content: markdownReply("outbound"),
 		})
 		resultOutbox(t, p, f.token, outboxResult(item, "sent", "", native))
@@ -48,7 +48,7 @@ func TestEchoUsesActualSourceConversationAndMessage(t *testing.T) {
 	require.NotNil(t, msg.Echo)
 	require.Equal(t, "outbound_echo", msg.Echo.Status)
 	require.Equal(t, &core.EchoReference{OutboxID: sentIDs[0]}, msg.Echo.Match)
-	require.Empty(t, routingDeliveries(t, p, msg.ID))
+	require.Empty(t, routingEvents(t, p, msg.ID))
 	require.Empty(t, receipt.EventID)
 	receipt.Duplicate = true
 	require.Equal(t, receipt, submit(t, p, f, exact))

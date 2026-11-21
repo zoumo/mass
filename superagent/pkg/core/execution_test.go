@@ -12,7 +12,7 @@ import (
 
 func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 	previous := Binding{
-		ID: "previous", Role: "worker", SessionID: "native", SessionUID: "uid", Name: "old", Workspace: "/project", Namespace: "topic",
+		ID: "previous", Role: "issue", SessionID: "native", SessionUID: "uid", Name: "old", Workspace: "/project", Namespace: "topic",
 		ExecutionProfile: ExecutionProfile{RuntimeRef: "agent", Model: "model", Effort: "medium"},
 		Close:            &BindingClose{Reusable: true},
 	}
@@ -74,10 +74,10 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 
 func TestRouterInitializationKeepsLegacySessionSpec(t *testing.T) {
 	t.Run("version 0", func(t *testing.T) {
-		testRouterInitializationKeepsSessionSpec(t, 0, "Deduplicate by eventId")
+		testRouterInitializationKeepsSessionSpec(t, 0, "deduplicate by event_id")
 	})
 	t.Run("version 1", func(t *testing.T) {
-		testRouterInitializationKeepsSessionSpec(t, 1, "For route_request, call source_query")
+		testRouterInitializationKeepsSessionSpec(t, 1, "On route_request")
 	})
 }
 
@@ -98,17 +98,17 @@ func testRouterInitializationKeepsSessionSpec(t *testing.T, version int, prompt 
 	require.Equal(t, agent.PermissionPresetFullAccess, spec.Config.PermissionPreset)
 	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, spec.Features)
 	require.Equal(t, 2, binding.AgentPromptVersion)
-	require.Contains(t, spec.SystemPrompt, "deduplicate by delivery_id")
+	require.Contains(t, spec.SystemPrompt, "deduplicate by event_id")
 	binding.AgentPromptVersion = version
 	spec.SystemPrompt = makeSpec(config, binding).SystemPrompt
 	require.Contains(t, spec.SystemPrompt, prompt)
 	require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET body=?2 WHERE id=?1", binding, binding.ID))
-	require.NoError(t, enqueueInternalDelivery(t.Context(), tx, internalDelivery{
+	require.NoError(t, enqueueInternalEvent(t.Context(), tx, internalEvent{
 		ID: "legacy-id", Kind: routeRequestKind,
-		Sender: deliveryIdentity{Kind: "core"}, Recipient: deliveryIdentity{Kind: "router"},
-		Refs: []deliveryReference{{Kind: messageRefKind, ID: "mass-m1"}},
+		Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "router"},
+		Refs: []eventReference{{Kind: messageRefKind, ID: "mass-m1"}},
 	}))
-	_, err = tx.ExecContext(t.Context(), "UPDATE internal_deliveries SET created_at=? WHERE id='legacy-id'", time.Now().Add(-time.Minute).Format(time.RFC3339Nano))
+	_, err = tx.ExecContext(t.Context(), "UPDATE internal_events SET created_at=? WHERE event_id='legacy-id'", time.Now().Add(-time.Minute).Format(time.RFC3339Nano))
 	require.NoError(t, err)
 	spec.Config.PermissionPreset = agent.PermissionPresetManualReview
 	spec.Features = nil
@@ -127,9 +127,9 @@ func testRouterInitializationKeepsSessionSpec(t *testing.T, version int, prompt 
 	require.NoError(t, tx.Rollback())
 	batch, err := reopened.selectInternalBatch(t.Context(), binding)
 	require.NoError(t, err)
-	wire := `{"events":[{"delivery_id":"legacy-id","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}]}]}`
+	wire := `{"events":[{"event_id":"legacy-id","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}]}]}`
 	if version == 0 {
-		wire = `{"bindingId":"` + binding.ID + `","generation":1,"schemaVersion":4,"events":[{"delivery_id":"legacy-id","kind":"route_request","sender":{"kind":"core"},"recipient":{"kind":"router"},"refs":[{"kind":"trigger_message","id":"mass-m1"}]}]}`
+		wire = `{"bindingId":"` + binding.ID + `","generation":1,"schemaVersion":4,"events":[{"event_id":"legacy-id","kind":"route_request","sender":{"kind":"core"},"recipient":{"kind":"router"},"refs":[{"kind":"trigger_message","id":"mass-m1"}]}]}`
 	}
 	require.JSONEq(t, wire, string(batch.wire))
 }

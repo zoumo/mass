@@ -16,17 +16,17 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-type deliveryParty struct {
+type eventParty struct {
 	Kind        string `json:"kind"`
 	TopicID     string `json:"topic_id,omitempty"`
 	ExecutionID string `json:"execution_id,omitempty"`
 }
 
 type internalEvent struct {
-	ID        string                  `json:"delivery_id"`
+	ID        string                  `json:"event_id"`
 	Kind      string                  `json:"kind"`
-	Sender    deliveryParty           `json:"sender"`
-	Recipient deliveryParty           `json:"recipient"`
+	Sender    eventParty              `json:"sender"`
+	Recipient eventParty              `json:"recipient"`
 	Content   *core.StructuredContent `json:"content,omitempty"`
 	Body      json.RawMessage         `json:"body,omitempty"`
 	Refs      []json.RawMessage       `json:"refs,omitempty"`
@@ -36,23 +36,23 @@ type internalEvent struct {
 	Messages  []json.RawMessage       `json:"messages,omitempty"`
 }
 
-type internalDeliveryRow struct {
+type internalEventRow struct {
 	ID, Kind, Status, SentAt string
 	Body, Content            json.RawMessage
 }
 
-func internalRows(t *testing.T, f *fixture, where string, args ...any) []internalDeliveryRow {
+func internalRows(t *testing.T, f *fixture, where string, args ...any) []internalEventRow {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.data, "core.sqlite")+"?mode=ro&_pragma=busy_timeout(1000)")
 	require.NoError(t, err)
 	defer db.Close()
-	rows, err := db.QueryContext(t.Context(), `SELECT id,kind,status,COALESCE(sent_at,''),body,content
- FROM internal_deliveries WHERE `+where+` ORDER BY rowid`, args...)
+	rows, err := db.QueryContext(t.Context(), `SELECT event_id,kind,status,COALESCE(sent_at,''),body,content
+ FROM internal_events WHERE `+where+` ORDER BY rowid`, args...)
 	require.NoError(t, err)
 	defer rows.Close()
-	var result []internalDeliveryRow
+	var result []internalEventRow
 	for rows.Next() {
-		var d internalDeliveryRow
+		var d internalEventRow
 		var body, content []byte
 		require.NoError(t, rows.Scan(&d.ID, &d.Kind, &d.Status, &d.SentAt, &body, &content))
 		d.Body, d.Content = body, content
@@ -62,16 +62,16 @@ func internalRows(t *testing.T, f *fixture, where string, args ...any) []interna
 	return result
 }
 
-func dependencyDeliveries(t *testing.T, f *fixture) []internalDeliveryRow {
+func dependencyEvents(t *testing.T, f *fixture) []internalEventRow {
 	t.Helper()
 	return internalRows(t, f, "json_extract(body,'$.type')='issue.dependency_changed'")
 }
 
-func waitInternalDelivery(t *testing.T, f *fixture, id, status string) internalDeliveryRow {
+func waitInternalEvent(t *testing.T, f *fixture, id, status string) internalEventRow {
 	t.Helper()
-	var row internalDeliveryRow
+	var row internalEventRow
 	require.Eventually(t, func() bool {
-		rows := internalRows(t, f, "id=?", id)
+		rows := internalRows(t, f, "event_id=?", id)
 		if len(rows) == 1 && rows[0].Status == status {
 			row = rows[0]
 			return true
@@ -81,7 +81,7 @@ func waitInternalDelivery(t *testing.T, f *fixture, id, status string) internalD
 	return row
 }
 
-func decodeInternalBatch(t *testing.T, call nativeDeliveryCall, ids ...string) []internalEvent {
+func decodeInternalBatch(t *testing.T, call nativeSubmitCall, ids ...string) []internalEvent {
 	t.Helper()
 	var batch struct {
 		Events []internalEvent `json:"events"`
@@ -105,26 +105,26 @@ func decodeInternalBatch(t *testing.T, call nativeDeliveryCall, ids ...string) [
 	return batch.Events
 }
 
-func newInternalEvent(id, kind string, recipient deliveryParty) internalEvent {
-	e := internalEvent{ID: id, Kind: kind, Sender: deliveryParty{Kind: "core"}, Recipient: recipient}
+func newInternalEvent(id, kind string, recipient eventParty) internalEvent {
+	e := internalEvent{ID: id, Kind: kind, Sender: eventParty{Kind: "core"}, Recipient: recipient}
 	e.Body = json.RawMessage(`{"example":"fixture"}`)
 	return e
 }
 
 func queueInternal(t *testing.T, p *process, items ...internalEvent) {
 	t.Helper()
-	status, data := request(t, http.MethodPost, p.endpoint, "/_test/internal-deliveries", testProducerToken, items)
+	status, data := request(t, http.MethodPost, p.endpoint, "/_test/internal-events", testProducerToken, items)
 	require.Equal(t, http.StatusOK, status, string(data))
 }
 
-func TestInternalDeliveryBatchProcess(t *testing.T) {
-	peer := newNativeDeliveryPeer(t)
-	endpoint, _ := startDeliveryMassd(t, peer)
-	f, _ := deliveryFixture(t, endpoint)
+func TestInternalEventBatchProcess(t *testing.T) {
+	peer := newNativeSubmitPeer(t)
+	endpoint, _ := startEventTestMassd(t, peer)
+	f, _ := eventFixture(t, endpoint)
 	p := f.start("SUPERAGENT_TEST_EVENTS=" + testProducerToken)
 	router := waitBinding(t, p, "router", "", "ready")
 	role := startRoleMCP(t, f, router)
-	recipient := deliveryParty{Kind: "router"}
+	recipient := eventParty{Kind: "router"}
 	contextEvent := func(id string) internalEvent {
 		return newInternalEvent(id, "context_supplement", recipient)
 	}
@@ -140,14 +140,14 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 	first := peer.next(t, "thread/inject_items")
 	require.Equal(t, router.SessionID, first.session)
 	decodeInternalBatch(t, first, ids[:20]...)
-	waitInternalDelivery(t, f, ids[0], "dispatching")
+	waitInternalEvent(t, f, ids[0], "dispatching")
 	peer.quiet(t, 250*time.Millisecond)
 	first.accept()
 	second := peer.next(t, "thread/inject_items")
 	decodeInternalBatch(t, second, ids[20])
 	second.accept()
 	for _, id := range ids {
-		require.NotEmpty(t, waitInternalDelivery(t, f, id, "sent").SentAt)
+		require.NotEmpty(t, waitInternalEvent(t, f, id, "sent").SentAt)
 	}
 
 	var large []internalEvent
@@ -171,7 +171,7 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 		call.accept()
 	}
 	require.Len(t, large, offset)
-	waitInternalDelivery(t, f, large[offset-1].ID, "sent")
+	waitInternalEvent(t, f, large[offset-1].ID, "sent")
 
 	long := contextEvent("long-context")
 	content := markdownReply(strings.Repeat("界", 3000))
@@ -185,28 +185,28 @@ func TestInternalDeliveryBatchProcess(t *testing.T) {
 	require.True(t, events[0].Truncated)
 	require.Empty(t, events[0].Body)
 	require.Nil(t, events[0].Content)
-	full := mcpWork[internalEvent](t, role, "delivery_get", map[string]string{"delivery_id": long.ID})
+	full := mcpWork[internalEvent](t, role, "get_internal_event", map[string]string{"event_id": long.ID})
 	require.Equal(t, long.Content, full.Content)
 	mixed.accept()
-	waitInternalDelivery(t, f, action.ID, "sent")
+	waitInternalEvent(t, f, action.ID, "sent")
 	peer.quiet(t, 250*time.Millisecond)
 	t.Log("Serialized count- and byte-limited batches through Inject and submitted mixed items with StartOrSteer. Full UTF-8 content remained available through MCP.")
 }
 
-func TestInternalDeliveryRestartAfterLostReceipt(t *testing.T) {
-	peer := newNativeDeliveryPeer(t)
-	endpoint, _ := startDeliveryMassd(t, peer)
+func TestInternalEventRestartAfterLostReceipt(t *testing.T) {
+	peer := newNativeSubmitPeer(t)
+	endpoint, _ := startEventTestMassd(t, peer)
 	var drop atomic.Bool
 	drop.Store(true)
 	dropped := make(chan struct{}, 1)
 	proxy := dropRPCResponse(t, endpoint, func(method string) bool {
 		return method == "session.inject" && drop.Swap(false)
 	}, func() { dropped <- struct{}{} })
-	f, _ := deliveryFixture(t, proxy)
+	f, _ := eventFixture(t, proxy)
 	gate := t.TempDir()
-	p := f.start("SUPERAGENT_TEST_EVENTS="+testProducerToken, "SUPERAGENT_TEST_GATE_STAGE=internal_delivery_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+gate)
+	p := f.start("SUPERAGENT_TEST_EVENTS="+testProducerToken, "SUPERAGENT_TEST_GATE_STAGE=internal_event_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+gate)
 	router := waitBinding(t, p, "router", "", "ready")
-	recipient := deliveryParty{Kind: "router"}
+	recipient := eventParty{Kind: "router"}
 	first := newInternalEvent("lost-first", "context_supplement", recipient)
 	second := newInternalEvent("lost-second", "context_supplement", recipient)
 	queueInternal(t, p, first, second)
@@ -218,13 +218,13 @@ func TestInternalDeliveryRestartAfterLostReceipt(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("massd response was not dropped")
 	}
-	waitWorkGate(t, gate, "internal_delivery_before_settlement")
+	waitWorkGate(t, gate, "internal_event_before_settlement")
 	for _, id := range []string{first.ID, second.ID} {
-		require.Empty(t, waitInternalDelivery(t, f, id, "dispatching").SentAt)
+		require.Empty(t, waitInternalEvent(t, f, id, "dispatching").SentAt)
 	}
 	pending := newInternalEvent("waiting", "context_supplement", recipient)
 	queueInternal(t, p, pending)
-	waitInternalDelivery(t, f, pending.ID, "pending")
+	waitInternalEvent(t, f, pending.ID, "pending")
 	p.stop(t, true)
 
 	p = f.start()
@@ -236,7 +236,7 @@ func TestInternalDeliveryRestartAfterLostReceipt(t *testing.T) {
 	decodeInternalBatch(t, next, pending.ID)
 	next.accept()
 	for _, id := range []string{first.ID, second.ID, pending.ID} {
-		waitInternalDelivery(t, f, id, "sent")
+		waitInternalEvent(t, f, id, "sent")
 	}
 	p.stop(t, false)
 	p = f.start()
@@ -245,31 +245,31 @@ func TestInternalDeliveryRestartAfterLostReceipt(t *testing.T) {
 	t.Log("Dropped massd acceptance after the native reply, killed Core before settlement, and recovered dispatching and pending IDs. A second restart skipped sent items.")
 }
 
-func TestInternalDeliveryRetiredExecution(t *testing.T) {
-	peer := newNativeDeliveryPeer(t)
-	endpoint, _ := startDeliveryMassd(t, peer)
-	f, operatorFile := deliveryFixture(t, endpoint)
+func TestInternalEventRetiredExecution(t *testing.T) {
+	peer := newNativeSubmitPeer(t)
+	endpoint, _ := startEventTestMassd(t, peer)
+	f, operatorFile := eventFixture(t, endpoint)
 	p := f.start("SUPERAGENT_TEST_EVENTS=" + testProducerToken)
 	topic, _ := startReminderTopic(t, f, p, peer)
 	work, old, start := startReminderWorker(t, f, p, peer, topic)
 	start.accept()
-	waitWorkDelivery(t, p, work.Execution.StartEventID, "sent")
-	recipient := deliveryParty{Kind: "worker", ExecutionID: work.Execution.ID}
+	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+	recipient := eventParty{Kind: "issue", ExecutionID: work.Execution.ID}
 	first := newInternalEvent("retire-dispatching", "context_supplement", recipient)
 	queueInternal(t, p, first)
 	held := peer.next(t, "thread/inject_items")
 	decodeInternalBatch(t, held, first.ID)
-	waitInternalDelivery(t, f, first.ID, "dispatching")
+	waitInternalEvent(t, f, first.ID, "dispatching")
 	pending := newInternalEvent("retire-pending", "context_supplement", recipient)
 	queueInternal(t, p, pending)
-	waitInternalDelivery(t, f, pending.ID, "pending")
+	waitInternalEvent(t, f, pending.ID, "pending")
 	canceled := mcpWork[core.WorkReceipt](t, topic, "issue_cancel", issueLifecycle("retire", work.Issue))
 	held.accept()
 	for _, id := range []string{first.ID, pending.ID} {
-		require.Empty(t, waitInternalDelivery(t, f, id, "superseded").SentAt)
+		require.Empty(t, waitInternalEvent(t, f, id, "superseded").SentAt)
 	}
 	_ = waitObservedStop(t, p, "executions", work.Execution.ID)
-	release := recoveryFor("release-retired-worker", "replace", old.ID)
+	release := recoveryFor("release-retired-issue", "replace", old.ID)
 	release.StopRuntime = true
 	require.Equal(t, "runtime_stopped", recoverRoleBinding(t, p, operatorFile, release).Close.Method)
 	p.stop(t, false)
@@ -277,26 +277,26 @@ func TestInternalDeliveryRetiredExecution(t *testing.T) {
 	// transaction, which has already superseded both items above.
 	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite"))
 	require.NoError(t, err)
-	res, err := db.ExecContext(t.Context(), "UPDATE internal_deliveries SET status='dispatching' WHERE id=?", first.ID)
+	res, err := db.ExecContext(t.Context(), "UPDATE internal_events SET status='dispatching' WHERE event_id=?", first.ID)
 	require.NoError(t, err)
 	n, err := res.RowsAffected()
 	require.NoError(t, err)
 	require.EqualValues(t, 1, n)
 	require.NoError(t, db.Close())
 	p = f.start()
-	waitInternalDelivery(t, f, first.ID, "superseded")
+	waitInternalEvent(t, f, first.ID, "superseded")
 	reopened := mcpWork[core.WorkReceipt](t, topic, "issue_reopen", issueLifecycle("reopen", canceled.Issue))
-	replacement := mcpWork[core.WorkReceipt](t, topic, "issue_start", startRequest("replace", reopened.Issue))
+	replacement := mcpWork[core.WorkReceipt](t, topic, "start_issue", startRequest("replace", reopened.Issue))
 	require.NotEqual(t, work.Execution.ID, replacement.Execution.ID)
-	b := waitBinding(t, p, "worker", replacement.Execution.ID, "ready")
+	b := waitBinding(t, p, "issue", replacement.Execution.ID, "ready")
 	require.NotEqual(t, old.SessionID, b.SessionID)
 	onlyStart := peer.next(t, "turn/start")
 	decodeInternalBatch(t, onlyStart, replacement.Execution.StartEventID)
 	onlyStart.accept()
-	waitWorkDelivery(t, p, replacement.Execution.StartEventID, "sent")
+	waitWorkEvent(t, p, replacement.Execution.StartEventID, "sent")
 	peer.quiet(t, 400*time.Millisecond)
 	for _, id := range []string{first.ID, pending.ID} {
-		waitInternalDelivery(t, f, id, "superseded")
+		waitInternalEvent(t, f, id, "superseded")
 	}
-	t.Log("A late acceptance kept the old row superseded. Startup independently fenced a stale dispatching fixture. Worker replacement replayed neither old Execution item.")
+	t.Log("A late acceptance kept the old row superseded. Startup independently fenced a stale dispatching fixture. Issue Session replacement replayed neither old Execution item.")
 }

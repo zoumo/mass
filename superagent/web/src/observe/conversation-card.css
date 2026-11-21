@@ -1,4 +1,4 @@
-.conversation-workspace [data-actor=issue] { --actor: #f4ca80 }
+.conversation-workspace [data-actor=issue-session] { --actor: #f4ca80 }
 .conversation-avatar-link:hover, .conversation-avatar-link:focus-visible {
   border-color: var(--actor);
   background: color-mix(in srgb, var(--actor) 22%, var(--panel));
@@ -23,15 +23,6 @@
 .conversation-card-party .conversation-avatar { width: var(--avatar-size); height: var(--avatar-size); border-radius: 50% }
 .conversation-card-sender { grid-area: sender }
 .conversation-card-recipient { grid-area: recipient }
-.conversation-card-delivery-route {
-  position: relative;
-  grid-area: card;
-  margin-top: calc(var(--avatar-size) / 2);
-  border-top: 1px dashed currentColor;
-  color: color-mix(in srgb, var(--actor) 48%, #344154);
-  pointer-events: none;
-}
-.conversation-card-delivery-arrow { position: absolute; right: -4px; top: -7px }
 .conversation-card {
   --sender-inset: 10px;
   --recipient-inset: 18px;
@@ -54,10 +45,11 @@
 .conversation-card > :is(header, footer) { display: flex; align-items: center; justify-content: space-between; gap: 4px 10px }
 .conversation-card > :is(header, footer), .conversation-card-content { padding-inline: 13px }
 .conversation-card > header {
-  flex-wrap: wrap;
   padding-block: 8px;
   border-bottom: 1px solid #ffffff12;
 }
+.conversation-card-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-inline-size: 0 }
+.conversation-card > header .trace-link { flex: none; align-self: start; margin-block-start: 3px; margin-inline-start: auto }
 .conversation-card > footer { flex-wrap: wrap; border-top: 1px solid #ffffff12; padding-block: 4px }
 .conversation-card-record-id {
   padding: 2px 6px;
@@ -122,7 +114,7 @@
 }
 .conversation-card-details:hover, .conversation-card-details[aria-current] { color: var(--teal) }
 .conversation-card-details::after { position: absolute; inset: 0; content: '' }
-.conversation-card :is(.conversation-card-facts a, .conversation-card-record-id) { position: relative; z-index: 1 }
+.conversation-card :is(.conversation-card-facts a, .conversation-card-record-id, .trace-link) { position: relative; z-index: 1 }
 .conversation-group-issue { display: flex; align-items: center; gap: 6px }
 .conversation-issues .conversation-group-issue .conversation-avatar-link { padding: 0; background: #282735; width: 33px; height: 33px; display: grid }
 .conversation-group-issue > a:last-child { flex: 1; min-width: 0; overflow-wrap: anywhere }

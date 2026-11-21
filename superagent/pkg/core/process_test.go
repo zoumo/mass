@@ -325,10 +325,10 @@ func TestPublicIngressDurability(t *testing.T) {
 			errorCode(t, status, b, 409, "conflict")
 		})
 	}
-	if len(page(t, p, "messages").Items) != 1 || len(page(t, p, "threads").Items) != 1 || len(page(t, p, "routing-deliveries").Items) != 1 {
+	if len(page(t, p, "messages").Items) != 1 || len(page(t, p, "threads").Items) != 1 || len(page(t, p, "routing-events").Items) != 1 {
 		t.Fatal("duplicate/failed commands created records")
 	}
-	event := page(t, p, "routing-deliveries")
+	event := page(t, p, "routing-events")
 	if !bytes.Contains(event.Items[0], []byte(`"status":"pending"`)) || !bytes.Contains(event.Items[0], []byte(`"kind":"route_request"`)) {
 		t.Fatal("event was not pending")
 	}
@@ -359,7 +359,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	if got := submit(t, p, f, input("message-2")); got.MessageID != "mass-m2" {
 		t.Fatalf("numbering did not resume after restart: %+v", got)
 	}
-	if len(page(t, p, "messages").Items) != 2 || len(page(t, p, "routing-deliveries").Items) != 2 {
+	if len(page(t, p, "messages").Items) != 2 || len(page(t, p, "routing-events").Items) != 2 {
 		t.Fatal("restart lost commit")
 	}
 	replay := submit(t, p, f, r)
@@ -406,7 +406,7 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 			errorCode(t, gotStatus, gotBody, wantStatus, code)
 		})
 	}
-	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/routing-deliveries", "/v1/observer/health", "/observer/"} {
+	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/routing-events", "/v1/observer/health", "/observer/"} {
 		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 			gotStatus, _ := request(t, method, p.endpoint, path, f.token, map[string]string{"write": "no"})
 			if gotStatus != 405 {
@@ -553,7 +553,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			if stage == "after_commit" {
 				count = 1
 			}
-			for _, kind := range []string{"messages", "threads", "routing-deliveries"} {
+			for _, kind := range []string{"messages", "threads", "routing-events"} {
 				if len(page(t, p, kind).Items) != count {
 					t.Fatalf("partial transaction after %s in %s", stage, kind)
 				}
@@ -568,7 +568,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			if receipt.Status != "accepted" {
 				t.Fatal("recovery replay failed")
 			}
-			for _, kind := range []string{"messages", "threads", "routing-deliveries"} {
+			for _, kind := range []string{"messages", "threads", "routing-events"} {
 				if len(page(t, p, kind).Items) != 1 {
 					t.Fatal("recovery replay duplicated records")
 				}
@@ -621,7 +621,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		r.Message.Text = strings.Repeat("x", 512*1024)
 		status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
 		errorCode(t, status, b, 503, "unavailable")
-		for _, kind := range []string{"messages", "threads", "routing-deliveries"} {
+		for _, kind := range []string{"messages", "threads", "routing-events"} {
 			if len(page(t, p, kind).Items) != 0 {
 				t.Fatal("failed persistence left partial state")
 			}
@@ -667,7 +667,7 @@ func TestPublicConcurrentDuplicate(t *testing.T) {
 		}
 		id = value
 	}
-	if len(page(t, p, "routing-deliveries").Items) != 1 {
+	if len(page(t, p, "routing-events").Items) != 1 {
 		t.Fatal("concurrent duplicate event")
 	}
 }

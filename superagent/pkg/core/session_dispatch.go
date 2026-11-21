@@ -97,8 +97,8 @@ func permanentHandshakeRejection(err error) bool {
 }
 
 func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resource.SessionSpec, a Attempt,
-	method string, wire []byte, admit func(*workerWatch) (bool, error),
-) (Attempt, *workerWatch) {
+	method string, wire []byte, admit func(*issueWatch) (bool, error),
+) (Attempt, *issueWatch) {
 	c, err := s.massClient()
 	if err != nil {
 		a.Status, a.ErrorCode = "blocked", "massd_configuration_invalid"
@@ -119,7 +119,7 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resou
 	var session resource.Session
 	err = c.GetSession(ctx, ref, &session)
 	switch {
-	case b.Role == "worker" && errorCode(err) == "not_found":
+	case b.Role == "issue" && errorCode(err) == "not_found":
 		a.Status, a.ErrorCode, a.ErrorReason = "pending", "not_found", "session_resume_required"
 		return a, nil
 	case errorCode(err) == "not_found" || err == nil && !bindingMatches(b, spec, session):
@@ -129,16 +129,16 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resou
 		a.Status, a.ErrorCode = "pending", "massd_session_read_unavailable"
 		return a, nil
 	case session.Status.State == "offline" || session.Status.State == "closing" || session.Status.State == "opening" ||
-		(b.Role == "worker" && ownershipUnconfirmed(session)):
+		(b.Role == "issue" && ownershipUnconfirmed(session)):
 		a.Status, a.ErrorCode, a.ErrorReason = "pending", "conflict", "session_resume_required"
 		return a, nil
 	}
-	var watch *workerWatch
+	var watch *issueWatch
 	switch b.Role {
-	case "worker":
-		commitGate("worker_before_rpc")
+	case "issue":
+		commitGate("issue_before_rpc")
 		if method == "start_or_steer" {
-			watch = s.prepareWorkerWatch(ctx, b, a)
+			watch = s.prepareIssueWatch(ctx, b, a)
 		}
 	case "topic":
 		commitGate("topic_before_rpc")
@@ -151,7 +151,7 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b Binding, spec resou
 	}
 	if watch != nil {
 		if armed {
-			s.stopWorkerWatch(b.ID)
+			s.stopIssueWatch(b.ID)
 		} else {
 			watch.close()
 			watch = nil

@@ -1,3 +1,5 @@
+import type { TraceAssociation } from './observe/TraceLinks'
+
 export type RoutingRelation = {
  id: string
  topicId: string
@@ -14,6 +16,7 @@ export type RoutingRelation = {
 export type ExecutionProfile = { runtimeRef: string; model: string; effort?: string }
 
 export type WorkbenchRow = {
+ traceAssociations?: TraceAssociation[]
  executionProfile?: ExecutionProfile
  runtimeRef?: string; model?: string; effort?: string
  id?: string; key?: string; title?: string; text?: string; actor?: string; source?: string
@@ -28,7 +31,7 @@ export type WorkbenchRow = {
  blockers?: { id: string; kind: 'human' | 'dependency'; reason: string; dependencyIssueId?: string }[]
  materials?: { label?: string; uri?: string; messageId?: string }[]
  pullRequests?: { id: string; canonicalUrl: string; subscriptionId: string }[]
- workerSession?: { state: string; observedAt?: string; observationGap?: string }
+ issueSession?: { state: string; observedAt?: string; observationGap?: string }
  preparation?: WorkbenchRow; startup?: WorkbenchRow
  targets?: { topicId: string; messageIds: string[]; create?: { title: string } }[]
  echo?: {
@@ -65,7 +68,7 @@ const statusLabels: Record<string, string> = {
  scheduled: '已安排', fired: '已触发', revoked: '已撤销', open: '待执行',
  running: '运行中', busy: '忙碌', idle: '空闲', stopped: '已停止', preparing: '准备中',
  noActiveWork: '无活跃任务', never_dispatched: '从未投递', requested: '已请求', observed: '已观测',
- router: '路由器', topic: 'Topic', worker: '执行器',
+ router: 'Router Session', topic: 'Topic Session', issue: 'Issue Session',
  send: '发送', query: '查询', started: '已开始', task: '已登记渠道任务', skipped: '已跳过',
  ambiguous: '结果不明', permanent_failure: '永久失败',
 }
@@ -74,9 +77,9 @@ export function stateLabel(state?: string) {
  return Object.hasOwn(statusLabels, state) ? statusLabels[state]! : state
 }
 
-export function routingDeliveryLabel(state?: string) {
+export function eventStatusLabel(state?: string) {
  switch (state) {
-  case 'pending': return '已登记投递'
+  case 'pending': return '已登记事件'
   case 'sent': return 'Session 已受理'
   case 'superseded': return '已被替代'
   default: return stateLabel(state)

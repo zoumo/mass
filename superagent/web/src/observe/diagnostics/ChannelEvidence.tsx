@@ -1,4 +1,4 @@
-import { routingDeliveryLabel, stateLabel } from '../../workbench'
+import { eventStatusLabel, stateLabel } from '../../workbench'
 import { identity, type RecordProps, type Kind } from './records'
 
 export default function ChannelEvidence({ kind, detail, navigate }: RecordProps) {
@@ -25,8 +25,8 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
         </button>
       )}
       {kind === 'messages' && (
-        <button onClick={() => navigate('routing-deliveries', identity(detail), 'messageId')} type="button">
-          查看路由投递
+        <button onClick={() => navigate('routing-events', identity(detail), 'messageId')} type="button">
+          查看路由事件
         </button>
       )}
       {!!(kind === 'messages' && detail.relations?.length) && (
@@ -37,7 +37,7 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
               <li key={relation.id}>
                 <span>
                   {stateLabel(relation.action)}
-                  {relation.status && <> · {routingDeliveryLabel(relation.status)}</>}
+                  {relation.status && <> · {eventStatusLabel(relation.status)}</>}
                 </span>
                 <p>{relation.reason}</p>
                 <button
@@ -95,8 +95,8 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
             )}
           </dl>
           {detail.echo.routingEventId && (
-            <button onClick={() => showRecord('routing-deliveries', detail.echo!.routingEventId!)} type="button">
-              回声放行后的投递
+            <button onClick={() => showRecord('routing-events', detail.echo!.routingEventId!)} type="button">
+              回声放行后的路由事件
             </button>
           )}
         </>

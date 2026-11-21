@@ -39,7 +39,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 22, version)
+	require.Equal(t, 23, version)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
 		require.NoError(t, err)
@@ -55,22 +55,22 @@ func assertCutoverSchema(t *testing.T, path string) {
 		t.Logf("%s -> %v", query, values)
 	}
 	check("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-		[]string{"executions", "internal_deliveries", "issues", "outbox", "scheduled_tasks", "session_bindings", "threads", "topics", "trigger_messages"})
+		[]string{"executions", "internal_events", "issues", "mcp_mutation_receipts", "mcp_tool_calls", "outbox", "scheduled_tasks", "session_bindings", "threads", "topics", "trigger_messages"})
 	check("SELECT name FROM pragma_table_info('outbox') ORDER BY cid", []string{"id", "message_id", "content", "status", "receipt", "blocker_ref"})
-	check("SELECT name FROM pragma_table_info('internal_deliveries') ORDER BY cid",
-		[]string{"id", "kind", "sender", "recipient", "content", "body", "refs", "created_at", "status", "sent_at"})
+	check("SELECT name FROM pragma_table_info('internal_events') ORDER BY cid",
+		[]string{"event_id", "kind", "sender", "recipient", "content", "body", "refs", "created_at", "status", "sent_at"})
 	check(`SELECT m.name||'.'||f."from"||' -> '||f."table"||'.'||f."to"
  FROM sqlite_schema m,pragma_foreign_key_list(m.name) f WHERE m.type='table' ORDER BY 1`,
 		[]string{
 			"executions.binding_id -> session_bindings.id", "executions.issue_id -> issues.id",
-			"issues.topic_id -> topics.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.topic_id -> topics.id",
+			"issues.topic_id -> topics.id", "mcp_mutation_receipts.binding_id -> session_bindings.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.topic_id -> topics.id",
 			"scheduled_tasks.trigger_message_id -> trigger_messages.id", "trigger_messages.thread_key -> threads.key",
 		})
 	check(`SELECT "table" FROM pragma_foreign_key_check`, nil)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tx.Rollback()) }()
-	insert := `INSERT INTO internal_deliveries (id,kind,sender,recipient,content,body,created_at,status)
+	insert := `INSERT INTO internal_events (event_id,kind,sender,recipient,content,body,created_at,status)
  VALUES ('constraint-probe','test','{"kind":"core"}','{"kind":"router"}',?,'"reason"',?,'pending')`
 	for _, value := range []string{"plain text", "[]", "null"} {
 		_, err := tx.ExecContext(t.Context(), insert, value, time.Now().UTC().Format(time.RFC3339Nano))
@@ -80,7 +80,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	require.NoError(t, err)
 }
 
-func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
+func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	trigger, dws := os.Getenv("SUPERAGENT_CUTOVER_TRIGGER"), os.Getenv("SUPERAGENT_CUTOVER_DWS")
 	coreExe := os.Getenv("SUPERAGENT_CUTOVER_CORE")
 	if trigger == "" && dws == "" && coreExe == "" {
@@ -90,8 +90,8 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 		require.True(t, filepath.IsAbs(path), "provide all three executable paths")
 		require.FileExists(t, path)
 	}
-	peer := newNativeDeliveryPeer(t)
-	massd, _ := startDeliveryMassd(t, peer)
+	peer := newNativeSubmitPeer(t)
+	massd, _ := startEventTestMassd(t, peer)
 	f := fixtureAt(t)
 	f.executable = coreExe
 	f.configure(0, "account")
@@ -132,36 +132,36 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 		}, 8*time.Second, 50*time.Millisecond)
 		return m
 	}
-	accept := func(session, deliveryID, turn string) {
+	accept := func(session, eventID, turn string) {
 		t.Helper()
 		call := peer.next(t, "turn/start")
 		require.Equal(t, session, call.session)
-		decodeInternalBatch(t, call, deliveryID)
-		call.answer <- nativeDeliveryAnswer{workID: turn, complete: true}
-		waitWorkDelivery(t, p, deliveryID, "sent")
+		decodeInternalBatch(t, call, eventID)
+		call.answer <- nativeSubmitAnswer{workID: turn, complete: true}
+		waitWorkEvent(t, p, eventID, "sent")
 	}
 	first := awaitMessage(firstNative)
 	accept(routerBinding.SessionID, first.EventID, "cutover-router")
 	route := newRoute("cutover-topic", []string{first.ID}, f.dir)
-	decision := mcpWork[core.RouteDecision](t, router, "route_decide", route)
+	decision := mcpWork[core.RouteDecision](t, router, "route_messages", route)
 	target := decision.Targets[0]
 	topicBinding := waitBinding(t, p, "topic", target.TopicID, "ready")
-	accept(topicBinding.SessionID, target.DeliveryIDs[first.ID], "cutover-topic")
+	accept(topicBinding.SessionID, target.EventIDs[first.ID], "cutover-topic")
 	topic := startRoleMCP(t, f, topicBinding)
 	create := issueInput(f.dir, "cutover-issue")
 	create.Start = true
-	work := mcpWork[core.WorkReceipt](t, topic, "issue_create", create)
+	work := mcpWork[core.WorkReceipt](t, topic, "create_issue", create)
 	x := work.Execution
-	workerBinding := waitBinding(t, p, "worker", x.ID, "ready")
-	worker := startRoleMCP(t, f, workerBinding)
+	issueBinding := waitBinding(t, p, "issue", x.ID, "ready")
+	issue := startRoleMCP(t, f, issueBinding)
 	firstWork := peer.next(t, "turn/start")
-	require.Equal(t, workerBinding.SessionID, firstWork.session)
+	require.Equal(t, issueBinding.SessionID, firstWork.session)
 	decodeInternalBatch(t, firstWork, x.StartEventID)
-	firstWork.answer <- nativeDeliveryAnswer{workID: "cutover-start"}
-	waitWorkDelivery(t, p, x.StartEventID, "sent")
+	firstWork.answer <- nativeSubmitAnswer{workID: "cutover-start"}
+	waitWorkEvent(t, p, x.StartEventID, "sent")
 
 	report := func(op, kind, summary string, questions []string) core.Report {
-		return mcpWork[core.Report](t, worker, "report_submit", core.ReportRequest{
+		return mcpWork[core.Report](t, issue, "submit_report", core.ReportRequest{
 			OperationID: op, Kind: kind, Summary: summary, Questions: questions, GoalRevision: x.Revision,
 		})
 	}
@@ -173,7 +173,7 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 	waiting := blockers(t, topic, work.Issue, "cutover-human-blocker", human(question))
 	require.Equal(t, "blocked", waiting.Status)
 	ref := &core.BlockerRef{IssueID: waiting.ID, BlockerID: waiting.Blockers[0].ID}
-	reply := mcpWork[core.OutboxItem](t, topic, "outbox_message_reply_structured", core.ReplyRequest{
+	reply := mcpWork[core.OutboxItem](t, topic, "send_reply", core.ReplyRequest{
 		OperationID: "cutover-question", MessageID: first.ID, Content: markdownReply(question), BlockerRef: ref,
 	})
 	var task string
@@ -192,7 +192,7 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 	p = f.start()
 	require.Equal(t, endpoint, p.endpoint)
 	require.Equal(t, waiting, readRecord[core.Issue](t, p, "issues/"+waiting.ID))
-	require.Equal(t, "sent", waitWorkDelivery(t, p, blockedReport.EventID, "sent").Status)
+	require.Equal(t, "sent", waitWorkEvent(t, p, blockedReport.EventID, "sent").Status)
 	require.Equal(t, task, readOutbox(t, p, reply.ID).Receipt.TaskID)
 	writeCutoverFile(t, filepath.Join(f.dir, task+".json"), fmt.Appendf(nil,
 		`{"success":true,"openTaskId":%q,"result":{"sendStatus":"SUCCESS","openConversationId":%q,"openMessageId":%q}}`, task, conversation, questionNative))
@@ -205,23 +205,23 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 	feed(2, "cutover-answer", "Use the east region.", questionNative)
 	answer := awaitMessage("cutover-answer")
 	accept(topicBinding.SessionID, answer.EventID, "cutover-answer")
-	quoted := mcpWork[quotedReplyRecord](t, topic, "source_query", core.QueryRequest{Collection: "messages", ID: answer.ID})
+	quoted := mcpWork[quotedReplyRecord](t, topic, "get_message", map[string]string{"messageId": answer.ID})
 	require.NotNil(t, quoted.QuotedReply)
 	require.Equal(t, reply.ID, quoted.QuotedReply.OutboxID)
 	require.Equal(t, *ref, quoted.QuotedReply.BlockerRef)
 	continued := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", core.UpdateBlockersRequest{
 		OperationID: "cutover-resolve", IssueID: waiting.ID, ExpectedRevision: waiting.Revision,
-		Resolve:         []core.BlockerResolution{{BlockerID: ref.BlockerID, Reason: "User confirmed the region", MessageID: answer.ID}},
-		NotifyWorker:    true,
-		UnblockedStatus: "active",
+		Resolve:            []core.BlockerResolution{{BlockerID: ref.BlockerID, Reason: "User confirmed the region", MessageID: answer.ID}},
+		NotifyIssueSession: true,
+		UnblockedStatus:    "active",
 	})
 	next := peer.next(t, "turn/start")
-	require.Equal(t, workerBinding.SessionID, next.session)
-	delivery := decodeInternalBatch(t, next, continued.NotificationEventID)[0]
-	require.Equal(t, "worker_update", delivery.Kind)
+	require.Equal(t, issueBinding.SessionID, next.session)
+	internalEvent := decodeInternalBatch(t, next, continued.NotificationEventID)[0]
+	require.Equal(t, "issue_session_update", internalEvent.Kind)
 	require.Contains(t, next.text, answer.ID)
-	next.answer <- nativeDeliveryAnswer{workID: "cutover-continue"}
-	waitWorkDelivery(t, p, continued.NotificationEventID, "sent")
+	next.answer <- nativeSubmitAnswer{workID: "cutover-continue"}
+	waitWorkEvent(t, p, continued.NotificationEventID, "sent")
 	require.Equal(t, x.ID, continued.Issue.CurrentExecutionID)
 	require.Equal(t, answer.ID, continued.Issue.ResolvedBlockers[0].Resolution.MessageID)
 	require.Empty(t, continued.Issue.Blockers)
@@ -234,7 +234,7 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 	require.Equal(t, "completed", outcome.Issue.Status)
 	require.Len(t, outcome.Issue.Reports, 2)
 	require.Len(t, page(t, p, "executions?issueId="+waiting.ID).Items, 1)
-	require.Len(t, workDeliveries(t, p, "worker_update"), 1)
+	require.Len(t, workEvents(t, p, "issue_session_update"), 1)
 	require.Len(t, page(t, p, "outbox").Items, 1)
 	require.Len(t, page(t, p, "messages").Items, 2)
 	require.Equal(t, "completed", readRecord[core.Issue](t, p, "issues/"+waiting.ID).Status)
@@ -267,7 +267,7 @@ func TestCutoverTriggerWorkerAcrossRestart(t *testing.T) {
 	p.stop(t, false)
 	assertCutoverSchema(t, filepath.Join(f.data, "core.sqlite"))
 	t.Logf("business issue=%s execution=%s completed; delivery=%s sent; Outbox=%s task=%s native=%s sent with one send and %d task queries",
-		waiting.ID, x.ID, delivery.ID, reply.ID, task, questionNative, queries)
+		waiting.ID, x.ID, internalEvent.ID, reply.ID, task, questionNative, queries)
 }
 
 func writeCutoverFile(t *testing.T, path string, content []byte) {

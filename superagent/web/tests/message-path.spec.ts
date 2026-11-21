@@ -4,9 +4,9 @@ import { test, expect, type APIRequestContext } from '@playwright/test'
 const audit = 'http://127.0.0.1:' + (process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795')
 const standard = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794')
 type Message = { id: string, sourceMessageId: string, echo?: { match: { outboxId: string } } }
-type Delivery = {
-  id: string, kind: string, status: string, topicId?: string, sender: { kind: string }, recipient: { kind: string },
-  createdAt: string, sentAt?: string, body: string, returnedDeliveryId?: string
+type InternalEvent = {
+  event_id: string, kind: string, status: string, topicId?: string, sender: { kind: string }, recipient: { kind: string },
+  createdAt: string, sentAt?: string, body: string, returnedEventId?: string
 }
 type Issue = { id: string, title: string, topicId: string, materials: { messageId?: string }[] }
 async function get<T>(request: APIRequestContext, url: string): Promise<T> {
@@ -26,9 +26,9 @@ test('Message branches use the sender, acceptance and explicit return ID committ
   const origin = await sampleOrigin(request)
   const msg = await findMessage(request, origin, 'observer-path-rerouted')
   const api = origin + '/v1/observer/'
-  const routes = (await get<{ items: Delivery[] }>(request, api + 'routing-deliveries?messageId=' + msg.id)).items
-  const returned = routes.find(row => row.returnedDeliveryId)!
-  const original = routes.find(row => row.id === returned.returnedDeliveryId)!
+  const routes = (await get<{ items: InternalEvent[] }>(request, api + 'routing-events?messageId=' + msg.id)).items
+  const returned = routes.find(row => row.returnedEventId)!
+  const original = routes.find(row => row.event_id === returned.returnedEventId)!
   expect(original.status).toBe('superseded')
   const redispatched = routes.filter(row => row.sender.kind === 'router' && row.recipient.kind === 'topic')
   expect(new Set(redispatched.map(row => row.topicId)).size).toBe(2)
@@ -36,21 +36,21 @@ test('Message branches use the sender, acceptance and explicit return ID committ
   await page.goto(origin + '/observer/?perspective=message&id=' + msg.id)
   const graph = page.getByRole('region', { name: '消息路径' })
   const panel = page.getByRole('region', { name: '路径详情' })
-  await expect(graph.locator('[data-delivery-id]')).toHaveCount(routes.length)
-  await expect(graph.locator('[data-target-delivery="' + original.id + '"]').locator('[data-origin-id]'))
-    .toHaveAttribute('data-origin-id', original.id)
+  await expect(graph.locator('[data-event-id]')).toHaveCount(routes.length)
+  await expect(graph.locator('[data-target-event="' + original.event_id + '"]').locator('[data-origin-id]'))
+    .toHaveAttribute('data-origin-id', original.event_id)
   for (const d of [original, returned, ...redispatched]) {
-    const edge = graph.locator('[data-delivery-id="' + d.id + '"]')
+    const edge = graph.locator('[data-event-id="' + d.event_id + '"]')
     await edge.focus()
     await page.keyboard.press('Enter')
     await expect(panel).toBeFocused()
-    await expect(panel).toContainText(d.id)
+    await expect(panel).toContainText(d.event_id)
     await expect(panel).toContainText(d.createdAt)
     await expect(panel).toContainText(d.body)
     await expect(panel).toContainText(d.sender.kind === 'core' ? 'Core' : d.sender.kind === 'router' ? 'Router' : 'Topic')
     if (d.sentAt) await expect(panel).toContainText(d.sentAt)
     await expect(edge).toHaveText(new RegExp(d.status === 'sent' ? 'Session 已受理' : '已被替代'))
-    if (d.id === returned.id) await expect(panel).toContainText(original.id)
+    if (d.event_id === returned.event_id) await expect(panel).toContainText(original.event_id)
     await page.keyboard.press('Escape')
     await expect(edge).toBeFocused()
   }
@@ -66,9 +66,9 @@ test('Message branches use the sender, acceptance and explicit return ID committ
   await graph.getByRole('button', { name: '加载更多Issue 引用' }).click()
   await expect(graph.getByRole('button', { name: '引用本消息', exact: true })).toHaveCount(hits.length)
   for (const hit of hits) {
-    const branch = graph.locator('li[data-target-delivery]').filter({ has: page.getByRole('button', { name: 'Issue ' + hit.title, exact: true }) })
-    const id = await branch.getAttribute('data-target-delivery')
-    expect(routes.find(d => d.id === id)!.topicId).toBe(hit.topicId)
+    const branch = graph.locator('li[data-target-event]').filter({ has: page.getByRole('button', { name: 'Issue ' + hit.title, exact: true }) })
+    const id = await branch.getAttribute('data-target-event')
+    expect(routes.find(d => d.event_id === id)!.topicId).toBe(hit.topicId)
   }
   await expect(graph.getByText('归档旧版本日志')).toHaveCount(0)
   await graph.getByRole('button', { name: 'Issue ' + next.items[0].title, exact: true }).click()
@@ -77,12 +77,12 @@ test('Message branches use the sender, acceptance and explicit return ID committ
   await expect(page).toHaveURL(new RegExp('perspective=issue&id=' + next.items[0].id))
   await page.goBack()
   const target = redispatched[0]
-  await graph.locator('[data-target-delivery="' + target.id + '"] .path-topic').click()
+  await graph.locator('[data-target-event="' + target.event_id + '"] .path-topic').click()
   await expect(panel).toContainText(target.topicId!)
   await panel.getByRole('link', { name: '查看此 Topic' }).click()
   await expect(page).toHaveURL(new RegExp('perspective=topic&id=' + target.topicId))
   await page.goBack()
-  await graph.locator('[data-delivery-id="' + returned.id + '"]').click()
+  await graph.locator('[data-event-id="' + returned.event_id + '"]').click()
   await expect(panel).toContainText(returned.body)
   await page.screenshot({ path: testInfo.outputPath('message-branches-desktop.png'), animations: 'disabled', fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
@@ -105,8 +105,8 @@ test('direct, pending, ignored, echo and channel acknowledgements stop at their 
 
   const missingRoute = await findMessage(request, extra, 'observer-path-material-only')
   await page.goto(extra + '/observer/?perspective=message&id=' + missingRoute.id)
-  await expect(graph.getByRole('heading', { name: '材料引用 · 缺少对应 Topic 投递记录' })).toBeVisible()
-  await expect(graph.locator('[data-target-delivery]')).toHaveCount(0)
+  await expect(graph.getByRole('heading', { name: '材料引用 · 缺少对应 Topic 事件记录' })).toBeVisible()
+  await expect(graph.locator('[data-target-event]')).toHaveCount(0)
   await graph.getByRole('button', { name: 'Issue 留存材料核对' }).click()
   await expect(page.getByRole('region', { name: '路径详情' })).toContainText(missingRoute.id)
 
@@ -127,7 +127,7 @@ test('direct, pending, ignored, echo and channel acknowledgements stop at their 
   await page.goto(standard + '/observer/?perspective=message&id=' + echo.id)
   await expect(graph.getByText('回声 · 自身回声')).toBeVisible()
   await expect(graph.getByRole('link', { name: '查看匹配回执' })).toHaveAttribute('href', new RegExp(echo.echo!.match.outboxId))
-  await expect(graph.locator('[data-delivery-id], .path-router, .path-topic')).toHaveCount(0)
+  await expect(graph.locator('[data-event-id], .path-router, .path-topic')).toHaveCount(0)
 })
 
 

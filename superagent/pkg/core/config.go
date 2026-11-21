@@ -34,7 +34,8 @@ type Config struct {
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
 	// ObserverOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
-	ObserverOTLPEndpoint string `mapstructure:"-"`
+	ObserverOTLPEndpoint string               `mapstructure:"-"`
+	ObserverTrace        *ObserverTraceConfig `mapstructure:"observerTrace"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -57,7 +58,7 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
 	}
 	if hasRemovedPermissionPreset(v) {
-		return c, problem("invalid_argument", "remove permissionPreset from Superagent execution roles and Worker templates; new Sessions use fullAccess")
+		return c, problem("invalid_argument", "remove permissionPreset from Superagent execution roles and Issue templates; new Sessions use fullAccess")
 	}
 	if err := v.UnmarshalExact(&c); err != nil {
 		return c, problem("invalid_argument", "configuration contains unknown or invalid fields")
@@ -73,6 +74,9 @@ func loadConfig(path, massdEndpoint string) (Config, error) {
 		return p
 	}
 	c.DataDir = resolve(c.DataDir)
+	if c.ObserverTrace != nil {
+		c.ObserverTrace.CredentialFile = resolve(c.ObserverTrace.CredentialFile)
+	}
 	if c.Execution != nil {
 		var execution ExecutionConfig
 		if err := v.UnmarshalKey("execution", &execution, func(d *mapstructure.DecoderConfig) {
@@ -165,7 +169,7 @@ func hasRemovedPermissionPreset(v *viper.Viper) bool {
 			return true
 		}
 	}
-	templates, _ := v.Get("execution.workerTemplates").([]any)
+	templates, _ := v.Get("execution.issueTemplates").([]any)
 	for _, template := range templates {
 		fields, _ := template.(map[string]any)
 		if _, present := fields["permissionpreset"]; present {

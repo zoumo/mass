@@ -20,7 +20,7 @@ test('routing, preparation, subscriptions and returns are visible through read-o
  await page.getByRole('button', { name: '路由关系', exact: true }).click()
  await page.getByRole('button', { name: '已退回', exact: true }).click()
  await expect(page.getByTestId('routing-record')).toContainText('Observer return reason')
- await expect(page.getByTestId('routing-record')).toContainText('"deliveryId": "dlv_')
+ await expect(page.getByTestId('routing-record')).toContainText('"eventId": "evt_')
  await expect(page.getByRole('dialog')).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
  await page.screenshot({ path: testInfo.outputPath('routing-return.png'), fullPage: true, animations: 'disabled' })
  await page.getByRole('button', { name: '关闭', exact: true }).click()
@@ -29,11 +29,11 @@ test('routing, preparation, subscriptions and returns are visible through read-o
  await page.getByRole('table').getByRole('button', { name: /^sub_/ }).first().click()
  await expect(page.getByRole('dialog').getByRole('button', { name: /^查看线程 dws:/ })).toBeVisible()
  await page.getByRole('button', { name: '关闭', exact: true }).click()
- await page.getByRole('button', { name: '路由投递', exact: true }).click()
+ await page.getByRole('button', { name: '路由事件', exact: true }).click()
  await expect(page.getByRole('table').getByText('Session 已受理').first()).toBeVisible()
  await page.getByRole('table').getByRole('button', { name: '路由请求', exact: true }).first().click()
  await expect(page.getByTestId('routing-record')).toContainText('"kind": "route_request"')
- for (const collection of ['topics', 'routing-deliveries', 'subscriptions', 'relations', 'bindings']) {
+ for (const collection of ['topics', 'routing-events', 'subscriptions', 'relations', 'bindings']) {
   expect((await request.get(`/v1/observer/${collection}`)).status()).toBe(200)
   expect((await request.head(`/v1/observer/${collection}`)).status()).toBe(200)
   expect((await request.post(`/v1/observer/${collection}`, { data: {} })).status()).toBe(405)
@@ -42,18 +42,18 @@ test('routing, preparation, subscriptions and returns are visible through read-o
  expect(methods.every(method => method === 'GET')).toBeTruthy()
 })
 
-test('internal delivery shows Session acceptance and stable identity', async ({ page, request }, testInfo) => {
+test('internal event shows Session acceptance and stable identity', async ({ page, request }, testInfo) => {
  const methods: string[] = []
  page.on('request', r => { if (r.url().includes('/v1/')) methods.push(r.method()) })
- await page.goto('/observer/?view=internal-deliveries&id=browser-accepted')
+ await page.goto('/observer/?view=internal-events&id=browser-accepted')
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByText('Session 已受理', { exact: true })).toBeVisible()
- await expect(page.getByTestId('routing-record')).toContainText('"delivery_id": "browser-accepted"')
+ await expect(page.getByTestId('routing-record')).toContainText('"event_id": "browser-accepted"')
  await expect(page.getByTestId('routing-record')).toContainText('"kind": "context_supplement"')
  await expect(dialog.getByRole('button', { name: /重试|替换|恢复|确认投递/ })).toHaveCount(0)
- await page.screenshot({ path: testInfo.outputPath('internal-delivery.png'), fullPage: true, animations: 'disabled' })
- expect((await request.head('/v1/observer/internal-deliveries/browser-accepted')).status()).toBe(200)
- expect((await request.post('/v1/observer/internal-deliveries/browser-accepted', { data: {} })).status()).toBe(405)
+ await page.screenshot({ path: testInfo.outputPath('internal-event.png'), fullPage: true, animations: 'disabled' })
+ expect((await request.head('/v1/observer/internal-events/browser-accepted')).status()).toBe(200)
+ expect((await request.post('/v1/observer/internal-events/browser-accepted', { data: {} })).status()).toBe(405)
  expect(methods.length).toBeGreaterThan(0)
  expect(methods.every(method => method === 'GET')).toBeTruthy()
 })

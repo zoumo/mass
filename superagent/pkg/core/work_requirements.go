@@ -13,7 +13,7 @@ type UpdateRequirementsRequest struct {
 	IssueID          string `json:"issueId"`
 	ExpectedRevision int    `json:"expectedRevision"`
 	Goal             string `json:"goal,omitempty"`
-	NotifyWorker     bool   `json:"notifyWorker,omitempty"`
+	NotifyIssueSession     bool   `json:"notifyIssueSession,omitempty"`
 }
 
 func editableIssue(ctx context.Context, tx *sql.Tx, b Binding, id string, expected int) (Issue, error) {
@@ -34,13 +34,13 @@ func editableIssue(ctx context.Context, tx *sql.Tx, b Binding, id string, expect
 }
 
 const (
-	workerStarted       = "worker_started"
-	workerUpdateKind    = "worker_update"
+	issueSessionStarted       = "issue_session_started"
+	issueSessionUpdateKind    = "issue_session_update"
 	reportSubmittedKind = "report_submitted"
 	reportReminderKind  = "report_reminder"
 )
 
-type WorkerUpdateRequest struct {
+type IssueSessionInputRequest struct {
 	OperationID      string             `json:"operationId"`
 	IssueID          string             `json:"issueId"`
 	ExpectedRevision int                `json:"expectedRevision"`
@@ -56,8 +56,8 @@ func validateGoal(goal string) error {
 	return nil
 }
 
-func issueGoalRef(issue Issue) deliveryReference {
-	return deliveryReference{Kind: "issue", ID: issue.ID, GoalRevision: issue.RequirementsRevision}
+func issueGoalRef(issue Issue) eventReference {
+	return eventReference{Kind: "issue", ID: issue.ID, GoalRevision: issue.RequirementsRevision}
 }
 
 func updateRequirements(r UpdateRequirementsRequest) workMutation {
@@ -74,12 +74,12 @@ func updateRequirements(r UpdateRequirementsRequest) workMutation {
 			issue.Revision++
 			issue.RequirementsRevision++
 		}
-		if !r.NotifyWorker {
+		if !r.NotifyIssueSession {
 			return WorkReceipt{Issue: issue}, saveIssue(ctx, tx, issue)
 		}
 		key := creationKey("goal-update", b.ID, r.OperationID)
 		id := creationID(key, r)
-		if existing, err := existingCreation(ctx, tx, "internal_deliveries", key, id); err != nil {
+		if existing, err := existingCreation(ctx, tx, "internal_events", "event_id", key, id); err != nil {
 			return nil, err
 		} else if existing {
 			return WorkReceipt{Issue: issue, NotificationEventID: id}, nil
@@ -89,20 +89,20 @@ func updateRequirements(r UpdateRequirementsRequest) workMutation {
 			return nil, err
 		}
 		commitGate("requirements_before_notification")
-		return notifyWorker(ctx, tx, issue, issue.LatestRequirementsEventID, workerUpdateKind, nil, nil)
+		return notifyIssueSession(ctx, tx, issue, issue.LatestRequirementsEventID, issueSessionUpdateKind, nil, nil)
 	}
 }
 
-func workerUpdate(r WorkerUpdateRequest) workMutation {
+func issueSessionInput(r IssueSessionInputRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
 		if r.Content != nil {
 			if err := r.Content.normalize(); err != nil {
 				return nil, err
 			}
 		}
-		key := creationKey("delivery", b.ID, r.OperationID)
+		key := creationKey("evt", b.ID, r.OperationID)
 		id := creationID(key, r)
-		if existing, err := existingCreation(ctx, tx, "internal_deliveries", key, id); err != nil {
+		if existing, err := existingCreation(ctx, tx, "internal_events", "event_id", key, id); err != nil {
 			return nil, err
 		} else if existing {
 			issue, err := topicIssue(ctx, tx, b, r.IssueID)
@@ -112,7 +112,7 @@ func workerUpdate(r WorkerUpdateRequest) workMutation {
 		if err != nil {
 			return nil, err
 		}
-		kind := workerUpdateKind
+		kind := issueSessionUpdateKind
 		switch r.Mode {
 		case "continue":
 		case contextSupplement:
@@ -133,7 +133,7 @@ func workerUpdate(r WorkerUpdateRequest) workMutation {
 				return nil, err
 			}
 		}
-		return notifyWorker(ctx, tx, issue, id, kind, r.Content, r.Materials)
+		return notifyIssueSession(ctx, tx, issue, id, kind, r.Content, r.Materials)
 	}
 }
 
@@ -151,24 +151,24 @@ func canContinueIssue(issue Issue) bool {
 	return issue.Status == "active" && len(issue.Blockers) == 0
 }
 
-func notifyWorker(ctx context.Context, tx *sql.Tx, issue Issue, id, kind string, content *StructuredContent, materials []Material) (WorkReceipt, error) {
+func notifyIssueSession(ctx context.Context, tx *sql.Tx, issue Issue, id, kind string, content *StructuredContent, materials []Material) (WorkReceipt, error) {
 	if issue.CurrentExecutionID == "" {
-		return WorkReceipt{}, problem("failed_precondition", "Worker update requires a current Execution")
+		return WorkReceipt{}, problem("failed_precondition", "Issue Session update requires a current Execution")
 	}
-	if kind == workerUpdateKind && !canContinueIssue(issue) {
-		return WorkReceipt{}, problem("failed_precondition", "Worker continuation requires an active Issue with all blockers resolved")
+	if kind == issueSessionUpdateKind && !canContinueIssue(issue) {
+		return WorkReceipt{}, problem("failed_precondition", "Issue Session continuation requires an active Issue with all blockers resolved")
 	}
 	var x Execution
 	if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=? AND issue_id=?", &x, issue.CurrentExecutionID, issue.ID); err != nil {
 		return WorkReceipt{}, err
 	}
 	if x.Authority != "current" {
-		return WorkReceipt{}, problem("failed_precondition", "Worker update requires a current Execution")
+		return WorkReceipt{}, problem("failed_precondition", "Issue Session update requires a current Execution")
 	}
-	refs := []deliveryReference{issueGoalRef(issue)}
+	refs := []eventReference{issueGoalRef(issue)}
 	for _, material := range materials {
 		if material.MessageID != "" {
-			refs = append(refs, deliveryReference{Kind: "trigger_message", ID: material.MessageID})
+			refs = append(refs, eventReference{Kind: "trigger_message", ID: material.MessageID})
 		}
 	}
 	var body json.RawMessage
@@ -181,10 +181,10 @@ func notifyWorker(ctx context.Context, tx *sql.Tx, issue Issue, id, kind string,
 			return WorkReceipt{}, err
 		}
 	}
-	err := enqueueInternalDelivery(ctx, tx, internalDelivery{
+	err := enqueueInternalEvent(ctx, tx, internalEvent{
 		ID: id, Kind: kind,
-		Sender:    deliveryIdentity{Kind: "topic", TopicID: issue.TopicID},
-		Recipient: deliveryIdentity{Kind: "worker", ExecutionID: x.ID},
+		Sender:    eventIdentity{Kind: "topic", TopicID: issue.TopicID},
+		Recipient: eventIdentity{Kind: "issue", ExecutionID: x.ID},
 		Content:   content,
 		Body:      body,
 		Refs:      refs,
@@ -192,9 +192,9 @@ func notifyWorker(ctx context.Context, tx *sql.Tx, issue Issue, id, kind string,
 	return WorkReceipt{Issue: issue, NotificationEventID: id}, err
 }
 
-func workDeliveryCurrent(ctx context.Context, tx *sql.Tx, d internalDelivery) (bool, error) {
+func workEventCurrent(ctx context.Context, tx *sql.Tx, d internalEvent) (bool, error) {
 	switch d.Kind {
-	case workerUpdateKind, reportReminderKind:
+	case issueSessionUpdateKind, reportReminderKind:
 	default:
 		return true, nil
 	}

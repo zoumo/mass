@@ -2,25 +2,27 @@ import CopyLink from './CopyLink'
 import { useState, type ReactNode } from 'react'
 import { Activity, ChevronDown, CircleDot, Mail } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { formatTime, routingDeliveryLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
+import { formatTime, eventStatusLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
 import { usePages, useRecord, viewHref, type ViewProps } from './observer'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
+import { TraceLinks, type TraceAssociation } from './TraceLinks'
+import { metricsHref } from './MetricsView'
 import './topic.css'
 
 const actions = {
   routed_message: '投往 Topic', route_request: 'Topic 退回', issue_created: '创建 Issue',
-  execution_started: '启动 Execution', goal_notification: '通知 Worker 当前目标版本',
-  worker_update: '通知 Worker 继续', context_supplement: '补充 Worker 上下文',
+  execution_started: '启动 Execution', goal_notification: '通知 Issue Session 当前目标版本',
+  issue_session_update: '通知 Issue Session 继续', context_supplement: '补充 Issue Session 上下文',
   report_submitted: '提交报告', blocker_resolved: '解除阻塞', completion: '业务验收',
   cancellation: '取消 Issue', reopening: '重开 Issue', issue_snapshot: '已保存的 Issue 状态',
 } as const
 
 type Event = {
-  id: string; kind: keyof typeof actions; at: string; actor?: string
+  id: string; kind: keyof typeof actions; at: string; actor?: string; traceAssociations?: TraceAssociation[]
   title?: string; issueId?: string; messageId?: string; executionId?: string; reportId?: string
-  deliveryId?: string; returnedDeliveryId?: string; bindingId?: string; blockerId?: string
+  eventId?: string; returnedEventId?: string; bindingId?: string; blockerId?: string
   summary?: string; status?: string; issueStatus?: string; goalRevision?: number; generation?: number
 }
 type Detail = WorkbenchRow & {
@@ -31,7 +33,7 @@ type Detail = WorkbenchRow & {
   content?: StructuredBody
   sentAt?: string
 }
-const actors: Record<string, string> = { core: 'Core', topic: 'Topic', router: 'Router', worker: 'Worker' }
+const actors: Record<string, string> = { core: 'Core', topic: 'Topic', router: 'Router', issue: 'Issue Session' }
 const categories = { all: '全部', message: '消息', issue: 'Issue' } as const
 const recordHref = (view: string, filters: Record<string, string>) =>
   '/observer/?' + new URLSearchParams({ view, ...filters })
@@ -45,33 +47,33 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function MessageFacts({ row }: { row: Event }) {
-  const delivery = useRecord<Detail>('routing-deliveries/' + encodeURIComponent(row.deliveryId!))
+  const internalEvent = useRecord<Detail>('routing-events/' + encodeURIComponent(row.eventId!))
   const message = useRecord<Detail>(row.messageId ? 'messages/' + encodeURIComponent(row.messageId) : '')
-  const reason = delivery.data?.body
+  const reason = internalEvent.data?.body
   return <>
-    {delivery.error && <ReadError message={delivery.error} stale={!!delivery.data}/>}
+    {internalEvent.error && <ReadError message={internalEvent.error} stale={!!internalEvent.data}/>}
     {message.error && <ReadError message={message.error} stale={!!message.data}/>}
     <dl>
-      <Fact label="投递状态">{routingDeliveryLabel(delivery.data?.status || row.status)}</Fact>
+      <Fact label="发送状态">{eventStatusLabel(internalEvent.data?.status || row.status)}</Fact>
       <Fact label="登记时间">{row.at}</Fact>
-      {delivery.data?.sentAt && <Fact label={row.kind === 'route_request' ? 'Router Session 受理' : 'Topic Session 受理'}>{delivery.data.sentAt}</Fact>}
-      {typeof reason === 'string' && <Fact label={row.kind === 'route_request' ? '退回原因' : '投递理由'}>{reason}</Fact>}
+      {internalEvent.data?.sentAt && <Fact label={row.kind === 'route_request' ? 'Router Session 受理' : 'Topic Session 受理'}>{internalEvent.data.sentAt}</Fact>}
+      {typeof reason === 'string' && <Fact label={row.kind === 'route_request' ? '退回原因' : '路由依据'}>{reason}</Fact>}
       {message.data && <><Fact label="来源">{sourceLabel(message.data.source)}{message.data.actor && ' · ' + message.data.actor}</Fact>
         <Fact label="消息原文"><pre>{message.data.text || '未记录正文'}</pre></Fact></>}
     </dl>
-    {(delivery.loading && !delivery.data || row.messageId && message.loading && !message.data) && <p>正在读取详情…</p>}
+    {(internalEvent.loading && !internalEvent.data || row.messageId && message.loading && !message.data) && <p>正在读取详情…</p>}
     <div className="topic-links">
       {row.messageId && <a href={viewHref('message',row.messageId, {threadKey: message.data?.threadKey || ''})}>查看此消息 →</a>}
-      {row.returnedDeliveryId && <a href={recordHref('routing-deliveries',{ id: row.returnedDeliveryId })}>查看原投递 →</a>}
-      <a href={recordHref('routing-deliveries',{ id: row.deliveryId! })}>投递记录 →</a>
+      {row.returnedEventId && <a href={recordHref('routing-events',{ id: row.returnedEventId })}>查看原事件 →</a>}
+      <a href={recordHref('routing-events',{ id: row.eventId! })}>事件记录 →</a>
     </div>
   </>
 }
 
 function IssueFacts({ row }: { row: Event }) {
-  const notification = ['goal_notification','worker_update','context_supplement'].includes(row.kind)
-  const collection = row.reportId ? 'reports' : row.kind === 'execution_started' ? 'executions' : notification ? 'internal-deliveries' : 'issues'
-  const id = row.reportId || (row.kind === 'execution_started' ? row.executionId : notification ? row.deliveryId : row.issueId)
+  const notification = ['goal_notification','issue_session_update','context_supplement'].includes(row.kind)
+  const collection = row.reportId ? 'reports' : row.kind === 'execution_started' ? 'executions' : notification ? 'internal-events' : 'issues'
+  const id = row.reportId || (row.kind === 'execution_started' ? row.executionId : notification ? row.eventId : row.issueId)
   const detail = useRecord<Detail>(collection + '/' + encodeURIComponent(id!))
   const data = detail.data
   const change = row.kind === 'completion' ? data?.completion : row.kind === 'cancellation' ? data?.cancellation : row.kind === 'reopening' ? data?.reopening : undefined
@@ -88,8 +90,8 @@ function IssueFacts({ row }: { row: Event }) {
       {row.summary && <Fact label="报告摘要">{data?.summary || row.summary}</Fact>}
       {data?.details && <Fact label="报告详情">{data.details}</Fact>}
       {data?.evidence?.length ? <Fact label="报告证据">{data.evidence.join('\n')}</Fact> : null}
-      {data?.startup?.status && <Fact label="启动投递">{routingDeliveryLabel(data.startup.status)}</Fact>}
-      {notification && data && <><Fact label="通知投递">{routingDeliveryLabel(data.status)}</Fact>
+      {data?.startup?.status && <Fact label="启动事件">{eventStatusLabel(data.startup.status)}</Fact>}
+      {notification && data && <><Fact label="通知事件">{eventStatusLabel(data.status)}</Fact>
         {data.content && <Fact label="补充说明"><StructuredContent content={data.content}/></Fact>}</>}
       {change && changeTime === row.at && <><Fact label="依据">{change.reason}</Fact>
         {'evidence' in change && <Fact label="验收证据">{change.evidence.join('\n')}</Fact>}</>}
@@ -104,7 +106,7 @@ function IssueFacts({ row }: { row: Event }) {
       <a href={viewHref('issue',row.issueId)}>查看此 Issue →</a>
       {row.reportId && <a href={recordHref('reports',{ id: row.reportId })}>查看报告 →</a>}
       {row.executionId && <a href={recordHref('executions',{ id: row.executionId })}>查看执行 →</a>}
-      {row.deliveryId && <a href={recordHref('internal-deliveries',{ id: row.deliveryId })}>查看投递 →</a>}
+      {row.eventId && <a href={recordHref('internal-events',{ id: row.eventId })}>查看事件 →</a>}
       {blocker?.resolution?.messageId && <a href={viewHref('message',blocker.resolution.messageId)}>解除依据消息 →</a>}
     </div>
   </>
@@ -125,7 +127,7 @@ function topicLane(row: Event, topic: FlowNode): FlowLane {
   if (isMessage) {
     const message: FlowNode = { kind:'message', label:row.title || row.messageId || '消息原文未记录',
       href:row.messageId ? viewHref('message',row.messageId) : undefined }
-    const status = routingDeliveryLabel(row.status)
+    const status = eventStatusLabel(row.status)
     if (row.kind === 'route_request') {
       return lane([topic, message, { kind:'router', label:'Router', href:viewHref('router',row.messageId) }], ['退回消息','请求路由 · ' + status])
     }
@@ -134,7 +136,7 @@ function topicLane(row: Event, topic: FlowNode): FlowLane {
   }
 
   const issue: FlowNode = { kind:'issue', label:row.title || row.issueId || 'Issue', href:row.issueId ? viewHref('issue',row.issueId) : undefined }
-  const execution: FlowNode = { kind:'execution', label:row.generation ? 'Worker · 第 ' + row.generation + ' 代' : 'Worker',
+  const execution: FlowNode = { kind:'execution', label:row.generation ? 'Issue Session · 第 ' + row.generation + ' 代' : 'Issue Session',
     href:row.executionId ? recordHref('executions',{ id:row.executionId }) : undefined }
   const actor: FlowNode = row.actor === 'topic' ? topic : { kind:'state', label:actors[row.actor || ''] || '主体未记录' }
   if (row.kind === 'report_submitted') {
@@ -197,11 +199,12 @@ function ActivityRow({ row }: { row: Event }) {
     <summary><Icon size={17} className={isMessage ? 'topic-msg-icon' : 'topic-issue-icon'}/>
       <div className="topic-row-text"><div className="topic-row-meta"><time dateTime={row.at} title={row.at}>{formatTime(row.at)}</time>
         <span>{row.kind === 'issue_snapshot' ? '当前快照' : actors[row.actor || ''] || '主体未记录'}</span></div>
-        <strong>{actions[row.kind]}</strong><span className="topic-row-object">{row.title || row.issueId || row.messageId || row.deliveryId}</span>
-        {row.status && <small>{routingDeliveryLabel(row.status)}</small>}{row.issueStatus && <small>{stateLabel(row.issueStatus)}</small>}
+        <strong>{actions[row.kind]}</strong><span className="topic-row-object">{row.title || row.issueId || row.messageId || row.eventId}</span>
+        {row.status && <small>{eventStatusLabel(row.status)}</small>}{row.issueStatus && <small>{stateLabel(row.issueStatus)}</small>}
         {row.summary && <p>{row.summary}</p>}
       </div><ChevronDown size={16} className="topic-chevron"/>
     </summary>
+    <div className="topic-row-traces"><TraceLinks associations={row.traceAssociations} at={row.at}/></div>
     {open && <div className="topic-row-facts">{isMessage ? <MessageFacts row={row}/> : <IssueFacts row={row}/>}</div>}
   </details></li>
 }
@@ -219,7 +222,7 @@ function TopicDetail({ id, filter }: {id: string; filter: keyof typeof categorie
       {t.completion && <details className="topic-acceptance"><summary>Topic 业务验收</summary>
         <p>{t.completion.reason}</p>{t.completion.evidence?.map((ref,i) => <p key={i}>{ref}</p>)}</details>}
       <nav className="topic-links" aria-label="Topic 关联记录">
-        <a href={viewHref('issue','',{ topicId:id })}>所属 Issue →</a>
+        <a href={viewHref('issue','',{ topicId:id })}>所属 Issue →</a><a href={metricsHref('topic', id)}>工具用量 →</a>
         {t.bindingId && <a href={recordHref('bindings',{id:t.bindingId})}>查看 Session →</a>}
         <a href={recordHref('subscriptions',{topicId:id})}>来源订阅 →</a>
         <a href={recordHref('pull-requests',{topicId:id})}>关联 PR →</a>

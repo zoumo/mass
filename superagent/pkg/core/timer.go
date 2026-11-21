@@ -158,8 +158,8 @@ func invalidateTimers(ctx context.Context, tx *sql.Tx, topicID, at string) error
 		return storageError()
 	}
 	// The Message and Thread remain readable even if their original followup expires.
-	if _, err := tx.ExecContext(ctx, `UPDATE internal_deliveries SET status='superseded'
- WHERE id IN (SELECT json_extract(m.body,'$.eventId') FROM scheduled_tasks t
+	if _, err := tx.ExecContext(ctx, `UPDATE internal_events SET status='superseded'
+ WHERE event_id IN (SELECT json_extract(m.body,'$.eventId') FROM scheduled_tasks t
  JOIN trigger_messages m ON m.id=t.trigger_message_id WHERE t.topic_id=?)
  AND status IN ('pending','dispatching')`, topicID); err != nil {
 		return storageError()

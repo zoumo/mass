@@ -1,4 +1,4 @@
-import { routingDeliveryLabel, stateLabel } from '../../workbench'
+import { eventStatusLabel, stateLabel } from '../../workbench'
 import SessionPreview from './SessionPreview'
 import { identity, reminderBasis, type RecordProps, type Kind } from './records'
 
@@ -22,8 +22,8 @@ export default function SessionEvidence({ kind, detail, navigate }: RecordProps)
           </dd>
           <dt>启动输入</dt>
           <dd>
-            {detail.startup?.delivery_id
-              ? routingDeliveryLabel(detail.startup.status)
+            {detail.startup?.event_id
+              ? eventStatusLabel(detail.startup.status)
               : stateLabel(detail.startup?.status)}
           </dd>
           {detail.startup?.receipt && (
@@ -47,8 +47,8 @@ export default function SessionEvidence({ kind, detail, navigate }: RecordProps)
               <span>
                 {' '}
                 ·{' '}
-                {detail.reminder.delivery_id
-                  ? routingDeliveryLabel(detail.reminder.status)
+                {detail.reminder.event_id
+                  ? eventStatusLabel(detail.reminder.status)
                   : stateLabel(detail.reminder.status)}
               </span>
             )}
@@ -144,12 +144,12 @@ export default function SessionEvidence({ kind, detail, navigate }: RecordProps)
         </dl>
       )}
       {kind === 'executions' && detail.startEventId && (
-        <button onClick={() => showRecord('internal-deliveries', String(detail.startEventId))} type="button">
+        <button onClick={() => showRecord('internal-events', String(detail.startEventId))} type="button">
           启动事件
         </button>
       )}
       {kind === 'executions' && detail.reminderEventId && (
-        <button onClick={() => showRecord('internal-deliveries', String(detail.reminderEventId))} type="button">
+        <button onClick={() => showRecord('internal-events', String(detail.reminderEventId))} type="button">
           提醒事件
         </button>
       )}

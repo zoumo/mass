@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testProducerToken = "delivery-fixture-event-producer"
+const testProducerToken = "test-internal-event-producer"
 
-func deliveryFixture(t *testing.T, endpoint string) (*fixture, string) {
+func eventFixture(t *testing.T, endpoint string) (*fixture, string) {
 	t.Helper()
 	f := fixtureAt(t)
 	saved, err := os.ReadFile(f.config)

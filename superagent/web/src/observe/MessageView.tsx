@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button'
 import { formatTime, messageTitle, sourceLabel, stateLabel } from '../workbench'
 import { navigate, usePages, useRecord, viewHref, type MessageRecord, type ViewProps } from './observer'
 import MessagePath from './MessagePath'
+import { metricsHref } from './MetricsView'
 
 export default function MessageView({ query }: ViewProps) {
   // A changed Thread starts its own list and selection.
@@ -50,7 +51,7 @@ function Messages({ query }: ViewProps) {
     previousSelection.current = requested
   }, [requested, wide])
   const displayed = requested || (wide ? id : '')
-  const detail = useRecord<MessageRecord>(displayed ? 'messages/' + encodeURIComponent(displayed) : '')
+  const detail = useRecord<MessageRecord>(displayed ? 'messages/' + encodeURIComponent(displayed) + '?trace=true' : '')
   const listHref = viewHref('message', '', { threadKey })
   return <div className={'split-view message-layout' + (requested ? ' has-selection' : '')}>
     <aside className="panel object-list" aria-label="最近消息">
@@ -98,7 +99,7 @@ function MessageDetail({ row, threadKey }: { row: MessageRecord, threadKey: stri
   return <article aria-label="当前消息" className="message-detail">
     <div className="panel original">
       <div className="panel-heading"><div className="panel-title"><Mail size={17}/><span>消息详情</span></div>
-        <CopyLink href={viewHref('message', row.id, {threadKey})}/></div>
+        <div className="observable-actions"><a href={metricsHref('message', row.id)}>工具用量</a><CopyLink href={viewHref('message', row.id, {threadKey})}/></div></div>
       <div className="detail-body"><div className="source-line"><span className="source-tag">{sourceLabel(row.source)}</span><span className="acceptance"><Check size={13}/>{stateLabel(row.acceptance)}</span></div>
         <h2 ref={heading} tabIndex={-1}>{messageTitle(row)}</h2>
         <div className="message-meta"><span><UserRound/>{row.actor || '发送者未记录'}</span><span><Clock3/><time dateTime={row.receivedAt}>{formatTime(row.receivedAt)}</time></span></div>

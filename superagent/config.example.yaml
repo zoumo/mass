@@ -1,4 +1,4 @@
-# Defaults to this directory beside the YAML file. Use an empty directory for schema 22.
+# Defaults to this directory beside the YAML file. Use an empty directory for schema 23.
 dataDir: ./superagent-core-data
 # Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
 listen: 127.0.0.1:24370
@@ -11,8 +11,16 @@ sources:
 # Optional SQLite main-database page budget; zero means unlimited.
 storageMaxPages: 0
 
+# Optional OpenObserve trace queries from the Observer.
+# The private credential file contains a username and password on separate lines.
+# observerTrace:
+#   endpoint: http://127.0.0.1:5080
+#   organization: default
+#   stream: default
+#   credentialFile: ./openobserve-login.txt
+
 # Optional: enabling execution allows Core to start Sessions through massd.
-# Choose the Router workspace, fixed role profiles and available Worker profiles.
+# Choose the Router workspace, fixed role profiles and available Issue profiles.
 # New Sessions use fullAccess and disable native agent questions.
 # execution:
 #   massdEndpoint: ws://127.0.0.1:24368/rpc
@@ -30,7 +38,7 @@ storageMaxPages: 0
 #       runtimeRef: codex-standard
 #       model: gpt-6.2-sol
 #       effort: medium
-#   workerTemplates:
+#   issueTemplates:
 #     - runtimeRef: codex-deepseek
 #       model: deepseek-chat
 #       description: Implement, fix and verify code.

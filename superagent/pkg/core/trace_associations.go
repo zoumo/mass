@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"slices"
 
 	"go.opentelemetry.io/otel/propagation"
@@ -27,10 +26,12 @@ type tracePhase struct{ collection, phase string }
 
 var (
 	messageAdmission = tracePhase{"messages", "admission"}
-	internalEnqueue  = tracePhase{"internal-deliveries", "enqueue"}
-	internalDispatch = tracePhase{"internal-deliveries", "dispatch"}
+	internalEnqueue  = tracePhase{"internal-events", "enqueue"}
+	internalDispatch = tracePhase{"internal-events", "dispatch"}
 	bindingCreation  = tracePhase{"session-bindings", "creation"}
 	timerRevision    = tracePhase{"timers", "revision"}
+	issueCreation    = tracePhase{"issues", "creation"}
+	issueLifecycle   = tracePhase{"issue-lifecycle", "transition"}
 	executionCreate  = tracePhase{"executions", "creation"}
 	outboxEnqueue    = tracePhase{"outbox", "enqueue"}
 )
@@ -99,52 +100,56 @@ func addTraceLinks(ctx context.Context, links []trace.Link) {
 	}
 }
 
-type observerTraceAssociation struct {
-	TraceID string `json:"traceId"`
-	Phase   string `json:"phase"`
-}
-
-// The Observer detail projection exposes only the identifiers needed for lookup.
-func observeTraceAssociations(ctx context.Context, tx *sql.Tx, collection, id string, body json.RawMessage) json.RawMessage {
+// Expressions are built from fixed collection names and internal SQL columns.
+// Look up associations through their primary key inside the page query.
+func observerTraceProjection(collection, id, body string) string {
+	association := ""
 	switch collection {
-	case "messages", "internal-deliveries", "timers", "executions", "outbox":
+	case "routing-events":
+		collection = "internal-events"
+	case "reports":
+		collection, id = "internal-events", "json_extract("+body+",'$.eventId')"
+	case "issues":
+		association = issueCreationTraces(id)
+	case "messages", "internal-events", "timers", "executions", "outbox":
 	default:
 		return body
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT phase,traceparent FROM trace_associations
- WHERE collection=? AND object_id=? ORDER BY phase,revision DESC LIMIT ?`, collection, id, traceAssociationLimit)
-	if err != nil {
-		return body
+	if association == "" {
+		association = observerTraceList(collection, id)
 	}
-	defer func() { _ = rows.Close() }()
-	var associations []observerTraceAssociation
-	for rows.Next() {
-		var phase, parent string
-		if err := rows.Scan(&phase, &parent); err != nil {
-			return body
+	return "json_set(" + body + ",'$.traceAssociations',json(" + association + "))"
+}
+
+func observerTraceList(collection, id string) string {
+	return `(SELECT json_group_array(json_object('phase',phase,'traceId',trace_id)) FROM (
+ SELECT DISTINCT phase,substr(traceparent,4,32) AS trace_id FROM trace_associations
+ WHERE collection='` + collection + `' AND object_id=` + id + ` ORDER BY phase,revision DESC LIMIT 20))`
+}
+
+func issueCreationTraces(id string) string {
+	// Existing Issues may predate the transactional creation association.
+	// A successful, state-changing create_issue on the target proves creation.
+	return `coalesce(nullif(` + observerTraceList("issues", id) + `,'[]'),
+ (SELECT json_array(json_object('phase','creation','traceId',trace_id)) FROM mcp_tool_calls
+ WHERE target_issue_id=` + id + ` AND caller_role='topic' AND tool='create_issue' AND changed=1
+ AND length(trace_id)=32 ORDER BY seq LIMIT 1),'[]')`
+}
+
+func issueLifecycleTraces(id, at string) string {
+	return observerTraceList("issue-lifecycle", "("+id+"||'/'||"+at+")")
+}
+
+func observerIssueActivityTraces(body, id string) string {
+	// The activity uses the transition timestamp stored in the same transaction.
+	projection := "json_set(" + body + ",'$.lifecycleTraces',json_object("
+	for index, transition := range []struct{ kind, at string }{{"completion", "completedAt"}, {"cancellation", "at"}, {"reopening", "at"}} {
+		if index != 0 {
+			projection += ","
 		}
-		if sc := readTraceContext(parent, ""); sc.IsValid() {
-			entry := observerTraceAssociation{TraceID: sc.TraceID().String(), Phase: phase}
-			if !slices.Contains(associations, entry) {
-				associations = append(associations, entry)
-			}
-		}
+		at := "json_extract(" + body + ",'$." + transition.kind + "." + transition.at + "')"
+		projection += "'" + transition.kind + "',json(" + issueLifecycleTraces(id, at) + ")"
 	}
-	if rows.Err() != nil || len(associations) == 0 {
-		return body
-	}
-	var record map[string]json.RawMessage
-	if json.Unmarshal(body, &record) != nil || record == nil {
-		return body
-	}
-	projection, err := json.Marshal(associations)
-	if err != nil {
-		return body
-	}
-	record["traceAssociations"] = projection
-	result, err := json.Marshal(record)
-	if err != nil {
-		return body
-	}
-	return result
+	return projection + `),'$.reports',json((SELECT json_group_array(json(` + observerTraceProjection("reports", "", "report.value") + `))
+ FROM json_each(issues.body,'$.reports') report)))`
 }

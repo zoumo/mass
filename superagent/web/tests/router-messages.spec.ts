@@ -4,7 +4,7 @@ const audit = 'http://127.0.0.1:' + (process.env.SUPERAGENT_OBSERVER_AUDIT_PORT 
 const routing = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794')
 
 type Message = { id: string; sourceMessageId: string; eventId: string }
-type Delivery = { id: string; createdAt: string; kind: string; topicId?: string; returnedDeliveryId?: string; body?: string }
+type InternalEvent = { event_id: string; createdAt: string; kind: string; topicId?: string; returnedEventId?: string; body?: string }
 type RouterRow = { id: string; state: string; activityAt: string; activityId: string; targets: { id: string; topicId: string; reason: string }[] }
 async function list<T>(request: APIRequestContext, url: string): Promise<T[]> {
   const result = await request.get(url)
@@ -49,7 +49,7 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
   await expect(page.getByRole('combobox', { name: '每页' })).toHaveValue('100')
 })
 
-test('Router connects each target and return reason to its source delivery', async ({ page, request }, testInfo) => {
+test('Router connects each target and return reason to its source event', async ({ page, request }, testInfo) => {
   const { endpoint } = await (await request.get(audit + '/message-path-fixture')).json()
   const api = endpoint + '/v1/observer/'
   const messages = await list<Message>(request, api + 'messages?preview=true')
@@ -62,9 +62,9 @@ test('Router connects each target and return reason to its source delivery', asy
   expect(result.some(row => row.id === direct.id)).toBe(false)
   expect(result.filter(row => row.id === rerouted.id)).toHaveLength(1)
   expect(result.filter(row => row.id === partial.id)).toHaveLength(1)
-  const deliveries = await list<Delivery>(request, api + 'routing-deliveries?messageId=' + partial.id)
-  const returned = deliveries.find(d => d.returnedDeliveryId)!
-  const original = deliveries.find(d => d.id === returned.returnedDeliveryId)!
+  const internalEvents = await list<InternalEvent>(request, api + 'routing-events?messageId=' + partial.id)
+  const returned = internalEvents.find(d => d.returnedEventId)!
+  const original = internalEvents.find(d => d.event_id === returned.returnedEventId)!
   const requests: string[] = []
   page.on('request', req => {
     if (req.url().includes('/v1/')) {
@@ -80,26 +80,26 @@ test('Router connects each target and return reason to its source delivery', asy
   await expect(row.locator('.router-brief')).toHaveCount(2)
   for (const target of summary.targets) {
     const branch = row.locator('.router-brief').filter({ has: page.locator(`a[href*="${target.topicId}"]`) })
-    const fact = deliveries.find(d => d.id === target.id)!
+    const fact = internalEvents.find(d => d.event_id === target.id)!
     await expect(branch).toContainText(fact.body!)
     expect(fact.topicId).toBe(target.topicId)
   }
-  await expect(row.locator('time')).toHaveAttribute('datetime', deliveries.find(d => d.id === summary.activityId)!.createdAt)
-  expect(requests.filter(path => path.endsWith('/routing-deliveries'))).toHaveLength(0)
-  await expect(page.locator(`[data-message-id="${bySource('observer-path-material-only').id}"]`)).toContainText('目标投递记录缺失')
+  await expect(row.locator('time')).toHaveAttribute('datetime', internalEvents.find(d => d.event_id === summary.activityId)!.createdAt)
+  expect(requests.filter(path => path.endsWith('/routing-events'))).toHaveLength(0)
+  await expect(page.locator(`[data-message-id="${bySource('observer-path-material-only').id}"]`)).toContainText('目标事件记录缺失')
   await page.screenshot({ path: testInfo.outputPath('router-overview.png'), animations: 'disabled' })
   const toggle = row.getByRole('button').first()
   await toggle.focus()
   await page.keyboard.press('Enter')
-  const history = row.getByRole('region', { name: '路由投递记录' })
-  await expect(history.locator('li')).toHaveCount(deliveries.length)
-  for (const d of deliveries) {
+  const history = row.getByRole('region', { name: '路由事件记录' })
+  await expect(history.locator('li')).toHaveCount(internalEvents.length)
+  for (const d of internalEvents) {
     // Locate by the persisted ID, which also occurs inside the return reference.
-    const entry = history.locator('li').filter({ has: page.getByText(d.id, { exact: true }) })
+    const entry = history.locator('li').filter({ has: page.getByText(d.event_id, { exact: true }) })
     if (d.body) await expect(entry.first()).toContainText(d.body)
     await expect(entry.first().locator('time').first()).toHaveAttribute('datetime', d.createdAt)
   }
-  const ref = history.getByRole('button', { name: '原投递 ' + original.id })
+  const ref = history.getByRole('button', { name: '原事件 ' + original.event_id })
   await ref.click()
   await expect(ref.locator('..').locator('dd').last()).toHaveText(original.body!)
   await ref.click()
@@ -131,8 +131,8 @@ test('Router connects each target and return reason to its source delivery', asy
 test('ignored Message displays the recorded return time and identifies the missing ignore reason', async ({ page, request }) => {
   const messages = await list<Message>(request, routing + '/v1/observer/messages?preview=true')
   const ignored = messages.find(m => m.sourceMessageId === 'observer-routing')!
-  const deliveries = await list<Delivery>(request, routing + '/v1/observer/routing-deliveries?messageId=' + ignored.id)
-  const returned = deliveries.find(d => d.returnedDeliveryId)!
+  const internalEvents = await list<InternalEvent>(request, routing + '/v1/observer/routing-events?messageId=' + ignored.id)
+  const returned = internalEvents.find(d => d.returnedEventId)!
   await page.goto(routing + '/observer/?perspective=router&id=' + ignored.id)
   const row = page.locator(`[data-message-id="${ignored.id}"]`)
   await expect(row.locator('.router-grid')).toContainText('已忽略')
@@ -143,7 +143,7 @@ test('ignored Message displays the recorded return time and identifies the missi
   await expect(row).not.toContainText('Observer ignore reason')
   const flow = page.getByRole('region', { name: 'Router 处理流程' })
   await expect(flow.locator('.flow-state')).toContainText('已忽略 · 原因未记录')
-  const returnLane = flow.locator(`[data-flow-id="${returned.id}"]`)
+  const returnLane = flow.locator(`[data-flow-id="${returned.event_id}"]`)
   await expect(returnLane.locator('.flow-node').last()).toHaveText('Router')
   await expect(returnLane.locator('.flow-edge').last()).toContainText(returned.body!)
 })
@@ -180,7 +180,7 @@ for (const [size, width, height] of [['desktop', 1360, 900], ['narrow', 390, 844
     await expect(flow.locator('[data-flow-id]')).toHaveCount(record.targets.length)
     const lane = flow.locator(`[data-flow-id="${record.targets[1].id}"]`)
     await lane.getByText('展开记录', { exact: true }).click()
-    await expect(lane.getByRole('link', { name: /投递记录/ })).toHaveAttribute('href', new RegExp(record.targets[1].id))
+    await expect(lane.getByRole('link', { name: /事件记录/ })).toHaveAttribute('href', new RegExp(record.targets[1].id))
     await expect(flow.locator('.flow-message').first()).toHaveAttribute('href', new RegExp(partial.id))
     await lane.locator('.flow-topic').click()
     await expect(page).toHaveURL(new RegExp('perspective=topic&id=' + record.targets[1].topicId))

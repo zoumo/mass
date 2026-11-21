@@ -110,6 +110,16 @@ _Avoid_: 将历史查询称为实时流重放。
 **实时事件流**：发送给当前订阅者的会话变化通知。
 _Avoid_: 将实时事件流等同于完整会话历史或可靠消费进度。
 
+## Superagent
+
+**Router Session**：全局 Router 的 MASS Session，负责判断入站 Message 的路由目标。
+
+**Topic Session**：为一个 Topic 绑定的 MASS Session，负责管理 Topic、安排 Issue 和验收报告。
+
+**Issue Session**：Issue 的 Execution 绑定的 MASS Session，按当前目标执行并提交 Report。Issue 保存业务身份，Execution 保存执行代次。
+
+**Internal Event（内部事件）**：Superagent 发给一个 Router Session、Topic Session 或 Issue Session 的结构化输入，例如路由请求、消息、执行输入或通知。每个事件有稳定身份，向同一接收方重试时沿用该身份。
+
 ## 消费与观察
 
 **Events 模块**：提供每 Session 一个实时 EventBroadcast 与统一 EventHandler；不管理历史或运行关联。

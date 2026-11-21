@@ -1,5 +1,5 @@
 import { useEffect, useState, type MouseEvent } from 'react'
-import { Activity, Boxes, CircleDot, GitBranch, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine } from 'lucide-react'
+import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { RefreshContext, defaultPerspective, navigate, useQuery, viewHref, type Perspective } from './observer'
 import MessageView from './MessageView'
@@ -8,6 +8,8 @@ import TopicView from './TopicView'
 import TopicConversation from './TopicConversation'
 import IssueView from './IssueView'
 import Diagnostics from './diagnostics/Diagnostics'
+import TraceView from './TraceView'
+import MetricsView from './MetricsView'
 
 const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
 
@@ -17,6 +19,8 @@ const views = {
   router: { title: 'Router', subtitle: '路由', icon: GitBranch, component: RouterView },
   topic: { title: 'Topic', subtitle: '主题', icon: Boxes, component: TopicView },
   issue: { title: 'Issue', subtitle: '事项', icon: CircleDot, component: IssueView },
+  trace: { title: 'Trace', subtitle: '调用链', icon: ListTree, component: TraceView },
+  metrics: { title: 'Metrics', subtitle: '工具用量', icon: BarChart3, component: MetricsView },
 }
 
 export default function App() {
@@ -86,7 +90,7 @@ export default function App() {
                 <ScanLine size={14} />
                 只读
               </span>
-              <a href="/observer/?view=internal-deliveries">
+              <a href="/observer/?view=internal-events">
                 <Activity size={16} />
                 诊断
               </a>

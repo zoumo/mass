@@ -94,7 +94,7 @@ func saveEcho(ctx context.Context, tx *sql.Tx, m Message) error {
 }
 
 func routeEchoInput(ctx context.Context, tx *sql.Tx, m Message, at string) error {
-	m.Echo.RoutingEventID = newID("dlv")
+	m.Echo.RoutingEventID = newID("evt")
 	if err := acceptRoute(ctx, tx, m, m.Echo.RoutingEventID, at); err != nil {
 		return err
 	}
