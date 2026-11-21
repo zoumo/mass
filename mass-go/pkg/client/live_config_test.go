@@ -32,7 +32,7 @@ func (a *liveConfigClientAPI) SetSessionConfig(context.Context, resource.Session
 
 func TestLiveSessionConfigurationClientValidationAndNoRetry(t *testing.T) {
 	api := &liveConfigClientAPI{}
-	server, err := transport.New(api, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	server, err := transport.New(api, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(server)
 	t.Cleanup(func() {

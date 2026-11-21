@@ -27,14 +27,15 @@ type Source struct {
 var instanceIDFormat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
 type Config struct {
-	Massd             *MassdConfig    `mapstructure:"massd"`
-	Sessions          *SessionsConfig `mapstructure:"sessions"`
-	OperatorTokenFile string          `mapstructure:"operatorTokenFile"`
-	operatorToken     string
-	DataDir           string   `mapstructure:"dataDir"`
-	Listen            string   `mapstructure:"listen"`
-	ExternalURL       string   `mapstructure:"externalURL"`
-	Sources           []Source `mapstructure:"sources"`
+	Massd                *MassdConfig    `mapstructure:"massd"`
+	Sessions             *SessionsConfig `mapstructure:"sessions"`
+	OperatorTokenFile    string          `mapstructure:"operatorTokenFile"`
+	operatorToken        string
+	DataDir              string   `mapstructure:"dataDir"`
+	Listen               string   `mapstructure:"listen"`
+	ExternalURL          string   `mapstructure:"externalURL"`
+	Sources              []Source `mapstructure:"sources"`
+	ObserverAllowedHosts []string `mapstructure:"observerAllowedHosts"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
 	// ObserverOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
@@ -88,6 +89,16 @@ func loadConfig(path string, composed bool) (Config, error) {
 		d.ErrorUnused = true
 		d.WeaklyTypedInput = false
 		d.DecodeHook = nil
+	}
+	if v.IsSet("observerAllowedHosts") {
+		if err := v.UnmarshalKey("observerAllowedHosts", &c.ObserverAllowedHosts, strict); err != nil {
+			return c, problem("invalid_argument", "observerAllowedHosts must be a list of strings")
+		}
+		for _, authority := range c.ObserverAllowedHosts {
+			if !validObserverAuthority(authority) {
+				return c, problem("invalid_argument", "observerAllowedHosts entries must be DNS names with an optional port")
+			}
+		}
 	}
 	if c.Sessions != nil {
 		var sessions SessionsConfig
@@ -201,6 +212,28 @@ func loadConfig(path string, composed bool) (Config, error) {
 		seenToken[s.tokenHash] = true
 	}
 	return c, nil
+}
+
+var dnsLabelPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
+
+func validObserverAuthority(authority string) bool {
+	host, port, hasPort := strings.Cut(authority, ":")
+	if hasPort {
+		portNumber, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || portNumber == 0 || port != strconv.FormatUint(portNumber, 10) {
+			return false
+		}
+	}
+	host = strings.TrimSuffix(host, ".")
+	if len(host) > 253 || net.ParseIP(host) != nil {
+		return false
+	}
+	for label := range strings.SplitSeq(host, ".") {
+		if !dnsLabelPattern.MatchString(label) {
+			return false
+		}
+	}
+	return true
 }
 
 func hasRemovedPermissionPreset(v *viper.Viper) bool {

@@ -77,7 +77,7 @@ func TestClaudeAssignedRootForwardingGapSurvivesRPCNotifications(t *testing.T) {
 		defer cancel()
 		assert.NoError(t, svc.Shutdown(cleanup))
 	})
-	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	t.Cleanup(handler.Shutdown)
 	server := httptest.NewServer(handler)

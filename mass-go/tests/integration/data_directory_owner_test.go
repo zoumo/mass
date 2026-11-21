@@ -33,7 +33,7 @@ func TestDataDirectoryHasOneWriterAcrossPathAliases(t *testing.T) {
 	env := environmentWithHome(home)
 	firstCtx, firstCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer firstCancel()
-	first := exec.CommandContext(firstCtx, app, "--data", data, "--listen", "127.0.0.1:0", "--local", "--session-idle-timeout", "0")
+	first := exec.CommandContext(firstCtx, app, "--data", data, "--listen", "127.0.0.1:0", "--session-idle-timeout", "0")
 	first.Env = env
 	var firstErr lockedBuffer
 	first.Stderr = &firstErr
@@ -71,7 +71,7 @@ func TestDataDirectoryHasOneWriterAcrossPathAliases(t *testing.T) {
 
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer secondCancel()
-	second := exec.CommandContext(secondCtx, app, "--data", alias, "--listen", "127.0.0.1:0", "--local", "--session-idle-timeout", "0")
+	second := exec.CommandContext(secondCtx, app, "--data", alias, "--listen", "127.0.0.1:0", "--session-idle-timeout", "0")
 	second.Env = env
 	var secondOut, secondErr bytes.Buffer
 	second.Stdout = &secondOut
@@ -95,6 +95,7 @@ func TestDataDirectoryHasOneWriterAcrossPathAliases(t *testing.T) {
 	case err = <-done:
 		waited = true
 		require.NoError(t, err, firstErr.String())
+		require.Contains(t, firstErr.String(), "WARN massd RPC accepts unauthenticated loopback connections")
 	case <-firstCtx.Done():
 		t.Fatal(firstCtx.Err())
 	}

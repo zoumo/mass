@@ -767,7 +767,7 @@ func (s *failureSuite) TestSubscriptionOverflowIsExplicit() {
 		broadcast:  broadcast,
 		prePublish: history.Events,
 	}
-	handler, err := transport.New(api, transport.Options{LocalOnly: true, WriteTimeout: 30 * time.Second})
+	handler, err := transport.New(api, transport.Options{WriteTimeout: 30 * time.Second})
 	s.Require().NoError(err)
 	defer handler.Shutdown()
 	server := httptest.NewServer(handler)

@@ -12,7 +12,7 @@ import (
 )
 
 func TestInitialSessionConfigurationRPCRejectsInvalidBeforeEffects(t *testing.T) {
-	endpoint, err := transport.New(nil, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	endpoint, err := transport.New(nil, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	server := httptest.NewServer(endpoint)
 	t.Cleanup(func() {

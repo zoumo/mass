@@ -5,6 +5,10 @@ dataDir: ./superagent-core-data
 listen: 127.0.0.1:24370
 # Optional Core URL for Session clients, including through a reverse proxy.
 # externalURL: https://core.example.com
+# Optional HTTP Host values for Observer reads. Include the port when clients send it.
+# Use network access controls to limit Observer access to trusted readers.
+# observerAllowedHosts:
+#   - observer.example.com:24370
 sources:
   - source: dws
     accountId: example-account
@@ -27,7 +31,7 @@ storageMaxPages: 0
 # New Sessions use fullAccess and disable native agent questions.
 # massd:
 #   endpoint: ws://127.0.0.1:24368/rpc
-#   tokenFile: ./massd.token  # omit only for explicit local massd access
+#   tokenFile: ./massd.token  # set when massd uses an instance token
 # operatorTokenFile: ./operator.token  # optional, for loopback CLI input recovery
 # sessions:
 #   routerWorkspace: /absolute/workspace

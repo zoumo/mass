@@ -62,14 +62,16 @@ boolean `false`. Unknown fields, invalid field types and malformed YAML are reje
 The old default `~/.mass/config.json` is no longer discovered; convert its contents
 to YAML and save them as `~/.mass/config.yaml`.
 
-For local single-user use, create `~/.mass/config.yaml` with:
+For an authenticated loopback instance, use a configuration like this in
+`~/.mass/config.yaml` and start `bin/massd`.
 
 ```yaml
+dataDir: ./data
 listen: 127.0.0.1:24368
-local: true
+tokenFile: /absolute/private/massd.token
 ```
 
-Then run `bin/massd` without flags. Use `dataDir` to choose the owned data
+Use `dataDir` to choose the owned data
 directory. A relative `dataDir` is resolved next to the YAML file. The legacy
 `data` field and the `--data` override take absolute paths. Specify at most one
 of `dataDir` and `data` in the YAML.
@@ -104,7 +106,7 @@ All these paths are relative to the data directory selected by `dataDir`,
 ```sh
 make build-go
 # Supply a fresh, absolute, application-owned data directory.
-bin/massd --data /absolute/owned/data --listen 127.0.0.1:24368 --local \
+bin/massd --data /absolute/owned/data --listen 127.0.0.1:24368 \
   --prototype-auto-approve-permissions
 bin/massctl runtime list
 ```
@@ -112,9 +114,13 @@ bin/massctl runtime list
 The permission flag is explicit prototype assembly policy; it leaves form/user
 questions pending. Without it permissions are manual too. `massd` prints its bound
 URL as JSON, supports port 0, and settles Service on SIGINT/SIGTERM. Shutdown
-failure exits nonzero. Select explicit `--local` trusted loopback mode or
-`--token-file`; direct remote access requires TLS. `/readyz` measures RPC
-admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
+failure exits nonzero. To require authentication, set `tokenFile` or
+`--token-file` and supply the same token to the CLI through `MASS_TOKEN`.
+With no token file, massd allows unauthenticated loopback RPC connections and
+logs a startup warning to stderr. Direct non-loopback listeners require a
+valid token file and TLS. `/readyz` measures RPC admission only.
+
+Remove `local` from existing YAML and `--local` from launch commands when upgrading.
 
 ### OpenTelemetry
 
@@ -126,7 +132,7 @@ operations. Each signal defaults to `none`. Set `OTEL_TRACES_EXPORTER=otlp` or
 OTEL_TRACES_EXPORTER=otlp \
 OTEL_METRICS_EXPORTER=otlp \
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
-bin/massd --local --data /absolute/owned/data
+bin/massd --data /absolute/owned/data
 ```
 
 The common endpoint appends `/v1/traces` and `/v1/metrics`. For per-signal

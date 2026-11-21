@@ -43,7 +43,7 @@ func TestRPCInjectEvidenceAndError(t *testing.T) {
 			if tc.code != "" {
 				api.err = &runtime.OperationError{Code: tc.code, Reason: "synthetic", Message: "Synthetic outcome"}
 			}
-			endpoint, err := transport.New(api, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+			endpoint, err := transport.New(api, withTestWriteTimeout(transport.Options{}))
 			require.NoError(t, err)
 			server := httptest.NewServer(endpoint)
 			t.Cleanup(func() { endpoint.Shutdown(); server.Close() })
@@ -75,7 +75,7 @@ func TestRPCInjectEvidenceAndError(t *testing.T) {
 
 func TestRPCInjectRejectsMalformedInput(t *testing.T) {
 	api := &injectAPI{}
-	endpoint, err := transport.New(api, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	endpoint, err := transport.New(api, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	server := httptest.NewServer(endpoint)
 	t.Cleanup(func() { endpoint.Shutdown(); server.Close() })

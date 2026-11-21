@@ -28,7 +28,7 @@ func ticket08Daemon(t *testing.T, expectedShutdown ...string) *entrypointSuite {
 	s.SetT(t)
 	s.data = t.TempDir()
 	config := filepath.Join(s.data, "config.yaml")
-	require.NoError(t, os.WriteFile(config, []byte("listen: 127.0.0.1:0\nlocal: true\n"), 0o600))
+	require.NoError(t, os.WriteFile(config, []byte("listen: 127.0.0.1:0\n"), 0o600))
 	c, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	t.Cleanup(cancel)
 	s.daemonCtx = c

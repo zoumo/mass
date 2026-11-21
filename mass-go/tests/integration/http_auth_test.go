@@ -117,16 +117,17 @@ func (webSocketAuthSuite *WebSocketAuthSuite) TestAuthenticatedDaemon() {
 	}
 	require.Error(t, err, "owned TLS listener must be released")
 	for _, args := range [][]string{
-		{"--data", filepath.Join(owned, "denied"), "--listen", "127.0.0.1:0"},
-		{"--data", filepath.Join(owned, "denied"), "--listen", "0.0.0.0:0", "--local"},
-		{"--data", filepath.Join(owned, "denied"), "--listen", "0.0.0.0:0", "--token-file", tokenPath},
-		{"--data", filepath.Join(owned, "denied"), "--listen", "127.0.0.1:0", "--local", "--session-idle-timeout=-1s"},
+		{"--listen", "0.0.0.0:0", "--tls-cert", certPath, "--tls-key", keyPath},
+		{"--listen", "0.0.0.0:0", "--token-file", tokenPath},
+		{"--listen", "127.0.0.1:0", "--token-file", filepath.Join(owned, "missing-token")},
+		{"--listen", "127.0.0.1:0", "--session-idle-timeout=-1s"},
 	} {
-		invalid := exec.CommandContext(ctx, app, args...)
+		invalid := exec.CommandContext(ctx, app, append([]string{"--data", filepath.Join(owned, "denied")}, args...)...)
 		invalid.Env = cmd.Env
-		require.Error(t, invalid.Run(), "unsafe or unspecified access mode must fail startup")
+		require.Error(t, invalid.Run(), "invalid daemon configuration must fail startup")
+		require.NoError(t, ctx.Err(), "invalid daemon configuration must fail promptly")
 	}
-	t.Log("PASS authenticated TLS WebSocket daemon/client with 5s idle configuration, unauthenticated RPC rejected, probes, explicit access-mode and negative-timeout rejection, and listener cleanup")
+	t.Log("PASS authenticated TLS WebSocket daemon/client with 5s idle configuration, unauthenticated RPC rejected, probes, invalid configuration rejection, and listener cleanup")
 }
 
 func TestWebSocketAuthSuite(t *testing.T) { suite.Run(t, new(WebSocketAuthSuite)) }

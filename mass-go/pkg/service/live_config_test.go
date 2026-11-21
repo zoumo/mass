@@ -154,7 +154,7 @@ func TestLiveSessionConfigurationServiceAdmission(t *testing.T) {
 
 func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 	svc, _, d, ref := newLiveConfigService(t, true)
-	h, err := transport.New(svc, transport.Options{LocalOnly: true, WriteTimeout: time.Second})
+	h, err := transport.New(svc, transport.Options{WriteTimeout: time.Second})
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)

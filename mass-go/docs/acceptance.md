@@ -246,7 +246,7 @@ commands have NOT been executed against a real Agent in this acceptance):
 
 ```sh
 rtk proxy make build-go
-rtk proxy bin/massd --data /ABS/OWNED/data --listen 127.0.0.1:0 --local
+rtk proxy bin/massd --data /ABS/OWNED/data --listen 127.0.0.1:0
 # Use the printed URL in MASS_URL; automatic permission approval stays OFF.
 # /ABS/OWNED/provider.json contains a RuntimeConfig, not a Runtime resource:
 # {"executable":"/ABS/OWNED/verified-launcher","envPolicy":"replace",

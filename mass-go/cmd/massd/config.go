@@ -40,7 +40,6 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 	for key, flag := range map[string]string{
 		"data":                            "data",
 		"listen":                          "listen",
-		"local":                           "local",
 		"tokenFile":                       "token-file",
 		"tlsCert":                         "tls-cert",
 		"tlsKey":                          "tls-key",
