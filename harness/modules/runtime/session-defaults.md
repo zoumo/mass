@@ -64,6 +64,6 @@ Runtime 的 `config` 仍按运行绑定快照影响 Driver 构造和启动；Ses
 - MCP 验证同名替换保持位置、新名称按 Session 顺序追加、空 Session 列表不清空默认项，以及重复名称被拒绝。
 - 显式 MCP 列表为空时，Claude strict mode 和 Codex 隔离目录都必须排除 ambient server；Codex 未配置隔离目录时明确失败。
 - 非回环明文 URL、URL userinfo、SSE 的 HTTP-only 认证字段必须被拒绝。
-- 文件引用校验覆盖目录边界、缺失文件与键、合并优先级及恢复时重新读取。
+- 文件引用校验覆盖绝对路径约束、缺失文件与键、合并优先级及恢复时重新读取。
 - 显式 Session MCP 在 Runtime 启动和原生副作用前完成公共结构校验；类型不支持在本次原生副作用前失败。
 - 解析后的默认值不进入 Session spec 或持久恢复材料；改变默认值后仍可恢复原 Session。
