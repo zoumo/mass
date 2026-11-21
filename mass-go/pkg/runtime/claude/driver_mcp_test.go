@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/mass-go/internal/testpeer/startup"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -85,9 +86,13 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 		"#!/bin/sh\n"+
 			": > \"$MASS_CLAUDE_DRIVER_CAPTURE\"\n"+
 			"for arg in \"$@\"; do printf '%s\\0' \"$arg\" >> \"$MASS_CLAUDE_DRIVER_CAPTURE\"; done\n"+
+			"/usr/bin/env > \"$MASS_CLAUDE_DRIVER_CAPTURE.env\"\n"+
 			"exec "+shellQuote(executable)+" -test.run '^TestClaudeDriverTestPeer$' -- \"$@\"\n",
 	), 0o700))
 
+	authFile := filepath.Join(t.TempDir(), "auth.env")
+	const fileAuth = "Bearer fixture-from-file"
+	require.NoError(t, os.WriteFile(authFile, []byte("MCP_AUTH='"+fileAuth+"'\n"), 0o600))
 	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
 		"executable": script,
 		"envPolicy":  "replace",
@@ -120,13 +125,18 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 			Type:    runtime.MCPTransportStdio,
 			Command: "/mcp-server",
 			Args:    []string{"--stdio"},
-			Env:     map[string]string{"TOKEN": "${TOKEN}"},
+			Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "${TOKEN}")},
 		},
 		{
 			Name:    "remote",
 			Type:    runtime.MCPTransportHTTP,
 			URL:     "https://example.invalid/mcp",
-			Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+			Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}")},
+		},
+		{Name: "literal", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp", Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer fixture-literal")}},
+		{
+			Name: "file", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp",
+			Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: authFile, Key: "MCP_AUTH"}}}},
 		},
 	}
 	session, err := driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "demo"}, runtime.SessionSpec{Cwd: cwd, MCPServers: &servers})
@@ -166,6 +176,21 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 		"url":     "https://example.invalid/mcp",
 		"headers": map[string]any{"Authorization": "Bearer ${TOKEN}"},
 	}, config.MCPServers["remote"])
+	require.Equal(t, map[string]any{
+		"type":    "http",
+		"url":     "http://127.0.0.1/mcp",
+		"headers": map[string]any{"Authorization": "Bearer fixture-literal"},
+	}, config.MCPServers["literal"])
+	require.NotContains(t, raw, fileAuth)
+	remote := config.MCPServers["file"].(map[string]any)
+	headers := remote["headers"].(map[string]any)
+	reference, _ := headers["Authorization"].(string)
+	_, name, ok := runtime.ParseMCPSecretReference(reference)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(name, "MASS_MCP_VALUE_"))
+	processEnv, err := os.ReadFile(capture + ".env")
+	require.NoError(t, err)
+	require.Contains(t, strings.Split(string(processEnv), "\n"), name+"="+fileAuth)
 }
 
 func shellQuote(value string) string {

@@ -28,12 +28,12 @@ func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool 
 		s.fail(w, problem("forbidden", "operator access is available to local CLI clients"))
 		return false
 	}
-	if s.config.Execution == nil || s.config.Execution.operatorToken == "" {
+	if s.config.operatorToken == "" {
 		s.fail(w, problem("not_found", "operator recovery is not configured"))
 		return false
 	}
 	got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
-	expected := sha256.Sum256([]byte("Bearer " + s.config.Execution.operatorToken))
+	expected := sha256.Sum256([]byte("Bearer " + s.config.operatorToken))
 	if subtle.ConstantTimeCompare(got[:], expected[:]) != 1 {
 		s.fail(w, problem("unauthorized", "operator credential is required"))
 		return false

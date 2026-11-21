@@ -63,7 +63,6 @@ test('Session reconnect rereads durable history while browsing produces no depen
  page.on('pageerror', error => errors.push(error.message))
  page.on('request', r => {
   const path = new URL(r.url()).pathname
-  expect(path).not.toBe('/mcp')
   if (!path.startsWith('/v1/')) return
   expect(path).toMatch(/^\/v1\/observer\//)
   expect(r.method()).toBe('GET')
@@ -112,7 +111,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
   expect(result.status()).toBe(405)
   expect(result.headers()['allow']).toBe('GET, HEAD')
  }
- const toolCall = await request.post('/mcp', {
+ const toolCall = await request.post('/v1/mcp', {
   headers: { Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-11-25' },
   data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'report_submit', arguments: {} } },
  })

@@ -53,13 +53,17 @@ func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := c.prepareMCPFiles(); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", c.Listen)
 	if err != nil {
 		_ = store.Close()
 		return nil, problem("unavailable", "cannot bind listen address")
 	}
 	s := &Server{store: store, config: c, listener: l, observerTelemetry: gateway, observerTraces: traces}
-	if c.Execution != nil {
+	if c.Sessions != nil {
 		if _, err = store.db.ExecContext(context.Background(), `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
  WHERE state='ready'`); err != nil {
 			_ = l.Close()
@@ -375,9 +379,10 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	for _, source := range s.config.Sources {
 		configured = append(configured, source.token)
 	}
-	if s.config.Execution != nil {
-		configured = append(configured, s.config.Execution.token, s.config.Execution.operatorToken)
+	if s.config.Massd != nil {
+		configured = append(configured, s.config.Massd.token)
 	}
+	configured = append(configured, s.config.operatorToken)
 	for _, token := range configured {
 		if token == "" {
 			continue

@@ -224,7 +224,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	status, body = call(topicToken, "ping", json.RawMessage(`1.5`), nil)
 	require.Equal(t, http.StatusBadRequest, status)
 	require.Contains(t, string(body), "Invalid Request")
-	status, _ = request(t, http.MethodGet, p.endpoint, "/mcp", topicToken, nil)
+	status, _ = request(t, http.MethodGet, p.endpoint, "/v1/mcp", topicToken, nil)
 	require.Equal(t, http.StatusMethodNotAllowed, status)
 	status, _ = request(t, http.MethodPost, p.endpoint, "/v1/role/topic_query", topicToken, struct{}{})
 	require.Equal(t, http.StatusNotFound, status)
@@ -330,7 +330,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		spans := map[[3]string]uint64{}
 		for _, span := range recorder.Ended() {
-			if span.Name() != "POST /mcp" {
+			if span.Name() != "POST /v1/mcp" {
 				continue
 			}
 			attrs := attribute.NewSet(span.Attributes()...)
@@ -443,7 +443,7 @@ func TestMCPMutationTelemetryByAuthenticatedCaller(t *testing.T) {
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		recorded := map[[3]string]uint64{}
 		for _, span := range recorder.Ended() {
-			if span.Name() != "POST /mcp" {
+			if span.Name() != "POST /v1/mcp" {
 				continue
 			}
 			attrs := attribute.NewSet(span.Attributes()...)

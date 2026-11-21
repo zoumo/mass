@@ -50,7 +50,6 @@ type SessionBinding struct {
 	IssueID                  string           `json:"issueId,omitempty"`
 	PreparationStarted       bool             `json:"preparationStarted"`
 	CapabilityFileID         string           `json:"capabilityFileId,omitempty"`
-	MCPWorkingDirectory      string           `json:"mcpWorkingDirectory,omitempty"`
 	PreviousSessionBindingID string           `json:"previousSessionBindingId,omitempty"`
 	Close                    *BindingClose    `json:"close,omitempty"`
 	ReuseError               string           `json:"reuseError,omitempty"`

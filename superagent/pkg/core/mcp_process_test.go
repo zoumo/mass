@@ -54,7 +54,7 @@ func newMCPRequest(ctx context.Context, endpoint, token, method string, id, para
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/mcp", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/mcp", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

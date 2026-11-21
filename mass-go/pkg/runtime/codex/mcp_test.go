@@ -18,14 +18,14 @@ func TestCodexMCPConfigurationMapping(t *testing.T) {
 			Type:    "stdio",
 			Command: "/mcp-server",
 			Args:    []string{"--stdio"},
-			Env:     map[string]string{"TOKEN": "${TOKEN}"},
+			Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "${TOKEN}")},
 			Cwd:     "/work",
 		},
 		{
 			Name:              "remote",
 			Type:              "http",
 			URL:               "https://example.invalid/mcp",
-			Headers:           map[string]string{"Authorization": "Bearer ${TOKEN}"},
+			Headers:           []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}")},
 			EnvHeaders:        map[string]string{"X-Token": "TOKEN"},
 			BearerTokenEnvVar: "TOKEN",
 		},
@@ -36,11 +36,11 @@ func TestCodexMCPConfigurationMapping(t *testing.T) {
 	require.Equal(t, mcp.TransportStdio, converted[0].Transport)
 	require.Equal(t, "/mcp-server", converted[0].Command)
 	require.Equal(t, "/work", converted[0].Cwd)
-	require.Equal(t, "fixture-secret", converted[0].Env["TOKEN"])
+	require.Equal(t, "fixture-secret", plainMCPValues(t, converted[0].Env)["TOKEN"])
 	require.Equal(t, "https://example.invalid/mcp", converted[1].URL)
 	require.Equal(t, mcp.TransportHTTP, converted[1].Transport)
 	require.Equal(t, "TOKEN", converted[1].BearerTokenEnvVar)
-	require.NotContains(t, converted[1].Headers, "Authorization")
+	require.NotContains(t, plainMCPValues(t, converted[1].Headers), "Authorization")
 	require.Equal(t, "TOKEN", converted[1].EnvHeaders["X-Token"])
 }
 
@@ -53,41 +53,43 @@ func TestCodexMCPConfigurationTranslatesAndResolvesSecretReferences(t *testing.T
 			Name:    "local",
 			Type:    "stdio",
 			Command: "/mcp-server",
-			Env: map[string]string{
-				"API_TOKEN":      "${TOKEN}",
-				"AUTHORIZATION":  "Bearer ${TOKEN}",
-				"RESOURCE_URI":   "https://service.invalid/${PROFILE}",
-				"RESOURCE_LABEL": "profile-${PROFILE}",
+			Env: []mcp.NamedValue{
+				mcp.Literal("API_TOKEN", "${TOKEN}"),
+				mcp.Literal("AUTHORIZATION", "Bearer ${TOKEN}"),
+				mcp.Literal("RESOURCE_URI", "https://service.invalid/${PROFILE}"),
+				mcp.Literal("RESOURCE_LABEL", "profile-${PROFILE}"),
 			},
 		},
 		{
 			Name: "remote",
 			Type: "http",
 			URL:  "https://example.invalid/mcp",
-			Headers: map[string]string{
-				"Authorization": "Bearer ${TOKEN}",
-				"Content-Type":  "application/json",
-				"Credential":    "Basic ${TOKEN}",
-				"X-Profile":     "${PROFILE}",
-				"X-Combined":    "profile-${PROFILE}",
-				"X-Scheme":      "Token ${TOKEN}",
-				"X-Api-Key":     "${HEADER_TOKEN}",
+			Headers: []mcp.NamedValue{
+				mcp.Literal("Authorization", "Bearer ${TOKEN}"),
+				mcp.Literal("Content-Type", "application/json"),
+				mcp.Literal("Credential", "Basic ${TOKEN}"),
+				mcp.Literal("X-Profile", "${PROFILE}"),
+				mcp.Literal("X-Combined", "profile-${PROFILE}"),
+				mcp.Literal("X-Scheme", "Token ${TOKEN}"),
+				mcp.Literal("X-Api-Key", "${HEADER_TOKEN}"),
 			},
 			EnvHeaders: map[string]string{"X-Explicit": "HEADER_TOKEN"},
 		},
 	}
 	converted, err := codexMCPServers(&servers, options)
 	require.NoError(t, err)
-	require.Equal(t, "fixture-secret", converted[0].Env["API_TOKEN"])
-	require.Equal(t, "Bearer fixture-secret", converted[0].Env["AUTHORIZATION"])
-	require.Equal(t, "https://service.invalid/fixture-profile", converted[0].Env["RESOURCE_URI"])
-	require.Equal(t, "profile-fixture-profile", converted[0].Env["RESOURCE_LABEL"])
-	require.Equal(t, "Basic fixture-secret", converted[1].Headers["Credential"])
-	require.Equal(t, "profile-fixture-profile", converted[1].Headers["X-Combined"])
-	require.Equal(t, "Token fixture-secret", converted[1].Headers["X-Scheme"])
-	require.Equal(t, "application/json", converted[1].Headers["Content-Type"])
-	require.NotContains(t, converted[1].Headers, "Authorization")
-	require.NotContains(t, converted[1].Headers, "X-Api-Key")
+	env := plainMCPValues(t, converted[0].Env)
+	headers := plainMCPValues(t, converted[1].Headers)
+	require.Equal(t, "fixture-secret", env["API_TOKEN"])
+	require.Equal(t, "Bearer fixture-secret", env["AUTHORIZATION"])
+	require.Equal(t, "https://service.invalid/fixture-profile", env["RESOURCE_URI"])
+	require.Equal(t, "profile-fixture-profile", env["RESOURCE_LABEL"])
+	require.Equal(t, "Basic fixture-secret", headers["Credential"])
+	require.Equal(t, "profile-fixture-profile", headers["X-Combined"])
+	require.Equal(t, "Token fixture-secret", headers["X-Scheme"])
+	require.Equal(t, "application/json", headers["Content-Type"])
+	require.NotContains(t, headers, "Authorization")
+	require.NotContains(t, headers, "X-Api-Key")
 	require.Equal(t, "HEADER_TOKEN", converted[1].EnvHeaders["X-Api-Key"])
 	require.Equal(t, "PROFILE", converted[1].EnvHeaders["X-Profile"])
 	require.Equal(t, "HEADER_TOKEN", converted[1].EnvHeaders["X-Explicit"])
@@ -104,7 +106,7 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name:    "local",
 				Type:    "stdio",
 				Command: "/mcp-server",
-				Env:     map[string]string{"TOKEN": "${MISSING_TOKEN}"},
+				Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "${MISSING_TOKEN}")},
 			},
 			want: "MISSING_TOKEN",
 		},
@@ -113,7 +115,7 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name:    "local",
 				Type:    "stdio",
 				Command: "/mcp-server",
-				Env:     map[string]string{"BASE_URL": "${MISSING_TOKEN}"},
+				Env:     []mcp.NamedValue{mcp.Literal("BASE_URL", "${MISSING_TOKEN}")},
 			},
 			want: "MISSING_TOKEN",
 		},
@@ -122,7 +124,7 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name:    "remote",
 				Type:    "http",
 				URL:     "https://example.invalid/mcp",
-				Headers: map[string]string{"X-URL": "${MISSING_TOKEN}"},
+				Headers: []mcp.NamedValue{mcp.Literal("X-URL", "${MISSING_TOKEN}")},
 			},
 			want: "MISSING_TOKEN",
 		},
@@ -131,7 +133,7 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name:    "remote",
 				Type:    "http",
 				URL:     "https://example.invalid/mcp",
-				Headers: map[string]string{"X-URL": "prefix-${MISSING_TOKEN}"},
+				Headers: []mcp.NamedValue{mcp.Literal("X-URL", "prefix-${MISSING_TOKEN}")},
 			},
 			want: "MISSING_TOKEN",
 		},
@@ -140,7 +142,7 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name:    "local",
 				Type:    "stdio",
 				Command: "/mcp-server",
-				Env:     map[string]string{"BASE_URL": "https://service.invalid/${MISSING_TOKEN}"},
+				Env:     []mcp.NamedValue{mcp.Literal("BASE_URL", "https://service.invalid/${MISSING_TOKEN}")},
 			},
 			want: "MISSING_TOKEN",
 		},
@@ -149,7 +151,7 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name:    "remote",
 				Type:    "http",
 				URL:     "https://example.invalid/mcp",
-				Headers: map[string]string{"X-URL": "${MISSING-TOKEN}"},
+				Headers: []mcp.NamedValue{mcp.Literal("X-URL", "${MISSING-TOKEN}")},
 			},
 			want: "unresolved environment reference",
 		},
@@ -158,8 +160,8 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name: "remote",
 				Type: "http",
 				URL:  "https://example.invalid/mcp",
-				Headers: map[string]string{
-					"Authorization": "Bearer ${MISSING_TOKEN}",
+				Headers: []mcp.NamedValue{
+					mcp.Literal("Authorization", "Bearer ${MISSING_TOKEN}"),
 				},
 			},
 			want: "MISSING_TOKEN",
@@ -187,7 +189,7 @@ func TestCodexMCPConfigurationRejectsUnresolvedReferences(t *testing.T) {
 				Name:    "local",
 				Type:    "stdio",
 				Command: "/mcp-server",
-				Env:     map[string]string{"TOKEN": "${EMPTY_TOKEN}"},
+				Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "${EMPTY_TOKEN}")},
 			},
 			want: "EMPTY_TOKEN",
 		},
@@ -211,13 +213,13 @@ func TestCodexMCPConfigurationRejectsInvalidResolvedHeaderValues(t *testing.T) {
 			Name:    "remote",
 			Type:    "http",
 			URL:     "https://example.invalid/mcp",
-			Headers: map[string]string{"X-Value": "${HEADER_VALUE}"},
+			Headers: []mcp.NamedValue{mcp.Literal("X-Value", "${HEADER_VALUE}")},
 		},
 		"literal": {
 			Name:    "remote",
 			Type:    "http",
 			URL:     "https://example.invalid/mcp",
-			Headers: map[string]string{"X-Value": "first\r\nsecond"},
+			Headers: []mcp.NamedValue{mcp.Literal("X-Value", "first\r\nsecond")},
 		},
 		"bearer environment variable": {
 			Name:              "remote",
@@ -243,8 +245,8 @@ func TestCodexMCPConfigurationRejectsConflictingAuthentication(t *testing.T) {
 			Name: "remote",
 			Type: "http",
 			URL:  "https://example.invalid/mcp",
-			Headers: map[string]string{
-				"Authorization": "Bearer ${TOKEN}",
+			Headers: []mcp.NamedValue{
+				mcp.Literal("Authorization", "Bearer ${TOKEN}"),
 			},
 			BearerTokenEnvVar: "OTHER_TOKEN",
 		},
@@ -252,8 +254,8 @@ func TestCodexMCPConfigurationRejectsConflictingAuthentication(t *testing.T) {
 			Name: "remote",
 			Type: "http",
 			URL:  "https://example.invalid/mcp",
-			Headers: map[string]string{
-				"X-Api-Key": "${TOKEN}",
+			Headers: []mcp.NamedValue{
+				mcp.Literal("X-Api-Key", "${TOKEN}"),
 			},
 			EnvHeaders: map[string]string{"x-api-key": "OTHER_TOKEN"},
 		},
@@ -268,14 +270,14 @@ func TestCodexMCPConfigurationRejectsConflictingAuthentication(t *testing.T) {
 			Name:              "remote",
 			Type:              "http",
 			URL:               "https://example.invalid/mcp",
-			Headers:           map[string]string{"Authorization": "${TOKEN}"},
+			Headers:           []mcp.NamedValue{mcp.Literal("Authorization", "${TOKEN}")},
 			BearerTokenEnvVar: "OTHER_TOKEN",
 		},
 		"literal authorization": {
 			Name:              "remote",
 			Type:              "http",
 			URL:               "https://example.invalid/mcp",
-			Headers:           map[string]string{"Authorization": "Basic literal"},
+			Headers:           []mcp.NamedValue{mcp.Literal("Authorization", "Basic literal")},
 			BearerTokenEnvVar: "OTHER_TOKEN",
 		},
 		"lowercase environment authorization header": {
@@ -313,7 +315,7 @@ func TestCodexMCPConfigurationClassifiesPublicValidation(t *testing.T) {
 		Name:    "local",
 		Type:    "stdio",
 		Command: "/mcp-server",
-		Env:     map[string]string{"TOKEN": "literal-secret"},
+		Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "literal-secret")},
 	}}
 	_, err := codexMCPServers(&servers, codexMCPOptions(t))
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
@@ -370,4 +372,11 @@ func codexMCPOptions(t *testing.T) runtime.ProcessConfig {
 			"TOKEN":      "fixture-secret",
 		},
 	}
+}
+
+func plainMCPValues(t *testing.T, values []mcp.NamedValue) map[string]string {
+	t.Helper()
+	plain, err := mcp.LiteralValues(values)
+	require.NoError(t, err)
+	return plain
 }

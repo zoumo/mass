@@ -239,12 +239,13 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		}
 	}
 
-	servers, err := claudeMCPServers(spec.MCPServers, d.options)
+	mcpConfig, err := claudeMCPServers(spec.MCPServers, d.options)
 	if err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	openOptions := sessionOpenOptions(spec, effective, servers)
+	openOptions := sessionOpenOptions(spec, effective, mcpConfig.servers)
+	openOptions.ProcessEnv = mcpConfig.processEnv
 
 	d.mu.Lock()
 	started := d.started

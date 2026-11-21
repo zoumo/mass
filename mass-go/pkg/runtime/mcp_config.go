@@ -2,11 +2,9 @@ package runtime
 
 import (
 	"fmt"
-	"maps"
 	"net"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -23,103 +21,103 @@ const (
 	MCPTransportSSE   = mcp.TransportSSE
 )
 
-func validMCPTransport(t MCPTransport) bool {
-	switch t {
-	case MCPTransportStdio, MCPTransportHTTP, MCPTransportSSE:
-		return true
-	default:
-		return false
-	}
-}
-
 // MCPServer is the provider-neutral Session MCP configuration. Runtime records
 // may provide defaults, but only Session opening or recovery consumes them.
 type MCPServer struct {
-	Name              string            `json:"name" minLength:"1"`
-	Type              MCPTransport      `json:"type" enum:"stdio,http,sse"`
-	Command           string            `json:"command,omitempty"`
-	Args              []string          `json:"args,omitempty"`
-	Env               map[string]string `json:"env,omitempty"`
-	Cwd               string            `json:"cwd,omitempty"`
-	URL               string            `json:"url,omitempty"`
-	Headers           map[string]string `json:"headers,omitempty"`
-	EnvHeaders        map[string]string `json:"envHeaders,omitempty"`
-	BearerTokenEnvVar string            `json:"bearerTokenEnvVar,omitempty"`
+	Name              string             `json:"name" minLength:"1"`
+	Type              MCPTransport       `json:"type" enum:"stdio,http,sse"`
+	Command           string             `json:"command,omitempty"`
+	Args              []string           `json:"args,omitempty"`
+	Env               []mcp.NamedValue   `json:"env,omitempty"`
+	EnvFrom           []mcp.ImportSource `json:"envFrom,omitempty"`
+	Cwd               string             `json:"cwd,omitempty"`
+	URL               string             `json:"url,omitempty"`
+	Headers           []mcp.NamedValue   `json:"headers,omitempty"`
+	HeadersFrom       []mcp.ImportSource `json:"headersFrom,omitempty"`
+	EnvHeaders        map[string]string  `json:"envHeaders,omitempty"`
+	BearerTokenEnvVar string             `json:"bearerTokenEnvVar,omitempty"`
 }
 
-// SDKServer maps the persisted Session shape to the SDK's shared MCP
-// definition. MASS keeps the wire field name "type"; runtime adapters consume
-// mcp.Server.
+// SDKServer maps the persisted Session shape to an independent SDK value.
+// MASS keeps the wire field name "type".
 func (s MCPServer) SDKServer() mcp.Server {
+	return mcp.CloneServers([]mcp.Server{s.sdkServer()})[0]
+}
+
+func (s MCPServer) sdkServer() mcp.Server {
 	return mcp.Server{
 		Name:              s.Name,
 		Transport:         s.Type,
 		Command:           s.Command,
-		Args:              slices.Clone(s.Args),
-		Env:               maps.Clone(s.Env),
+		Args:              s.Args,
+		Env:               s.Env,
+		EnvFrom:           s.EnvFrom,
 		Cwd:               s.Cwd,
 		URL:               s.URL,
-		Headers:           maps.Clone(s.Headers),
-		EnvHeaders:        maps.Clone(s.EnvHeaders),
+		Headers:           s.Headers,
+		HeadersFrom:       s.HeadersFrom,
+		EnvHeaders:        s.EnvHeaders,
 		BearerTokenEnvVar: s.BearerTokenEnvVar,
 	}
 }
 
-// ValidateMCPServers checks the provider-neutral shape before native side
-// effects. Provider-specific field and transport support is checked by adapters.
-func ValidateMCPServers(servers []MCPServer) error {
-	seen := make(map[string]struct{}, len(servers))
+func sdkMCPServers(servers []MCPServer) []mcp.Server {
+	if servers == nil {
+		return nil
+	}
+	converted := make([]mcp.Server, len(servers))
 	for i, server := range servers {
-		if server.Name == "" || !utf8.ValidString(server.Name) {
-			return fmt.Errorf("mcp server %d: name must be nonempty valid UTF-8", i)
+		converted[i] = server.sdkServer()
+	}
+	return converted
+}
+
+// ValidateMCPServers checks the persisted configuration without accessing files.
+func ValidateMCPServers(servers []MCPServer) error {
+	if err := mcp.ValidateServers(sdkMCPServers(servers)); err != nil {
+		return err
+	}
+	return validateMCPPolicy(servers)
+}
+
+// ResolveMCPServers reads files for one native open, resume, or load. It keeps
+// the original configuration intact for persistence and source attribution.
+func ResolveMCPServers(servers []MCPServer) ([]mcp.Server, error) {
+	if err := validateMCPPolicy(servers); err != nil {
+		return nil, err
+	}
+	return mcp.ResolveServers(sdkMCPServers(servers), nil)
+}
+
+// MCPDirectValues indexes explicit value entries. A resolved entry without a
+// matching name came from a file, and its contents are opaque to interpolation.
+func MCPDirectValues(entries []mcp.NamedValue) map[string]struct{} {
+	names := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry.Value != nil {
+			names[entry.Name] = struct{}{}
 		}
-		if _, ok := seen[server.Name]; ok {
-			return fmt.Errorf("mcp server %d: name must be unique", i)
-		}
-		seen[server.Name] = struct{}{}
+	}
+	return names
+}
+
+func validateMCPPolicy(servers []MCPServer) error {
+	for i, server := range servers {
 		if err := validateMCPServerText(i, server); err != nil {
 			return err
 		}
-		if !validMCPTransport(server.Type) {
-			return fmt.Errorf("mcp server %d: type must be stdio, http or sse", i)
-		}
-		if server.Type == MCPTransportStdio {
-			if server.Command == "" {
-				return fmt.Errorf("mcp server %d: stdio requires command", i)
-			}
-			switch {
-			case server.URL != "":
-				return fmt.Errorf("mcp server %d: stdio does not allow url", i)
-			case len(server.Headers) > 0:
-				return fmt.Errorf("mcp server %d: stdio does not allow headers", i)
-			case len(server.EnvHeaders) > 0:
-				return fmt.Errorf("mcp server %d: stdio does not allow envHeaders", i)
-			case server.BearerTokenEnvVar != "":
-				return fmt.Errorf("mcp server %d: stdio does not allow bearerTokenEnvVar", i)
-			}
+		switch server.Type {
+		case MCPTransportStdio:
 			if server.Cwd != "" && !filepath.IsAbs(server.Cwd) {
 				return fmt.Errorf("mcp server %d: cwd must be absolute", i)
 			}
-			continue
-		}
-		if server.URL == "" {
-			return fmt.Errorf("mcp server %d: %s requires url", i, server.Type)
-		}
-		if err := validateMCPURL(i, server); err != nil {
-			return err
-		}
-		switch {
-		case server.Command != "":
-			return fmt.Errorf("mcp server %d: %s does not allow command", i, server.Type)
-		case len(server.Args) > 0:
-			return fmt.Errorf("mcp server %d: %s does not allow args", i, server.Type)
-		case len(server.Env) > 0:
-			return fmt.Errorf("mcp server %d: %s does not allow env", i, server.Type)
-		case server.Cwd != "":
-			return fmt.Errorf("mcp server %d: %s does not allow cwd", i, server.Type)
-		}
-		if server.Type == MCPTransportSSE && (len(server.EnvHeaders) > 0 || server.BearerTokenEnvVar != "") {
-			return fmt.Errorf("mcp server %d: sse does not allow envHeaders or bearerTokenEnvVar", i)
+		case MCPTransportHTTP, MCPTransportSSE:
+			if err := validateMCPURL(i, server); err != nil {
+				return err
+			}
+			if server.Type == MCPTransportSSE && (len(server.EnvHeaders) > 0 || server.BearerTokenEnvVar != "") {
+				return fmt.Errorf("mcp server %d: sse does not allow envHeaders or bearerTokenEnvVar", i)
+			}
 		}
 	}
 	return nil
@@ -133,42 +131,25 @@ func validateMCPServerText(index int, server MCPServer) error {
 		{"command", server.Command},
 		{"cwd", server.Cwd},
 		{"url", server.URL},
-		{"bearerTokenEnvVar", server.BearerTokenEnvVar},
 	} {
-		if !utf8.ValidString(field.value) || strings.ContainsRune(field.value, 0) {
-			return fmt.Errorf("mcp server %d: %s must be valid UTF-8 without NUL", index, field.name)
+		if strings.ContainsRune(field.value, 0) {
+			return fmt.Errorf("mcp server %d: %s must not contain NUL", index, field.name)
 		}
 	}
 	for argIndex, arg := range server.Args {
-		if !utf8.ValidString(arg) || strings.ContainsRune(arg, 0) {
-			return fmt.Errorf("mcp server %d: args[%d] must be valid UTF-8 without NUL", index, argIndex)
+		if strings.ContainsRune(arg, 0) {
+			return fmt.Errorf("mcp server %d: args[%d] must not contain NUL", index, argIndex)
 		}
 	}
-	for _, field := range []struct {
-		name   string
-		values map[string]string
-	}{
-		{"env", server.Env},
-		{"headers", server.Headers},
-		{"envHeaders", server.EnvHeaders},
-	} {
-		for key, value := range field.values {
-			if key == "" || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, 0) {
-				return fmt.Errorf("mcp server %d: %s contains an invalid entry", index, field.name)
-			}
-		}
-	}
-	for key, value := range server.Env {
-		if IsSensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
-			return fmt.Errorf("mcp server %d: env %q must reference a secret", index, key)
-		}
-	}
-	for key, value := range server.Headers {
-		if IsSensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
-			return fmt.Errorf("mcp server %d: header %q must reference a secret", index, key)
+	for _, entry := range server.Env {
+		if entry.Value != nil && IsSensitiveMCPName(entry.Name) && !mcpSecretReference.MatchString(*entry.Value) {
+			return fmt.Errorf("mcp server %d: env %q must reference a secret", index, entry.Name)
 		}
 	}
 	for key, value := range server.EnvHeaders {
+		if key == "" || !utf8.ValidString(key) || strings.ContainsAny(key, "=\x00") {
+			return fmt.Errorf("mcp server %d: envHeaders contains an invalid entry", index)
+		}
 		if !mcpEnvironmentName.MatchString(value) {
 			return fmt.Errorf("mcp server %d: envHeaders %q must name an environment variable", index, key)
 		}

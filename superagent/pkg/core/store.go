@@ -57,10 +57,10 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	}
 	allowed := map[string]bool{".core.lock": true, "core.sqlite": true, "core.sqlite-wal": true, "core.sqlite-shm": true}
 	for _, e := range entries {
-		if e.Name() == "capabilities" && e.IsDir() {
-			info, statErr := e.Info()
-			if statErr != nil || info.Mode().Perm()&0o077 != 0 {
-				return nil, problem("failed_precondition", "capabilities directory must be private")
+		if c.Sessions != nil && e.Name() == mcpCredentialsDir {
+			info, err := e.Info()
+			if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+				return nil, problem("failed_precondition", "MCP credentials directory must be private")
 			}
 			continue
 		}

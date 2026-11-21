@@ -38,7 +38,7 @@ func dispatchBinaries(t *testing.T) (string, string) {
 		for target, pkg := range map[string]string{dispatchBuild.massd: "./cmd/massd", dispatchBuild.relay: "./tests/integration/testdata/live-config-peer"} {
 			cmd := exec.CommandContext(t.Context(), "go", "build", "-race", "-o", target, pkg)
 			cmd.Dir = "../../../mass-go"
-			cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+			cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 			dispatchBuild.log, dispatchBuild.err = cmd.CombinedOutput()
 			if dispatchBuild.err != nil {
 				return

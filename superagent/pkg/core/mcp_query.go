@@ -84,7 +84,7 @@ func (s *Server) mcpQuery(ctx context.Context, b SessionBinding, tool string, ra
 			delete(value, "pullRequests")
 		}
 		if slices.Contains(q.Include, "executionTemplates") {
-			value["executionTemplates"], err = json.Marshal(s.config.Execution.IssueTemplates)
+			value["executionTemplates"], err = json.Marshal(s.config.Sessions.IssueTemplates)
 			if err != nil {
 				return nil, err
 			}

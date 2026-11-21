@@ -48,6 +48,10 @@ func newCompose() *cobra.Command {
 func runCompose(cmd *cobra.Command, massdBin, massdConfig, coreConfig string) (result error) {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	config, err := core.LoadComposeConfig(coreConfig)
+	if err != nil {
+		return err
+	}
 	daemon, err := startMassd(massdBin, massdConfig, cmd.ErrOrStderr())
 	if err != nil {
 		return err
@@ -72,9 +76,8 @@ func runCompose(cmd *cobra.Command, massdBin, massdConfig, coreConfig string) (r
 		return nil
 	}
 
-	config, err := core.LoadComposedConfig(coreConfig, endpoint)
-	if err != nil {
-		return err
+	if config.Massd != nil {
+		config.Massd.Endpoint = endpoint
 	}
 	return runCore(ctx, cmd, config, endpoint, daemon)
 }

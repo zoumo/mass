@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"maps"
 	"slices"
 )
 
@@ -67,10 +66,13 @@ func CloneMCPServers(servers []MCPServer) []MCPServer {
 	cloned := make([]MCPServer, len(servers))
 	for i, server := range servers {
 		cloned[i] = server
-		cloned[i].Args = slices.Clone(server.Args)
-		cloned[i].Env = maps.Clone(server.Env)
-		cloned[i].Headers = maps.Clone(server.Headers)
-		cloned[i].EnvHeaders = maps.Clone(server.EnvHeaders)
+		sdkServer := server.SDKServer()
+		cloned[i].Args = sdkServer.Args
+		cloned[i].Env = sdkServer.Env
+		cloned[i].EnvFrom = sdkServer.EnvFrom
+		cloned[i].Headers = sdkServer.Headers
+		cloned[i].HeadersFrom = sdkServer.HeadersFrom
+		cloned[i].EnvHeaders = sdkServer.EnvHeaders
 	}
 	return cloned
 }

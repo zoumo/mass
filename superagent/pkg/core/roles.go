@@ -3,8 +3,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -265,13 +263,6 @@ const agentSourceMessageProjection = `(SELECT json_group_object(field,json(value
  OR (trigger_messages.body->>'$.channel.type'='dws' AND key='forwardMessages')
  HAVING count(*)>0
  ))`
-
-// Capability comparison is explicit so startup-file identity cannot override the authenticated binding.
-func capabilityMatches(c capability, b SessionBinding) bool {
-	a := sha256.Sum256([]byte(c.SessionBindingID + "\x00" + c.Role + "\x00" + c.OwnerID + "\x00" + c.TopicID + "\x00" + c.IssueID))
-	v := sha256.Sum256([]byte(b.ID + "\x00" + b.Role + "\x00" + b.OwnerID + "\x00" + b.TopicID + "\x00" + b.IssueID))
-	return subtle.ConstantTimeCompare(a[:], v[:]) == 1 && c.Generation == b.Generation
-}
 
 // Projection placeholders precede filter placeholders in both list and detail queries.
 func projectionArgs(kind string, b *SessionBinding) []any {

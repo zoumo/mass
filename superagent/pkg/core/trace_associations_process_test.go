@@ -246,8 +246,8 @@ func TestTraceAssociationsSingleEventParent(t *testing.T) {
 	}
 	require.NotNil(t, issue)
 	for _, name := range []string{
-		"POST /mcp", "superagent.internal_event.dispatch", "superagent.routing.decide",
-		"POST /mcp", "superagent.internal_event.dispatch", "superagent.message.admit",
+		"POST /v1/mcp", "superagent.internal_event.dispatch", "superagent.routing.decide",
+		"POST /v1/mcp", "superagent.internal_event.dispatch", "superagent.message.admit",
 		"POST /v1/channel/messages",
 	} {
 		parent := byID[hex.EncodeToString(issue.GetParentSpanId())]

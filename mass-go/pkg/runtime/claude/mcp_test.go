@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,33 +18,33 @@ func TestClaudeMCPConfigurationMapping(t *testing.T) {
 			Type:    "stdio",
 			Command: "/mcp-server",
 			Args:    []string{"--stdio"},
-			Env:     map[string]string{"TOKEN": "${TOKEN}"},
+			Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "${TOKEN}")},
 		},
 		{
 			Name:    "remote",
 			Type:    "http",
 			URL:     "https://example.invalid/http",
-			Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+			Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}")},
 		},
 	}
 	process := runtime.ProcessConfig{Env: map[string]string{"TOKEN": "secret-value"}}
 	converted, err := claudeMCPServers(&servers, process)
 	require.NoError(t, err)
-	require.Len(t, converted, 2)
-	require.Equal(t, mcp.TransportStdio, converted[0].Transport)
-	require.Equal(t, mcp.TransportHTTP, converted[1].Transport)
-	require.Equal(t, "${TOKEN}", converted[0].Env["TOKEN"])
-	require.Equal(t, "Bearer ${TOKEN}", converted[1].Headers["Authorization"])
+	require.Len(t, converted.servers, 2)
+	require.Equal(t, mcp.TransportStdio, converted.servers[0].Transport)
+	require.Equal(t, mcp.TransportHTTP, converted.servers[1].Transport)
+	require.Equal(t, "${TOKEN}", *converted.servers[0].Env[0].Value)
+	require.Equal(t, "Bearer ${TOKEN}", *converted.servers[1].Headers[0].Value)
 }
 
 func TestClaudeMCPEmptyAndAbsentListsAreSDKEquivalent(t *testing.T) {
 	empty := []runtime.MCPServer{}
 	converted, err := claudeMCPServers(&empty, runtime.ProcessConfig{})
 	require.NoError(t, err)
-	require.Empty(t, converted)
+	require.Empty(t, converted.servers)
 	converted, err = claudeMCPServers(nil, runtime.ProcessConfig{})
 	require.NoError(t, err)
-	require.Nil(t, converted)
+	require.Nil(t, converted.servers)
 }
 
 func TestClaudeMCPRejectsSSEBeforeNativeEffects(t *testing.T) {
@@ -92,7 +94,7 @@ func TestClaudeMCPEnvironmentReferencesFailBeforeOpen(t *testing.T) {
 				Name:    "remote",
 				Type:    "http",
 				URL:     "https://example.invalid/mcp",
-				Headers: map[string]string{"Authorization": test.value},
+				Headers: []mcp.NamedValue{mcp.Literal("Authorization", test.value)},
 			}}
 			_, err := claudeMCPServers(&servers, runtime.ProcessConfig{Env: test.env})
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
@@ -106,7 +108,7 @@ func TestClaudeMCPStdioEnvReferenceFailsBeforeOpen(t *testing.T) {
 		Name:    "local",
 		Type:    "stdio",
 		Command: "/mcp-server",
-		Env:     map[string]string{"TOKEN": "${MISSING}"},
+		Env:     []mcp.NamedValue{mcp.Literal("TOKEN", "${MISSING}")},
 	}}
 	_, err := claudeMCPServers(&servers, runtime.ProcessConfig{})
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
@@ -119,7 +121,7 @@ func TestClaudeMCPResolvedHeaderRejectsNewlines(t *testing.T) {
 			Name:    "remote",
 			Type:    "http",
 			URL:     "https://example.invalid/mcp",
-			Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+			Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${TOKEN}")},
 		}}
 		_, err := claudeMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"TOKEN": value}})
 		require.ErrorIs(t, err, runtime.ErrInvalidArgument)
@@ -140,7 +142,7 @@ func TestClaudeMCPSecretReferenceRejectedBeforeNativeOpen(t *testing.T) {
 		Name:    "remote",
 		Type:    "http",
 		URL:     "https://example.invalid/mcp",
-		Headers: map[string]string{"Authorization": "Bearer ${MISSING}"},
+		Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer ${MISSING}")},
 	}}
 	_, err = driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "session"}, runtime.SessionSpec{
 		Cwd: "/work", MCPServers: &servers,
@@ -154,4 +156,18 @@ func TestClaudeSessionDefaultsAreNotRuntimeConfig(t *testing.T) {
 		"features":   map[string]any{"agentQuestions": false},
 	}
 	require.ErrorContains(t, (Factory{}).Validate(config), `unknown process config "features"`)
+}
+
+func TestClaudeMCPRejectsInterpolationInFileValues(t *testing.T) {
+	const sensitive = "fixture-${DO_NOT_EXPAND}"
+	authFile := filepath.Join(t.TempDir(), "auth.env")
+	require.NoError(t, os.WriteFile(authFile, []byte("MCP_AUTH='"+sensitive+"'\n"), 0o600))
+	servers := []runtime.MCPServer{{
+		Name: "file", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp",
+		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: authFile, Key: "MCP_AUTH"}}}},
+	}}
+	_, err := claudeMCPServers(&servers, runtime.ProcessConfig{})
+	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
+	require.ErrorContains(t, err, "file-backed header contains Claude interpolation syntax")
+	require.NotContains(t, err.Error(), sensitive)
 }

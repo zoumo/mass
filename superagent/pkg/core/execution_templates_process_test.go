@@ -29,7 +29,17 @@ func TestExecutionTemplateConfig(t *testing.T) {
 	require.Equal(t, []core.IssueTemplate{
 		{ExecutionProfile: issueModel, Description: "Implement changes"},
 		{ExecutionProfile: reviewModel, Description: "Review results"},
-	}, config.Execution.IssueTemplates)
+	}, config.Sessions.IssueTemplates)
+
+	// A stable HTTPS endpoint can point at Core from a different massd host.
+	remote := "https://core.example.com"
+	override := "externalURL: " + remote + "\n" + string(valid)
+	override = strings.Replace(override, "listen: "+config.Listen, "listen: 127.0.0.1:0", 1)
+	write(t, f.config, override)
+	config, err = core.LoadConfig(f.config)
+	require.NoError(t, err)
+	require.Equal(t, remote, config.ExternalURL)
+	require.Equal(t, "127.0.0.1:0", config.Listen)
 
 	_, templates, found := strings.Cut(fixtureExecutionProfiles, "  issueTemplates:\n")
 	require.True(t, found)
@@ -52,6 +62,12 @@ func TestExecutionTemplateConfig(t *testing.T) {
 		{"invalid permission preset", "model: issue-model", "model: issue-model\n      permissionPreset: fullaccess"},
 		{"null permission preset", "model: review-model", "model: review-model\n      permissionPreset: null"},
 		{"legacy field", "  issueTemplates:", "  runtimeRef: agent\n  issueTemplates:"},
+		{"removed execution block", "sessions:", "execution:"},
+		{"removed MCP command", "sessions:", "sessions:\n  mcpCommand: superagent"},
+		{"remote cleartext", "sessions:", "externalURL: http://core.example.com\nsessions:"},
+		{"embedded credentials", "sessions:", "externalURL: https://user:pass@core.example.com\nsessions:"},
+		{"endpoint query", "sessions:", "externalURL: https://core.example.com?token=value\nsessions:"},
+		{"endpoint path", "sessions:", "externalURL: https://core.example.com/v1/mcp\nsessions:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Contains(t, string(valid), tc.from)
@@ -94,7 +110,7 @@ func assertSessionProfile(t *testing.T, massd *client.Client, peer *nativeSubmit
 	require.Equal(t, new(false), questions)
 }
 
-func assertTemplateAccess(t *testing.T, p *process, binding core.SessionBinding, f *fixture, mcp *stdioClient, permitted bool) {
+func assertTemplateAccess(t *testing.T, p *process, binding core.SessionBinding, f *fixture, mcp *roleMCPClient, permitted bool) {
 	t.Helper()
 	var result struct {
 		Tools []struct {
@@ -116,7 +132,7 @@ func assertTemplateAccess(t *testing.T, p *process, binding core.SessionBinding,
 	errorCode(t, code, body, http.StatusForbidden, "forbidden")
 }
 
-func queryTemplates(t *testing.T, topic *stdioClient) []core.IssueTemplate {
+func queryTemplates(t *testing.T, topic *roleMCPClient) []core.IssueTemplate {
 	t.Helper()
 	return mcpWork[struct{ ExecutionTemplates []core.IssueTemplate }](t, topic, "get_topic", map[string][]string{"include": {"executionTemplates"}}).ExecutionTemplates
 }
@@ -125,9 +141,6 @@ func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
 	peer := newNativeSubmitPeer(t)
 	endpoint, massd := startEventTestMassd(t, peer)
 	f, _ := eventFixture(t, endpoint)
-	raw, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	write(t, f.config, string(raw)+"  mcpCommand: "+build(t)+"\n")
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
 	store, err := core.Open(config)
@@ -150,6 +163,9 @@ func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), "UPDATE session_bindings SET spec=? WHERE id=?", saved, binding.ID)
 	require.NoError(t, err)
 
+	credential := testCapabilityPath(f, binding)
+	require.NoError(t, os.MkdirAll(filepath.Dir(credential), 0o700))
+	write(t, credential, "AUTHORIZATION='Bearer synthetic-initial-token'\n")
 	var original resource.Session
 	require.NoError(t, massd.CreateSession(t.Context(), resource.Session{
 		Metadata: resource.Metadata{Namespace: binding.Namespace, Name: binding.Name}, Spec: spec,

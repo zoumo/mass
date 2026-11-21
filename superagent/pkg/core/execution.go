@@ -18,23 +18,24 @@ import (
 	"time"
 
 	"github.com/zoumo/agent-sdk-go/agent"
+	"github.com/zoumo/agent-sdk-go/mcp"
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"go.opentelemetry.io/otel/trace"
 )
 
-type ExecutionConfig struct {
-	MassdEndpoint     string          `mapstructure:"massdEndpoint"`
-	TokenFile         string          `mapstructure:"tokenFile"`
-	OperatorTokenFile string          `mapstructure:"operatorTokenFile"`
-	Roles             ExecutionRoles  `mapstructure:"roles"`
-	IssueTemplates    []IssueTemplate `mapstructure:"issueTemplates"`
-	RouterWorkspace   string          `mapstructure:"routerWorkspace"`
-	Namespace         string          `mapstructure:"namespace"`
-	MCPCommand        string          `mapstructure:"mcpCommand"`
-	token             string
-	operatorToken     string
+type SessionsConfig struct {
+	Roles           ExecutionRoles  `mapstructure:"roles"`
+	IssueTemplates  []IssueTemplate `mapstructure:"issueTemplates"`
+	RouterWorkspace string          `mapstructure:"routerWorkspace"`
+	Namespace       string          `mapstructure:"namespace"`
+}
+
+type MassdConfig struct {
+	Endpoint  string `mapstructure:"endpoint"`
+	TokenFile string `mapstructure:"tokenFile"`
+	token     string
 }
 
 type ExecutionProfile struct {
@@ -68,7 +69,7 @@ func (p ExecutionProfile) valid() bool {
 		strings.TrimSpace(p.Model) != "" && p.sessionConfig().Validate() == nil
 }
 
-func (c *ExecutionConfig) issueProfile(runtimeRef, model string) (ExecutionProfile, error) {
+func (c *SessionsConfig) issueProfile(runtimeRef, model string) (ExecutionProfile, error) {
 	if c != nil {
 		for _, template := range c.IssueTemplates {
 			if template.RuntimeRef == runtimeRef && template.Model == model {
@@ -79,23 +80,40 @@ func (c *ExecutionConfig) issueProfile(runtimeRef, model string) (ExecutionProfi
 	return ExecutionProfile{}, problem("invalid_argument", "runtimeRef and model must match a configured Issue template")
 }
 
-func (c *ExecutionConfig) validate(resolve func(string) string) error {
-	u, err := url.Parse(c.MassdEndpoint)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/rpc") || (u.Scheme != "ws" && u.Scheme != "wss") {
-		return problem("invalid_argument", "execution.massdEndpoint must be a ws/wss MASS endpoint")
+func (c *MassdConfig) validate(resolve func(string) string, composed bool) error {
+	if !composed {
+		u, err := url.Parse(c.Endpoint)
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/rpc") || (u.Scheme != "ws" && u.Scheme != "wss") {
+			return problem("invalid_argument", "massd.endpoint must be a ws/wss MASS endpoint")
+		}
 	}
+	if c.TokenFile != "" {
+		c.TokenFile = resolve(c.TokenFile)
+		b, err := readPrivate(c.TokenFile)
+		if err != nil {
+			return err
+		}
+		c.token = strings.TrimSpace(string(b))
+		if c.token == "" {
+			return problem("invalid_argument", "empty massd tokenFile")
+		}
+	}
+	return nil
+}
+
+func (c *SessionsConfig) validate(resolve func(string) string) error {
 	if c.Namespace == "" {
 		c.Namespace = "superagent"
 	}
 	namespacePattern := regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	if len(c.Namespace) > 24 || !namespacePattern.MatchString(c.Namespace) {
-		return problem("invalid_argument", "execution namespace must be a DNS label of at most 24 bytes")
+		return problem("invalid_argument", "sessions.namespace must be a DNS label of at most 24 bytes")
 	}
 	if !c.Roles.Router.valid() || !c.Roles.Topic.valid() {
-		return problem("invalid_argument", "execution.roles.router and execution.roles.topic each require a valid runtimeRef and model, with optional effort")
+		return problem("invalid_argument", "sessions.roles.router and sessions.roles.topic each require a valid runtimeRef and model, with optional effort")
 	}
 	if len(c.IssueTemplates) == 0 {
-		return problem("invalid_argument", "execution.issueTemplates requires at least one template")
+		return problem("invalid_argument", "sessions.issueTemplates requires at least one template")
 	}
 	seen := make(map[[2]string]bool, len(c.IssueTemplates))
 	for _, template := range c.IssueTemplates {
@@ -110,46 +128,10 @@ func (c *ExecutionConfig) validate(resolve func(string) string) error {
 	}
 	c.RouterWorkspace = resolve(c.RouterWorkspace)
 	if !filepath.IsAbs(c.RouterWorkspace) {
-		return problem("invalid_argument", "execution.routerWorkspace must be absolute")
+		return problem("invalid_argument", "sessions.routerWorkspace must be absolute")
 	}
 	if info, statErr := os.Stat(c.RouterWorkspace); statErr != nil || !info.IsDir() {
-		return problem("invalid_argument", "execution.routerWorkspace must exist")
-	}
-	if c.MCPCommand == "" {
-		c.MCPCommand, err = os.Executable()
-		if err != nil {
-			return problem("unavailable", "cannot locate MCP executable")
-		}
-	} else {
-		c.MCPCommand = resolve(c.MCPCommand)
-	}
-	info, statErr := os.Stat(c.MCPCommand)
-	if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return problem("invalid_argument", "execution.mcpCommand must be an executable regular file")
-	}
-	if !filepath.IsAbs(c.MCPCommand) {
-		return problem("invalid_argument", "execution.mcpCommand must be absolute")
-	}
-	if c.TokenFile != "" {
-		c.TokenFile = resolve(c.TokenFile)
-		b, readErr := readPrivate(c.TokenFile)
-		if readErr != nil {
-			return readErr
-		}
-		c.token = strings.TrimSpace(string(b))
-		if c.token == "" {
-			return problem("invalid_argument", "empty massd tokenFile")
-		}
-	}
-	if c.OperatorTokenFile != "" {
-		c.OperatorTokenFile = resolve(c.OperatorTokenFile)
-		c.operatorToken, err = ReadOperatorToken(c.OperatorTokenFile)
-		if err != nil {
-			return err
-		}
-		if c.operatorToken == c.token {
-			return problem("invalid_argument", "operator token must be distinct from the massd token")
-		}
+		return problem("invalid_argument", "sessions.routerWorkspace must exist")
 	}
 	return nil
 }
@@ -214,13 +196,13 @@ Reports
 - On report_reminder, report work already performed on this Issue. Use an operationId stable for that event.`
 
 func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
-	if c.Execution == nil {
+	if c.Sessions == nil {
 		var count int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM session_bindings").Scan(&count); err != nil {
 			return storageError()
 		}
 		if count > 0 {
-			return problem("failed_precondition", "persisted SessionBindings require execution configuration")
+			return problem("failed_precondition", "persisted SessionBindings require sessions configuration")
 		}
 		return nil
 	}
@@ -231,9 +213,9 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 		if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, b.ID); err != nil {
 			return err
 		}
-		configured := c.Execution.Roles.Router
-		if !b.ExecutionProfile.sameModel(configured) || b.Workspace != c.Execution.RouterWorkspace || b.Namespace != c.Execution.Namespace+"-router" {
-			return problem("failed_precondition", "execution configuration differs from persisted Router binding")
+		configured := c.Sessions.Roles.Router
+		if !b.ExecutionProfile.sameModel(configured) || b.Workspace != c.Sessions.RouterWorkspace || b.Namespace != c.Sessions.Namespace+"-router" {
+			return problem("failed_precondition", "sessions configuration differs from persisted Router binding")
 		}
 		expected, err := makeSpec(c, b)
 		if err != nil {
@@ -246,7 +228,7 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 			expected.Config.PermissionPreset = spec.Config.PermissionPreset
 		}
 		if !reflect.DeepEqual(spec, expected) {
-			return problem("failed_precondition", "execution configuration differs from persisted Router binding")
+			return problem("failed_precondition", "sessions configuration differs from persisted Router binding")
 		}
 		return nil
 	}
@@ -254,7 +236,7 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 	if !errors.As(err, &e) || e.Code != "not_found" {
 		return err
 	}
-	_, err = createBinding(ctx, tx, c, "router", "", c.Execution.RouterWorkspace, now(), 1)
+	_, err = createBinding(ctx, tx, c, "router", "", c.Sessions.RouterWorkspace, now(), 1)
 	return err
 }
 
@@ -263,12 +245,12 @@ func createBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, works
 }
 
 func createRoleBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, workspace, at string, generation int, previous SessionBinding) (SessionBinding, error) {
-	if c.Execution == nil {
-		return SessionBinding{}, problem("failed_precondition", "execution configuration is required")
+	if c.Sessions == nil {
+		return SessionBinding{}, problem("failed_precondition", "sessions configuration is required")
 	}
-	b := SessionBinding{ID: newID("session-binding"), Role: role, OwnerID: owner, Generation: generation, Workspace: workspace, Namespace: c.Execution.Namespace + "-router", ExecutionProfile: c.Execution.Roles.Router, State: "pending", CreatedAt: at}
+	b := SessionBinding{ID: newID("session-binding"), Role: role, OwnerID: owner, Generation: generation, Workspace: workspace, Namespace: c.Sessions.Namespace + "-router", ExecutionProfile: c.Sessions.Roles.Router, State: "pending", CreatedAt: at}
 	if role == "topic" {
-		b.ExecutionProfile = c.Execution.Roles.Topic
+		b.ExecutionProfile = c.Sessions.Roles.Topic
 		b.Namespace = topicNamespace(c, owner)
 	}
 	b.Name = role + "-g" + strconv.Itoa(b.Generation)
@@ -276,12 +258,12 @@ func createRoleBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, w
 }
 
 func topicNamespace(c Config, topicID string) string {
-	return c.Execution.Namespace + "-" + strings.ReplaceAll(creationKey("topic", topicID, ""), "_", "-")
+	return c.Sessions.Namespace + "-" + strings.ReplaceAll(creationKey("topic", topicID, ""), "_", "-")
 }
 
 func createIssueBinding(ctx context.Context, tx *sql.Tx, c Config, issue Issue, previous SessionBinding, at string) (SessionBinding, error) {
-	if c.Execution == nil {
-		return SessionBinding{}, problem("failed_precondition", "execution configuration is required")
+	if c.Sessions == nil {
+		return SessionBinding{}, problem("failed_precondition", "sessions configuration is required")
 	}
 	generation := previous.Generation + 1
 	b := SessionBinding{
@@ -307,7 +289,6 @@ func usePreviousSession(ctx context.Context, tx *sql.Tx, next *SessionBinding, p
 		}
 		next.SessionID, next.SessionUID, next.Name = previous.SessionID, previous.SessionUID, previous.Name
 		next.CapabilityFileID = previous.capabilityFileID()
-		next.MCPWorkingDirectory = previous.MCPWorkingDirectory
 		return &spec, nil
 	}
 	return nil, nil
@@ -355,11 +336,20 @@ func bindingSystemPrompt(b SessionBinding) string {
 }
 
 func makeSpec(c Config, b SessionBinding) (resource.SessionSpec, error) {
-	servers := []runtime.MCPServer{{Name: "superagent", Type: runtime.MCPTransportStdio, Command: c.Execution.MCPCommand, Args: []string{"mcp", "--capability-file", filepath.Join(c.DataDir, "capabilities", b.capabilityFileID()+".json")}, Cwd: b.MCPWorkingDirectory}}
+	endpoint, err := c.roleMCPEndpoint()
+	if err != nil {
+		return resource.SessionSpec{}, err
+	}
+	servers := []runtime.MCPServer{{
+		Name: "superagent", Type: runtime.MCPTransportHTTP, URL: endpoint,
+		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{
+			FileKeyRef: &mcp.FileKeyRef{Path: filepath.Join(c.DataDir, mcpCredentialsDir, b.capabilityFileID()+".env"), Key: "AUTHORIZATION"},
+		}}},
+	}}
 	prompt := bindingSystemPrompt(b)
-	if b.Role == "topic" && len(c.Execution.IssueTemplates) != 0 {
-		templates := make([]map[string]string, 0, len(c.Execution.IssueTemplates))
-		for _, template := range c.Execution.IssueTemplates {
+	if b.Role == "topic" && len(c.Sessions.IssueTemplates) != 0 {
+		templates := make([]map[string]string, 0, len(c.Sessions.IssueTemplates))
+		for _, template := range c.Sessions.IssueTemplates {
 			templates = append(templates, map[string]string{"runtimeRef": template.RuntimeRef, "model": template.Model, "description": template.Description})
 		}
 		raw, err := json.Marshal(templates)
@@ -418,40 +408,41 @@ func sameBinding(a, b SessionBinding) bool {
 		a.TopicID == b.TopicID && a.IssueID == b.IssueID
 }
 
-type capability struct {
-	Endpoint         string `json:"endpoint"`
-	SessionBindingID string `json:"sessionBindingId"`
-	Role             string `json:"role"`
-	OwnerID          string `json:"ownerId"`
-	TopicID          string `json:"topicId,omitempty"`
-	IssueID          string `json:"issueId,omitempty"`
-	Generation       int    `json:"generation"`
-	Token            string `json:"token"`
+func (c Config) roleMCPEndpoint() (string, error) {
+	if c.ExternalURL != "" {
+		u, err := url.Parse(c.ExternalURL)
+		if err != nil || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
+			return "", problem("invalid_argument", "externalURL must be a URL with scheme and host")
+		}
+		u.Path = mcpPath
+		endpoint := u.String()
+		servers := []runtime.MCPServer{{Name: "superagent", Type: runtime.MCPTransportHTTP, URL: endpoint}}
+		if err := runtime.ValidateMCPServers(servers); err != nil {
+			return "", problem("invalid_argument", "externalURL must use HTTPS or loopback HTTP")
+		}
+		return endpoint, nil
+	}
+	host, port, err := net.SplitHostPort(c.Listen)
+	ip := net.ParseIP(host)
+	if err != nil || (!ip.IsLoopback() && !ip.IsUnspecified()) {
+		return "", problem("invalid_argument", "set externalURL for a non-loopback Core listener")
+	}
+	if ip.IsUnspecified() {
+		host = "127.0.0.1"
+		if ip.To4() == nil {
+			host = "::1"
+		}
+	}
+	return "http://" + net.JoinHostPort(host, port) + mcpPath, nil
 }
 
 func (s *Server) capabilityFile(b SessionBinding, token string) error {
-	dir := filepath.Join(s.config.DataDir, "capabilities")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return problem("unavailable", "cannot prepare MCP capability directory")
-	}
-	endpoint := s.Endpoint()
-	host, port, err := net.SplitHostPort(s.listener.Addr().String())
-	if err != nil {
+	dir := filepath.Join(s.config.DataDir, mcpCredentialsDir)
+	if err := s.config.prepareMCPFiles(); err != nil {
 		return err
 	}
-	if net.ParseIP(host).IsUnspecified() {
-		if strings.Contains(host, ":") {
-			host = "::1"
-		} else {
-			host = "127.0.0.1"
-		}
-		endpoint = "http://" + net.JoinHostPort(host, port)
-	}
-	data, err := json.Marshal(capability{Endpoint: endpoint, SessionBindingID: b.ID, Role: b.Role, OwnerID: b.OwnerID, TopicID: b.TopicID, IssueID: b.IssueID, Generation: b.Generation, Token: token})
-	if err != nil {
-		return err
-	}
-	// Publish a complete private file; each MCP captures its identity once at startup.
+	data := []byte("AUTHORIZATION='Bearer " + token + "'\n")
+	// Publish a complete private file before massd opens or resumes the Session.
 	temp, err := os.CreateTemp(dir, ".cap-")
 	if err != nil {
 		return err
@@ -469,7 +460,7 @@ func (s *Server) capabilityFile(b SessionBinding, token string) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(path, filepath.Join(dir, b.capabilityFileID()+".json"))
+	return os.Rename(path, filepath.Join(dir, b.capabilityFileID()+".env"))
 }
 
 func bindingSessionRef(b SessionBinding) resource.SessionRef {
@@ -733,7 +724,7 @@ func errorCode(err error) string {
 }
 
 func (s *Server) massClient() (*client.Client, error) {
-	return client.New(s.config.Execution.MassdEndpoint, s.config.Execution.token, client.Options{WriteTimeout: 5 * time.Second, SubscriptionQueueCapacity: 32})
+	return client.New(s.config.Massd.Endpoint, s.config.Massd.token, client.Options{WriteTimeout: 5 * time.Second, SubscriptionQueueCapacity: 32})
 }
 
 func bindingMatches(b SessionBinding, spec resource.SessionSpec, found resource.Session) bool {

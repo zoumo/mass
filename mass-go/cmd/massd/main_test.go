@@ -67,6 +67,7 @@ func (s *commandSuite) TestParsing() {
 			if args[0] == "--help" {
 				s.Require().NoError(err)
 				s.Contains(out.String(), "--token-file")
+				s.NotContains(out.String(), "--mcp-files-dir")
 				s.Contains(out.String(), "--local")
 				s.Contains(out.String(), "--session-idle-timeout")
 			} else {

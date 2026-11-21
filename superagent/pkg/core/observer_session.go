@@ -44,7 +44,7 @@ func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 	var binding SessionBinding
-	if json.Unmarshal(raw, &binding) != nil || s.config.Execution == nil || binding.SessionID == "" || binding.SessionUID == "" {
+	if json.Unmarshal(raw, &binding) != nil || s.config.Sessions == nil || binding.SessionID == "" || binding.SessionUID == "" {
 		s.fail(w, problem("unavailable", "Session identity has not been recorded"))
 		return
 	}

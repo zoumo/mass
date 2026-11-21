@@ -457,13 +457,13 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	peer := filepath.Join(temp, "claude-wire-peer")
 	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", peer, "./tests/integration/testdata/ticket14-recovery-peer")
 	cmd.Dir = "../../../mass-go"
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	launcher := filepath.Join(temp, "claude-with-mcp")
 	cmd = exec.CommandContext(t.Context(), "go", "build", "-o", launcher, "./pkg/core/testdata/claude-mcp-peer")
 	cmd.Dir = "../.."
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	workspace, err := filepath.EvalSymlinks(temp)
@@ -522,7 +522,6 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 		return false
 	}, 5*time.Second, 25*time.Millisecond)
 	require.NoError(t, syscall.Kill(nativePID, 0))
-	var nativeMCP int
 	findMCP := func(want string) bool {
 		raw, err := os.ReadFile(filepath.Join(native, "mcp.jsonl"))
 		if err != nil {
@@ -532,21 +531,18 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 			var row struct {
 				Method            string
 				NativePID         int
-				MCPPID            int
 				QuestionsDisabled bool
 			}
 			if json.Unmarshal([]byte(line), &row) == nil && row.NativePID == nativePID && row.Method == want {
 				if want == "opened" {
 					require.True(t, row.QuestionsDisabled, "Claude launch must disallow AskUserQuestion")
 				}
-				nativeMCP = row.MCPPID
 				return true
 			}
 		}
 		return false
 	}
 	require.True(t, findMCP("opened"))
-	require.NoError(t, syscall.Kill(nativeMCP, 0))
 	canceled := mcpWork[core.WorkReceipt](t, topic, "issue_cancel", issueLifecycle("claude-cancel", work.Issue))
 	_ = waitObservedStop(t, p, "session-bindings", work.SessionBinding.ID)
 	req := recoveryFor("close-claude-session", "settle", old.ID)
@@ -555,7 +551,6 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.True(t, closed.Close.Reusable)
 	require.ErrorIs(t, syscall.Kill(nativePID, 0), syscall.ESRCH)
 	require.True(t, findMCP("released"))
-	require.ErrorIs(t, syscall.Kill(nativeMCP, 0), syscall.ESRCH)
 	var released resource.Session
 	require.NoError(t, c.GetSession(t.Context(), resource.SessionRef{SessionID: old.SessionID}, &released))
 	require.Equal(t, "offline", string(released.Status.State))
@@ -577,6 +572,10 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.Contains(t, readTrace(), `"method":"full_access","params":{"resumed":false,"sessionId":"`+old.SessionID+`"}`)
 	require.Contains(t, readTrace(), `"method":"full_access","params":{"resumed":true,"sessionId":"`+old.SessionID+`"}`)
 	require.NotEqual(t, oldCredential, roleToken(t, f, fresh))
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(filepath.Join(native, "mcp.jsonl"))
+		return err == nil && strings.Contains(string(raw), `"id":"`+fresh.ID+`"`)
+	}, 5*time.Second, 25*time.Millisecond, "resumed native client must authenticate as the new binding")
 	current := startRoleMCP(t, f, fresh)
 	require.Equal(t, next.SessionBinding.ID, mcpWork[core.WorkReceipt](t, current, "get_issue", struct{}{}).Issue.CurrentSessionBindingID)
 	mcpWorkError(t, oldProcess, "get_issue", "stale_binding", struct{}{})
@@ -618,7 +617,7 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	historical := readRecord[core.SessionBinding](t, p, "session-bindings/"+next.SessionBinding.ID)
 	require.Equal(t, fresh.SessionID, historical.SessionID)
 	require.Equal(t, issueModel, historical.ExecutionProfile)
-	t.Logf("Claude native PID %d and its MCP PID %d released before offline readback. Matching parameters resumed the same Session with a fresh token, and a new profile created a separate Session.", nativePID, nativeMCP)
+	t.Logf("Claude native PID %d exited before offline readback. Matching parameters resumed the same Session with a fresh HTTP MCP token, and a new profile created a separate Session.", nativePID)
 
 	reviewStart := waitWorkEvent(t, p, review.SessionBinding.StartEventID, "sent")
 	reviewRef := resource.SessionRef{SessionID: reviewBinding.SessionID}

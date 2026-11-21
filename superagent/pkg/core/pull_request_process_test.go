@@ -261,5 +261,5 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.Equal(t, issuePR, readRecord[core.PullRequest](t, p, "pull-requests/"+issuePR.ID))
 	require.Equal(t, issuePR, readRecord[core.Issue](t, p, "issues/"+current.Issue.ID).PullRequests[0].PullRequest)
 	mcpWorkError(t, primary, "update_topic", "conflict", register)
-	t.Log("Public Message and stdio MCP agreed on both arrival orders, scoped deduplication, issue authority and shared-Thread routing.")
+	t.Log("Public Message and HTTP MCP agreed on both arrival orders, scoped deduplication, issue authority and shared-Thread routing.")
 }

@@ -2,14 +2,14 @@
 
 This is the current Go implementation acceptance map, not a change to the
 [harness contracts](../../harness/index.md). The runtime SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.1.0`, source `c169f237a1a1`, with no local
+`github.com/zoumo/agent-sdk-go v0.1.1-0.20261121191721-f37213c20a77`, source `f37213c20a77`, with no local
 `replace`. The test-only recording and replay tool
 `github.com/zoumo/agent-sdk-testify` is pinned to `v0.2.2`, source
 `d5e8a481450572b6147aa4dd218f56460363017e`. Exact consumer case hashes and gate
 results are in
 [consumer recording acceptance](recording-acceptance.md).
 
-Current T06 validation is recorded in [SDK upgrade acceptance](sdk-latest-sync.md).
+The earlier T06 validation is recorded in [SDK upgrade acceptance](sdk-latest-sync.md).
 A recipe or an existing test is not itself an executed PASS.
 
 ## Test Layers

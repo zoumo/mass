@@ -73,8 +73,9 @@ PRAGMA user_version=24;`, topic.ID, legacy.ID)
 	}
 	checkRawVersion(24)
 
-	f.configure(0, "different-account")
-	f.execution(boundary)
+	config, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	write(t, f.config, strings.Replace(string(config), "accountId: account-1", "accountId: different-account", 1))
 	f.fails("configured source/account differs")
 	var liveVersion, count int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&liveVersion))
@@ -84,8 +85,7 @@ PRAGMA user_version=24;`, topic.ID, legacy.ID)
 		require.Equal(t, 1, count)
 	}
 
-	f.configure(0, "account-1")
-	f.execution(boundary)
+	write(t, f.config, string(config))
 	// Keep a SQLite connection open until after restart so the main-file
 	// header can still be v24 when SQLite reads the committed v25 WAL.
 	p = f.start()

@@ -136,13 +136,6 @@ func New() *cobra.Command {
 		observe.AddCommand(cmd)
 	}
 	root.AddCommand(observe)
-	var capability string
-	mcp := &cobra.Command{Use: "mcp", Short: "Serve the startup-bound role over stdio MCP", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		return core.RunMCPStdio(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), capability)
-	}}
-	mcp.Flags().StringVar(&capability, "capability-file", "", "Private startup capability file")
-	_ = mcp.MarkFlagRequired("capability-file")
-	root.AddCommand(mcp)
 	root.AddCommand(newRecoverInput(), newInspectBinding(), newReleaseEcho())
 	return root
 }

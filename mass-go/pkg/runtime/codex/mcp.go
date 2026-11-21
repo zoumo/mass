@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/zoumo/agent-sdk-go/mcp"
@@ -13,85 +11,90 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-var codexMCPEnvironmentReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-
 func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessConfig) ([]mcp.Server, error) {
 	if configured == nil {
 		return nil, nil
 	}
-	servers := *configured
-	if err := runtime.ValidateMCPServers(servers); err != nil {
-		return nil, codexMCPInvalid(err)
-	}
-	converted := make([]mcp.Server, 0, len(servers))
-	for i, server := range servers {
-		sdkServer := server.SDKServer()
-		if strings.Contains(sdkServer.Name, ".") {
+	for i, server := range *configured {
+		if strings.Contains(server.Name, ".") {
 			return nil, codexMCPUnsupported("mcp_server_name_unsupported", fmt.Errorf("mcp server %d: Codex names must not contain dots", i))
 		}
-		switch sdkServer.Transport {
-		case runtime.MCPTransportStdio:
-			env, err := codexMCPEnvironment(i, sdkServer.Env, options)
-			if err != nil {
-				return nil, err
-			}
-			sdkServer.Env = env
-			converted = append(converted, sdkServer)
-		case runtime.MCPTransportHTTP:
-			remote, err := codexHTTPMCPServer(i, sdkServer, options)
-			if err != nil {
-				return nil, err
-			}
-			converted = append(converted, remote)
-		case runtime.MCPTransportSSE:
+		if server.Type == runtime.MCPTransportSSE {
 			return nil, codexMCPUnsupported("mcp_transport_unsupported", fmt.Errorf("mcp server %d: Codex does not support sse transport", i))
 		}
 	}
-	return converted, nil
+	servers, err := runtime.ResolveMCPServers(*configured)
+	if err != nil {
+		return nil, codexMCPInvalid(err)
+	}
+	for i, server := range servers {
+		original := (*configured)[i]
+		switch server.Transport {
+		case runtime.MCPTransportStdio:
+			direct := runtime.MCPDirectValues(original.Env)
+			for j, entry := range server.Env {
+				if _, ok := direct[entry.Name]; !ok {
+					continue
+				}
+				value, err := runtime.ResolveMCPEnvironmentReferences(*entry.Value, options.LookupEnv)
+				if err != nil {
+					return nil, codexMCPInvalid(fmt.Errorf("mcp server %d: env %q: %w", i, entry.Name, err))
+				}
+				server.Env[j] = mcp.Literal(entry.Name, value)
+			}
+		case runtime.MCPTransportHTTP:
+			server, err = codexHTTPMCPServer(i, server, original.Headers, options)
+			if err != nil {
+				return nil, err
+			}
+		}
+		servers[i] = server
+	}
+	return servers, nil
 }
 
-func codexHTTPMCPServer(index int, server mcp.Server, options runtime.ProcessConfig) (mcp.Server, error) {
-	headers := maps.Clone(server.Headers)
+func codexHTTPMCPServer(index int, server mcp.Server, original []mcp.NamedValue, options runtime.ProcessConfig) (mcp.Server, error) {
 	envHeaders := maps.Clone(server.EnvHeaders)
 	if envHeaders == nil {
 		envHeaders = map[string]string{}
 	}
-	if err := validateCodexHeaderNames(headers, envHeaders); err != nil {
+	if err := validateCodexHeaderNames(server.Headers, envHeaders); err != nil {
 		return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: %w", index, err))
 	}
+	direct := runtime.MCPDirectValues(original)
 	bearerTokenEnvVar := server.BearerTokenEnvVar
-	for _, key := range slices.Sorted(maps.Keys(headers)) {
-		raw := headers[key]
-		if strings.ContainsAny(raw, "\r\n") {
-			return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: header %q contains an invalid value", index, key))
+	headers := server.Headers[:0]
+	for _, entry := range server.Headers {
+		key, raw := entry.Name, *entry.Value
+		if _, ok := direct[key]; !ok {
+			headers = append(headers, entry)
+			continue
 		}
 		prefix, name, exact := runtime.ParseMCPSecretReference(raw)
 		if exact {
 			if err := codexMCPHeaderReference(name, options); err != nil {
 				return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: header %q: %w", index, key, err))
 			}
-			if runtime.IsSensitiveMCPName(key) && strings.EqualFold(key, "Authorization") && strings.EqualFold(prefix, "Bearer") {
+			if strings.EqualFold(key, "Authorization") && strings.EqualFold(prefix, "Bearer") {
 				if bearerTokenEnvVar != "" && bearerTokenEnvVar != name {
 					return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: conflicting Authorization bearer references", index))
 				}
 				bearerTokenEnvVar = name
-				delete(headers, key)
 				continue
 			}
 			if prefix == "" {
 				envHeaders[key] = name
-				delete(headers, key)
 				continue
 			}
 		}
-		value, err := codexMCPResolveValue(raw, options)
+		value, err := runtime.ResolveMCPEnvironmentReferences(raw, options.LookupEnv)
 		if err != nil {
 			return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: header %q: %w", index, key, err))
 		}
-		if strings.ContainsAny(value, "\r\n") {
+		if !runtime.ValidMCPHeaderValue(value) {
 			return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: header %q contains an invalid value", index, key))
 		}
-		headers[key] = value
+		headers = append(headers, mcp.Literal(key, value))
 	}
 	if err := validateCodexAuthorizationConflict(headers, envHeaders, bearerTokenEnvVar); err != nil {
 		return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: %w", index, err))
@@ -106,95 +109,50 @@ func codexHTTPMCPServer(index int, server mcp.Server, options runtime.ProcessCon
 			return mcp.Server{}, codexMCPInvalid(fmt.Errorf("mcp server %d: bearerTokenEnvVar: %w", index, err))
 		}
 	}
-	return mcp.Server{
-		Name:              server.Name,
-		Transport:         mcp.TransportHTTP,
-		URL:               server.URL,
-		Headers:           headers,
-		EnvHeaders:        envHeaders,
-		BearerTokenEnvVar: bearerTokenEnvVar,
-	}, nil
-}
-
-func codexMCPEnvironment(index int, env map[string]string, options runtime.ProcessConfig) (map[string]string, error) {
-	resolved := maps.Clone(env)
-	for _, key := range slices.Sorted(maps.Keys(env)) {
-		value, err := codexMCPResolveValue(env[key], options)
-		if err != nil {
-			return nil, codexMCPInvalid(fmt.Errorf("mcp server %d: env %q: %w", index, key, err))
-		}
-		resolved[key] = value
-	}
-	return resolved, nil
-}
-
-func codexMCPResolveValue(value string, options runtime.ProcessConfig) (string, error) {
-	if !strings.Contains(value, "${") {
-		return value, nil
-	}
-	matches := codexMCPEnvironmentReference.FindAllStringSubmatchIndex(value, -1)
-	if len(matches) == 0 {
-		return "", errors.New("contains an unresolved environment reference")
-	}
-	var resolved strings.Builder
-	last := 0
-	for _, match := range matches {
-		if strings.Contains(value[last:match[0]], "${") {
-			return "", errors.New("contains an unresolved environment reference")
-		}
-		resolved.WriteString(value[last:match[0]])
-		replacement, err := codexMCPReference(value[match[2]:match[3]], options)
-		if err != nil {
-			return "", err
-		}
-		resolved.WriteString(replacement)
-		last = match[1]
-	}
-	if strings.Contains(value[last:], "${") {
-		return "", errors.New("contains an unresolved environment reference")
-	}
-	resolved.WriteString(value[last:])
-	return resolved.String(), nil
+	server.Headers = headers
+	server.EnvHeaders = envHeaders
+	server.BearerTokenEnvVar = bearerTokenEnvVar
+	return server, nil
 }
 
 func codexMCPHeaderReference(name string, options runtime.ProcessConfig) error {
-	value, err := codexMCPReference(name, options)
+	value, err := runtime.LookupMCPEnvironmentReference(options.LookupEnv, name)
 	if err != nil {
 		return err
 	}
-	if strings.ContainsAny(value, "\r\n") {
+	if !runtime.ValidMCPHeaderValue(value) {
 		return fmt.Errorf("environment variable %q has an invalid header value", name)
 	}
 	return nil
 }
 
-func codexMCPReference(name string, options runtime.ProcessConfig) (string, error) {
-	return runtime.LookupMCPEnvironmentReference(options.LookupEnv, name)
-}
-
-func validateCodexHeaderNames(headers, envHeaders map[string]string) error {
+func validateCodexHeaderNames(headers []mcp.NamedValue, envHeaders map[string]string) error {
 	seen := make(map[string]struct{}, len(headers)+len(envHeaders))
-	for _, values := range []map[string]string{headers, envHeaders} {
-		for key := range values {
-			canonical := strings.ToLower(key)
-			if _, ok := seen[canonical]; ok {
-				return fmt.Errorf("header %q is declared more than once", key)
-			}
-			seen[canonical] = struct{}{}
+	for _, entry := range headers {
+		seen[strings.ToLower(entry.Name)] = struct{}{}
+	}
+	for key := range envHeaders {
+		canonical := strings.ToLower(key)
+		if _, ok := seen[canonical]; ok {
+			return errors.New("header is declared more than once")
 		}
+		seen[canonical] = struct{}{}
 	}
 	return nil
 }
 
-func validateCodexAuthorizationConflict(headers, envHeaders map[string]string, bearerTokenEnvVar string) error {
+func validateCodexAuthorizationConflict(headers []mcp.NamedValue, envHeaders map[string]string, bearerTokenEnvVar string) error {
 	if bearerTokenEnvVar == "" {
 		return nil
 	}
-	for _, values := range []map[string]string{headers, envHeaders} {
-		for key := range values {
-			if strings.EqualFold(key, "Authorization") {
-				return errors.New("authorization header conflicts with bearerTokenEnvVar")
-			}
+	for _, entry := range headers {
+		if strings.EqualFold(entry.Name, "Authorization") {
+			return errors.New("authorization header conflicts with bearerTokenEnvVar")
+		}
+	}
+	for key := range envHeaders {
+		if strings.EqualFold(key, "Authorization") {
+			return errors.New("authorization header conflicts with bearerTokenEnvVar")
 		}
 	}
 	return nil

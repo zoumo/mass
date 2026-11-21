@@ -1,8 +1,6 @@
 package core_test
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -13,9 +11,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -260,7 +258,7 @@ func (f *fixture) execution(boundary *routeBoundary) {
 	f.t.Helper()
 	b, err := os.ReadFile(f.config)
 	require.NoError(f.t, err)
-	b = append(b, fmt.Appendf(nil, "execution:\n  massdEndpoint: %s\n  routerWorkspace: %s\n  namespace: superagent\n", boundary.url, f.dir)...)
+	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\nsessions:\n  routerWorkspace: %s\n  namespace: superagent\n", boundary.url, f.dir)...)
 	b = append(b, fixtureExecutionProfiles...)
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
 }
@@ -317,12 +315,12 @@ func roleToken(t *testing.T, f *fixture, b core.SessionBinding) string {
 	path := testCapabilityPath(f, b)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var c struct {
-		Token string `json:"token"`
-	}
-	require.NoError(t, json.Unmarshal(data, &c))
-	require.NotEmpty(t, c.Token)
-	return c.Token
+	token, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "AUTHORIZATION='Bearer ")
+	require.True(t, ok)
+	token, ok = strings.CutSuffix(token, "'")
+	require.True(t, ok)
+	require.NotEmpty(t, token)
+	return token
 }
 
 func testCapabilityPath(f *fixture, b core.SessionBinding) string {
@@ -330,7 +328,7 @@ func testCapabilityPath(f *fixture, b core.SessionBinding) string {
 	if b.CapabilityFileID != "" {
 		id = b.CapabilityFileID
 	}
-	return filepath.Join(f.data, "capabilities", id+".json")
+	return filepath.Join(f.data, "mcp-files", id+".env")
 }
 
 func roleCall(t *testing.T, p *process, token, tool string, args any) json.RawMessage {
@@ -512,60 +510,35 @@ func TestRoutingPublicProcess(t *testing.T) {
 	_, data = request(t, http.MethodGet, p.endpoint, "/v1/observer/subscriptions", "", nil)
 	require.Contains(t, string(data), topicID)
 	require.Contains(t, string(data), otherID)
-	t.Log("0/1/many subscriptions, explicit multi-Topic, retry, return round, scope rejection, stdio MCP and restart passed")
+	t.Log("0/1/many subscriptions, explicit multi-Topic, retry, return round, scope rejection, HTTP MCP and restart passed")
 }
 
-type stdioClient struct {
-	t      *testing.T
-	cmd    *exec.Cmd
-	in     io.WriteCloser
-	out    *bufio.Reader
-	seq    int
-	stderr bytes.Buffer
+type roleMCPClient struct {
+	t        *testing.T
+	endpoint string
+	token    string
+	seq      int
 }
 
-func startRoleMCP(t *testing.T, f *fixture, b core.SessionBinding) *stdioClient {
+func startRoleMCP(t *testing.T, f *fixture, b core.SessionBinding) *roleMCPClient {
 	t.Helper()
-	c := &stdioClient{t: t}
-	c.cmd = exec.CommandContext(context.Background(), f.coreExecutable(), "mcp", "--capability-file", testCapabilityPath(f, b))
-	c.cmd.Env = []string{"HOME=" + f.dir, "PATH=" + f.dir}
-	c.cmd.Stderr = &c.stderr
-	in, err := c.cmd.StdinPipe()
+	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	c.in = in
-	out, err := c.cmd.StdoutPipe()
-	require.NoError(t, err)
-	c.out = bufio.NewReader(out)
-	require.NoError(t, c.cmd.Start())
-	t.Cleanup(func() {
-		_ = c.in.Close()
-		done := make(chan error, 1)
-		go func() { done <- c.cmd.Wait() }()
-		select {
-		case err := <-done:
-			require.NoError(t, err, c.stderr.String())
-		case <-time.After(5 * time.Second):
-			_ = c.cmd.Process.Kill()
-			<-done
-			t.Error("MCP did not release")
-		}
-		t.Logf("MCP released pid=%d", c.cmd.Process.Pid)
-	})
-	c.call("initialize", map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "process-test", "version": "1"}})
+	c := &roleMCPClient{t: t, endpoint: "http://" + config.Listen, token: roleToken(t, f, b)}
+	initializeMCP(t, c.endpoint, c.token)
 	return c
 }
 
-func (c *stdioClient) call(method string, params any) map[string]json.RawMessage {
+func (c *roleMCPClient) call(method string, params any) map[string]json.RawMessage {
 	c.t.Helper()
 	c.seq++
-	data, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": c.seq, "method": method, "params": params})
+	req, err := newMCPRequest(c.t.Context(), c.endpoint, c.token, method, c.seq, params)
 	require.NoError(c.t, err)
-	_, err = c.in.Write(append(data, '\n'))
-	require.NoError(c.t, err)
-	line, err := c.out.ReadBytes('\n')
-	require.NoError(c.t, err)
+	status, body := sendMCPRequest(c.t, req)
+	require.Equal(c.t, http.StatusOK, status, string(body))
+	decodeMCPResponse(c.t, body, strconv.Itoa(c.seq))
 	var result map[string]json.RawMessage
-	require.NoError(c.t, json.Unmarshal(line, &result))
+	require.NoError(c.t, json.Unmarshal(body, &result))
 	return result
 }
 
@@ -616,7 +589,7 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Session
 	bound := waitBinding(t, p, "topic", result.StructuredContent.Targets[0].TopicID, "ready")
 	waitDelivered(t, p, m.MessageID, "topic", bound.OwnerID)
 	topicMCP := startRoleMCP(t, f, bound)
-	returned := topicMCP.call("tools/call", map[string]any{"name": "decline_message", "arguments": core.DeclineMessageRequest{EventID: result.StructuredContent.Targets[0].EventIDs[m.MessageID], Reason: "explicit stdio return"}})
+	returned := topicMCP.call("tools/call", map[string]any{"name": "decline_message", "arguments": core.DeclineMessageRequest{EventID: result.StructuredContent.Targets[0].EventIDs[m.MessageID], Reason: "explicit MCP return"}})
 	require.Empty(t, returned["error"])
 	require.Contains(t, string(returned["result"]), result.StructuredContent.Targets[0].EventIDs[m.MessageID])
 	waitDelivered(t, p, m.MessageID, "router", "")
@@ -954,27 +927,10 @@ func TestRoutingOperationAndCapabilityFences(t *testing.T) {
 	require.NotEmpty(t, got.NextCursor)
 	status, body = requestMCPTool(t, p.endpoint, "list_messages", token, map[string]any{"limit": 1, "cursor": got.NextCursor})
 	require.Equal(t, http.StatusBadRequest, status, string(body))
-	// The file's role/owner/generation must agree with the credential's persisted identity.
-	capPath := filepath.Join(f.data, "capabilities", topic.ID+".json")
-	data, err := os.ReadFile(capPath)
-	require.NoError(t, err)
-	var capData map[string]any
-	require.NoError(t, json.Unmarshal(data, &capData))
-	capData["role"] = "router"
-	capData["ownerId"] = ""
-	forged, err := json.Marshal(capData)
-	require.NoError(t, err)
-	forgedPath := filepath.Join(f.dir, "forged.json")
-	require.NoError(t, os.WriteFile(forgedPath, forged, 0o600))
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, build(t), "mcp", "--capability-file", forgedPath)
-	cmd.Env = []string{"HOME=" + f.dir, "PATH=" + f.dir}
-	output, err := cmd.CombinedOutput()
-	require.Error(t, err)
-	require.Contains(t, string(output), "stale_binding")
-	require.NotContains(t, string(output), topicToken)
-	t.Log("operation parameters, filesystem-independent replay, scoped cursor and startup capability identity fenced")
+	identity := initializeMCP(t, p.endpoint, topicToken)
+	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"role":"topic","ownerId":%q,"generation":%d}`, topic.ID, topic.OwnerID, topic.Generation), string(identity))
+	status, body = requestMCPTool(t, p.endpoint, "route_messages", topicToken, r)
+	errorCode(t, status, body, http.StatusForbidden, "forbidden")
 }
 
 func TestRoutingCrashAtomicReturn(t *testing.T) {
@@ -1065,8 +1021,12 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	require.Empty(t, bindings(t, p))
 	p.stop(t, false)
 	f.execution(boundary)
+	credentials := filepath.Join(f.data, "mcp-files")
 	p = f.start()
 	router := waitBinding(t, p, "router", "", "ready")
+	info, err := os.Stat(credentials)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 	waitDelivered(t, p, m.MessageID, "router", "")
 	p.stop(t, false)
 	original, err := os.ReadFile(f.config)

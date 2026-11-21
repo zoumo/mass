@@ -42,7 +42,7 @@ func build(t *testing.T) string {
 			tags += ",observerweb"
 		}
 		cmd := exec.CommandContext(context.Background(), "go", "build", "-race", "-tags", tags, "-o", binary, "../../cmd/superagent")
-		cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+		cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build: %w: %s", err, b)
 		}

@@ -32,10 +32,12 @@ Session spec 可以携带同名字段作为显式覆盖；历史 load 的输入�
 
 - Session 传空列表表示没有覆盖项，不删除 Runtime 默认项。
 - 同一个 Runtime 默认列表或 Session 覆盖列表内部不得出现重复名称。
-- `stdio` 要求 `command`，可使用 `args`、`env` 和可选 `cwd`；`http` 与 `sse` 要求 `url`，可使用 `headers`。各 transport 不接受另一组字段。
+- `stdio` 要求 `command`，可使用 `args`、`env`、`envFrom` 和可选 `cwd`；`http` 与 `sse` 要求 `url`，可使用 `headers` 和 `headersFrom`。各 transport 不接受另一组字段。
 - `envHeaders` 与 `bearerTokenEnvVar` 是 HTTP 的可选认证配置；SSE 不接受这两个字段。具体 Runtime 类型决定 transport、字段和名称约束；不支持项在该 Session 的原生副作用前拒绝。
 - `url` 只接受 HTTPS；HTTP 只允许回环主机。URL 不得包含 userinfo 凭据。
-- 名称含 `authorization`、`cookie`、`credential`、`password`、`secret`、`token`、`api-key` 或 `apikey`，或以 `-key`/`_key` 结尾的 `headers`/`env` 值，以及所有 `envHeaders`/`bearerTokenEnvVar` 值，必须引用环境变量。敏感 header 与 env 值使用 `${ENV_VAR}`，可带 `Bearer` 等 scheme 前缀；环境变量引用名必须符合 shell 环境变量命名。上述敏感值在公开 Runtime/Session spec 中只保留变量引用，`envHeaders`/`bearerTokenEnvVar` 只保存变量名。adapter 在打开原生 Session 前把引用映射为原生引用或从 Runtime 进程环境解析；引用缺失或为空时明确失败，解析值不进入公开错误或持久数据。
+- `env` 和 `headers` 的条目使用 `name`，并提供 `value` 或 `valueFrom.fileKeyRef`。HTTP 请求头可以使用字面值。凭据的暴露范围见 [ADR-0002](../../adr/0002-mcp-http-header-values.md)。
+- 文件引用使用 massd 所在主机上的绝对路径。文件以 `KEY='value'` 定义条目。`fileKeyRef` 读取指定 `key`。`envFrom` 和 `headersFrom` 的 `fileRef` 导入所有键值，后列出的来源覆盖先列出的来源，显式条目优先。Header 名比较时忽略大小写。
+- 每次原生 open、resume 和 load 重新读取文件。文件或指定的键缺失时，该次操作失败。解析值只用于该次原生配置，持久 spec 保存文件引用。
 
 Runtime 写入时校验 provider-neutral 的结构、transport 字段组合和列表内名称唯一性。类型专属支持由对应 Driver 在 open、resume 或 load 时校验。MCP 配置只声明原生 Session 使用的 server；打开成功不证明 server 已连接、工具可用或远端身份可信。
 
@@ -61,6 +63,7 @@ Runtime 的 `config` 仍按运行绑定快照影响 Driver 构造和启动；Ses
 - feature 字段分别验证继承、同名覆盖、显式关闭及 schema 缺省。
 - MCP 验证同名替换保持位置、新名称按 Session 顺序追加、空 Session 列表不清空默认项，以及重复名称被拒绝。
 - 显式 MCP 列表为空时，Claude strict mode 和 Codex 隔离目录都必须排除 ambient server；Codex 未配置隔离目录时明确失败。
-- 非回环明文 URL、URL userinfo、SSE 的 HTTP-only 认证字段和明文敏感 header/env 值必须被拒绝。
+- 非回环明文 URL、URL userinfo、SSE 的 HTTP-only 认证字段必须被拒绝。
+- 文件引用校验覆盖绝对路径约束、缺失文件与键、合并优先级及恢复时重新读取。
 - 显式 Session MCP 在 Runtime 启动和原生副作用前完成公共结构校验；类型不支持在本次原生副作用前失败。
 - 解析后的默认值不进入 Session spec 或持久恢复材料；改变默认值后仍可恢复原 Session。

@@ -16,8 +16,8 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 		ExecutionProfile: ExecutionProfile{RuntimeRef: "agent", Model: "model", Effort: "medium"},
 		Close:            &BindingClose{Reusable: true},
 	}
-	config := Config{DataDir: t.TempDir(), Execution: &ExecutionConfig{
-		Roles: ExecutionRoles{Router: previous.ExecutionProfile}, RouterWorkspace: "/project", Namespace: "routing", MCPCommand: "/core",
+	config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", Sessions: &SessionsConfig{
+		Roles: ExecutionRoles{Router: previous.ExecutionProfile}, RouterWorkspace: "/project", Namespace: "routing",
 	}}
 	store, err := Open(config)
 	require.NoError(t, err)
@@ -72,10 +72,17 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 	}
 }
 
+func TestRoleMCPEndpointDefaultsToLoopback(t *testing.T) {
+	config := Config{Listen: "0.0.0.0:24370"}
+	endpoint, err := config.roleMCPEndpoint()
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:24370/v1/mcp", endpoint)
+}
+
 func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
-	config := Config{DataDir: t.TempDir(), Execution: &ExecutionConfig{
+	config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", ExternalURL: "https://core.example.com", Sessions: &SessionsConfig{
 		Roles:           ExecutionRoles{Router: ExecutionProfile{RuntimeRef: "agent", Model: "model"}},
-		RouterWorkspace: "/project", Namespace: "routing", MCPCommand: "/core",
+		RouterWorkspace: "/project", Namespace: "routing",
 	}}
 	store, err := Open(config)
 	require.NoError(t, err)
@@ -85,6 +92,9 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	require.NoError(t, readJSON(t.Context(), tx, "SELECT body FROM session_bindings WHERE role='router'", &binding))
 	var spec resource.SessionSpec
 	require.NoError(t, readJSON(t.Context(), tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, binding.ID))
+	require.Len(t, *spec.MCPServers, 1)
+	require.Equal(t, runtime.MCPTransportHTTP, (*spec.MCPServers)[0].Type)
+	require.Equal(t, "https://core.example.com/v1/mcp", (*spec.MCPServers)[0].URL)
 	require.Equal(t, agent.PermissionPresetFullAccess, spec.Config.PermissionPreset)
 	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, spec.Features)
 	require.Contains(t, spec.SystemPrompt, "deduplicate by event_id")

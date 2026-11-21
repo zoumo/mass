@@ -38,14 +38,14 @@ func waitIssueObservation(t *testing.T, p *process, x *core.SessionBinding, stat
 	return observed
 }
 
-func startReminderTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer) (*stdioClient, core.SessionBinding) {
+func startReminderTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer) (*roleMCPClient, core.SessionBinding) {
 	t.Helper()
 	router := startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))
 	b, _ := nativeWorkTopic(t, f, p, peer, router, "missing-report")
 	return startRoleMCP(t, f, b), b
 }
 
-func startReminderWorker(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, topic *stdioClient) (core.WorkReceipt, core.SessionBinding, nativeSubmitCall) {
+func startReminderWorker(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, topic *roleMCPClient) (core.WorkReceipt, core.SessionBinding, nativeSubmitCall) {
 	t.Helper()
 	req := issueInput(f.dir, "work")
 	req.Start = true
@@ -94,7 +94,7 @@ func checkReminderCall(t *testing.T, peer *nativeSubmitPeer, b core.SessionBindi
 	return call
 }
 
-func updateReminderWork(t *testing.T, topic *stdioClient, work core.WorkReceipt) core.WorkReceipt {
+func updateReminderWork(t *testing.T, topic *roleMCPClient, work core.WorkReceipt) core.WorkReceipt {
 	t.Helper()
 	return mcpWork[core.WorkReceipt](t, topic, "issue_update_requirements", core.UpdateRequirementsRequest{
 		OperationID: "update", IssueID: work.Issue.ID, ExpectedRevision: work.Issue.Revision,

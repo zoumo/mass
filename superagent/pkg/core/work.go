@@ -337,7 +337,7 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		if !filepath.IsAbs(workspace) {
 			return nil, problem("invalid_argument", "workspace must be an absolute path")
 		}
-		profile, err := s.config.Execution.issueProfile(r.RuntimeRef, r.Model)
+		profile, err := s.config.Sessions.issueProfile(r.RuntimeRef, r.Model)
 		if err != nil {
 			return nil, err
 		}
@@ -395,7 +395,7 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 			return nil, problem("conflict", "Issue already has a current SessionBinding")
 		}
 		if r.RuntimeRef != nil {
-			issue.ExecutionProfile, err = s.config.Execution.issueProfile(*r.RuntimeRef, *r.Model)
+			issue.ExecutionProfile, err = s.config.Sessions.issueProfile(*r.RuntimeRef, *r.Model)
 			if err != nil {
 				return nil, err
 			}

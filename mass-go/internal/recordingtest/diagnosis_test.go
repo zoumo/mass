@@ -27,7 +27,7 @@ func TestRecordingDiagnosticMissingExecutable(t *testing.T) {
 		"MASS_RECORD_CODEX=/missing/mass-ticket03-codex",
 		"MASS_RECORD_MODEL=explicit-test-model", "MASS_RECORD_DIAGNOSTICS="+output,
 		"MASS_RECORD_OUTPUT="+filepath.Join(filepath.Dir(output), "export"),
-		"GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+		"GOPROXY=off", "GOSUMDB=off")
 	log, err := command.CombinedOutput()
 	require.Error(t, err, "%s", log)
 	report := readDiagnosis(t, filepath.Join(output, "diagnosis.json"))
@@ -101,7 +101,7 @@ func TestRecordingDiagnosticCLIExitCodes(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "mass-record-diagnose")
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "./cmd/mass-record-diagnose")
 	build.Dir = root
-	build.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+	build.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 	buildOutput, err := build.CombinedOutput()
 	require.NoError(t, err, "%s", buildOutput)
 
@@ -168,7 +168,7 @@ func TestRecordingFlowCleanupOnMissingNative(t *testing.T) {
 			output := filepath.Join(t.TempDir(), "diagnosis")
 			command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestRecordingFlowCleanupOnMissingNative$")
 			command.Env = append(os.Environ(), "MASS_FLOW_CLEANUP_CHILD="+fault, "MASS_RECORD_DIAGNOSTICS="+output,
-				"MASS_RECORD_MODEL=explicit-test-model", "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+				"MASS_RECORD_MODEL=explicit-test-model", "GOPROXY=off", "GOSUMDB=off")
 			log, err := command.CombinedOutput()
 			require.Error(t, err, "%s", log)
 			report := readDiagnosis(t, filepath.Join(output, "diagnosis.json"))
