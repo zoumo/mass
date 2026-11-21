@@ -96,6 +96,12 @@ trace sampling or export omits a span.
 
 ## Query process and Go runtime metrics
 
+Set `observerTrace` in the Core configuration to enable **Metrics → 系统性能**
+in Observer. The charts show CPU cores, resident memory, goroutines, and open
+file descriptors for Core and massd. Each line represents one process instance.
+CPU uses a five-minute rate. Each point for the other metrics uses the
+latest sample within the chart step or 90 seconds, whichever is longer.
+
 With `OTEL_METRICS_EXPORTER=otlp`, `massd`, `superagent serve`, and
 `superagent compose` report measurements even when idle. Use
 `service_name="massd"` or `service_name="superagent-core"` to select a service.

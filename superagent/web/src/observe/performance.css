@@ -1,0 +1,48 @@
+.performance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.performance-chart { padding: 14px 16px; }
+.performance-plot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 10px;
+  margin-block: 18px 12px;
+}
+.performance-plot > svg {
+  width: 100%;
+  height: 168px;
+  overflow: visible;
+  background: var(--canvas);
+  cursor: crosshair;
+}
+.performance-gridline { stroke: var(--line); }
+.performance-cursor { stroke: var(--muted); stroke-dasharray: 3 3; }
+.performance-scale { display: flex; flex-direction: column; justify-content: space-between; text-align: right; }
+.performance-axis { grid-column: 2; display: flex; justify-content: space-between; gap: 8px; }
+.performance-axis, .performance-scale { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.performance-scale span { height: 0; display: flex; align-items: center; justify-content: flex-end; }
+.performance-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; font-size: 12px; }
+.performance-legend li { display: flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
+.performance-legend svg { width: 21px; height: 8px; flex: none; }
+.performance-legend li > span { min-width: 0; overflow-wrap: anywhere; }
+.performance-legend small, .performance-inspector small { margin-inline-start: 3px; }
+.performance-inspector {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.performance-inspector label { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.performance-inspector input { flex: 1; min-width: 0; accent-color: var(--teal); }
+.performance-inspector output { display: grid; gap: 3px; font-variant-numeric: tabular-nums; }
+.performance-inspector time { color: var(--muted); }
+.performance-inspector output > span { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.performance-inspector strong { font-weight: 600; text-align: right; }
+.performance-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 820px) {
+  .performance-grid { grid-template-columns: minmax(0, 1fr); }
+}

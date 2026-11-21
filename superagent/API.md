@@ -177,6 +177,14 @@ the past seven days by default, or seven days on either side of an optional
 RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
 partial results. The Observer links to `/observer/?perspective=trace&id={traceId}`.
 
+`/performance` reads process and Go runtime metrics from the same OpenObserve
+organization. `window` accepts `15m`, `1h`, `6h` and `24h` and defaults to `1h`.
+The response includes `from`, `until` and `stepSeconds`. Each metric contains
+series grouped by service and process instance. Each point is a pair of Unix
+seconds and a value. The metrics are `cpu` in cores, `rss` in bytes, and
+`goroutines` and `file_descriptors` as counts. A metric with `unavailable: true`
+could not be read. An empty series list indicates no samples in the window.
+
 Topic activity merges routing events and saved Issue facts in descending `(at, id)` order. The filter applies before pagination. `limit` defaults to 20 and accepts 1–200. `nextCursor` binds the Topic, filter and first-page watermark. Each row identifies its source record. An `issue_snapshot` describes the saved state at `updatedAt`. Lifecycle entries use the timestamp on the saved transition.
 
 In `mode=conversation`, omitting `topicId` lists Topics by their latest

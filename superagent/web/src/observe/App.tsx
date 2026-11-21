@@ -20,7 +20,7 @@ const views = {
   topic: { title: 'Topic', subtitle: '主题', icon: Boxes, component: TopicView },
   issue: { title: 'Issue', subtitle: '事项', icon: CircleDot, component: IssueView },
   trace: { title: 'Trace', subtitle: '调用链', icon: ListTree, component: TraceView },
-  metrics: { title: 'Metrics', subtitle: '工具用量', icon: BarChart3, component: MetricsView },
+  metrics: { title: 'Metrics', subtitle: '', icon: BarChart3, component: MetricsView },
 }
 
 export default function App() {
@@ -39,6 +39,7 @@ export default function App() {
   const [paused, setPaused] = useState(() => sessionStorage.getItem('observer-paused') === 'true')
   const [online, setOnline] = useState(navigator.onLine)
   const [revision, setRevision] = useState(0)
+  const refreshMs = !diagnostics && view === 'metrics' && query.get('tab') === 'performance' ? 30000 : 5000
   const refresh = () => setRevision((tick) => tick + 1)
   useEffect(() => {
     const update = () => setOnline(navigator.onLine)
@@ -46,13 +47,13 @@ export default function App() {
     window.addEventListener('offline', update)
     const timer = window.setInterval(() => {
       if (!paused && !document.hidden && navigator.onLine) refresh()
-    }, 5000)
+    }, refreshMs)
     return () => {
       clearInterval(timer)
       window.removeEventListener('online', update)
       window.removeEventListener('offline', update)
     }
-  }, [paused])
+  }, [paused, refreshMs])
   function follow(event: MouseEvent) {
     const link = (event.target as Element).closest('a')
     if (

@@ -3,6 +3,7 @@ import { Button } from '../components/ui/button'
 import { formatTime } from '../workbench'
 import { countText, elapsed, rate } from './metricFormat'
 import { navigate, useRecord, viewHref, type ViewProps } from './observer'
+import PerformanceView, { performanceHref } from './PerformanceView'
 import { TraceLink } from './TraceLinks'
 import './observability.css'
 
@@ -26,14 +27,24 @@ export function metricsHref(scope: Dimension, id = '', window: Window = '24h', i
 }
 
 export default function MetricsView({ query }: ViewProps) {
+  const performance = query.get('tab') === 'performance'
   const scope = query.get('scope') || 'all'
-  const window = query.get('window') || '24h'
+  const window = query.get('window') || ''
   const filter: Filter = {
     scope: Object.hasOwn(dimensions, scope) ? scope as Dimension : 'all',
     window: Object.hasOwn(windows, window) ? window as Window : '24h',
     id: query.get('id') || '', includeIssues: query.get('includeIssues') === 'true',
   }
-  return <MetricsWorkspace key={JSON.stringify(filter)} filter={filter} before={query.get('before') || ''}/>
+  const toolUsage = performance ? viewHref('metrics') : metricsHref(filter.scope, filter.id, filter.window, filter.includeIssues, query.get('before') || '')
+  return <div className="observability">
+    <nav className="panel metrics-scopes" aria-label="Metrics">
+      <a href={toolUsage} aria-current={performance ? undefined : 'page'}>工具用量</a>
+      <a href={performance ? viewHref('metrics', '', { tab: 'performance', window }) : performanceHref()} aria-current={performance ? 'page' : undefined}>系统性能</a>
+    </nav>
+    {performance
+      ? <PerformanceView query={query}/>
+      : <MetricsWorkspace key={JSON.stringify(filter)} filter={filter} before={query.get('before') || ''}/>}
+  </div>
 }
 
 function metricsParams(filter: Filter) {

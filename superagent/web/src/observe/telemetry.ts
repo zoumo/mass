@@ -136,7 +136,7 @@ function allowedAPI(url: URL) {
   if (remaining.length) return
   if (collection === 'session-preview' && id && (action === 'history' || action === 'live')) return `session-preview/${action}`
   if (action === undefined && apiCollections.has(collection) && id !== '') return collection
-  if (id === undefined && (collection === 'health' || collection === 'topic-activity')) return collection
+  if (id === undefined && (collection === 'health' || collection === 'topic-activity' || collection === 'performance')) return collection
 }
 
 export async function observerRequest<T>(

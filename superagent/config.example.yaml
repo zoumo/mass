@@ -11,7 +11,7 @@ sources:
 # Optional SQLite main-database page budget; zero means unlimited.
 storageMaxPages: 0
 
-# Optional OpenObserve trace queries from the Observer.
+# Optional OpenObserve trace and process metric queries from the Observer.
 # The private credential file contains a username and password on separate lines.
 # observerTrace:
 #   endpoint: http://127.0.0.1:5080

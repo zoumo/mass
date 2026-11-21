@@ -21,7 +21,7 @@ const (
 	observerTraceWindow = 7 * 24 * time.Hour
 )
 
-// ObserverTraceConfig configures the OpenObserve read endpoint for Core traces.
+// ObserverTraceConfig configures OpenObserve reads for traces and process metrics.
 type ObserverTraceConfig struct {
 	Endpoint       string `mapstructure:"endpoint"`
 	Organization   string `mapstructure:"organization"`
@@ -32,9 +32,9 @@ type ObserverTraceConfig struct {
 var traceStreamName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z_0-9]{0,127}$`)
 
 type observerTraceReader struct {
-	url, stream, user, password string
-	client                      *http.Client
-	inFlight                    chan struct{}
+	url, metricsURL, stream, user, password string
+	client                                  *http.Client
+	inFlight, metricsInFlight               chan struct{}
 }
 
 func newObserverTraceReader(config *ObserverTraceConfig) (*observerTraceReader, error) {
@@ -56,14 +56,16 @@ func newObserverTraceReader(config *ObserverTraceConfig) (*observerTraceReader, 
 	if !traceStreamName.MatchString(org) || !traceStreamName.MatchString(stream) {
 		return nil, problem("invalid_argument", "invalid observerTrace organization or stream")
 	}
+	base := u.Scheme + "://" + u.Host + "/api/" + org
 	reader := &observerTraceReader{
-		url: u.Scheme + "://" + u.Host + "/api/" + org + "/_search?type=traces", stream: stream,
+		url: base + "/_search?type=traces", stream: stream,
+		metricsURL: base + "/prometheus/api/v1/query_range",
 		client: &http.Client{
 			Timeout:       12 * time.Second,
 			Transport:     &http.Transport{IdleConnTimeout: 30 * time.Second},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		inFlight: make(chan struct{}, 4),
+		inFlight: make(chan struct{}, 4), metricsInFlight: make(chan struct{}, 2),
 	}
 	if config.CredentialFile != "" {
 		info, err := os.Lstat(config.CredentialFile)
