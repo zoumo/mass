@@ -116,7 +116,7 @@ func startStubMassd(t *testing.T, script string) *massdProcess {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "massd")
 	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\n"+script+"\n"), 0o700))
-	daemon, err := startMassd(binary, filepath.Join(dir, "massd.yaml"), "", io.Discard)
+	daemon, err := startMassd(binary, filepath.Join(dir, "massd.yaml"), io.Discard)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, daemon.stop(time.Second))

@@ -16,8 +16,8 @@ record ingress and Thread subscriptions. `topics`, `issues`,
 `internal_events` records delivery to Sessions. `outbox` records
 external replies. Reports and PR associations are embedded and exposed
 through read views.
-When tracing is enabled, Core stores trace associations. `sessions.mcpFilesDir`
-contains private role credentials.
+When tracing is enabled, Core stores trace associations. Core keeps private
+role credentials in `dataDir/mcp-files`.
 
 Core upgrades schema 24 in one startup transaction. The upgrade drops
 `mcp_tool_calls` and `mcp_mutation_receipts`. It preserves business records,
@@ -295,7 +295,6 @@ massd:
   # tokenFile: /private/massd.token
 # operatorTokenFile: /private/operator.token  # enables local input recovery
 sessions:
-  mcpFilesDir: /private/mcp-files
   routerWorkspace: /absolute/workspace
   namespace: superagent
   roles:
@@ -397,22 +396,16 @@ External Message text, metadata, tool arguments and native-subagent suggestions
 cannot select permissions.
 
 MASS-managed role Sessions connect directly to Core `/v1/mcp` over HTTP.
-`externalURL` optionally sets the base URL as seen by the native process on
-the massd host. Core appends `/v1/mcp`. Use a stable HTTPS URL between hosts.
-If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
-upstream `Host` to the local address that receives the request.
-Core writes a private file containing the scoped bearer and passes its relative
-path in `headers[].valueFrom.fileKeyRef`. Configure the same directory in
-`sessions.mcpFilesDir` and `massd --mcp-files-dir` when running separately.
-Across hosts, mount the same credential files at the two configured roots
-and make each Session workspace available at the same absolute path on
-both hosts. Set `massd.endpoint` to the RPC address reachable from Core.
-Create the private directory before starting a separate massd. Compose
-creates the directory and passes it to massd. `sessions.mcpFilesDir` defaults to
-`mcp-files` inside `dataDir`. Without an explicit endpoint, use a fixed Core
-listen port. A wildcard Core listener maps to `127.0.0.1` or `::1` for native
-Session MCP connections. Core persists the URL in the Session spec. Keep that
-URL stable when moving massd or changing Core's network address.
+`externalURL` optionally sets the base URL for native Session clients. Core
+appends `/v1/mcp`. If a reverse proxy terminates TLS, forward `/v1/mcp` to Core
+and set the upstream `Host` to the local address that receives the request.
+Core writes a private file containing the scoped bearer under `dataDir/mcp-files`
+and passes its absolute path in `headers[].valueFrom.fileKeyRef`. Run Core and
+massd on the same host under the same operating-system account. For separate
+processes, set `massd.endpoint` to the RPC address reachable from Core. Without
+an explicit `externalURL`, use a fixed Core listen port. A wildcard Core listener
+maps to `127.0.0.1` or `::1` for native Session MCP connections. Core persists the
+MCP URL and credential path in the Session spec. Keep both stable across restarts.
 
 | Tool | Router | Topic | Arguments |
 | --- | --- | --- | --- |

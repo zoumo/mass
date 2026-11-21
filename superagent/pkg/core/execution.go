@@ -30,7 +30,6 @@ type SessionsConfig struct {
 	IssueTemplates  []IssueTemplate `mapstructure:"issueTemplates"`
 	RouterWorkspace string          `mapstructure:"routerWorkspace"`
 	Namespace       string          `mapstructure:"namespace"`
-	MCPFilesDir     string          `mapstructure:"mcpFilesDir"`
 }
 
 type MassdConfig struct {
@@ -102,7 +101,7 @@ func (c *MassdConfig) validate(resolve func(string) string, composed bool) error
 	return nil
 }
 
-func (c *SessionsConfig) validate(resolve func(string) string, dataDir string) error {
+func (c *SessionsConfig) validate(resolve func(string) string) error {
 	if c.Namespace == "" {
 		c.Namespace = "superagent"
 	}
@@ -133,14 +132,6 @@ func (c *SessionsConfig) validate(resolve func(string) string, dataDir string) e
 	}
 	if info, statErr := os.Stat(c.RouterWorkspace); statErr != nil || !info.IsDir() {
 		return problem("invalid_argument", "sessions.routerWorkspace must exist")
-	}
-	if c.MCPFilesDir == "" {
-		c.MCPFilesDir = filepath.Join(dataDir, "mcp-files")
-	} else {
-		c.MCPFilesDir = resolve(c.MCPFilesDir)
-	}
-	if dataPath, err := filepath.Rel(c.MCPFilesDir, dataDir); err == nil && filepath.IsLocal(dataPath) {
-		return problem("invalid_argument", "sessions.mcpFilesDir must be a dedicated directory outside or below dataDir")
 	}
 	return nil
 }
@@ -352,7 +343,7 @@ func makeSpec(c Config, b SessionBinding) (resource.SessionSpec, error) {
 	servers := []runtime.MCPServer{{
 		Name: "superagent", Type: runtime.MCPTransportHTTP, URL: endpoint,
 		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{
-			FileKeyRef: &mcp.FileKeyRef{Path: b.capabilityFileID() + ".env", Key: "AUTHORIZATION"},
+			FileKeyRef: &mcp.FileKeyRef{Path: filepath.Join(c.DataDir, mcpCredentialsDir, b.capabilityFileID()+".env"), Key: "AUTHORIZATION"},
 		}}},
 	}}
 	prompt := bindingSystemPrompt(b)
@@ -446,8 +437,8 @@ func (c Config) roleMCPEndpoint() (string, error) {
 }
 
 func (s *Server) capabilityFile(b SessionBinding, token string) error {
-	dir := s.config.Sessions.MCPFilesDir
-	if err := s.config.PrepareMCPFiles(); err != nil {
+	dir := filepath.Join(s.config.DataDir, mcpCredentialsDir)
+	if err := s.config.prepareMCPFiles(); err != nil {
 		return err
 	}
 	data := []byte("AUTHORIZATION='Bearer " + token + "'\n")

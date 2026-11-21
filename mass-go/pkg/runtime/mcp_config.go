@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"fmt"
-	"io/fs"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -83,11 +82,11 @@ func ValidateMCPServers(servers []MCPServer) error {
 
 // ResolveMCPServers reads files for one native open, resume, or load. It keeps
 // the original configuration intact for persistence and source attribution.
-func ResolveMCPServers(servers []MCPServer, files fs.FS) ([]mcp.Server, error) {
+func ResolveMCPServers(servers []MCPServer) ([]mcp.Server, error) {
 	if err := validateMCPPolicy(servers); err != nil {
 		return nil, err
 	}
-	return mcp.ResolveServers(sdkMCPServers(servers), files)
+	return mcp.ResolveServers(sdkMCPServers(servers), nil)
 }
 
 // MCPDirectValues indexes explicit value entries. A resolved entry without a

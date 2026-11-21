@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -34,7 +33,6 @@ type options struct {
 	Data               string           `mapstructure:"data"`
 	DataDir            *string          `mapstructure:"dataDir"`
 	Listen             string           `mapstructure:"listen"`
-	MCPFilesDir        string           `mapstructure:"mcpFilesDir"`
 	TokenFile          string           `mapstructure:"tokenFile"`
 	TLSCert            string           `mapstructure:"tlsCert"`
 	TLSKey             string           `mapstructure:"tlsKey"`
@@ -73,7 +71,6 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.Listen, "listen", "127.0.0.1:24368", "loopback listen address (port 0 supported)")
 	f.BoolVar(&o.Approve, "prototype-auto-approve-permissions", false, "explicit synthetic prototype policy; questions remain manual")
 	f.BoolVar(&o.Local, "local", false, "explicit trusted single-user loopback mode without authentication")
-	f.StringVar(&o.MCPFilesDir, "mcp-files-dir", "", "absolute directory for Session MCP file references")
 	f.StringVar(&o.TokenFile, "token-file", "", "file containing an instance Bearer token")
 	f.StringVar(&o.TLSCert, "tls-cert", "", "TLS certificate for direct remote access")
 	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
@@ -121,18 +118,6 @@ func run(parent context.Context, o options) (result error) {
 	if (o.Local && token != "") || (!o.Local && token == "") {
 		return errors.New("select local mode or token authentication")
 	}
-	var mcpFiles fs.FS
-	if o.MCPFilesDir != "" {
-		if !filepath.IsAbs(o.MCPFilesDir) {
-			return runtime.InvalidArgument("absolute MCP files directory required")
-		}
-		root, err := os.OpenRoot(o.MCPFilesDir)
-		if err != nil {
-			return runtime.InvalidArgument("cannot open MCP files directory")
-		}
-		defer func() { result = errors.Join(result, root.Close()) }()
-		mcpFiles = root.FS()
-	}
 	telemetry, err := newTelemetry(parent)
 	if err != nil {
 		return &runtime.OperationError{Code: "invalid_argument", Reason: "invalid_telemetry_config", Message: err.Error()}
@@ -158,8 +143,8 @@ func run(parent context.Context, o options) (result error) {
 	}
 	recoveryDir := filepath.Join(dataDir, "private")
 	registry := runtime.NewRegistry(map[string]runtime.Factory{
-		"codex":  codex.Factory{RecoveryDir: recoveryDir, MCPFiles: mcpFiles, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
-		"claude": claude.Factory{RecoveryDir: recoveryDir, MCPFiles: mcpFiles, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
+		"codex":  codex.Factory{RecoveryDir: recoveryDir, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
+		"claude": claude.Factory{RecoveryDir: recoveryDir, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
 	})
 	svc := service.NewWithOptions(meta, history, registry, service.Options{
 		InteractionPolicy:  policy,

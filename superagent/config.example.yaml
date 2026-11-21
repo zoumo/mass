@@ -3,7 +3,7 @@
 dataDir: ./superagent-core-data
 # Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
 listen: 127.0.0.1:24370
-# Optional address that other machines use to reach Core.
+# Optional Core URL for Session clients, including through a reverse proxy.
 # externalURL: https://core.example.com
 sources:
   - source: dws
@@ -32,7 +32,6 @@ storageMaxPages: 0
 # sessions:
 #   routerWorkspace: /absolute/workspace
 #   namespace: superagent
-#   mcpFilesDir: ./mcp-files  # same directory as massd --mcp-files-dir
 #   roles:
 #     router:
 #       runtimeRef: codex-fast

@@ -465,7 +465,7 @@ For example, a Runtime may be created with:
       "url": "https://example.invalid/mcp",
       "headers": [{
         "name": "Authorization",
-        "valueFrom": {"fileKeyRef": {"path": "remote.env", "key": "AUTHORIZATION"}}
+        "valueFrom": {"fileKeyRef": {"path": "/private/mcp/remote.env", "key": "AUTHORIZATION"}}
       }]
     }]
   }
@@ -478,11 +478,12 @@ input accepts them as top-level request fields. `stdio` servers use `command`,
 `headers`; `envHeaders` and `bearerTokenEnvVar` are HTTP-only. Remote URLs must
 use HTTPS, except HTTP on loopback, and must not contain userinfo credentials.
 Entries in `env` and `headers` use `name` and exactly one of `value` or
-`valueFrom.fileKeyRef`. The latter selects a key from a file under the
-directory enabled by `massd --mcp-files-dir`. For the example above, put
-`AUTHORIZATION='Bearer example-token'` in `remote.env`. Use `envFrom` or
-`headersFrom` with `fileRef.path` to import all entries. massd reads the
-files again for each native open, resume and load. A literal HTTP Header
+`valueFrom.fileKeyRef`. File references use absolute paths on the host where
+massd runs. For the example above, put `AUTHORIZATION='Bearer example-token'`
+in `/private/mcp/remote.env`. Use `envFrom` or `headersFrom` with `fileRef.path`
+to import all entries. The SDK reads files using massd's operating-system
+permissions on each native open, resume, and load. Allow only trusted clients
+to submit Session and Runtime configurations. A literal HTTP Header
 is included in the persisted spec and can be read by authorized clients. The unified SDK supports only `stdio` and `http`; `sse` is rejected.
 Claude supports `stdio` and `http`, and rejects `sse`, `cwd`, `envHeaders` and
 `bearerTokenEnvVar`. Claude follows the SDK target CLI merge behavior; an empty

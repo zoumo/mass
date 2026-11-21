@@ -67,7 +67,7 @@ func (s *commandSuite) TestParsing() {
 			if args[0] == "--help" {
 				s.Require().NoError(err)
 				s.Contains(out.String(), "--token-file")
-				s.Contains(out.String(), "--mcp-files-dir")
+				s.NotContains(out.String(), "--mcp-files-dir")
 				s.Contains(out.String(), "--local")
 				s.Contains(out.String(), "--session-idle-timeout")
 			} else {
@@ -119,7 +119,6 @@ func (s *commandSuite) TestConfigurationFieldsAndIsolation() {
 data: /owned/data
 listen: 127.0.0.1:23456
 local: true
-mcpFilesDir: /owned/mcp-files
 tokenFile: /owned/token
 tlsCert: /owned/cert
 tlsKey: /owned/key
@@ -133,14 +132,14 @@ writeTimeout: 7s
 	s.Require().NoError(err)
 	s.Equal(options{
 		Data: "/owned/data", Listen: "127.0.0.1:23456", Local: true,
-		MCPFilesDir: "/owned/mcp-files", TokenFile: "/owned/token", TLSCert: "/owned/cert", TLSKey: "/owned/key", Approve: true,
+		TokenFile: "/owned/token", TLSCert: "/owned/cert", TLSKey: "/owned/key", Approve: true,
 		AllowedOrigins:     []string{"https://allowed.example"},
 		SessionIdleTimeout: 10 * time.Minute,
 		WriteTimeout:       7 * time.Second,
 	}, got)
 	for name, value := range map[string]string{
 		"data": "/other/data", "listen": "127.0.0.1:0", "local": "false",
-		"mcp-files-dir": "", "token-file": "", "tls-cert": "/other/cert", "tls-key": "/other/key",
+		"token-file": "", "tls-cert": "/other/cert", "tls-key": "/other/key",
 		"allowed-origin":                     "https://flag.example",
 		"prototype-auto-approve-permissions": "false",
 		"write-timeout":                      "3s",

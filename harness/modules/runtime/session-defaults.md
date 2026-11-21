@@ -36,7 +36,7 @@ Session spec 可以携带同名字段作为显式覆盖；历史 load 的输入�
 - `envHeaders` 与 `bearerTokenEnvVar` 是 HTTP 的可选认证配置；SSE 不接受这两个字段。具体 Runtime 类型决定 transport、字段和名称约束；不支持项在该 Session 的原生副作用前拒绝。
 - `url` 只接受 HTTPS；HTTP 只允许回环主机。URL 不得包含 userinfo 凭据。
 - `env` 和 `headers` 的条目使用 `name`，并提供 `value` 或 `valueFrom.fileKeyRef`。HTTP 请求头可以使用字面值。凭据的暴露范围见 [ADR-0002](../../adr/0002-mcp-http-header-values.md)。
-- 文件引用使用配置目录中的相对路径。文件以 `KEY='value'` 定义条目。`fileKeyRef` 读取指定 `key`。`envFrom` 和 `headersFrom` 的 `fileRef` 导入所有键值，后列出的来源覆盖先列出的来源，显式条目优先。Header 名比较时忽略大小写。
+- 文件引用使用 massd 所在主机上的绝对路径。文件以 `KEY='value'` 定义条目。`fileKeyRef` 读取指定 `key`。`envFrom` 和 `headersFrom` 的 `fileRef` 导入所有键值，后列出的来源覆盖先列出的来源，显式条目优先。Header 名比较时忽略大小写。
 - 每次原生 open、resume 和 load 重新读取文件。文件或指定的键缺失时，该次操作失败。解析值只用于该次原生配置，持久 spec 保存文件引用。
 
 Runtime 写入时校验 provider-neutral 的结构、transport 字段组合和列表内名称唯一性。类型专属支持由对应 Driver 在 open、resume 或 load 时校验。MCP 配置只声明原生 Session 使用的 server；打开成功不证明 server 已连接、工具可用或远端身份可信。

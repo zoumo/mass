@@ -56,17 +56,11 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, problem("unavailable", "cannot inspect data directory")
 	}
 	allowed := map[string]bool{".core.lock": true, "core.sqlite": true, "core.sqlite-wal": true, "core.sqlite-shm": true}
-	var credentialPaths []string
-	if c.Sessions != nil {
-		rel, err := filepath.Rel(c.DataDir, c.Sessions.MCPFilesDir)
-		if err == nil && filepath.IsLocal(rel) && rel != "." {
-			credentialPaths = strings.Split(rel, string(filepath.Separator))
-		}
-	}
 	for _, e := range entries {
-		if len(credentialPaths) != 0 && e.Name() == credentialPaths[0] && !allowed[e.Name()] {
-			if err := checkMCPFilesSubtree(c.DataDir, e, credentialPaths[1:]); err != nil {
-				return nil, err
+		if c.Sessions != nil && e.Name() == mcpCredentialsDir {
+			info, err := e.Info()
+			if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+				return nil, problem("failed_precondition", "MCP credentials directory must be private")
 			}
 			continue
 		}
@@ -188,32 +182,6 @@ DROP TABLE mcp_tool_calls;`+fmt.Sprintf("PRAGMA user_version=%d;", schemaVersion
 	}
 	s.queueRegistration = s.telemetry.registerQueueDepth(options.Metrics, s)
 	return s, nil
-}
-
-func checkMCPFilesSubtree(parent string, entry os.DirEntry, remaining []string) error {
-	dir := filepath.Join(parent, entry.Name())
-	for _, name := range remaining {
-		if !entry.IsDir() {
-			return problem("failed_precondition", "MCP credentials directory path must use directories")
-		}
-		children, err := os.ReadDir(dir)
-		if err != nil {
-			return problem("unavailable", "cannot inspect MCP credentials directory path")
-		}
-		if len(children) == 0 {
-			return nil
-		}
-		if len(children) != 1 || children[0].Name() != name {
-			return problem("failed_precondition", "MCP credentials directory path contains unrelated files")
-		}
-		entry = children[0]
-		dir = filepath.Join(dir, name)
-	}
-	info, err := entry.Info()
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return problem("failed_precondition", "MCP credentials directory must be private")
-	}
-	return nil
 }
 
 // Read the main SQLite file directly. Even a read-only SQLite connection can

@@ -295,7 +295,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, []runtime.MCPServer{{
 		Name: "superagent", Type: runtime.MCPTransportHTTP, URL: p.endpoint + "/v1/mcp",
 		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{
-			FileKeyRef: &mcp.FileKeyRef{Path: issueBinding.ID + ".env", Key: "AUTHORIZATION"},
+			FileKeyRef: &mcp.FileKeyRef{Path: testCapabilityPath(f, issueBinding), Key: "AUTHORIZATION"},
 		}}},
 	}}, *session.Spec.MCPServers)
 	t.Log("same and different concurrent start operations produced one SessionBinding, stable Event and actual StartOrSteer receipt")

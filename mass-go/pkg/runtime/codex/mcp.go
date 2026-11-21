@@ -23,7 +23,7 @@ func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCon
 			return nil, codexMCPUnsupported("mcp_transport_unsupported", fmt.Errorf("mcp server %d: Codex does not support sse transport", i))
 		}
 	}
-	servers, err := runtime.ResolveMCPServers(*configured, options.MCPFiles)
+	servers, err := runtime.ResolveMCPServers(*configured)
 	if err != nil {
 		return nil, codexMCPInvalid(err)
 	}

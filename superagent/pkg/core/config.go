@@ -95,7 +95,7 @@ func loadConfig(path string, composed bool) (Config, error) {
 			return c, problem("invalid_argument", "sessions configuration contains unknown or invalid fields")
 		}
 		c.Sessions = &sessions
-		if err := c.Sessions.validate(resolve, c.DataDir); err != nil {
+		if err := c.Sessions.validate(resolve); err != nil {
 			return c, err
 		}
 		if c.Massd == nil && composed {
@@ -223,12 +223,13 @@ func (c Config) String() string {
 	return fmt.Sprintf("superagent configuration (%d sources)", len(c.Sources))
 }
 
-// PrepareMCPFiles creates the private directory shared with massd.
-func (c Config) PrepareMCPFiles() error {
+const mcpCredentialsDir = "mcp-files"
+
+func (c Config) prepareMCPFiles() error {
 	if c.Sessions == nil {
 		return nil
 	}
-	dir := c.Sessions.MCPFilesDir
+	dir := filepath.Join(c.DataDir, mcpCredentialsDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return problem("unavailable", "cannot prepare MCP credentials directory")
 	}

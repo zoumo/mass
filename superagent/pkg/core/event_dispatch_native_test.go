@@ -369,29 +369,13 @@ func startEventTestMassdWithData(t *testing.T, peer *nativeSubmitPeer) (string, 
 	})
 }
 
-var mcpFileDirs sync.Map
-
-func testMCPFiles(t *testing.T) string {
-	t.Helper()
-	if dir, ok := mcpFileDirs.Load(t); ok {
-		return dir.(string)
-	}
-	dir := filepath.Join(t.TempDir(), "mcp-files")
-	require.NoError(t, os.Mkdir(dir, 0o700))
-	actual, loaded := mcpFileDirs.LoadOrStore(t, dir)
-	if !loaded {
-		t.Cleanup(func() { mcpFileDirs.Delete(t) })
-	}
-	return actual.(string)
-}
-
 func startNativeMassd(t *testing.T, massd string, spec resource.RuntimeSpec) (string, *client.Client, string) {
 	t.Helper()
 	dir := t.TempDir()
 	config := filepath.Join(dir, "massd.yaml")
 	write(t, config, "{}")
 	data := filepath.Join(dir, "massd")
-	cmd := exec.CommandContext(context.Background(), massd, "--local", "--listen", "127.0.0.1:0", "--config", config, "--data", data, "--session-idle-timeout", "0", "--mcp-files-dir", testMCPFiles(t))
+	cmd := exec.CommandContext(context.Background(), massd, "--local", "--listen", "127.0.0.1:0", "--config", config, "--data", data, "--session-idle-timeout", "0")
 	cmd.Env = []string{"HOME=" + dir, "PATH=" + dir}
 	log, err := os.Create(filepath.Join(dir, "massd.log"))
 	require.NoError(t, err)

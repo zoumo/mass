@@ -128,14 +128,12 @@ local: true
 Use `config.example.yaml` as the starting point for `core.yaml`. Set
 `dataDir: ./superagent` and configure a source and its private token file.
 Add `sessions` to enable agent execution. Compose supplies the actual RPC
-address for `massd.endpoint` and passes `sessions.mcpFilesDir` to massd.
-Keep the Core listen port fixed when using the default loopback MCP URL.
-Set `externalURL` to a stable HTTPS origin when massd runs on another host.
-For separate processes, configure `massd.endpoint` and point massd
-`--mcp-files-dir` and `sessions.mcpFilesDir` at the same private files,
-using a shared mount across hosts. Create the directory before starting massd.
-To use massd
-authentication, configure its `tokenFile` and the matching Core
+address for `massd.endpoint`. Keep Core and massd on the same host and run
+both under the same operating-system account. Core stores private role
+credentials under `dataDir/mcp-files` and passes absolute file references in
+role Session specs. Keep the Core listen port fixed when using the default
+loopback MCP URL. Use a stable `externalURL` when using a reverse proxy.
+For separate processes, configure `massd.endpoint`. To use massd authentication, configure its `tokenFile` and the matching Core
 `massd.tokenFile` in place of massd local mode. Use an absolute path
 for the massd `tokenFile` when starting from outside the configuration
 directory.

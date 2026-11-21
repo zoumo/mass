@@ -53,7 +53,7 @@ func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := c.PrepareMCPFiles(); err != nil {
+	if err := c.prepareMCPFiles(); err != nil {
 		_ = store.Close()
 		return nil, err
 	}

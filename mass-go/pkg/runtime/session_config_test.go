@@ -205,26 +205,23 @@ func TestMergeSessionMCPServersTreatsSessionEmptyAsNoOverride(t *testing.T) {
 	require.Empty(t, *overriddenEmpty)
 }
 
-func TestResolveMCPServersRequiresRootAndRejectsEscape(t *testing.T) {
-	rootDir, externalDir := t.TempDir(), t.TempDir()
-	outside := filepath.Join(externalDir, "outside.env")
-	require.NoError(t, os.WriteFile(outside, []byte("AUTH='outside-fixture'\n"), 0o600))
-	require.NoError(t, os.Symlink(outside, filepath.Join(rootDir, "escape.env")))
-	root, err := os.OpenRoot(rootDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, root.Close()) })
-	reference := &mcp.FileKeyRef{Path: "escape.env", Key: "AUTH"}
+func TestResolveMCPServersReadsLocalAbsolutePaths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.env")
+	require.NoError(t, os.WriteFile(path, []byte("AUTH='fixture'\n"), 0o600))
+	reference := &mcp.FileKeyRef{Path: path, Key: "AUTH"}
 	servers := []runtime.MCPServer{{
 		Name: "remote", Type: "http", URL: "http://127.0.0.1/mcp",
 		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: reference}}},
 	}}
 	require.NoError(t, runtime.ValidateMCPServers(servers))
-	_, err = runtime.ResolveMCPServers(servers, nil)
-	require.ErrorContains(t, err, "requires an MCP file system")
-	for _, path := range []string{"escape.env", "missing.env", "../outside.env"} {
+	resolved, err := runtime.ResolveMCPServers(servers)
+	require.NoError(t, err)
+	require.Equal(t, []mcp.NamedValue{mcp.Literal("Authorization", "fixture")}, resolved[0].Headers)
+	for _, path := range []string{"auth.env", filepath.Join(dir, "missing.env")} {
 		reference.Path = path
-		_, err := runtime.ResolveMCPServers(servers, root.FS())
+		_, err := runtime.ResolveMCPServers(servers)
 		require.Error(t, err)
-		require.NotContains(t, err.Error(), "outside-fixture")
+		require.NotContains(t, err.Error(), dir)
 	}
 }

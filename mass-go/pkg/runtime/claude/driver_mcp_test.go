@@ -90,13 +90,10 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 			"exec "+shellQuote(executable)+" -test.run '^TestClaudeDriverTestPeer$' -- \"$@\"\n",
 	), 0o700))
 
-	filesDir := t.TempDir()
+	authFile := filepath.Join(t.TempDir(), "auth.env")
 	const fileAuth = "Bearer fixture-from-file"
-	require.NoError(t, os.WriteFile(filepath.Join(filesDir, "auth.env"), []byte("MCP_AUTH='"+fileAuth+"'\n"), 0o600))
-	root, err := os.OpenRoot(filesDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, root.Close()) })
-	driver, err := (Factory{RecoveryDir: t.TempDir(), MCPFiles: root.FS()}).New("agent", runtime.Config{
+	require.NoError(t, os.WriteFile(authFile, []byte("MCP_AUTH='"+fileAuth+"'\n"), 0o600))
+	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
 		"executable": script,
 		"envPolicy":  "replace",
 		"env": map[string]any{
@@ -139,7 +136,7 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 		{Name: "literal", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp", Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer fixture-literal")}},
 		{
 			Name: "file", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp",
-			Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: "auth.env", Key: "MCP_AUTH"}}}},
+			Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: authFile, Key: "MCP_AUTH"}}}},
 		},
 	}
 	session, err := driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "demo"}, runtime.SessionSpec{Cwd: cwd, MCPServers: &servers})

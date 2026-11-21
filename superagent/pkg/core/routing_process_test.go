@@ -258,7 +258,7 @@ func (f *fixture) execution(boundary *routeBoundary) {
 	f.t.Helper()
 	b, err := os.ReadFile(f.config)
 	require.NoError(f.t, err)
-	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\nsessions:\n  routerWorkspace: %s\n  namespace: superagent\n  mcpFilesDir: %s\n", boundary.url, f.dir, testMCPFiles(f.t))...)
+	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\nsessions:\n  routerWorkspace: %s\n  namespace: superagent\n", boundary.url, f.dir)...)
 	b = append(b, fixtureExecutionProfiles...)
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
 }
@@ -328,7 +328,7 @@ func testCapabilityPath(f *fixture, b core.SessionBinding) string {
 	if b.CapabilityFileID != "" {
 		id = b.CapabilityFileID
 	}
-	return filepath.Join(testMCPFiles(f.t), id+".env")
+	return filepath.Join(f.data, "mcp-files", id+".env")
 }
 
 func roleCall(t *testing.T, p *process, token, tool string, args any) json.RawMessage {
@@ -1021,10 +1021,7 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	require.Empty(t, bindings(t, p))
 	p.stop(t, false)
 	f.execution(boundary)
-	config, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	credentials := filepath.Join(f.data, "private", "mcp-files")
-	write(t, f.config, strings.Replace(string(config), testMCPFiles(t), credentials, 1))
+	credentials := filepath.Join(f.data, "mcp-files")
 	p = f.start()
 	router := waitBinding(t, p, "router", "", "ready")
 	info, err := os.Stat(credentials)

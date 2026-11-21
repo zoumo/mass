@@ -103,25 +103,22 @@ func appendCodexPeerTrace(path, method string, params map[string]any) error {
 }
 
 func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
+	files := t.TempDir()
+	authFile, extraFile := filepath.Join(files, "auth.env"), filepath.Join(files, "extra.env")
 	configured := []runtime.MCPServer{
 		{Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server", Args: []string{"--stdio"}, Env: []mcp.NamedValue{mcp.Literal("TOKEN", "${TOKEN}")}, Cwd: "/mcp-work"},
 		{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/mcp", Headers: []mcp.NamedValue{mcp.Literal("X-Mode", "fixture"), mcp.Literal("Authorization", "Bearer ${TOKEN}")}, EnvHeaders: map[string]string{"X-Token": "TOKEN"}},
 		{Name: "literal", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp", Headers: []mcp.NamedValue{mcp.Literal("Authorization", "Bearer fixture-literal")}},
 		{
 			Name: "file", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp",
-			Headers:     []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: "auth.env", Key: "MCP_AUTH"}}}},
-			HeadersFrom: []mcp.ImportSource{{FileRef: &mcp.FileRef{Path: "extra.env"}}},
+			Headers:     []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: authFile, Key: "MCP_AUTH"}}}},
+			HeadersFrom: []mcp.ImportSource{{FileRef: &mcp.FileRef{Path: extraFile}}},
 		},
 	}
 	empty := []runtime.MCPServer{}
 	for name, servers := range map[string]*[]runtime.MCPServer{"omitted": nil, "empty": &empty, "stdio and http": &configured} {
 		t.Run(name, func(t *testing.T) {
 			driver, cwd, trace, openedID := newCodexMCPDriverTestPeer(t)
-			files := t.TempDir()
-			fileRoot, err := os.OpenRoot(files)
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, fileRoot.Close()) })
-			driver.options.MCPFiles = fileRoot.FS()
 			const openAuth = "Bearer fixture-open-${UNDEFINED}"
 			const resumeAuth = "Bearer fixture-resume"
 			const loadAuth = "Bearer fixture-load"
@@ -129,9 +126,9 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 				t.Helper()
 				next := filepath.Join(files, "next.env")
 				require.NoError(t, os.WriteFile(next, []byte("MCP_AUTH='"+value+"'\n"), 0o600))
-				require.NoError(t, os.Rename(next, filepath.Join(files, "auth.env")))
+				require.NoError(t, os.Rename(next, authFile))
 			}
-			require.NoError(t, os.WriteFile(filepath.Join(files, "extra.env"), []byte("authorization='must lose to explicit source'\nX-Mode='from-file'\n"), 0o600))
+			require.NoError(t, os.WriteFile(extraFile, []byte("authorization='must lose to explicit source'\nX-Mode='from-file'\n"), 0o600))
 			rotate(openAuth)
 			address := runtime.Address{Namespace: "one", SessionName: "mcp"}
 			spec := runtime.SessionSpec{Cwd: cwd, MCPServers: servers}

@@ -1,8 +1,9 @@
 package claude
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
-	"testing/fstest"
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/mcp"
@@ -159,12 +160,13 @@ func TestClaudeSessionDefaultsAreNotRuntimeConfig(t *testing.T) {
 
 func TestClaudeMCPRejectsInterpolationInFileValues(t *testing.T) {
 	const sensitive = "fixture-${DO_NOT_EXPAND}"
-	files := fstest.MapFS{"auth.env": &fstest.MapFile{Data: []byte("MCP_AUTH='" + sensitive + "'\n")}}
+	authFile := filepath.Join(t.TempDir(), "auth.env")
+	require.NoError(t, os.WriteFile(authFile, []byte("MCP_AUTH='"+sensitive+"'\n"), 0o600))
 	servers := []runtime.MCPServer{{
 		Name: "file", Type: runtime.MCPTransportHTTP, URL: "http://127.0.0.1/mcp",
-		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: "auth.env", Key: "MCP_AUTH"}}}},
+		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: authFile, Key: "MCP_AUTH"}}}},
 	}}
-	_, err := claudeMCPServers(&servers, runtime.ProcessConfig{MCPFiles: files})
+	_, err := claudeMCPServers(&servers, runtime.ProcessConfig{})
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 	require.ErrorContains(t, err, "file-backed header contains Claude interpolation syntax")
 	require.NotContains(t, err.Error(), sensitive)

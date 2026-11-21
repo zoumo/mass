@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"maps"
 	"path/filepath"
 	"reflect"
@@ -43,7 +42,6 @@ type codexReadClient interface {
 
 type Factory struct {
 	RecoveryDir    string
-	MCPFiles       fs.FS
 	TracerProvider trace.TracerProvider
 	MeterProvider  metric.MeterProvider
 }
@@ -55,7 +53,6 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	o.MCPFiles = f.MCPFiles
 	args := o.Args
 	if args == nil {
 		args = []string{"app-server"}

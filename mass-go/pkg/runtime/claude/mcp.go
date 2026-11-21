@@ -31,7 +31,7 @@ func claudeMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCo
 			return claudeMCPConfig{}, errors.Join(runtime.UnsupportedOption("mcp_auth_fields_unsupported", "MCP environment headers and bearer token references are not supported by this Claude runtime"), fmt.Errorf("mcp server %d: Claude does not support envHeaders or bearerTokenEnvVar", i))
 		}
 	}
-	servers, err := runtime.ResolveMCPServers(*configured, options.MCPFiles)
+	servers, err := runtime.ResolveMCPServers(*configured)
 	if err != nil {
 		return claudeMCPConfig{}, errors.Join(runtime.ErrInvalidArgument, err)
 	}
