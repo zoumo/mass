@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
+	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 
@@ -449,11 +450,13 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	t.Log("An in-flight send stayed superseded; no second authority before verified release. Topic recovery accounted for its retired Issue Session and allowed a later explicitly started generation.")
 }
 
-func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
+func startClaudeBindingPeer(t *testing.T) (endpoint string, c *client.Client, native, config, workspace, project string) {
+	t.Helper()
 	massd, _ := dispatchBinaries(t)
 	temp := t.TempDir()
-	native, config := filepath.Join(temp, "native"), filepath.Join(temp, "claude")
+	native, config = filepath.Join(temp, "native"), filepath.Join(temp, "claude")
 	require.NoError(t, os.Mkdir(native, 0o700))
+	require.NoError(t, os.Mkdir(config, 0o700))
 	peer := filepath.Join(temp, "claude-wire-peer")
 	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", peer, "./tests/integration/testdata/ticket14-recovery-peer")
 	cmd.Dir = "../../../mass-go"
@@ -466,11 +469,10 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
-	workspace, err := filepath.EvalSymlinks(temp)
+	workspace, err = filepath.EvalSymlinks(temp)
 	require.NoError(t, err)
-	project := filepath.Join(config, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(workspace, "-"))
-	require.NoError(t, os.MkdirAll(project, 0o700))
-	endpoint, c, _ := startNativeMassd(t, massd, resource.RuntimeSpec{
+	project = filepath.Join(config, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(workspace, "-"))
+	endpoint, c, _ = startNativeMassd(t, massd, resource.RuntimeSpec{
 		Type:     "claude",
 		Features: &runtime.SessionFeatures{AgentQuestions: new(true)},
 		Config: runtime.Config{"executable": launcher, "envPolicy": "replace", "env": map[string]any{
@@ -478,6 +480,78 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 			"CLAUDE_WIRE_PEER": peer, "PEER_CLAUDE_FULL_ACCESS": "1",
 		}},
 	})
+	return endpoint, c, native, config, workspace, project
+}
+
+func TestClaudeRouterReplacesMissingProjectAfterOwnerRelease(t *testing.T) {
+	endpoint, c, native, _, workspace, project := startClaudeBindingPeer(t)
+	f, _ := eventFixture(t, endpoint)
+	raw, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	fixtureWorkspace, err := filepath.EvalSymlinks(f.dir)
+	require.NoError(t, err)
+	write(t, f.config, strings.Replace(string(raw), "routerWorkspace: "+fixtureWorkspace, "routerWorkspace: "+workspace, 1))
+
+	p := f.start()
+	original := waitBinding(t, p, "router", "", "ready")
+	require.NoFileExists(t, filepath.Join(project, original.SessionID+".jsonl"))
+	ref := resource.SessionRef{SessionID: original.SessionID}
+	var stopped resource.Runtime
+	require.NoError(t, c.StopRuntime(t.Context(), original.RuntimeRef, &stopped))
+	require.Equal(t, "stopped", stopped.Status.State)
+	var oldSession resource.Session
+	require.NoError(t, c.GetSession(t.Context(), ref, &oldSession))
+	require.Equal(t, "offline", string(oldSession.Status.State))
+	require.Equal(t, resource.SessionReasonOwnerReleased, oldSession.Status.Reason)
+	require.NoDirExists(t, filepath.Dir(project))
+
+	message := submit(t, p, f, input("claude-router-recovery"))
+	require.Eventually(t, func() bool {
+		return readRecord[core.SessionBinding](t, p, "session-bindings/"+original.ID).State == "revoked"
+	}, 10*time.Second, 25*time.Millisecond)
+	replacement := waitBinding(t, p, "router", "", "ready")
+	require.Equal(t, original.Generation+1, replacement.Generation)
+	require.Equal(t, original.ID, replacement.PreviousSessionBindingID)
+	require.NotEqual(t, original.SessionID, replacement.SessionID)
+	require.NotEqual(t, original.SessionUID, replacement.SessionUID)
+	require.NoError(t, c.GetSession(t.Context(), ref, &oldSession))
+	require.Equal(t, "offline", string(oldSession.Status.State))
+	require.Equal(t, resource.SessionReasonRecoveryMissing, oldSession.Status.Reason)
+	retired := readRecord[core.SessionBinding](t, p, "session-bindings/"+original.ID)
+	require.Equal(t, "revoked", retired.State)
+	require.NotNil(t, retired.Close)
+	require.Equal(t, resource.SessionReasonRecoveryMissing, retired.Close.Method)
+	require.False(t, retired.Close.Reusable)
+
+	waitRouteStatus(t, p, message.EventID, "sent")
+	var delivered int
+	require.Eventually(t, func() bool {
+		raw, _ := os.ReadFile(filepath.Join(native, "wire.jsonl"))
+		delivered = 0
+		for line := range strings.SplitSeq(string(raw), "\n") {
+			var row struct {
+				Method string
+				Params struct {
+					SessionID string
+					Text      string
+				}
+			}
+			if json.Unmarshal([]byte(line), &row) == nil && row.Method == "input" && strings.Contains(row.Params.Text, message.EventID) {
+				delivered++
+				if row.Params.SessionID != replacement.SessionID {
+					return false
+				}
+			}
+		}
+		_, err := os.Stat(filepath.Join(project, replacement.SessionID+".jsonl"))
+		return delivered == 1 && err == nil
+	}, 5*time.Second, 25*time.Millisecond)
+	require.Len(t, bindings(t, p), 2)
+}
+
+func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
+	endpoint, c, native, _, workspace, project := startClaudeBindingPeer(t)
+	require.NoError(t, os.MkdirAll(project, 0o700))
 	f, operatorFile := eventFixture(t, endpoint)
 	p := f.start()
 	router := startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))

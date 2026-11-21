@@ -625,9 +625,15 @@ func (s *Server) prepare(ctx, call context.Context, b SessionBinding, token stri
 	}
 	if err == nil && resumeRecoveryMissing(found) {
 		switch {
-		case b.Role == "issue" && b.SessionID != "" && !b.PreviousOwnerUnknown:
-			if s.store.replaceUnrecoverableIssue(ctx, b, found) == nil {
+		case (b.Role == "issue" || b.Role == "router" && b.RuntimeType == "claude") &&
+			b.SessionID != "" && !b.PreviousOwnerUnknown:
+			switch errorCode(s.store.replaceUnrecoverableBinding(ctx, b, found)) {
+			case "":
 				outcome = "pending"
+				return
+			case "router_input_outcome_unknown":
+				b.State, b.LastError, b.NextAttemptAt = "blocked", "router_input_outcome_unknown", ""
+				record()
 				return
 			}
 		case b.CapabilityFileID != "" && firstPreparation && !b.PreviousOwnerUnknown:

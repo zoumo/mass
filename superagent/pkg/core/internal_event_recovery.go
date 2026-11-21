@@ -464,7 +464,7 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b SessionBinding
 	})
 }
 
-func (s *Store) replaceUnrecoverableIssue(ctx context.Context, b SessionBinding, session resource.Session) error {
+func (s *Store) replaceUnrecoverableBinding(ctx context.Context, b SessionBinding, session resource.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -476,16 +476,39 @@ func (s *Store) replaceUnrecoverableIssue(ctx context.Context, b SessionBinding,
 	if err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE id=? AND state='pending'`, &current, b.ID); err != nil {
 		return err
 	}
-	if current.Role != "issue" || current.Generation != b.Generation || current.PreviousOwnerUnknown ||
+	router := current.Role == "router" && current.RuntimeType == "claude"
+	if (!router && current.Role != "issue") || !sameBinding(current, b) || current.PreviousOwnerUnknown ||
+		current.SessionID == "" || current.SessionUID == "" ||
 		current.SessionID != session.Status.SessionID || current.SessionUID != session.Metadata.UID ||
 		!resumeRecoveryMissing(session) {
-		return problem("stale_binding", "Issue Session recovery evidence no longer matches the binding")
+		return problem("stale_binding", "Session recovery evidence no longer matches the binding")
+	}
+	if router {
+		// Router events are addressed to the role across generations. The
+		// ordinary dispatcher may retry dispatching events for the same owner.
+		// Transferring those to a fresh Session requires explicit reconciliation.
+		var outstanding bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM internal_events
+ WHERE `+eventRecipientKind+`='router' AND `+eventRecipientOwner+`=? AND status='dispatching')`,
+			current.eventRecipientID()).Scan(&outstanding)
+		if err != nil {
+			return storageError()
+		}
+		if outstanding {
+			return problem("router_input_outcome_unknown", "An in-flight Router input requires reconciliation before replacement")
+		}
 	}
 	settlement := BindingClose{At: now(), ResourceVersion: session.Metadata.ResourceVersion, Method: resource.SessionReasonRecoveryMissing}
 	if err := putJSON(ctx, tx, "UPDATE session_bindings SET body=json_set(body,'$.close',json(?2)) WHERE id=?1", settlement, current.ID); err != nil {
 		return err
 	}
-	if err := s.replaceIssue(ctx, tx, current, &Recovery{}); err != nil {
+	if router {
+		current.Close = &settlement
+		err = s.replaceBinding(ctx, tx, current, &Recovery{})
+	} else {
+		err = s.replaceIssue(ctx, tx, current, &Recovery{})
+	}
+	if err != nil {
 		return err
 	}
 	return tx.Commit()

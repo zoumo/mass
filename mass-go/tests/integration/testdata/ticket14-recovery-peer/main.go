@@ -151,6 +151,7 @@ func main() {
 			n := save(text)
 			uid, aid := fmt.Sprintf("user-%d", n), fmt.Sprintf("answer-%d", n)
 			path := filepath.Join(os.Getenv("SAVED_TRANSCRIPT_DIR"), sessionID+".jsonl")
+			must(os.MkdirAll(filepath.Dir(path), 0o700))
 			f, e := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 			must(e)
 			var parent any
