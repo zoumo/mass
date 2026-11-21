@@ -491,7 +491,7 @@ func (s *entrypointSuite) TestParametersAndDirectory() {
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	var rs []resource.Runtime
 	s.call("runtime.list", workflowParams{}, &rs)
-	s.Len(rs, 1)
+	s.Len(rs, 3)
 	s.call("runtime.delete", workflowParams{Name: "unused"}, nil)
 	e := workflowHTTP(c, ctx(s.T()), "runtime.get", workflowParams{Name: "unused"}, nil)
 	var public *transport.Error
@@ -558,10 +558,11 @@ func (s *entrypointSuite) TestDualAgentDirectory() {
 		if kind == "claude" {
 			bin = claudeMock
 		}
-		r := resource.Runtime{Metadata: resource.Metadata{Name: kind}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
+		name := kind + "-fixture"
+		r := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
 		s.call("runtime.create", workflowParams{Runtime: &r}, nil)
-		s.call("runtime.start", workflowParams{Name: kind}, nil)
-		create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: kind}, Spec: resource.SessionSpec{RuntimeRef: kind, SessionSpec: runtime.SessionSpec{Cwd: work}}}
+		s.call("runtime.start", workflowParams{Name: name}, nil)
+		create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: kind}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}}
 		var session resource.Session
 		s.call("session.create", workflowParams{Create: &create}, &session)
 		refs[kind] = resource.SessionRef{SessionID: session.Status.SessionID}
@@ -580,11 +581,11 @@ func (s *entrypointSuite) TestDualAgentDirectory() {
 	s.Equal("invalid_argument", public.Code)
 	var rs []resource.Runtime
 	s.call("runtime.list", workflowParams{}, &rs)
-	s.Len(rs, 2)
+	s.Len(rs, 4)
 	for _, kind := range []string{"codex", "claude"} {
 		s.runWork(refs[kind], "hello", false)
 		s.call("session.close", workflowParams{Session: refs[kind]}, nil)
-		s.call("runtime.stop", workflowParams{Name: kind}, nil)
+		s.call("runtime.stop", workflowParams{Name: kind + "-fixture"}, nil)
 	}
 	s.T().Log("PASS synthetic two SDK peers on one daemon; cross-Runtime Session pages preserve both IDs, exclusive next and filter binding; each input/live/history path stays independent")
 }

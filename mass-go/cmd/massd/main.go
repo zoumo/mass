@@ -17,15 +17,18 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/metastore/backend"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/claude"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
 	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
@@ -157,6 +160,9 @@ func run(parent context.Context, o options) (result error) {
 	if err := svc.Prepare(parent); err != nil {
 		return err
 	}
+	if err := registerDefaultRuntimes(svc); err != nil {
+		return err
+	}
 	listener, err := (&net.ListenConfig{}).Listen(parent, "tcp", o.Listen)
 	if err != nil {
 		return err
@@ -226,6 +232,30 @@ func run(parent context.Context, o options) (result error) {
 		serveErr = nil
 	}
 	return errors.Join(serveErr, settleErr, drainErr, httpErr)
+}
+
+func registerDefaultRuntimes(svc *service.Service) error {
+	for _, name := range []string{"claude", "codex"} {
+		_, err := svc.GetRuntime(name)
+		switch {
+		case err == nil:
+			continue
+		case !errors.Is(err, store.ErrNotFound):
+			return err
+		}
+		_, err = svc.CreateRuntime(resource.Runtime{
+			Metadata: resource.Metadata{Name: name},
+			Spec: resource.RuntimeSpec{
+				Type:             name,
+				Config:           runtime.Config{},
+				PermissionPreset: agent.PermissionPresetFullAccess,
+			},
+		})
+		if err != nil && !errors.Is(err, store.ErrConflict) {
+			return err
+		}
+	}
+	return nil
 }
 
 func settleService(svc interface {

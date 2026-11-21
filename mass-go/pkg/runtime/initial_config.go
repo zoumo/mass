@@ -38,15 +38,22 @@ func (c *InitialSessionConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
-	switch c.PermissionPreset {
-	case "", agent.PermissionPresetManualReview, agent.PermissionPresetAutoReview, agent.PermissionPresetFullAccess:
-	default:
-		return InvalidArgument("unknown session permission preset")
+	if err := ValidatePermissionPreset(c.PermissionPreset); err != nil {
+		return err
 	}
 	if err := c.SDKConfig().Validate(); err != nil {
 		return InvalidArgument("invalid initial session config: " + err.Error())
 	}
 	return nil
+}
+
+func ValidatePermissionPreset(preset agent.PermissionPreset) error {
+	switch preset {
+	case "", agent.PermissionPresetManualReview, agent.PermissionPresetAutoReview, agent.PermissionPresetFullAccess:
+		return nil
+	default:
+		return InvalidArgument("unknown session permission preset")
+	}
 }
 
 // UnmarshalJSON rejects values encoding/json would silently replace or coerce.

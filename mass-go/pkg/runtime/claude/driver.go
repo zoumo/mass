@@ -54,6 +54,10 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
+	o.Executable, err = o.ResolveExecutable("claude")
+	if err != nil {
+		return nil, err
+	}
 	life, cancel := context.WithCancel(context.Background())
 	provider := agentclaude.New(agentclaude.Config{
 		CLIPath:        o.Executable,

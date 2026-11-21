@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -71,7 +72,7 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 			return o, fmt.Errorf("unknown process config %q", key)
 		}
 	}
-	if !filepath.IsAbs(o.Executable) || strings.ContainsRune(o.Executable, 0) {
+	if _, explicit := config["executable"]; explicit && (!filepath.IsAbs(o.Executable) || strings.ContainsRune(o.Executable, 0)) {
 		return o, errors.New("explicit absolute executable required")
 	}
 	if o.Scenario != "" && (!filepath.IsAbs(o.Scenario) || strings.ContainsRune(o.Scenario, 0)) {
@@ -91,6 +92,23 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 		}
 	}
 	return o, nil
+}
+
+// ResolveExecutable uses the daemon's PATH when no executable was configured.
+// It never binds an implicit executable from a relative PATH entry.
+func (o ProcessConfig) ResolveExecutable(command string) (string, error) {
+	if o.Executable != "" {
+		return o.Executable, nil
+	}
+	path, err := exec.LookPath(command)
+	if err != nil || !filepath.IsAbs(path) {
+		return "", errors.Join(ErrResourcesReleased, &OperationError{
+			Code:    "unavailable",
+			Reason:  "agent_executable_unavailable",
+			Message: fmt.Sprintf("Agent executable %q was not found on the daemon's absolute PATH entries", command),
+		})
+	}
+	return path, nil
 }
 
 // Environment explicitly merges overrides instead of accidentally replacing PATH,

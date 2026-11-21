@@ -131,7 +131,7 @@ daemon 的空闲回收使用与人工 close 相同的入口。配置、计时条
 
 Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。创建时 metadata.name 还必须通过[名称校验](#创建名称校验)。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或 close 修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
 
-Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs、初始显式 config、会话功能请求 features 与显式 MCP 覆盖 mcpServers；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
+Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs、初始 config（含新建时应用的预设）、会话功能请求 features 与显式 MCP 覆盖 mcpServers；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
 
 Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime 类型配置快照版本。后者来自 Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation；Session 默认值不属于该快照。打开或恢复成功后记录这两个版本、协商能力和实际生效功能；确认 close 后清除当前运行版本、协商能力和 effectiveFeatures，保留身份与历史；结果未知时保留最后确认事实并表达 `closing` 或 `unknown`。features 先继承当前 Runtime 默认值；Runtime 和 Session 都省略时各字段使用 schema 默认值。请求开启但 Driver 不支持时 effectiveFeatures 对应值为 false，请求本身不被拒绝。
 
@@ -175,7 +175,7 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 | close 与 prompt/resume 并发 | 同一 Session 操作序列决定先后，不产生越过关闭栅栏的新派发或两个有效运行控制者 |
 | 已提交历史后部损坏 | 即使请求第一页，也明确失败；不先修尾或激活 |
 | 冷恢复成功 | 保持原 ID、已提交历史前缀、已存 UUID 与同步位置；不重演业务动作 |
-| Runtime 默认值已更新后的恢复 | 使用最新 features/mcpServers 合并结果建立连接；不因旧默认值不同拒绝恢复，Session spec 不写回结果 |
+| Runtime 默认值已更新后的恢复 | 使用 Session 保存的初始权限与最新 features 和 mcpServers 合并结果建立连接。Session spec 不写回合并结果 |
 | Session 显式 MCP 与 Runtime 默认同名 | 用 Session server 整体替换默认项并保持默认顺序；Session 新名称追加，空列表不删除默认项 |
 | 同名 Runtime 的资源 uid 改变 | 按名称定位并由 Driver 验证恢复，不因 uid 不同拒绝 |
 

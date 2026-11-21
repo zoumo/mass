@@ -14,10 +14,10 @@ interface RuntimeService {
   /** 默认查询全部已登记实例；不分页。 */
   listRuntimes(query?: RuntimeQuery): Runtime[] | OperationError;
 
-  /** 完整替换 RuntimeSpec，type/config 及 Session 默认值 features/mcpServers 可改；
+  /** 完整替换 RuntimeSpec，type/config 及 Session 默认值 features、mcpServers、permissionPreset 可改；
    * metadata 与 status 不接受更新。
    * 只持久更新期望 spec；不受运行状态、会话引用或前置版本条件限制。
-   * Session 默认值由后续 create/resume/load 重新读取并合并，不热更新已打开 Session。
+   * features/mcpServers 由后续 create/resume/load 读取并合并。permissionPreset 只用于后续创建。
    * spec 改变时原子递增 generation；不重启运行或改写 appliedGeneration。 */
   updateRuntime(runtimeRef: string, spec: RuntimeSpec):
     | Runtime
