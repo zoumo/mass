@@ -163,7 +163,9 @@ func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), "UPDATE session_bindings SET spec=? WHERE id=?", saved, binding.ID)
 	require.NoError(t, err)
 
-	write(t, testCapabilityPath(f, binding), "AUTHORIZATION='Bearer synthetic-initial-token'\n")
+	credential := testCapabilityPath(f, binding)
+	require.NoError(t, os.MkdirAll(filepath.Dir(credential), 0o700))
+	write(t, credential, "AUTHORIZATION='Bearer synthetic-initial-token'\n")
 	var original resource.Session
 	require.NoError(t, massd.CreateSession(t.Context(), resource.Session{
 		Metadata: resource.Metadata{Namespace: binding.Namespace, Name: binding.Name}, Spec: spec,
