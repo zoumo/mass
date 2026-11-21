@@ -27,6 +27,28 @@ type metadataIntent struct {
 	Created map[string]bool `json:"created"`
 }
 
+func (i *metadataIntent) UnmarshalJSON(b []byte) error {
+	type intentFields metadataIntent
+	wire := struct {
+		*intentFields
+		Next struct {
+			*snapshot
+			Sessions map[string]storedSession `json:"sessions"`
+		} `json:"next"`
+	}{intentFields: (*intentFields)(i)}
+	wire.Next.snapshot = &i.Next
+	if err := fileio.Decode(b, &wire); err != nil {
+		return err
+	}
+	if wire.Next.Sessions != nil {
+		i.Next.Sessions = make(map[string]resource.Session, len(wire.Next.Sessions))
+		for key, r := range wire.Next.Sessions {
+			i.Next.Sessions[key] = resource.Session(r)
+		}
+	}
+	return nil
+}
+
 type sessionIndexEntry struct {
 	Namespace  string `json:"namespace"`
 	Name       string `json:"name"`
@@ -170,7 +192,7 @@ func (s *Store) load(write bool) error {
 		next.Runtimes[r.Metadata.Name] = r
 	}
 	if err := s.walkSessions(func(path, namespace, name string) error {
-		var r resource.Session
+		var r storedSession
 		if err := fileio.ReadJSON(filepath.Join(path, "state.json"), &r); err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -180,7 +202,7 @@ func (s *Store) load(write bool) error {
 		if r.Metadata.Namespace != namespace || r.Metadata.Name != name {
 			return errors.New("session directory identity mismatch")
 		}
-		next.Sessions[key(namespace, name)] = r
+		next.Sessions[key(namespace, name)] = resource.Session(r)
 		return nil
 	}); err != nil {
 		return err

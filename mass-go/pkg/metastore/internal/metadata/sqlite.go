@@ -188,9 +188,9 @@ func (s *Store) readSQL(tx *sql.Tx) error {
 				err = fileio.Decode(b, &r)
 				s.data.Runtimes[r.Metadata.Name] = r
 			} else {
-				var r resource.Session
+				var r storedSession
 				err = fileio.Decode(b, &r)
-				s.data.Sessions[key(r.Metadata.Namespace, r.Metadata.Name)] = r
+				s.data.Sessions[key(r.Metadata.Namespace, r.Metadata.Name)] = resource.Session(r)
 			}
 			if err != nil {
 				break

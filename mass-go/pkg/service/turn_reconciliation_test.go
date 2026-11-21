@@ -66,17 +66,15 @@ func turnReconciliationFixture(t *testing.T, d *turnReconciliationDriver) (*Serv
 func TestObservationReconcilesTerminalTurnBeforeRelease(t *testing.T) {
 	for _, test := range []struct {
 		name, status, state, reason string
-		latest                      bool
 		closeErr                    error
 	}{
-		{"released", "completed", "offline", resource.SessionReasonOwnerReleased, true, nil},
-		{"release rejected", "failed", "closing", sessionCloseFailed, true, errors.New("test close failed")},
-		{"newer native turn", "interrupted", "unknown", sessionObservationLost, false, nil},
+		{"released", "completed", "offline", resource.SessionReasonOwnerReleased, nil},
+		{"close failed", "failed", "closing", sessionCloseFailed, errors.New("test close failed")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			d := &turnReconciliationDriver{closeErr: test.closeErr}
 			s, run, l, native := turnReconciliationFixture(t, d)
-			result := runtime.TurnReconciliation{TurnID: "turn-original", Status: test.status, Latest: test.latest}
+			result := runtime.TurnReconciliation{TurnID: "turn-original", Status: test.status, Latest: true}
 			ref := resource.SessionRef{SessionID: native.SessionID}
 			reached := make(chan struct{}, 1)
 			d.read = func(_ context.Context, id string, source events.Source) (runtime.TurnReconciliation, error) {
@@ -100,31 +98,32 @@ func TestObservationReconcilesTerminalTurnBeforeRelease(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, events.SessionState(test.state), current.Status.State)
 				require.Equal(t, test.reason, current.Status.Reason)
-				require.Equal(t, &resource.ReconciledTurn{TurnID: result.TurnID, Status: test.status}, current.Status.ReconciledTurn)
 			}, time.Second, time.Millisecond)
-			if test.latest {
-				require.EqualValues(t, 1, d.closes.Load())
-			} else {
-				require.Zero(t, d.closes.Load())
-			}
+			require.EqualValues(t, 1, d.closes.Load())
 		})
 	}
 }
 
 func TestObservationReconciliationFencesAmbiguousWork(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		read func() (runtime.TurnReconciliation, error)
+		name      string
+		read      func() (runtime.TurnReconciliation, error)
+		wantReads int
 	}{
 		{"active", func() (runtime.TurnReconciliation, error) {
-			return runtime.TurnReconciliation{TurnID: "turn-original", Status: "inProgress"}, nil
-		}},
-		{"missing", func() (runtime.TurnReconciliation, error) { return runtime.TurnReconciliation{}, nil }},
+			return runtime.TurnReconciliation{TurnID: "turn-original", Status: "inProgress", Latest: true}, nil
+		}, 2},
+		{"newer native turn", func() (runtime.TurnReconciliation, error) {
+			return runtime.TurnReconciliation{TurnID: "turn-original", Status: "interrupted"}, nil
+		}, 1},
+		{"missing turn ID", func() (runtime.TurnReconciliation, error) {
+			return runtime.TurnReconciliation{Status: "completed", Latest: true}, nil
+		}, 2},
 		{"query failure", func() (runtime.TurnReconciliation, error) {
 			return runtime.TurnReconciliation{}, errors.New("test query failed")
-		}},
-		{"unknown input", nil},
-		{"input in flight", nil},
+		}, 2},
+		{"unknown input", nil, 0},
+		{"input in flight", nil, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			d := &turnReconciliationDriver{}
@@ -137,6 +136,9 @@ func TestObservationReconciliationFencesAmbiguousWork(t *testing.T) {
 			l.inputInFlight = test.name == "input in flight"
 			s.mu.Unlock()
 			require.True(t, s.observationLost(run, l, native))
+			ref := resource.SessionRef{SessionID: native.SessionID}
+			before, err := s.GetSession(ref)
+			require.NoError(t, err)
 			calls := 0
 			budget := 2 * time.Second
 			if test.read == nil {
@@ -154,17 +156,13 @@ func TestObservationReconciliationFencesAmbiguousWork(t *testing.T) {
 				return result, err
 			}
 			s.reconcileObservation(ctx, run, l, native, d)
-			current, err := s.GetSession(resource.SessionRef{SessionID: native.SessionID})
+			current, err := s.GetSession(ref)
 			require.NoError(t, err)
 			require.Equal(t, events.Unknown, current.Status.State)
 			require.Equal(t, sessionObservationLost, current.Status.Reason)
-			require.Nil(t, current.Status.ReconciledTurn)
+			require.Equal(t, before.Metadata.ResourceVersion, current.Metadata.ResourceVersion)
 			require.Zero(t, d.closes.Load())
-			if test.read == nil {
-				require.Zero(t, calls)
-			} else {
-				require.Equal(t, 2, calls)
-			}
+			require.Equal(t, test.wantReads, calls)
 		})
 	}
 }
@@ -195,7 +193,7 @@ func TestObservationReconciliationRetriesContestedRelease(t *testing.T) {
 	current, err := s.GetSession(resource.SessionRef{SessionID: native.SessionID})
 	require.NoError(t, err)
 	require.Equal(t, events.SessionState("offline"), current.Status.State)
-	require.Equal(t, &resource.ReconciledTurn{TurnID: "turn-original", Status: "completed"}, current.Status.ReconciledTurn)
+	require.Equal(t, resource.SessionReasonOwnerReleased, current.Status.Reason)
 	require.Equal(t, 2, calls)
 	require.EqualValues(t, 1, d.closes.Load())
 }
@@ -214,18 +212,12 @@ func TestObservationReconciliationDiscardsLateTurnAfterOwnerChange(t *testing.T)
 		s.mu.Lock()
 		run.lanes[native.SessionID] = &lane{session: l.session, source: events.NewSource()}
 		s.mu.Unlock()
-		_, err := s.sessionStatus(ref, func(r *resource.Session) {
-			r.Status.State = events.Running
-			r.Status.Reason = ""
-		})
-		require.NoError(t, err)
 		return runtime.TurnReconciliation{TurnID: "turn-original", Status: "completed", Latest: true}, nil
 	}
 	s.reconcileObservation(ctx, run, l, native, d)
 	current, err := s.GetSession(ref)
 	require.NoError(t, err)
-	require.Equal(t, events.Running, current.Status.State)
-	require.Empty(t, current.Status.Reason)
-	require.Nil(t, current.Status.ReconciledTurn)
+	require.Equal(t, events.Unknown, current.Status.State)
+	require.Equal(t, sessionObservationLost, current.Status.Reason)
 	require.Zero(t, d.closes.Load())
 }
