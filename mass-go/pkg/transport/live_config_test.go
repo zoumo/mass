@@ -33,7 +33,7 @@ func (a *liveConfigAPI) SetSessionConfig(_ context.Context, _ resource.SessionRe
 func newLiveConfigRPCFixture(t *testing.T) (*liveConfigAPI, *httptest.Server) {
 	t.Helper()
 	api := &liveConfigAPI{}
-	endpoint, err := transport.New(api, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	endpoint, err := transport.New(api, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	server := httptest.NewServer(endpoint)
 	t.Cleanup(func() {

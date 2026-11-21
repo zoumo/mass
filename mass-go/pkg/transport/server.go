@@ -22,10 +22,10 @@ type API interface {
 	service.SessionService
 }
 
-// Options selects authenticated instance access or explicit trusted local access.
+// Options configures instance access and WebSocket transport. An empty Token
+// limits unauthenticated RPC access to loopback peers.
 type Options struct {
 	Token          string
-	LocalOnly      bool
 	AllowedOrigins []string
 	WriteTimeout   time.Duration
 	ServerVersion  string
@@ -43,7 +43,7 @@ type Server struct {
 }
 
 func New(api API, opts Options) (*Server, error) {
-	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") || opts.WriteTimeout <= 0 {
+	if strings.ContainsAny(opts.Token, " \t\r\n") || opts.WriteTimeout <= 0 {
 		return nil, Invalid()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -86,7 +86,7 @@ func (s *Server) Shutdown() {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 func (s *Server) authorized(r *http.Request) bool {
-	if s.options.LocalOnly {
+	if s.options.Token == "" {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		return err == nil && net.ParseIP(host).IsLoopback()
 	}

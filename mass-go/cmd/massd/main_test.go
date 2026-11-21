@@ -56,7 +56,7 @@ func (s *commandSuite) TestStoreOwnershipRetainedForUnsettledService() {
 
 func (s *commandSuite) TestParsing() {
 	s.T().Setenv("HOME", s.T().TempDir())
-	for _, args := range [][]string{{"--help"}, {"--unknown"}, {"--listen"}, {"--local=invalid"}, {"extra"}, {"--local", "--listen", "0.0.0.0:0"}} {
+	for _, args := range [][]string{{"--help"}, {"--unknown"}, {"--listen"}, {"--local"}, {"extra"}} {
 		s.Run(strings.Join(args, " "), func() {
 			cmd := newCommand()
 			var out bytes.Buffer
@@ -68,7 +68,7 @@ func (s *commandSuite) TestParsing() {
 				s.Require().NoError(err)
 				s.Contains(out.String(), "--token-file")
 				s.NotContains(out.String(), "--mcp-files-dir")
-				s.Contains(out.String(), "--local")
+				s.NotContains(out.String(), "--local")
 				s.Contains(out.String(), "--session-idle-timeout")
 			} else {
 				s.Require().Error(err)
@@ -93,18 +93,16 @@ func (s *commandSuite) TestConfiguration() {
 	s.Require().NoError(cmd.Flags().Set("config", path))
 	_, err = readOptions(cmd, path)
 	s.Require().Error(err, "an explicitly selected missing config must fail")
-	s.Require().NoError(os.WriteFile(path, []byte("# daemon settings\nlisten: 127.0.0.1:23456\nlocal: true\n"), 0o600))
+	s.Require().NoError(os.WriteFile(path, []byte("# daemon settings\nlisten: 127.0.0.1:23456\n"), 0o600))
 	got, err = readOptions(cmd, path)
 	s.Require().NoError(err)
 	s.Equal("127.0.0.1:23456", got.Listen)
 	s.Equal(defaults.Data, got.Data)
-	s.True(got.Local)
 	s.Require().NoError(cmd.Flags().Set("listen", defaults.Listen))
-	s.Require().NoError(cmd.Flags().Set("local", "false"))
 	got, err = readOptions(cmd, path)
 	s.Require().NoError(err)
-	s.Equal(defaults, got, "explicit flags, including false, override file values")
-	for _, invalid := range []string{`[]`, `unknown: true`, `local: "true"`, `listen: 123`, "local: true\nlocal: false", `local: [`, `{`} {
+	s.Equal(defaults, got, "explicit flags override file values")
+	for _, invalid := range []string{`[]`, `unknown: true`, `local: true`, `local: false`, `listen: 123`, "listen: 127.0.0.1:0\nlisten: 127.0.0.1:1", `{`} {
 		s.Require().NoError(os.WriteFile(path, []byte(invalid), 0o600))
 		_, err = readOptions(cmd, path)
 		s.Require().Error(err, invalid)
@@ -118,7 +116,6 @@ func (s *commandSuite) TestConfigurationFieldsAndIsolation() {
 	s.Require().NoError(os.WriteFile(path, []byte(`
 data: /owned/data
 listen: 127.0.0.1:23456
-local: true
 tokenFile: /owned/token
 tlsCert: /owned/cert
 tlsKey: /owned/key
@@ -131,14 +128,14 @@ writeTimeout: 7s
 	got, err := readOptions(cmd, path)
 	s.Require().NoError(err)
 	s.Equal(options{
-		Data: "/owned/data", Listen: "127.0.0.1:23456", Local: true,
+		Data: "/owned/data", Listen: "127.0.0.1:23456",
 		TokenFile: "/owned/token", TLSCert: "/owned/cert", TLSKey: "/owned/key", Approve: true,
 		AllowedOrigins:     []string{"https://allowed.example"},
 		SessionIdleTimeout: 10 * time.Minute,
 		WriteTimeout:       7 * time.Second,
 	}, got)
 	for name, value := range map[string]string{
-		"data": "/other/data", "listen": "127.0.0.1:0", "local": "false",
+		"data": "/other/data", "listen": "127.0.0.1:0",
 		"token-file": "", "tls-cert": "/other/cert", "tls-key": "/other/key",
 		"allowed-origin":                     "https://flag.example",
 		"prototype-auto-approve-permissions": "false",
@@ -190,7 +187,7 @@ func (s *commandSuite) TestDataDirConfiguration() {
 	}{
 		{name: "relative", yaml: "dataDir: ./massd", data: filepath.Join(configDir, "massd")},
 		{name: "absolute", yaml: "dataDir: " + absolute, data: absolute},
-		{name: "default", yaml: "local: true", data: filepath.Join(home, ".mass")},
+		{name: "default", yaml: "{}", data: filepath.Join(home, ".mass")},
 		{name: "legacy", yaml: "data: " + absolute, data: absolute},
 		{name: "legacy relative remains unresolved", yaml: "data: ./massd", data: "./massd"},
 		{name: "explicit flag", yaml: "dataDir: ./massd", flag: absolute, data: absolute},

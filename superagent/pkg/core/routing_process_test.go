@@ -135,7 +135,7 @@ func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundar
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}))
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
 	require.NoError(t, err)
-	api, err := transport.New(svc, transport.Options{LocalOnly: true, WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})
+	api, err := transport.New(svc, transport.Options{WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})
 	require.NoError(t, err)
 	upstream := httptest.NewServer(api)
 	f := &routeBoundary{driver: d, svc: svc}

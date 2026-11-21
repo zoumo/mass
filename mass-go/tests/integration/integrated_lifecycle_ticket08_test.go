@@ -182,7 +182,7 @@ func ticket08HTTP(t *testing.T, kind string, gate *ticket08Gate, configure ...fu
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	server := httptest.NewServer(h)
 	c := newHTTPClient(t, server.URL, "")

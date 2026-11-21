@@ -118,7 +118,7 @@ func newSubscriptionRPCFixture(t *testing.T, capacity int, opts transport.Option
 	broadcast, err := events.NewBroadcast("demo", "observed", "observed", capacity)
 	require.NoError(t, err)
 	api := &subscriptionRPCAPI{broadcast: broadcast, subscriptions: map[string]*events.Subscription{}}
-	if opts.Token == "" && !opts.LocalOnly {
+	if opts.Token == "" {
 		opts.Token = "test-token"
 	}
 	opts = withTestWriteTimeout(opts)
@@ -151,7 +151,7 @@ func newNamedSubscriptionRPCFixture(
 		broadcasts:    broadcasts,
 		subscriptions: map[string]*events.Subscription{},
 	}
-	if opts.Token == "" && !opts.LocalOnly {
+	if opts.Token == "" {
 		opts.Token = "test-token"
 	}
 	opts = withTestWriteTimeout(opts)

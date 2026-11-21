@@ -157,7 +157,7 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 			before := wait(1)
 			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
-			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+			h, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 			require.NoError(t, err)
 			t.Cleanup(h.Shutdown)
 			server := httptest.NewServer(h)
@@ -409,7 +409,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 	for _, kind := range []string{"claude", "codex"} {
 		t.Run(kind, func(t *testing.T) {
 			f := ticket20Setup(t, kind, "early-terminal")
-			h, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+			h, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{}))
 			require.NoError(t, err)
 			t.Cleanup(h.Shutdown)
 			server := httptest.NewServer(h)
@@ -452,7 +452,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			durable, err := f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{Types: []string{"agent.message"}})
 			require.NoError(t, err)
 			require.Equal(t, before, durable)
-			h2, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+			h2, err := transport.New(f.svc, withTestWriteTimeout(transport.Options{}))
 			require.NoError(t, err)
 			t.Cleanup(h2.Shutdown)
 			server2 := httptest.NewServer(h2)

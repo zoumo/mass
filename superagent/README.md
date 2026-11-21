@@ -122,7 +122,6 @@ that directory. Put the following settings in `massd.yaml`.
 ```yaml
 dataDir: ./massd
 listen: 127.0.0.1:0
-local: true
 ```
 
 Use `config.example.yaml` as the starting point for `core.yaml`. Set
@@ -133,10 +132,11 @@ both under the same operating-system account. Core stores private role
 credentials under `dataDir/mcp-files` and passes absolute file references in
 role Session specs. Keep the Core listen port fixed when using the default
 loopback MCP URL. Use a stable `externalURL` when using a reverse proxy.
-For separate processes, configure `massd.endpoint`. To use massd authentication, configure its `tokenFile` and the matching Core
-`massd.tokenFile` in place of massd local mode. Use an absolute path
-for the massd `tokenFile` when starting from outside the configuration
-directory.
+For separate processes, configure `massd.endpoint`. Set `tokenFile` in
+`massd.yaml` and the matching `massd.tokenFile` in `core.yaml` to enable
+RPC authentication. Use an absolute path in `massd.yaml` when starting
+from outside the configuration directory. With `tokenFile` omitted,
+massd warns at startup and accepts unauthenticated loopback RPC connections.
 
 Build the binaries from the repository root and start both services.
 

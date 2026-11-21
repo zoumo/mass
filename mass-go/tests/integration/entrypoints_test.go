@@ -45,7 +45,7 @@ func (s *entrypointSuite) SetupTest() {
 	s.daemonCtx = daemonCtx
 	s.data = s.T().TempDir()
 	config := filepath.Join(s.data, "daemon-config.yaml")
-	s.Require().NoError(os.WriteFile(config, []byte("listen: 127.0.0.1:0\nlocal: true\nprototypeAutoApprovePermissions: true\n"), 0o600))
+	s.Require().NoError(os.WriteFile(config, []byte("listen: 127.0.0.1:0\nprototypeAutoApprovePermissions: true\n"), 0o600))
 	if s.backend != "" {
 		f, e := os.OpenFile(config, os.O_APPEND|os.O_WRONLY, 0o600)
 		s.Require().NoError(e)

@@ -149,7 +149,7 @@ must already be cached.
 Start the local daemon.
 
 ```sh
-bin/massd --local
+bin/massd
 ```
 
 Inspect the available commands in another terminal.
@@ -166,7 +166,8 @@ bin/massctl session --help
 | 📂 Data directory | `~/.mass` |
 | ⚙️ Configuration | `~/.mass/config.yaml` when present. Flags override file values. |
 
-`--local` selects trusted single-user loopback access.
+Without a token file, `massd` logs a warning and accepts unauthenticated
+RPC connections over loopback. Configure `tokenFile` to require a Bearer token.
 See the [Go implementation guide](mass-go/README.md) for configuration and API
 usage, subject to the driver limits below.
 

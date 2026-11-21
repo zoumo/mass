@@ -41,7 +41,7 @@ type rpcError struct {
 
 func newRPCServer(t *testing.T, opts transport.Options) (*transport.Server, *httptest.Server) {
 	t.Helper()
-	if opts.Token == "" && !opts.LocalOnly {
+	if opts.Token == "" {
 		opts.Token = "test-token"
 	}
 	opts = withTestWriteTimeout(opts)
@@ -492,16 +492,21 @@ func TestRPCTraceContext(t *testing.T) {
 	}
 }
 
-func TestRPCLocalMode(t *testing.T) {
-	_, httpServer := newRPCServer(t, transport.Options{LocalOnly: true})
-	conn, response, err := websocket.DefaultDialer.Dial(rpcURL(httpServer), nil)
-	if response != nil {
-		_ = response.Body.Close()
-	}
+func TestRPCWithoutTokenAllowsOnlyLoopbackPeers(t *testing.T) {
+	server, err := transport.New(nil, transport.Options{WriteTimeout: time.Second})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-	sendText(t, conn, initializeMessage(`"local"`, rpcwire.Version))
+	t.Cleanup(server.Shutdown)
+	httpServer := httptest.NewServer(server)
+	t.Cleanup(httpServer.Close)
+	conn := dialRPC(t, httpServer, nil)
+	sendText(t, conn, initializeMessage(`"loopback"`, rpcwire.Version))
 	require.Nil(t, readRPC(t, conn).Error)
+
+	request := httptest.NewRequest(http.MethodGet, "/rpc", nil)
+	request.RemoteAddr = "192.0.2.1:12345"
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	require.Equal(t, http.StatusUnauthorized, response.Code)
 }
 
 func get(t *testing.T, url string) (*http.Response, error) {

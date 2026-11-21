@@ -305,7 +305,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		cancelFlow()
 	}()
 	config := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(config, []byte("listen: 127.0.0.1:0\nlocal: true\n"), 0o600))
+	require.NoError(t, os.WriteFile(config, []byte("listen: 127.0.0.1:0\n"), 0o600))
 	log, err := os.Create(filepath.Join(dir, "daemon.log"))
 	require.NoError(t, err)
 	defer log.Close()

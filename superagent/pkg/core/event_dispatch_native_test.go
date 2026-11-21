@@ -375,7 +375,7 @@ func startNativeMassd(t *testing.T, massd string, spec resource.RuntimeSpec) (st
 	config := filepath.Join(dir, "massd.yaml")
 	write(t, config, "{}")
 	data := filepath.Join(dir, "massd")
-	cmd := exec.CommandContext(context.Background(), massd, "--local", "--listen", "127.0.0.1:0", "--config", config, "--data", data, "--session-idle-timeout", "0")
+	cmd := exec.CommandContext(context.Background(), massd, "--listen", "127.0.0.1:0", "--config", config, "--data", data, "--session-idle-timeout", "0")
 	cmd.Env = []string{"HOME=" + dir, "PATH=" + dir}
 	log, err := os.Create(filepath.Join(dir, "massd.log"))
 	require.NoError(t, err)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -38,7 +39,6 @@ type options struct {
 	TLSKey             string           `mapstructure:"tlsKey"`
 	AllowedOrigins     []string         `mapstructure:"allowedOrigins"`
 	Approve            bool             `mapstructure:"prototypeAutoApprovePermissions"`
-	Local              bool             `mapstructure:"local"`
 	SessionIdleTimeout time.Duration    `mapstructure:"sessionIdleTimeout"`
 	WriteTimeout       time.Duration    `mapstructure:"writeTimeout"`
 }
@@ -70,8 +70,7 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.Data, "data", filepath.Join(home, ".mass"), "absolute owned data directory")
 	f.StringVar(&o.Listen, "listen", "127.0.0.1:24368", "loopback listen address (port 0 supported)")
 	f.BoolVar(&o.Approve, "prototype-auto-approve-permissions", false, "explicit synthetic prototype policy; questions remain manual")
-	f.BoolVar(&o.Local, "local", false, "explicit trusted single-user loopback mode without authentication")
-	f.StringVar(&o.TokenFile, "token-file", "", "file containing an instance Bearer token")
+	f.StringVar(&o.TokenFile, "token-file", "", "file containing an instance Bearer token (required for non-loopback listeners)")
 	f.StringVar(&o.TLSCert, "tls-cert", "", "TLS certificate for direct remote access")
 	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
 	f.StringSliceVar(&o.AllowedOrigins, "allowed-origin", nil, "allowed WebSocket Origin (repeatable)")
@@ -95,28 +94,22 @@ func run(parent context.Context, o options) (result error) {
 	if ip == nil {
 		return errors.New("listen address must be an IP literal")
 	}
-	token := ""
+	var token string
 	if o.TokenFile != "" {
-		b, e := os.ReadFile(o.TokenFile)
-		if e != nil {
+		b, err := os.ReadFile(o.TokenFile)
+		if err != nil {
 			return errors.New("cannot read token file")
 		}
 		token = strings.TrimSpace(string(b))
-		if token == "" {
-			return errors.New("empty token file")
+		if token == "" || strings.ContainsAny(token, " \t\r\n") {
+			return errors.New("token file must contain a single nonempty token")
 		}
-	}
-	if o.Local && !ip.IsLoopback() {
-		return errors.New("local mode requires loopback address")
 	}
 	if !ip.IsLoopback() && (token == "" || o.TLSCert == "" || o.TLSKey == "") {
 		return errors.New("remote access requires a token and TLS")
 	}
 	if (o.TLSCert == "") != (o.TLSKey == "") {
 		return errors.New("TLS requires both certificate and key")
-	}
-	if (o.Local && token != "") || (!o.Local && token == "") {
-		return errors.New("select local mode or token authentication")
 	}
 	telemetry, err := newTelemetry(parent)
 	if err != nil {
@@ -172,7 +165,7 @@ func run(parent context.Context, o options) (result error) {
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	handler, err := transport.New(svc, transport.Options{
-		Token: token, LocalOnly: o.Local, AllowedOrigins: o.AllowedOrigins, WriteTimeout: o.WriteTimeout,
+		Token: token, AllowedOrigins: o.AllowedOrigins, WriteTimeout: o.WriteTimeout,
 		TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics,
 	})
 	if err != nil {
@@ -193,6 +186,9 @@ func run(parent context.Context, o options) (result error) {
 			done <- server.Serve(listener)
 		}
 	}()
+	if token == "" {
+		slog.Warn("massd RPC accepts unauthenticated loopback connections because tokenFile is unset")
+	}
 	scheme := "ws://"
 	if o.TLSCert != "" {
 		scheme = "wss://"

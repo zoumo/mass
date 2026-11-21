@@ -23,7 +23,7 @@ func TestMetadataBackendStartupFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			config := filepath.Join(dir, "daemon.yaml")
-			require.NoError(t, os.WriteFile(config, []byte("listen: 127.0.0.1:0\nlocal: true\n"+test.config), 0o600))
+			require.NoError(t, os.WriteFile(config, []byte("listen: 127.0.0.1:0\n"+test.config), 0o600))
 			if test.path != "" {
 				require.NoError(t, os.Mkdir(filepath.Join(dir, test.path), 0o700))
 			}

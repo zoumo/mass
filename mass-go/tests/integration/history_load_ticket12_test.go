@@ -47,7 +47,7 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 	t.Helper()
 	evidence := filepath.Join(t.TempDir(), "peer.jsonl")
 	svc, cwd := ticket06Service(t, mode, map[string]any{"LOAD_EVIDENCE": evidence})
-	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	defer h.Shutdown()
 	server := httptest.NewServer(h)

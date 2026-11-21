@@ -149,7 +149,7 @@ func TestSDKNotificationsThroughRPCHistoryStateAndResume(t *testing.T) {
 		Spec:     resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}},
 	})
 	require.NoError(t, err)
-	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+	handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)
 	t.Cleanup(handler.Shutdown)
 	server := httptest.NewServer(handler)

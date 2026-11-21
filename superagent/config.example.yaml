@@ -31,7 +31,7 @@ storageMaxPages: 0
 # New Sessions use fullAccess and disable native agent questions.
 # massd:
 #   endpoint: ws://127.0.0.1:24368/rpc
-#   tokenFile: ./massd.token  # omit only for explicit local massd access
+#   tokenFile: ./massd.token  # set when massd uses an instance token
 # operatorTokenFile: ./operator.token  # optional, for loopback CLI input recovery
 # sessions:
 #   routerWorkspace: /absolute/workspace

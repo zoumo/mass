@@ -5,7 +5,6 @@
 ```yaml
 data: /absolute/owned/data
 listen: 127.0.0.1:24368
-local: true
 metaStore:
   backend: sqlite # default when omitted; file is the other supported value
 ```

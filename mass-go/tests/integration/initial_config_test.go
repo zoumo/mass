@@ -100,7 +100,7 @@ func TestInitialSessionConfigurationCodexCreateResume(t *testing.T) {
 			svc, _, dir := setup(t, nil)
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 			require.NoError(t, err)
-			handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+			handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 			require.NoError(t, err)
 			defer handler.Shutdown()
 			server := httptest.NewServer(handler)
@@ -250,7 +250,7 @@ func TestInitialSessionConfigurationLoadNative(t *testing.T) {
 					svc, work := ticket06Service(t, "", map[string]any{"LOAD_EVIDENCE": evidence})
 					cwd = work
 					id = "native-thread"
-					h, err := transport.New(svc, withTestWriteTimeout(transport.Options{LocalOnly: true}))
+					h, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 					require.NoError(t, err)
 					t.Cleanup(h.Shutdown)
 					server := httptest.NewServer(h)
