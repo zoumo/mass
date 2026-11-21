@@ -28,7 +28,7 @@ func validateSessionConfig(spec runtime.SessionSpec) error {
 	return nil
 }
 
-func (s *Service) resolveSessionSpec(run *runBinding, spec runtime.SessionSpec) (runtime.SessionSpec, error) {
+func (s *Service) resolveSessionSpec(run *runBinding, spec runtime.SessionSpec, creating bool) (runtime.SessionSpec, error) {
 	r, err := s.meta.GetRuntime(run.runtimeName)
 	if err != nil {
 		return spec, err
@@ -37,7 +37,17 @@ func (s *Service) resolveSessionSpec(run *runBinding, spec runtime.SessionSpec) 
 	if err := defaults.Validate(); err != nil {
 		return spec, runtime.InvalidArgument("invalid runtime session defaults: " + err.Error())
 	}
-	return defaults.ResolveSessionSpec(spec), nil
+	spec = defaults.ResolveSessionSpec(spec)
+	if creating && r.Spec.PermissionPreset != "" && (spec.Config == nil || spec.Config.PermissionPreset == "") {
+		if err := runtime.ValidatePermissionPreset(r.Spec.PermissionPreset); err != nil {
+			return spec, err
+		}
+		if spec.Config == nil {
+			spec.Config = &runtime.InitialSessionConfig{}
+		}
+		spec.Config.PermissionPreset = r.Spec.PermissionPreset
+	}
+	return spec, nil
 }
 
 func sameSessionOverrides(a, b runtime.SessionSpec) bool {

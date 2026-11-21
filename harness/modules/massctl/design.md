@@ -33,10 +33,10 @@ massctl 通过 [JSON-RPC over WebSocket](../../bindings/websocket.md) 调用 [Ru
 
 | 命令 | 输入 | 能力与结果 |
 |---|---|---|
-| `runtime create NAME` | `--type TYPE`、常用配置 flag；补充输入支持 `--config-file FILE` 或 `--config-json JSON`；可选 `--features-json`、`--mcp-servers-json` | 创建命名资源并设置 Session 默认值，返回 Runtime；不启动 |
+| `runtime create NAME` | `--type TYPE`、常用配置 flag；补充输入支持 `--config-file FILE` 或 `--config-json JSON`；可选 `--features-json`、`--mcp-servers-json`、`--permission-preset` | 创建命名资源并设置 Session 默认值，返回 Runtime；不启动 |
 | `runtime get NAME` | 无业务请求体 | 查询资源、期望配置、当前状态与已协商能力 |
 | `runtime list` | 无筛选参数 | 查询全部 Runtime，不分页；首版不提供筛选（已确认） |
-| `runtime update NAME` | 配置 flag、`--config-file FILE` 或 `--config-json JSON`；可选 `--features-json`、`--mcp-servers-json`；不提供 --type | CLI 先获取当前 spec，保留 type 与未修改的 Session 默认值；flag 更新对应字段，完整 config 替换原配置，再提交完整 RuntimeSpec；不热更新、不重启（流程已确认） |
+| `runtime update NAME` | 配置 flag、`--config-file FILE` 或 `--config-json JSON`；可选 `--features-json`、`--mcp-servers-json`、`--permission-preset`；不提供 --type | CLI 先获取当前 spec，保留 type 与未修改的 Session 默认值；flag 更新对应字段，完整 config 替换原配置，再提交完整 RuntimeSpec；不热更新、不重启（流程已确认） |
 | `runtime start NAME` | 无业务请求体 | 启动或取得当前运行状态，不隐式重启已运行实例 |
 | `runtime stop NAME` | 无业务请求体 | 通过 Service 排空并释放所属运行资源 |
 | `runtime delete NAME` | 无业务请求体 | 删除实例记录，保留 Service 的引用和释放检查 |
@@ -52,6 +52,8 @@ Runtime 类型由配置合同决定；CLI 不自行增加类型发现操作，�
 已确认的创建输入形式为 `massctl runtime create NAME --type TYPE [配置参数]`，不将类型增加为 create 下的子命令。首版提供 --executable PATH，映射 config.executable；其他配置字段使用 --config-file 或 --config-json 输入完整 RuntimeConfig。测试专用 scenario 不作为正式 CLI flag。此首版字段清单不限制后续扩展。
 
 `--features-json` 接收 SessionFeatures JSON 对象或 `null`，`--mcp-servers-json` 接收 MCPServer 数组或 `null`。它们写入 RuntimeSpec 顶层，不进入 RuntimeConfig，也不替代配置输入。Runtime 只保存和校验公共结构，不启动 MCP 或改变 Runtime 运行；默认值由后续 session create/resume/load 与 Session 显式值合并。
+
+`--permission-preset` 设置 RuntimeSpec 顶层的 `permissionPreset`，可用 `manualReview`、`autoReview`、`fullAccess` 或空字符串。该默认值用于新建 Session。更新时省略 flag 保留当前值，传空字符串清除，也可与其他配置输入一起使用。
 
 创建必填项与默认行为已确认：NAME 与 --type 必填，不默认选择 Runtime 类型。配置参数可省略，全部省略时提交空配置 `{}`，由对应 Runtime 类型校验并应用其默认值；CLI 不自行填充类型专属默认配置。Runtime 创建只登记资源，不启动运行资源；后续 session create/resume 由 Service 按需启动，也可提前使用独立的 runtime start 命令。
 
@@ -94,7 +96,7 @@ Session 不提供持久更新、删除、任意 ACP 配置选项写入和待决�
 
 Session 恢复可选互斥 --text TEXT 或 --input-file FILE，使用与创建相同的 SessionInput 读取及校验规则；省略保持零输入，显式空输入拒绝。这是新输入，不是历史或恢复配置；同一原生 ID/cwd 验证前不报告成功，receipt 不表示完成，结果未知不自动重试。
 
-session resume 不提供 features/mcpServers flag：Session 没有 updateSession，恢复使用已持久化的 Session 显式值，并在调用 Driver 前与当前 Runtime 默认值重新合并。
+session resume 不提供 features/mcpServers flag：Session 没有 updateSession，恢复使用已持久化的 Session 初始权限，并在调用 Driver 前合并当前 Runtime 的 features 和 mcpServers 默认值与 Session 显式覆盖。
 
 session prompt 的首版输入范围已确认：仅提供 --text TEXT，将文本构造为 SessionInput 中的一个 text ContentBlock；不提供 --input-file、--input-json、多模态内容输入或隐式 stdin 读取。此限制属于 CLI 首版范围，不缩减 Service/JSON-RPC 的 SessionInput 合同。answer 延后讨论，首版不暴露命令，不将先前建议的参数作为已确认合同。
 
@@ -182,7 +184,7 @@ watch 在独立 WebSocket 完成 initialize 和 session.subscribe 后确认就�
 | Session 按需启动与重启后查询 | create/resume 无需先 start；查询、history、watch 不启动；重启后不显示旧 idle 为当前可用，按 Service 校正结果返回 offline/unknown |
 | Session close | close 从任意状态调用同一 JSON-RPC 方法；成功为 offline，失败为 closing 且可重试，offline 重试成功，不停止 Runtime |
 | CLI 配置更新 | 先获取当前 spec 并保留 type；显式 flag 只覆盖对应字段，完整 config 替换全部配置，最后提交完整 spec；获取失败不写回，不宣称具备并发条件更新保护 |
-| CLI Runtime Session 默认值 | create 写入顶层 features/mcpServers；update 未传保留旧值、显式 null 清除；不进入 config，不启动或热更新 Runtime |
+| CLI Runtime Session 默认值 | create 将显式默认值写入顶层。update 省略 flag 时保留旧值，使用 JSON `null` 清除 features 或 mcpServers，使用空字符串清除 permissionPreset |
 | CLI Session 覆盖 | create/load 的 flags 只写 Session 显式值；空 MCP 数组不删除 Runtime 默认项，fetch 或构造失败不发起副作用请求 |
 | 查询离线 Session | 查询和历史不激活 Runtime 或恢复 Session；prompt 失败并要求先显式 resume |
 | 文本输入 | --text 正确构造单个 text 内容块；首版拒绝 prompt 文件/JSON 输入，不隐式读取 stdin |

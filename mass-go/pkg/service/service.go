@@ -328,6 +328,9 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (_ resource.Run
 	if err != nil {
 		s.mu.Lock()
 		run.err = err
+		if errors.Is(err, runtime.ErrResourcesReleased) && !run.stopping {
+			delete(s.runs, name)
+		}
 		s.mu.Unlock()
 		close(run.done)
 		return r, err
@@ -464,10 +467,11 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		return resource.SessionCreated{Session: r}, errors.New("runtime unavailable")
 	}
 	span.SetAttributes(providerAttribute(run.provider))
-	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec)
+	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec, true)
 	if err != nil {
 		return resource.SessionCreated{Session: r}, err
 	}
+	r.Spec.Config = resolvedSpec.Config
 	var creator runtime.CreationDriver
 	if initial != nil {
 		copyInput, err := runtime.CopyInput(*initial)

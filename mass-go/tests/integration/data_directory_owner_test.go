@@ -66,7 +66,7 @@ func TestDataDirectoryHasOneWriterAcrossPathAliases(t *testing.T) {
 	c := newHTTPClient(t, ready.URL, "")
 	var rows []resource.Runtime
 	require.NoError(t, c.ListRuntimes(t.Context(), resource.RuntimeQuery{}, &rows))
-	require.Empty(t, rows)
+	require.Len(t, rows, 2)
 	before := snapshotTree(t, data)
 
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -87,7 +87,9 @@ func TestDataDirectoryHasOneWriterAcrossPathAliases(t *testing.T) {
 	_, err = os.Stat(filepath.Join(data, "private"))
 	require.True(t, os.IsNotExist(err), "second writer must not construct a Driver")
 
-	require.NoError(t, c.ListRuntimes(t.Context(), resource.RuntimeQuery{}, &rows))
+	var rowsAfter []resource.Runtime
+	require.NoError(t, c.ListRuntimes(t.Context(), resource.RuntimeQuery{}, &rowsAfter))
+	require.Equal(t, rows, rowsAfter)
 	require.NoError(t, first.Process.Signal(syscall.SIGTERM))
 	done := make(chan error, 1)
 	go func() { done <- first.Wait() }()

@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -87,7 +88,7 @@ func (o *options) runtimeCommands() *cobra.Command {
 		cmd.Example = "  massctl runtime " + action + " agent"
 		var input configInput
 		var sessionDefaults sessionOptionsInput
-		var kind string
+		var kind, permissionPreset string
 		if action == "list" {
 			cmd.Example = "  massctl runtime list"
 			cmd.Use = "list"
@@ -96,7 +97,8 @@ func (o *options) runtimeCommands() *cobra.Command {
 		if action == "create" || action == "update" {
 			input.flags(cmd)
 			sessionDefaults.flags(cmd)
-			cmd.Long = "Configuration inputs --executable, --config-file and --config-json are mutually exclusive. Files contain RuntimeConfig; '-' reads stdin. --features-json and --mcp-servers-json set Session defaults on the Runtime spec; null clears a default."
+			cmd.Flags().StringVar(&permissionPreset, "permission-preset", "", "Default permission for new Sessions (manualReview, autoReview, fullAccess, or empty to clear)")
+			cmd.Long = "Configuration inputs --executable, --config-file and --config-json are mutually exclusive. Files contain RuntimeConfig. '-' reads stdin. --features-json and --mcp-servers-json set Session defaults on the Runtime spec. Use null to clear a JSON default. --permission-preset sets the default for new Sessions. An empty value clears the preset."
 			if action == "create" {
 				cmd.Long += " NAME and --type are required. Omitted configuration submits {}. Creation does not start the Runtime."
 				cmd.Example = "  massctl runtime create agent --type codex --executable /absolute/path/to/codex\n  massctl runtime create agent --type codex --features-json '{\"agentQuestions\":false}'"
@@ -131,10 +133,13 @@ func (o *options) runtimeCommands() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				v := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: config, Features: defaults.Features, MCPServers: defaults.MCPServers}}
+				v := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{
+					Type: kind, Config: config, Features: defaults.Features, MCPServers: defaults.MCPServers,
+					PermissionPreset: agent.PermissionPreset(permissionPreset),
+				}}
 				call = func(ctx context.Context, out any) error { return o.client.CreateRuntime(ctx, v, out) }
 			case "update":
-				if !input.provided(cmd) && !sessionDefaults.provided(cmd) {
+				if !input.provided(cmd) && !sessionDefaults.provided(cmd) && !cmd.Flags().Changed("permission-preset") {
 					return invalid("Runtime update requires configuration input")
 				}
 				// Parse complete config before any network request; flags apply after GET.
@@ -170,7 +175,13 @@ func (o *options) runtimeCommands() *cobra.Command {
 				if !cmd.Flags().Changed("mcp-servers-json") {
 					defaults.MCPServers = current.Spec.MCPServers
 				}
-				spec := resource.RuntimeSpec{Type: current.Spec.Type, Config: config, Features: defaults.Features, MCPServers: defaults.MCPServers}
+				spec := current.Spec
+				spec.Config = config
+				spec.Features = defaults.Features
+				spec.MCPServers = defaults.MCPServers
+				if cmd.Flags().Changed("permission-preset") {
+					spec.PermissionPreset = agent.PermissionPreset(permissionPreset)
+				}
 				call = func(ctx context.Context, out any) error { return o.client.UpdateRuntime(ctx, name, spec, out) }
 			case "get":
 				call = func(ctx context.Context, out any) error { return o.client.GetRuntime(ctx, name, out) }

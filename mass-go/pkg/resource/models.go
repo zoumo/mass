@@ -5,6 +5,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zoumo/agent-sdk-go/agent"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -18,10 +20,11 @@ type Metadata struct {
 	ResourceVersion string    `json:"resourceVersion" readOnly:"true"`
 }
 type RuntimeSpec struct {
-	Type       string                   `json:"type"`
-	Config     runtime.Config           `json:"config" nullable:"false"`
-	Features   *runtime.SessionFeatures `json:"features,omitempty"`
-	MCPServers *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
+	Type             string                   `json:"type"`
+	Config           runtime.Config           `json:"config" nullable:"false"`
+	Features         *runtime.SessionFeatures `json:"features,omitempty"`
+	MCPServers       *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
+	PermissionPreset agent.PermissionPreset   `json:"permissionPreset,omitempty"`
 }
 type RuntimeStatus struct {
 	State             string               `json:"state" enum:"stopped,starting,running,stopping,unknown"`

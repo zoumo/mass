@@ -68,7 +68,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 		Cwd:        input.Cwd,
 		Features:   input.Features,
 		MCPServers: input.MCPServers,
-	})
+	}, false)
 	if err != nil {
 		return resource.SessionLoadAccepted{}, err
 	}

@@ -50,7 +50,9 @@ RuntimeType 为开放字符串，RuntimeConfig 为 Record<unknown>，见[共享�
 
 RuntimeRegistry 按类型负责配置校验，本地与远端参数不能任意混用。开放字段不表示所有 Driver 都支持任意配置；具体类型自行决定支持项和透传规则。秘密使用引用，解析失败明确报错，公开结果不携带明文秘密。
 
-除类型专属 `config` 外，Runtime spec 顶层还可以保存 `features` 与 `mcpServers`，作为该 Runtime 下 Session 的默认值。它们不进入 `RuntimeConfig`，不参与 Driver 构造、Runtime 启动或类型配置快照；Service 在 createSession、resumeSession 和 loadSession 时读取当前 Runtime spec，与 Session 显式值合并后交给 Driver。按字段、按 server name 的完整合并语义见 [Runtime Session 默认配置](session-defaults.md)。
+Claude 和 Codex 的 `config.executable` 省略时，构造 Driver 按 Runtime 类型名在 daemon 的 `PATH` 上查找绝对可执行路径。显式路径须为绝对路径。查找失败返回标识所需 CLI 的错误，本次操作未启动 Agent。解析出的绝对路径用于本次运行及现有恢复身份校验。
+
+Runtime spec 的 Session 默认值独立于类型专属 `config` 及其运行快照。Service 按 [Runtime Session 默认配置](session-defaults.md) 解析后传给 Driver。
 
 Driver 内部持久保存和读取恢复材料，不能仅依赖内存。恢复验证原会话、账号及数据归属，不以相同 URL、名称或 ID 格式替代验证；失败不能新建会话代替恢复。closeSession 结束本次 MASS 会话运行绑定但保留后续恢复所需材料，不关闭共享事件流，也不停止 Runtime。
 
@@ -98,7 +100,7 @@ Service 在 start 前取得 events() 并启动接收，Driver 不为各 Session 
 
 ## 恢复并异步回放
 
-显式 loadSession 按 [异步 load](../service/load.md)先恢复同一个原生会话，再沿唯一 Driver 流异步回放全部保留主历史。Service 在接纳时把当前 Runtime Session 默认值与本次显式覆盖合并为 DriverSessionSpec，Driver 用它建立恢复连接。成功保留恢复的执行连接，本地结算后可直接继续输入；普通 resume 仍不回放。历史带 replay 来源，不能由旧状态恢复工作或审批。接纳、恢复、上游穷尽和本地提交/分发完成分开表达；失败/取消还须释放本次恢复资源，未知保留责任。
+显式 loadSession 按 [异步 load](../service/load.md)先恢复同一个原生会话，再沿唯一 Driver 流异步回放全部保留主历史。Service 在接纳时合并当前 Runtime 的 features 和 mcpServers 默认值与本次显式覆盖，并使用历史 load 提供的初始权限配置。Driver 使用解析后的 DriverSessionSpec 建立恢复连接。成功保留恢复的执行连接，本地结算后可直接继续输入；普通 resume 仍不回放。历史带 replay 来源，不能由旧状态恢复工作或审批。接纳、恢复、上游穷尽和本地提交/分发完成分开表达；失败/取消还须释放本次恢复资源，未知保留责任。
 
 主 Session 的初始 `config.model/effort`、瞬态 setter、原运行在途责任及错误以[配置合同](session-config.md)为准。初始值保存在 Session spec，create/resume/load 传给 SDK；setter 不持久，close/resume 重新请求初始值。可变配置不参与恢复身份验证。
 

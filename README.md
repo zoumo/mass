@@ -152,6 +152,11 @@ Start the local daemon.
 bin/massd
 ```
 
+On startup, `massd` registers `claude` and `codex` if their names are missing.
+The new entries default to `fullAccess` for new Sessions. Install and sign in to
+the agent CLIs in the daemon environment. MASS finds them on the daemon's `PATH`
+when you first use each Runtime.
+
 Inspect the available commands in another terminal.
 
 ```sh
@@ -179,7 +184,7 @@ Superagent is experimental.
 | Area | Available today | Current limit |
 |---|---|---|
 | 🛠️ Service | WebSocket JSON-RPC API, CLI, and persistent resources and history | Direct remote access requires TLS and a token file. |
-| 🧩 Agent drivers | Codex and Claude SDK adapters | Each Runtime needs an absolute path to its agent executable. |
+| 🧩 Agent drivers | Codex and Claude SDK adapters | The Agent CLI must be on the daemon's `PATH` or configured by absolute path. |
 | 🧪 Demonstration | Isolated end-to-end runtime scenarios | Uses mock CLIs. Real-agent checks run separately. |
 | 💬 Claude input | Text input, close, and resume | Each input uses one text block. Resume requires an absolute `CLAUDE_CONFIG_DIR`. |
 | 🤝 Permissions & questions | JSON-RPC `session.answer` | Answer through the API. |

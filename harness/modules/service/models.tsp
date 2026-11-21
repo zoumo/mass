@@ -2,6 +2,7 @@ import "./observation.tsp";
 import "../runtime/session-events.tsp";
 import "../../shared/models.tsp";
 import "../runtime/models.tsp";
+import "../runtime/session-config.tsp";
 import "../../shared/history-models.tsp";
 
 namespace MASS.Design;
@@ -67,7 +68,7 @@ union SessionRef {
 }
 
 /** config 是类型专属配置，只保存秘密引用且公开结果不返回解析后的秘密；
- * features 与 mcpServers 是所属 Session 的默认值，不进入 config，
+ * features、mcpServers 与 permissionPreset 是所属 Session 的默认值，不进入 config，
  * Runtime 启动和 Driver 构造也不消费它们。 */
 model RuntimeSpec {
   type: RuntimeType;
@@ -80,6 +81,9 @@ model RuntimeSpec {
    * 新名称按 Session 顺序追加，Session 空列表不删除默认项。合并后非 nil 的列表是完整有效
    * server 集合；Runtime 与 Session 都省略时保留 provider ambient。 */
   mcpServers?: Execution.MCPServer[];
+
+  /** 新建 Session 省略权限预设时使用。Service 将应用的预设保存在 Session 的初始配置中。 */
+  permissionPreset?: PermissionPreset;
 }
 
 model RuntimeCreate {

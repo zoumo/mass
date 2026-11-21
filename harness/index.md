@@ -54,6 +54,7 @@ Service 的详细职责：[Session](modules/service/session.md)、[历史](modul
 
 - [ADR-0001：暂不预设业务消息容量限制](adr/0001-defer-http-capacity-limits.md)。
 - [ADR-0002：允许 MCP HTTP 请求头使用字面值](adr/0002-mcp-http-header-values.md)。
+- [ADR-0003：启动时登记默认 Claude 和 Codex Runtime](adr/0003-register-default-runtimes.md)。
 
 ## 更新记录
 

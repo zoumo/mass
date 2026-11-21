@@ -1,7 +1,7 @@
 ---
 type: Contract
 title: Runtime Session 默认配置
-description: Runtime 保存 features 与 MCP 默认值，Session 在每次打开操作时按字段和名称合并。
+description: Runtime 保存 Session 功能、MCP 和创建时权限默认值。
 status: stable
 sources:
   - id: direction
@@ -11,9 +11,15 @@ sources:
 
 # Runtime Session 默认配置
 
-Runtime spec 顶层的 `features` 与 `mcpServers` 是该 Runtime 下 Session 的默认配置。它们不属于 `RuntimeConfig`，不改变 Runtime 类型专属配置的校验与启动语义。与它们对应的准确结构见 [Runtime 模型](models.tsp)和 [Service 模型](../service/models.tsp)。
+Runtime spec 顶层的 `features`、`mcpServers` 和 `permissionPreset` 是该 Runtime 下 Session 的默认配置。它们不属于 `RuntimeConfig`。准确结构见 [Runtime 模型](models.tsp)和 [Service 模型](../service/models.tsp)。
 
-Session spec 可以携带同名字段作为显式覆盖；历史 load 的输入也在顶层携带这两个字段。Runtime 启动和 Driver 构造不消费默认值。Service 在 createSession、resumeSession 和 loadSession 选择或启动所属 Runtime 后，读取当前持久 Runtime spec，将默认值与 Session 显式值合并，再把完整的 DriverSessionSpec 交给 Driver。合并结果只用于本次原生操作，不写回 Session spec、状态或恢复材料。
+Session spec 与历史 load 输入都可以携带 `features` 和 `mcpServers` 显式覆盖。Service 在 createSession、resumeSession 和 loadSession 选择或启动所属 Runtime 后读取当前持久 Runtime spec，将这两个字段与 Session 显式值合并，再把完整的 DriverSessionSpec 交给 Driver。功能和 MCP 合并结果只用于本次原生操作。
+
+## permissionPreset
+
+创建新 Session 时，包括带初始输入的创建，如果 `config.permissionPreset` 省略或为空字符串，Service 应用当前 Runtime spec 的非空 `permissionPreset`。支持 `manualReview`、`autoReview`、`fullAccess`。Session 的非空预设优先，创建成功后，Session spec 持久保存应用的预设。Runtime 也省略预设时，SDK 使用自身默认权限。
+
+恢复使用 Session 已保存的初始配置。历史 load 使用本次显式配置。修改 Runtime 的预设只影响后续创建，先前省略预设的 Session 也沿用原初始配置。通过 RuntimeService 或 JSON-RPC 更新时，省略预设或传空字符串会清除 Runtime 默认值。`massctl runtime update` 在传入 `--permission-preset` 时更新该字段，空值清除。
 
 ## features
 
@@ -58,12 +64,13 @@ Runtime 的 `config` 仍按运行绑定快照影响 Driver 构造和启动；Ses
 
 ## 验收要求
 
-- Runtime start 和 Driver 构造不读取或应用 `features`、`mcpServers`。
-- Runtime 更新后无需重启，下一次 create/resume/load 使用新默认值；已经打开的 Session 保持原运行。
+- Runtime start 和 Driver 构造不应用 Session 默认值。
+- 创建 Session 时覆盖和持久保存权限预设。更新 Runtime 预设后，恢复仍使用 Session 的初始配置，历史 load 使用自身输入。
+- Runtime 更新 `features` 或 `mcpServers` 后无需重启，下一次 create/resume/load 使用新默认值。已经打开的 Session 保持原运行。
 - feature 字段分别验证继承、同名覆盖、显式关闭及 schema 缺省。
 - MCP 验证同名替换保持位置、新名称按 Session 顺序追加、空 Session 列表不清空默认项，以及重复名称被拒绝。
 - 显式 MCP 列表为空时，Claude strict mode 和 Codex 隔离目录都必须排除 ambient server；Codex 未配置隔离目录时明确失败。
 - 非回环明文 URL、URL userinfo、SSE 的 HTTP-only 认证字段必须被拒绝。
 - 文件引用校验覆盖绝对路径约束、缺失文件与键、合并优先级及恢复时重新读取。
 - 显式 Session MCP 在 Runtime 启动和原生副作用前完成公共结构校验；类型不支持在本次原生副作用前失败。
-- 解析后的默认值不进入 Session spec 或持久恢复材料；改变默认值后仍可恢复原 Session。
+- 解析后的 features 和 MCP server 不进入 Session spec 或持久恢复材料。改变这两项默认值后仍可恢复原 Session。

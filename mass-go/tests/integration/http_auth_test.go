@@ -106,8 +106,7 @@ func (webSocketAuthSuite *WebSocketAuthSuite) TestAuthenticatedDaemon() {
 	c := newHTTPClient(t, ready.URL, "synthetic-http-token")
 	c.SetTLSClientConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})
 	require.NoError(t, c.ListRuntimes(ctx, resource.RuntimeQuery{}, &rows))
-	require.NotNil(t, rows)
-	require.Empty(t, rows)
+	require.Len(t, rows, 2)
 	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, cmd.Wait())
 	waited = true

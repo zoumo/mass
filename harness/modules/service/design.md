@@ -81,7 +81,7 @@ Service 按 sessionId 管理唯一 EventBroadcast，按名称和 ID 定位同一
 
 ## 统一资源结构
 
-Runtime 与 Session 都采用 metadata/spec/status。RuntimeSpec 含 type、类型专属 config，以及顶层 Session 默认值 features、mcpServers；名称仅在 metadata。Runtime namespace 必须为空，name 全局唯一；Session 的名称键是 namespace/name，并具有跨 Runtime 和 namespace 唯一的 sessionId。
+Runtime 与 Session 都采用 metadata/spec/status。RuntimeSpec 包含 type、类型专属 config，以及顶层 Session 默认值 features、mcpServers 和 permissionPreset。Runtime namespace 为空，name 全局唯一。Session 的名称键是 namespace/name，sessionId 跨 Runtime 和 namespace 唯一。
 
 两类资源复用 ObjectMetadata；uid、createdAt、generation、resourceVersion 由系统生成。创建输入仅接受 namespace/name 与 spec；名称创建后不变，uid 区分同名重建。名称采用 DNS subdomain 规则，namespace 采用 DNS label 规则，准确约束见 models.tsp。namespace 不自动代表权限隔离。
 
@@ -93,7 +93,7 @@ RuntimeService 支持在线登记、更新和删除。配置文件的初始导�
 
 updateRuntime 直接接收 RuntimeSpec，完整替换期望 type/config 及 Session 默认值；不接受 metadata、status 或前置版本条件。metadata.name、namespace、uid、createdAt 不通过更新修改。RuntimeRegistry 负责类型专属 config 校验，Service 负责 Session 默认值的公共结构校验；合法更新不因运行状态或会话引用而拒绝。删除仍须检查持久引用、在途创建和实际资源释放。
 
-直接调用 updateRuntime 或 JSON-RPC 时，`features` 与 `mcpServers` 也按完整 spec 替换：省略即清除对应默认值，不能借此修改已打开 Session。CLI 的部分更新便利规则见 [massctl](../massctl/design.md#runtime)；Service 与 JSON-RPC 的全量替换语义不变。
+直接调用 updateRuntime 或 JSON-RPC 时，省略 `features`、`mcpServers` 或 `permissionPreset` 会清除对应默认值。CLI 的部分更新规则见 [massctl](../massctl/design.md#runtime)。
 
 MetaStore 在 create 时初始化 generation 为 1，在 spec 真正变化时原子递增；Service 不计算或传入新 generation。相同 spec 重复提交、状态更新、启停均不递增，准确比较与规范化规则待定义。MetaStore 通过独立的 resourceVersion 进行乐观并发控制，更新使用预期版本，冲突后由 Service 重新读取并决定处理；每次返回本次提交的快照；状态写入不能用旧资源对象覆盖期望配置。
 
@@ -101,7 +101,9 @@ MetaStore 在 create 时初始化 generation 为 1，在 spec 真正变化时原
 
 Service 保存 spec.type 和 spec.config。资源创建与配置更新调用 RuntimeRegistry.validateConfig(type, config) 校验配置；校验失败直接返回错误，校验成功只保存资源，不创建 Driver、不启动 Agent，也不修改当前运行实例。RuntimeType 为开放字符串，RuntimeConfig 为 Record<unknown>；配置字段按具体类型解释，当前不设置全局封闭字段列表，具体约定与校验责任见[运行时配置](../runtime/design.md#配置与恢复)。未知类型和不合法配置明确失败，不能任意透传原生参数。
 
-spec.features 与 spec.mcpServers 不属于 RuntimeConfig，也不传给 Registry 的类型配置校验。Service 在持久写入前校验其公共结构，包括 MCP 列表内名称唯一性和 transport 字段组合；类型专属支持在 Session 打开时由 Driver 校验。完整归属、字段与合并规则见 [Runtime Session 默认配置](../runtime/session-defaults.md)。
+应用入口在状态校正完成后、开放业务接口前，通过 RuntimeService 登记缺失的 `claude` 和 `codex`。两个实例的名称与类型相同，初始 `config` 为空对象，`permissionPreset` 为 `fullAccess`，状态为 `stopped`。按名称独立判断是否登记，同名存在则跳过。登记失败时中止启动，再次启动补齐缺项。登记后的实例使用相同的 Runtime CRUD、引用和释放检查。删除后的名称在下一次服务启动时补齐。决策见 [ADR-0003](../../adr/0003-register-default-runtimes.md)。
+
+Service 在持久写入前校验 Runtime spec 的 Session 默认值。完整归属、字段与解析规则见 [Runtime Session 默认配置](../runtime/session-defaults.md)。
 
 ## 状态与配置生效
 
@@ -111,7 +113,7 @@ spec.features 与 spec.mcpServers 不属于 RuntimeConfig，也不传给 Registr
 4. 应用新配置必须先完成停止，再启动。停止中仍可保存新 spec；清理使用原 Driver、原类型和原配置。
 5. 确认停止后清除当前 appliedGeneration 与能力；结果未知时保留最后确认事实和原操作责任。
 
-Session 默认值的生效独立于 Runtime 运行代际。createSession、resumeSession 和 loadSession 在确定当前运行绑定后，读取最新持久 Runtime spec，把 features 按字段、mcpServers 按名称与 Session 显式值合并，再调用 Driver。该读取不改变运行绑定、类型配置快照、generation 或 Session spec；已经打开且仍有效的 Session 不被热更新。Runtime 更新后无需 restart，下一次 Session 打开操作使用新默认值。
+Session 默认值的生效独立于 Runtime 运行代际。createSession、resumeSession 和 loadSession 在确定当前运行绑定后读取最新 Runtime spec，并合并 features 和 mcpServers。createSession 还会在 Session 省略预设时应用非空的 Runtime permissionPreset，并将该值保存在 Session 初始配置中。已有 Session 无需改写或重启。
 
 并发创建、恢复和显式启动共享同一次启动及其结果，不构造第二个 Driver。启动失败时，本次 Session 操作失败，不继续调用原生 open/resume；未知结果不自动重试。停止栅栏建立后不允许按需启动绕过栅栏或自动重开接纳；与停止并发的 Session 操作须重新确认目标运行可接纳。正常完成停止后，后续新的创建或恢复请求可以按最新配置再次按需启动。
 
@@ -183,7 +185,7 @@ sendPrompt 不隐式 resume，也不启动 Runtime。`unknown` 的输入准入�
 
 ## 服务重启与状态校正
 
-服务启动只打开持久目录、校验数据并校正旧运行状态，不自动启动 Runtime，不自动恢复 Session，也不从历史重放输入、工具或交互。持久资源存在不表示当前进程已经持有有效运行连接；重启前保存的 idle 不能直接作为重启后的可用状态。
+服务启动打开持久目录、校验数据、校正旧运行状态并登记缺失的默认 Runtime。Runtime 和 Session 的运行仍由调用者按需启动或恢复。重启前保存的 idle 不能直接作为重启后的可用状态。
 
 Service 在开放业务接口前，通过 MetaStore 完成状态校正；不由 get/list 的读取副作用触发，也不由 MetaStore 自行推断运行状态。校正只更新 status 及其 resourceVersion，保留 metadata 身份、createdAt、spec、generation、sessionId、历史 eventId 和同步位置。更新失败时不开放带有旧在线状态的业务接口；中断后再次启动可重复校正，不自动进行原生操作。
 
@@ -227,7 +229,7 @@ barrier、排空证明或其他协调手段可作为 Service 的 internal seam�
 
 ## Session spec 与 agentrun 的参考关系
 
-SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDirs、config、features 和 mcpServers 上增加 runtimeRef。路径按 Agent 所在环境解释；额外目录不代表授权。systemPrompt 是配置，创建与恢复不隐式发送业务输入。features 是持久的功能请求，字段省略时继承当前 Runtime 默认值或 schema 默认值；Driver 返回实际生效值，Session.status.effectiveFeatures 记录本次运行的实际值。mcpServers 是本次 Session 的显式覆盖项，打开时与当前 Runtime 默认列表按名称合并。请求开启但 Driver 不支持时降级为 false；其他显式不支持的选项必须报错。Session spec 只保存显式值，不写回合并结果。
+SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDirs、config、features 和 mcpServers 上增加 runtimeRef。路径按 Agent 所在环境解释；额外目录不代表授权。systemPrompt 是配置，创建与恢复不隐式发送业务输入。Session.status.effectiveFeatures 记录 Driver 返回的实际功能值。Session spec 保存显式 features、mcpServers、初始配置和新建时应用的权限预设。功能与 MCP 合并规则见 [Runtime Session 默认配置](../runtime/session-defaults.md)。
 
 字段沿用此前 agentrun 参考讨论，bundleDir 与私有恢复材料由运行时实现管理；不加入无约束 _meta 或 permissions。MCP 使用受约束的 mcpServers 值，不接受任意透传 map。SessionService 当前没有 updateSession 或 deleteSession，close 保留身份和历史。Runtime 的 Session 默认值设置不属于更新 Session spec。
 
@@ -258,11 +260,11 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 - sessionIdleTimeout 默认 10m、0 禁用、负数或无效值启动失败、约 5s 可显式配置。
 - 服务重启不启动 Runtime 或 Session；旧 archived 迁移为 offline，缺少结算证明的旧在线状态为 unknown；冷进程无当前运行映射的 unknown Runtime 可由显式 start/resume 建立新 Driver，unknown Session 随即可恢复；unknown resume 失败仍为 unknown。已有运行绑定或未结算责任时仍拒绝。
 - SessionQuery.state=archived 被拒绝，不返回空页或兼容别名。
-- 启动状态校正完成前不开放业务接口；校正失败明确报错，重复启动不修改身份、spec、generation 或历史，不复活旧工作与交互。
+- 启动校正和默认 Runtime 登记完成后开放业务接口。启动登记补齐缺项，保留同名资源的身份、spec 和 generation。
 - 运行中更新不替换 Driver；停止使用原 Driver 并保留未确定责任。
 - Runtime 更新 features/mcpServers 不需要重启；下一次 create/resume/load 使用新默认值，已打开 Session 不变。
 - Session 显式 feature 按字段覆盖 Runtime 默认值；MCP server 同名替换、新名称追加，空列表不清空默认项。
-- Session spec 与恢复材料只保存显式 Session 选项，不保存本次解析出的 Runtime 默认值。
+- 新建 Session 保存应用的权限预设，恢复使用保存的初始配置。Session spec 与恢复材料省略每次打开时解析出的 features 和 mcpServers。
 - 两种 Session 引用解析到同一记录；跨 Runtime 重复 sessionId 拒绝第二次登记并清理本次资源。
 - 创建成功但持久化失败时不公开 Session，清理仅作用于本次运行。
 - 事件早于目录提交时不误投；旧运行事件不更新新运行状态。

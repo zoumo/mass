@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.3.4
+interface_version: v0.3.5
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论
@@ -12,7 +12,7 @@ sources:
 
 # TypeSpec 合同入口
 
-v0.3.4 增加可选的主 Session 初始权限预设。创建、恢复和加载使用 Session 初始配置。详见[配置合同](../modules/runtime/session-config.md)。
+v0.3.5 在 RuntimeSpec 顶层增加 `permissionPreset`。新建 Session 省略权限预设时，Service 使用当前 Runtime 的值并写入 Session 初始配置。恢复和历史加载沿用各自的初始配置输入。详见[配置合同](../modules/runtime/session-config.md)。
 
 当前接口版本记录在本页元数据。v0.3.3 增加可选 InjectDriver、Service inject 和 session.inject，保留 context-only 接受证据及错误 receipt，不分配 work identity、不扩大历史持久化。同一版本同步统一权限选项的 kind/scope 和可选 toolCallId，保留已录制的历史选项读法。v0.3.2 在 SDK 统一事件与配置合同之后增加 JSON-RPC 消息及方法绑定；v0.3.1 增加主 Session 初始配置与瞬态单项配置操作，沿用既有错误与接受证据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
 

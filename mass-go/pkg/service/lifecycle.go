@@ -233,7 +233,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	if err != nil {
 		return r, err
 	}
-	if run.driver == nil {
+	if run.driver == nil && !errors.Is(run.err, runtime.ErrResourcesReleased) {
 		return r, errors.New("runtime start failed without confirmed cleanup")
 	}
 	if _, err = s.runtimeStatus(name, func(status *resource.RuntimeStatus) { status.State = "stopping" }); err != nil {
@@ -320,7 +320,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 			return r, err
 		}
 	}
-	if !run.driverStopped {
+	if run.driver != nil && !run.driverStopped {
 		if err := run.driver.Stop(ctx); err != nil {
 			return r, &runtime.OperationError{
 				Code:    "outcome_unknown",
@@ -447,7 +447,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("start original runtime before resume")
 	}
 	span.SetAttributes(providerAttribute(run.provider))
-	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec)
+	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec, false)
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}

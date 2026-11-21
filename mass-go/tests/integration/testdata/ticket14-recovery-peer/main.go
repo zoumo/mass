@@ -185,7 +185,15 @@ func main() {
 			if method == "thread/resume" && p["threadId"] != sessionID {
 				panic("replacement thread")
 			}
-			reply(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
+			result := map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}}
+			if p["sandbox"] == "danger-full-access" {
+				result["approvalPolicy"] = "never"
+				result["approvalsReviewer"] = "user"
+				result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
+			} else if p["approvalsReviewer"] == "user" {
+				result["approvalsReviewer"] = "user"
+			}
+			reply(result)
 			notify("thread/status/changed", map[string]any{"threadId": sessionID, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			reply(map[string]any{"thread": thread()})

@@ -222,13 +222,16 @@ and defaults to `64`. Both must be positive, and an invalid value fails argument
 validation before any request is sent.
 Neither timeout nor Ctrl-C cancels Agent work; requests are never retried.
 
-For Codex, explicitly create and start a Runtime, then create a Session without
-sending input (the working directory is interpreted on the Agent host):
+On startup, `massd` creates any missing `claude` and `codex` Runtimes. Existing
+entries with those names keep their configuration. New entries default to
+`fullAccess` for new Sessions. Use `runtime update` and `runtime delete` as with
+any Runtime. A deleted default entry returns on the next daemon startup.
+
+Install and sign in to the Codex CLI in the daemon environment, then create a
+Session in an absolute working directory on the Agent host.
 
 ```sh
-bin/massctl runtime create codex-local --type codex --executable /absolute/path/to/codex
-bin/massctl runtime start codex-local
-bin/massctl session create review -n demo --runtime codex-local --cwd /absolute/owned/workspace
+bin/massctl session create review -n demo --runtime codex --cwd /absolute/owned/workspace
 # Keep this running in one terminal; wait for subscription.ready on stderr.
 bin/massctl -o json session watch review -n demo
 # In another terminal:
@@ -236,20 +239,16 @@ bin/massctl session prompt review -n demo --text 'Describe this workspace'
 bin/massctl session history review -n demo --limit 100
 bin/massctl session close review -n demo
 bin/massctl session resume review -n demo
-bin/massctl runtime stop codex-local
+bin/massctl runtime stop codex
 ```
 
-For Claude, use the installed Claude executable with the same resource commands:
+For Claude, create a Session on `claude`. To configure a separate Runtime, use
+the same resource commands with a different name.
 
 ```sh
-bin/massctl runtime create claude-local --type claude --executable /absolute/path/to/claude
-bin/massctl runtime start claude-local
-bin/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace
-bin/massctl session prompt review -n demo --text 'Describe this workspace'
-# Unlinked completion stays unknown; do not automatically retry/resume to
-# bypass that fence. Explicit close/resume retains the original identity.
-bin/massctl session close review -n demo
-bin/massctl session resume review -n demo --text 'continue after close'
+bin/massctl session create claude-review -n demo --runtime claude --cwd /absolute/owned/workspace
+bin/massctl session prompt claude-review -n demo --text 'Describe this workspace'
+bin/massctl session close claude-review -n demo
 ```
 
 Both drivers currently accept text input; Claude requires exactly one text block.
@@ -433,7 +432,7 @@ prove only a complete local write, not native acceptance or recording.
 
 | Field | Behavior |
 | --- | --- |
-| `executable` | Required absolute executable path; never discovered from personal configuration. |
+| `executable` | Optional absolute executable path. If omitted, the Driver uses the `codex` or `claude` executable on the daemon's `PATH`. |
 | `args` | Codex process arguments, default `["app-server"]`; explicit `[]` means no arguments. Claude rejects nonempty arguments; use an explicit launcher if needed. |
 | `envPolicy` | `inherit` (default) merges parent environment with `env`; `replace` passes only configured entries, including an explicitly empty environment. |
 | `env` | String-to-string overrides; callers supply any required PATH/HOME/config-directory settings explicitly when replacing. |
@@ -445,16 +444,20 @@ Runtime `spec` separately accepts Session defaults:
 | --- | --- |
 | `features` | Session feature defaults; currently accepts `agentQuestions`. |
 | `mcpServers` | Session MCP defaults. Each item requires `name` and `type` plus the transport fields. The runtime SDK supports `stdio` and `http`; `sse` is rejected. |
+| `permissionPreset` | Default permission for new Sessions. A nonempty Session preset wins, and each Session saves its applied preset for resume. |
 
 `features` merges by field and `mcpServers` merges by server name: a Session
 value overrides the Runtime value with the same name, and a Session-only name is
 added. An empty Session `mcpServers` list adds no overrides, so it does not
 clear Runtime defaults. Each Session operation reads the current Runtime spec
-before calling the Driver, so `runtime update` affects the next create, resume
-or history load without restarting the Runtime. An already open Session is
-unchanged.
+before calling the Driver, so changes to features and MCP apply to the next
+create, resume or history load. A change to `permissionPreset` applies to
+subsequent creation only.
 `--features-json` and `--mcp-servers-json` set these fields from `massctl`;
 `null` clears Runtime defaults. A Session omission or `null` inherits them.
+Use `massctl runtime update NAME --permission-preset VALUE` to set
+`manualReview`, `autoReview` or `fullAccess`. Use `--permission-preset ''` to
+clear the Runtime preset.
 
 For example, a Runtime may be created with:
 

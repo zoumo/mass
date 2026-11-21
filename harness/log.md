@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-22
+
+- **v0.3.5** 在开放业务接口前登记缺失的 `claude` 和 `codex` Runtime。新登记实例采用普通 Runtime 管理规则，并为新建 Session 提供 `fullAccess` 默认值。Session 保存创建时选定的预设供后续恢复。见 [ADR-0003](adr/0003-register-default-runtimes.md)。
+
 ## 2026-11-20
 
 - **v0.3.4** 增加主 Session 初始 `permissionPreset`。创建、恢复和加载时将 Session 初始配置传给 SDK。省略时使用 SDK 的 `autoReview`。
