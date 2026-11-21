@@ -8,18 +8,22 @@ This document describes the current Core implementation.
 `dataDir`, opens `core.sqlite` and starts HTTP. The default directory is
 `./superagent-core-data` relative to the YAML file. Startup prints one JSON
 object with `endpoint`, `observerEndpoint`, and `status: ready`.
-Schema 22 uses SQLite WAL, FULL synchronous durability and foreign keys.
+Schema 24 uses SQLite WAL, FULL synchronous durability and foreign keys.
 
-The database has nine business tables. `threads` and `trigger_messages`
-record ingress and Thread subscriptions. `topics`, `issues`, `executions`,
+The database has eight business tables. `threads` and `trigger_messages`
+record ingress and Thread subscriptions. `topics`, `issues`,
 `session_bindings` and `scheduled_tasks` record work, ownership and timing.
 `internal_events` records delivery to Sessions. `outbox` records
 external replies. Reports and PR associations are embedded and exposed
-through read views. `capabilities/` contains private role startup files.
+through read views. Core also stores MCP mutation receipts and tool usage.
+When tracing is enabled, Core stores trace associations. `capabilities/`
+contains private role startup files.
 
 Choose a new empty `dataDir` when upgrading from earlier SQLite schemas or
 JSON v4 state. Startup rejects those directories and preserves their contents.
 Keep the old directory for access through its original version.
+If both directories use the same massd, configure a distinct
+`execution.namespace` for the new directory.
 
 SIGTERM/SIGINT stop admission and wait up to ten seconds for active HTTP
 requests. Accepted records survive normal or forced exit. After a lost
@@ -133,7 +137,6 @@ No write credential is needed or sent by these trusted-reader endpoints:
 - GET/HEAD `/v1/observer/topic-activity?topicId={id}&filter=all|message|issue`
 - GET/HEAD `/v1/observer/topic-activity?mode=conversation`
 - GET/HEAD `/v1/observer/issues[/{id}]`
-- GET/HEAD `/v1/observer/executions[/{id}]`
 - GET/HEAD `/v1/observer/reports[/{id}]`
 - GET/HEAD `/v1/observer/timers[/{id}]`
 - GET/HEAD `/v1/observer/pull-requests[/{id}]`
@@ -142,16 +145,20 @@ No write credential is needed or sent by these trusted-reader endpoints:
 - GET/HEAD `/v1/observer/routing-events[/{event_id}]`
 - GET/HEAD `/v1/observer/subscriptions[/{id}]`
 - GET/HEAD `/v1/observer/relations[/{id}]`
-- GET/HEAD `/v1/observer/bindings[/{id}]`
+- GET/HEAD `/v1/observer/session-bindings[/{id}]`
 - GET/HEAD `/v1/observer/internal-events[/{event_id}]`
-- GET/HEAD `/v1/observer/session-preview/{bindingId}/history`
-- GET/HEAD `/v1/observer/session-preview/{bindingId}/live`
+- GET/HEAD `/v1/observer/session-preview/{sessionBindingId}/history`
+- GET/HEAD `/v1/observer/session-preview/{sessionBindingId}/live`
 - GET/HEAD `/observer/` and its static assets
+
+Use `superagent observe session-bindings --issue-id ISSUE_ID` to list an
+Issue's SessionBindings, or `superagent observe session-bindings ID` to read one.
 
 The MCP usage summary returns `count` and rows grouped by authenticated
 `role`, `callerId`, `tool`, `action` and `outcome`. Rows include `count`,
 `replayed`, `changed`, and total `durationNs`. Filter MCP usage by `role`,
-`callerId`, `tool`, `topicId`, `issueId`, `messageId`, `from` or `until`.
+`callerId`, `sessionBindingId`, `tool`, `topicId`, `issueId`, `messageId`, `from`
+or `until`. Filter by `sessionBindingId` to read calls made with one binding.
 `from` is inclusive and `until` is exclusive. Both accept RFC3339 timestamps.
 `messageId` includes calls with a matching routing event or Message admission
 trace. One call can be associated with more than one Message.
@@ -197,10 +204,10 @@ or `report`.
 Ingress rows identify the saved Message and event and include the source
 `threadKey` when present. Issue creation appears on the timeline while activity
 ordering uses conversation messages. Issue Session dispatch rows identify the saved
-event, its Issue and the recipient Execution and generation. Their
+event, its Issue and the recipient `sessionBindingId`. Their
 `dispatchKind` identifies startup, continuation, goal notification or context
 supplement. Read the internal event for its full content and references.
-Report rows identify the saved Report, Issue, Execution and notification
+Report rows identify the saved Report, Issue, SessionBinding and notification
 event. Read the Report for its complete body and the Issue for recorded
 acceptance. A notification retry keeps the same Report row.
 An exact `eventId` within a Topic returns a single row in the standard page
@@ -216,17 +223,17 @@ Router is `not_started` when execution is
 omitted, or its persisted `pending/ready/blocked` preparation state. Messages
 include current `routing: {round,state}`. Observer/Router projections also include
 source reception/return relations. Topic-role Message queries omit other Topics'
-relations. Thread details expose key, ref and timestamps. Bindings expose fixed
+relations. Thread details expose key, ref and timestamps. SessionBindings expose fixed
 role, owner, generation, workspace, namespace/name, `runtimeRef`, `model`,
 optional `effort`, actual Session IDs,
-preparation state/error and next attempt time, never token or MCP capability files.
+preparation state and any error, and the next attempt time. Credentials and MCP capability files stay private.
 Internal event details expose sender, recipient, content references, status
 and the Session acceptance timestamp.
 
 Lists return `{"items":[...],"nextCursor":"opaque"}`. Default limit 50,
 valid range 1–200. Messages and subscriptions accept an exact `threadKey`.
 Issues, Timers, PR associations, routing events, routing relations and subscriptions accept `topicId`. Routing events also accept `messageId`. An event includes its sender, recipient, content references, status and return link.
-Executions, Reports and PR associations accept `issueId`. Internal events accept the same filter for explicit Issue references. Their preview marks recorded goal-update notifications with `goalUpdate` and includes the target revision. Supply one parent
+SessionBindings, Reports and PR associations accept `issueId`. Internal events accept the same filter for explicit Issue references. Their preview marks recorded goal-update notifications with `goalUpdate` and includes the target revision. Supply one parent
 filter at a time. The Observer also supports `topicId` on Outbox to find replies to messages in the
 Topic's routing history. Outbox and routing relations accept `messageId`. Observer Issues accept
 `messageId` to select Issues with an explicit matching material across all Topics. Message-filtered
@@ -266,7 +273,7 @@ Metadata are rejected. No query parameter grants write authority. No CORS
 credentials or browser-side write token is configured. Cache-Control is no-store.
 Reads preserve Core business state.
 
-Session preview resolves a recorded Core binding, then verifies the Session
+Session preview resolves a recorded SessionBinding, then verifies the Session
 identity through massd. The history endpoint reads up to 50 durable events and
 accepts the previous page's `nextCursor` as `cursor`. It also returns
 `observedAt` and massd's `syncedEventId`. The live endpoint streams
@@ -276,7 +283,7 @@ history again. On reconnect the client reads history and its cursor again.
 Activity between live connections can be missing. Stored history belongs to
 the Session, which can span several binding generations. The projection omits
 raw tool values, Runtime configuration and event metadata. Text previews
-longer than 16 KiB carry a truncation flag. HEAD reads the binding and returns
+longer than 16 KiB carry a truncation flag. HEAD reads the SessionBinding and returns
 headers without opening a massd connection.
 
 
@@ -332,7 +339,7 @@ Namespace is a DNS label of at most 24 bytes. The Router is unique per Core
 store, in `<namespace>-router/router-g1`. Each Topic has a stable namespace derived from its ID and Session `topic-g1`.
 Configure distinct execution namespaces for Core stores that share one massd.
 An Issue Session uses its Topic namespace and a fixed
-`issue-<executionId with underscores changed to hyphens>-g<generation>` name.
+`issue-<issueId>-g<generation>` name.
 Each binding stores the selected Runtime, model and any effort, along with the
 workspace and other Session preparation parameters. Core sends `runtimeRef`
 and `config: {model, effort?}` in the MASS Session spec. The template list
@@ -353,9 +360,8 @@ Offline matching Sessions use public resume without new input.
 
 Preparation failure retains the original binding, fixed name and visible pending
 operation, retried after two seconds in this slice. On restart, ready bindings
-are reconciled before dispatch resumes. New Topic Sessions have the issue and
-acceptance instructions in their fixed prompt. Earlier Topics retain their
-persisted Session spec and can discover the new tools through MCP.
+are reconciled before dispatch resumes. Topic Sessions receive Issue and
+acceptance instructions in their fixed prompt.
 MCP capability files are private, atomically replaced and read once per MCP
 process. Authentication is checked by Core on every role call. Runtime/model/
 effort are never options in a route decision.
@@ -366,7 +372,7 @@ Core exposes one Streamable HTTP endpoint at `/mcp`. Router, Topic and Issue bin
 send JSON-RPC 2.0 messages via `POST /mcp` with `Authorization: Bearer TOKEN`.
 Core authenticates each request against its binding. `tools/list` advertises
 that binding's tools and `tools/call` enforces its permissions. A revoked
-Issue binding can discover and call `submit_report` for its historical Execution.
+Issue SessionBinding can discover and call `submit_report` for historical work.
 A revoked Router or Topic cannot discover or call its former tools.
 Channel tokens cannot authenticate as role bindings.
 
@@ -386,7 +392,7 @@ and include the Core error under `result.structuredContent.error`. JSON-RPC
 errors cover malformed requests and capability violations. Unauthenticated
 requests return HTTP 401.
 
-`initialize` returns binding metadata under `_meta["mass.dev/binding"]` with
+`initialize` returns binding metadata under `_meta["mass.dev/session-binding"]` with
 `id`, `role`, `ownerId`, `generation` and the applicable `topicId` and `issueId`.
 Topic and Issue Agents use `get_topic` and `get_issue` for scoped business state.
 External Message text, metadata, tool arguments and native-subagent suggestions
@@ -469,7 +475,7 @@ relations. Observer exposes the saved routing event records.
 Subscription selection includes completed/canceled Topics. Receiving, preparing
 or waking a Topic preserves its business status. Use `update_topic` with the `complete` transition to record acceptance. Routing keeps Issue ownership within its original Topic.
 
-## Issue, Execution, Report and acceptance
+## Issue, SessionBinding, Report and acceptance
 
 Core assigns IDs with decimal counters starting at 1.
 
@@ -478,16 +484,15 @@ Core assigns IDs with decimal counters starting at 1.
 | Message | `mass-m42` | `trigger_messages.seq` within the Core database |
 | Topic | `mass-t42` | Topic sequence within the Core database |
 | Issue | `mass-t42-i3` | Issue sequence within the Topic |
-| Execution | `mass-t42-i3-e2` | Execution generation within the Issue |
-| Report | `mass-t42-i3-r5` | Report submission sequence within the Issue, across Executions |
+| Report | `mass-t42-i3-r5` | Report submission sequence within the Issue |
 | Timer | `mass-t42-tm3` | Timer sequence within the Topic, across Topic generations |
 | Blocker | `mass-t42-i3-b2` | Blocker sequence within the Issue, including resolved blockers |
 
 These IDs stay fixed after creation, including when an Issue or Topic is
-reopened. Report IDs are separate from their Topic notification IDs.
+reopened. Each SessionBinding gets an opaque ID. Reports use their own IDs
+and reference their Topic notification with `eventId`.
 
-All changes require an `operationId` scoped to the authenticated binding and
-tool. Report submissions scope their `operationId` to their Execution.
+All changes require an `operationId` scoped to the authenticated SessionBinding and tool.
 Role MCP calls use the same Core transactions over either transport. Replaying an
 identical creation request returns the saved ID. Reusing its operation ID
 with different parameters returns `conflict`.
@@ -504,16 +509,16 @@ A new Topic can supply `create.goal` in `route_messages`. Router reads it in
 | --- | --- | --- |
 | `get_topic` | Optional `include` with `executionTemplates`, `followups`, or `pullRequests` | The bound Topic and requested expansions. |
 | `update_topic` | `operationId,expectedRevision`, optional `title,description,goal,pullRequests,transition,triggerEventId` | The Topic after one transactional update. |
-| `create_issue` | `operationId,title,goal,runtimeRef,model`, optional `workspace,materials,start,triggerEventId` | `{issue, execution?}`. The Issue belongs to the authenticated Topic. |
-| `get_issue` | `issueId`, optional `include` with `executions`, `reports`, or `pullRequests` | The scoped Issue and requested expansions. |
+| `create_issue` | `operationId,title,goal,runtimeRef,model`, optional `workspace,materials,start,triggerEventId` | `{issue, sessionBinding?}`. The Issue belongs to the authenticated Topic. |
+| `get_issue` | `issueId`, optional `include` with `reports` or `pullRequests` | The scoped Issue and requested expansions. |
 | `list_issues` | Optional `status,cursor,limit` | Issues in the bound Topic. |
-| `start_issue` | `operationId,issueId,expectedRevision`, optional `resolve`, `runtimeRef,model` as a pair, and `triggerEventId` | `{issue, execution}`. Resolves supplied blockers and starts the Execution in one transaction. |
-| `update_issue` | `operationId,issueId,expectedRevision`, optional `title,goal,materials,blockers,executionInput,pullRequests,transition,triggerEventId` | `{issue, execution?, notificationEventId?}`. Applies the update in one transaction. |
+| `start_issue` | `operationId,issueId,expectedRevision`, optional `resolve`, `runtimeRef,model` as a pair, and `triggerEventId` | `{issue, sessionBinding}`. Resolves supplied blockers and starts the Issue Session in one transaction. |
+| `update_issue` | `operationId,issueId,expectedRevision`, optional `title,goal,materials,blockers,sessionInput,pullRequests,transition,triggerEventId` | `{issue, sessionBinding?, notificationEventId?}`. Applies the update in one transaction. |
 | `get_report` | `reportId` | The scoped Report and its evidence. |
 
 Use `materials: {add:[...]}` to append materials and `pullRequests: {add:[...]}`
 to add absolute PR URLs. Use `blockers: {add?,resolve?,unblockedStatus?}` to
-edit blockers and `executionInput: {mode,content?}` to send Execution input.
+edit blockers and `sessionInput: {mode,content?}` to send input to the current Issue Session.
 Use `transition: {action,reason,evidence?}` in `update_topic` or `update_issue`.
 Actions are `complete`, `cancel`, and `reopen`. Completion requires an evidence
 list. Topic completion also requires every Issue to be terminal. Issue reopen
@@ -528,20 +533,18 @@ returns `conflict` with `resource` and `currentRevision`.
 
 For each explicit selection, Core validates the complete Runtime and model
 pair against the current list and takes effort from that entry. An incomplete
-or unlisted pair returns `invalid_argument`. An `start_issue` with neither
+or unlisted pair returns `invalid_argument`. A `start_issue` with neither
 field uses the saved Issue profile, even if the template changed or was
 removed. Issue reads include `executionProfile: {runtimeRef, model, effort?}`,
 including through the Issue Session's `get_issue`. An identical create retry
-returns the original Issue identity and, for `start: true`, its first Execution.
+returns the original Issue identity and, for `start: true`, its initial SessionBinding.
 
 `start: true` uses the same scheduling transaction as `start_issue`. Core
-saves the Issue's profile, the new Execution, its Session binding, and a
-`issue_session_started` internal event together. Another start with a current
-Execution returns `conflict`. The Execution records the goal revision at
-startup. Its details project the Session binding as `preparation`, so
-historical Executions retain their own Runtime, model and effort after
-another start changes the Issue's profile. Execution details also project
-the `startup` event state.
+saves the Issue's profile and `currentSessionBindingId`, creates the
+SessionBinding and registers an `issue_session_started` event in one
+transaction. Another start with a current SessionBinding returns `conflict`.
+Each SessionBinding retains its starting goal revision, Runtime, model and
+effort. Its Observer detail includes the `startup` event state.
 
 Completion requires a reason and at least one evidence reference, such as a
 Report ID or artifact path. Core stores the acceptance author and timestamp.
@@ -560,18 +563,16 @@ Each `resolve` entry is `{blockerId,reason,messageId?}`. Core validates the
 current Issue and open blocker IDs and retains the basis in `resolvedBlockers`.
 An associated Message can serve as the basis and becomes Issue material.
 Any remaining blocker keeps the Issue blocked. On the final resolution, the
-Topic chooses `pending` or `active`. Pending retires any current Execution
-so the Topic can arrange a later start. Active requires a current Execution.
-Operator replacement retires a blocked Execution after resource release.
-The Topic can arrange a fresh Execution once its blockers are resolved.
-For an active Execution, call `update_issue` with `executionInput` in the same
-operation or in a later update.
+Topic chooses `pending` or `active`. Pending retires the current SessionBinding
+so the Topic can arrange a later start. Active requires a current SessionBinding.
+To continue the active Issue in the same Session, call `update_issue` with
+`sessionInput` in the same operation or in a later update.
 
 Use `mode: "context_supplement"` with structured `content` or a material to send background
 to the current Issue Session via Inject. Use `mode: "continue"` on an active Issue
 with all blockers resolved to send `issue_session_update` via StartOrSteer.
-Include `executionInput.mode: "continue"` in a goal or blocker edit to send a
-work update. Core rechecks the target Execution, goal revision and blockers
+Include `sessionInput.mode: "continue"` in a goal or blocker edit to send a
+work update. Core rechecks the target SessionBinding, goal revision and blockers
 before admitting that update. The receipt field `notificationEventId` holds
 the stable internal event ID.
 
@@ -581,29 +582,32 @@ The Topic reads current dependencies and decides whether and how to proceed.
 
 Issue detail includes the most recent explicit goal notification in
 `latestRequirementsNotification`, with event status and goal version.
-A current Execution also has a read-only MASS `issueSession` observation,
+An Issue with a current SessionBinding also has a read-only MASS `issueSession` observation,
 including observation time or an unknown-state reason.
 
 ### Issue Session tools
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `get_issue` | `{}` | Bound Issue and current Execution. |
+| `get_issue` | `{}` | Bound Issue with its current goal, materials, blockers and business state. |
 | `get_message` | `messageId` | Message listed in the Issue materials. |
 | `update_issue` | `operationId,expectedRevision`, optional `title,materials,pullRequests,triggerEventId` | The bound Issue after applying edits. |
 | `submit_report` | `operationId,kind,summary,goalRevision`, optional `details,evidence,questions,triggerEventId` | Appended Report with its Topic notification ID. |
 | `get_internal_event` | `event_id` | Complete Agent view of the event addressed to this binding. |
 
 Report kinds are `progress`, `ready`, `blocked` and `failed`. The Issue Session
-supplies the goal revision it used. Core derives ownership and the generation
-from the authenticated Session binding.
+supplies the goal revision it used. Core records the authenticated
+`sessionBindingId` as the source.
 
 The Report is appended to `issue.reports` in the same transaction as its
 Topic notification. Current Reports register `report_submitted` with a
-reference to the Issue and Report. A late Report uses the retired Execution's
-identity and revision bounds, is marked `historical` and sends
-`context_supplement` to the Topic. Scoped Report queries and Observer history
-still read by Report ID. Topic owns acceptance, regardless of Report kind.
+reference to the Issue and Report. A Report is current when its binding and
+goal revision match the current Issue and it was submitted before the binding
+retired. A Report from a retired binding uses its saved goal revision bounds
+and is marked `historical`. Both historical Reports and Reports for a prior
+goal revision send `context_supplement`. Topic `get_report`, the Agent report
+view and the Observer Reports collection compute `current` at read time.
+Topic owns acceptance.
 
 ### Issue Session observation and report reminder
 
@@ -622,15 +626,16 @@ during live observation changes the state to `unknown`. Core restart marks
 unfinished observation as `core_observation_interrupted`. A newly accepted
 input can establish fresh observation.
 
-When the current Execution has no Report, the observed `idle` and one
-`report_reminder` commit together. It targets the same Execution and
+When the current goal has no Report from the current SessionBinding, the
+observed `idle` and one `report_reminder` commit together. It targets the same
+SessionBinding and
 asks for a Report about existing work. The Issue Session can use the event ID
 as its Report operation ID. The marker stays set after delivery, supersession
-or replay. A Report for the current Execution supersedes an unconfirmed
-reminder in the same transaction. Core rechecks that Execution and its
-Reports before dispatch. A retry preserves the event ID.
+or replay. A current Report supersedes an unconfirmed reminder in the same
+transaction. Core rechecks the SessionBinding and current Report eligibility
+before dispatch. A retry preserves the event ID.
 
-Execution reads project `workObservation` with the binding and Session
+SessionBinding detail projects `workObservation` with the binding and Session
 identities, attempt ID, optional diagnostic work reference, continuity, and
 the observed idle under `end` or the observation gap. They also project `reminderScheduled`,
 `reminderEligibility` and `reminder` with its event status when scheduled.
@@ -639,8 +644,8 @@ Observer links to the event and separately shows Issue, Topic and stop status.
 ### Retirement and stop observation
 
 Issue completion and cancellation supersede pending Issue Session input and revoke
-the Execution's authority in the business transaction. Cancellation also
-persists a stop request for the retired Execution. Completion requests a
+the current SessionBinding in the business transaction. Cancellation also
+persists a stop request on the retired binding. Completion requests a
 stop when it finds admitted input. A late acceptance leaves an internal
 delivery that was already superseded in that state. Topic cancellation performs these changes for each
 unfinished Issue, retires the Topic binding and requests a stop for it. Existing
@@ -648,7 +653,7 @@ acceptance evidence, reports, workspaces and Session history remain accessible.
 Cancellation does not undo external effects.
 
 Core serializes stop with the binding's current dispatch, verifies the original
-MASS Session identity and uses public `session.cancel`. Execution details
+MASS Session identity and uses public `session.cancel`. SessionBinding details
 show `stop.status` (`requested`, `dispatching`, `observed`, `blocked` or
 `unknown`), request and observation times, receipt/error, Session observation
 and any gap. Stop control is scheduled ahead of the binding's next input and
@@ -656,14 +661,13 @@ does not wait for the input aggregation window. An interrupted in-flight stop
 remains unknown across restart. The stop observer records Session state
 separately from the Issue Session's input observation. Cancel acknowledgment,
 no-active-work, idle and EOF leave `stop.workState` unknown. A verified resource release
-appears as `close` on the old binding and in Execution preparation. Its method,
+appears as `close` on the retired SessionBinding. Its method,
 time and massd resource version are available separately from the turn outcome.
 
 Reopening preserves historical acceptance and blocker records. An Issue moves
 to pending or stays blocked by open blockers. A later explicit start creates
-the next Execution. A start requires
-proof that prior preparation never began or that the original native owner
-was released. It assigns a fresh Execution ID, generation and credential.
+a fresh SessionBinding and credential after Core verifies that prior
+preparation never began or that the original native owner was released.
 When the previous Session was verified reusable, Core can reuse it only with
 the same workspace, Runtime, model, effort and namespace.
 A canceled Topic still accepts new Messages through its subscriptions.
@@ -700,9 +704,8 @@ Pass its `event_id` to `decline_message` when the Message belongs elsewhere.
 {"events":[{"event_id":"evt_topic","kind":"routed_message","refs":[{"kind":"trigger_message","id":"mass-m1"}],"content":{"type":"markdown","data":{"text":"Verify the report."}}}]}
 ```
 
-On `report_submitted`, use the supplied `report` and `issue` to compare
-`executionId` with `currentExecutionId` and check both goal revisions.
-Verify the evidence before accepting the Issue. When either view is missing,
+On `report_submitted`, check `report.current` and the Issue goal revision.
+Verify the evidence against the current goal before accepting the Issue. When either view is missing,
 read the relevant record with `get_report` or `get_issue`. For an Issue mutation, supply the
 Issue's `revision` as `expectedRevision`; read current state on a conflict.
 
@@ -721,7 +724,7 @@ referenced Messages that need readback. Workspace is the Session's `Cwd`.
 | `route_request` | `refs` with `trigger_message`; eligible initial requests also carry `content`, `threadKey`, and `routing`. A return carries the original `internal_event` reference. |
 | `routed_message` | One `trigger_message` in `refs`, Markdown `content` when eligible, and `quotedReply` and `issue` for an eligible matched reply. |
 | `report_submitted` | `refs` with `report`; eligible notifications include `report` and `issue`. |
-| Historical Report `context_supplement` | `refs` with `report`. |
+| Prior goal or historical Report `context_supplement` | `refs` with `report`. |
 | `issue_session_started` and `issue_session_update` | Eligible `issue` and short material `messages`. An update can include `content` and `body.materials`. |
 | Issue Session `context_supplement` | Provided `content`, `body.materials`, and eligible short material `messages`. |
 | `report_reminder`, `binding_recovered` | `event_id` and `kind`. |
@@ -735,12 +738,9 @@ Structured `content` uses the Outbox schemas, including Markdown prompts for
 its complete Agent view. Its stored record and Observer detail retain the
 original fields.
 
-New sessions use Agent prompt version 2. New Topic instructions include
-configured Issue template choices. `get_topic` with `include: ["executionTemplates"]` returns the
-current choices when a Topic needs a refresh. Bindings with version 1 keep
-their original Agent view and instructions. Bindings with no prompt version
-keep their saved instructions, `schemaVersion: 4` wire format, and readback
-fields. Session reuse requires matching instructions and wire format.
+Topic instructions include the configured Issue template choices. Use
+`get_topic` with `include: ["executionTemplates"]` to read the current choices.
+Session reuse requires matching saved Session instructions.
 
 When a supported mutation responds to an event, pass its `event_id` as
 `triggerEventId` so the operation continues the event's trace.
@@ -756,14 +756,14 @@ and timestamp separately from work completion.
 
 Set `execution.operatorTokenFile` to a distinct private credential with at
 least 32 non-whitespace bytes and bind Core to loopback. Inspection uses
-`GET /v1/operator/bindings/{bindingId}` to read the saved binding, its stop
+`GET /v1/operator/session-bindings/{sessionBindingId}` to read the saved binding, its stop
 evidence and a live identity-checked massd snapshot. Recovery uses
 `POST /v1/operator/input-recovery`. Both require the local operator credential.
 
 ```sh
-superagent inspect-binding BINDING_ID --endpoint http://127.0.0.1:24370 \
+superagent inspect-session-binding SESSION_BINDING_ID --endpoint http://127.0.0.1:24370 \
   --operator-token-file /private/operator.token
-superagent recover-input BINDING_ID --endpoint http://127.0.0.1:24370 \
+superagent recover-input SESSION_BINDING_ID --endpoint http://127.0.0.1:24370 \
   --operator-token-file /private/operator.token --operation-id incident-123 \
   --mode retry --reconciliation 'Compared original native trace and affected work' \
   --accept-possible-duplicate
@@ -782,7 +782,7 @@ record retains the operator note and observed resource versions. Seeing
 idle alone is insufficient.
 
 `settle` releases a retired Issue Session or Topic binding. For an Issue Session, the next
-explicit start creates the new Execution. For a Topic, settlement prepares its
+explicit start creates the next SessionBinding. For a Topic, settlement prepares its
 next owner so queued source Messages can reach it. Core prefers reusing an
 identity-checked local Claude Session on macOS/Linux after its online native
 process has closed and massd verifies the same resource offline. A new MCP
@@ -793,15 +793,15 @@ the original Session.
 During normal Issue Session dispatch, Core resumes the same Session and retries
 pending input. Sent events stay settled. If massd records
 `session_recovery_missing` after verifying release of the original control
-and settling the failed resume, Core retires that Issue Session and starts a fresh
-Execution and Session when the Issue can continue. The new Issue Session receives
+and settling the failed resume, Core retires that SessionBinding and starts a fresh Issue Session when the
+Issue can continue. The new Issue Session receives
 `issue_session_started` in the same workspace. It uses the Issue and materials in the
 event when available and calls `get_issue` if it needs current Issue
-facts or Report history. An opening or unreachable Session stays pending while
+facts. An opening or unreachable Session stays pending while
 Core reconciles the original identity.
 
 `replace` requests a fresh Session after verified release. A current Issue Session
-replacement retires the old Execution and explicitly schedules its successor.
+replacement retires the old SessionBinding and schedules a fresh Issue Session.
 A retired Issue Session replacement records the release policy for its next explicit
 start. Router and Topic replacement retain valid unsubmitted facts with their
 stable IDs, apply current event eligibility and enqueue a recovery notification.
@@ -880,7 +880,7 @@ to an Issue, in that Issue's `pullRequests`. Both writes, the Thread, the Topic
 subscription share a transaction. A link returns
 `id`, `canonicalUrl`, `threadKey`, `topicId`, `subscriptionId` and
 `createdAt`. Issue links also carry `issueId` and the initiating
-`executionId` if an Issue Session registered that link. Registration reuses the link for the same canonical URL and Topic or Issue,
+`sessionBindingId` if an Issue Session registered that link. Registration reuses the link for the same canonical URL and Topic or Issue,
 including across Issue Session generations. Multiple Issues can share one parent Topic–Thread
 subscription. Each further Topic has its own subscription.
 
@@ -954,8 +954,8 @@ clarification when needed. Unanswered blockers stay open. Pass the reply
 Message ID as the basis in `update_issue.blockers.resolve`. Core rejects a
 matched quoted Message as the basis for any other blocker, including a
 replacement blocker for the same question. To explicitly continue the current
-Execution after resolving the last blocker, set `blockers.unblockedStatus` to
-`"active"` and `executionInput.mode` to `"continue"`. The resolution and `issue_session_update` commit together.
+Issue Session after resolving the last blocker, set `blockers.unblockedStatus` to
+`"active"` and `sessionInput.mode` to `"continue"`. The resolution and `issue_session_update` commit together.
 
 ## Trigger Outbox
 

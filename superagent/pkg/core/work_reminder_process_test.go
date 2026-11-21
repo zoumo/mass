@@ -21,43 +21,43 @@ import (
 
 const reportReminder = "report_reminder"
 
-type reminderExecution struct {
-	core.Execution
+type bindingObservation struct {
+	core.SessionBinding
 	ReminderScheduled   bool            `json:"reminderScheduled"`
 	ReminderEligibility string          `json:"reminderEligibility"`
 	Reminder            workEventRecord `json:"reminder"`
 }
 
-func waitIssueObservation(t *testing.T, p *process, x *core.Execution, state string) reminderExecution {
+func waitIssueObservation(t *testing.T, p *process, x *core.SessionBinding, state string) bindingObservation {
 	t.Helper()
-	var observed reminderExecution
+	var observed bindingObservation
 	require.Eventually(t, func() bool {
-		observed = readRecord[reminderExecution](t, p, "executions/"+x.ID)
+		observed = readRecord[bindingObservation](t, p, "session-bindings/"+x.ID)
 		return observed.WorkObservation != nil && observed.WorkObservation.State == state
 	}, 5*time.Second, 20*time.Millisecond, "waiting for %s on %s", state, x.ID)
 	return observed
 }
 
-func startReminderTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer) (*stdioClient, core.Binding) {
+func startReminderTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer) (*stdioClient, core.SessionBinding) {
 	t.Helper()
 	router := startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))
 	b, _ := nativeWorkTopic(t, f, p, peer, router, "missing-report")
 	return startRoleMCP(t, f, b), b
 }
 
-func startReminderWorker(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, topic *stdioClient) (core.WorkReceipt, core.Binding, nativeSubmitCall) {
+func startReminderWorker(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, topic *stdioClient) (core.WorkReceipt, core.SessionBinding, nativeSubmitCall) {
 	t.Helper()
 	req := issueInput(f.dir, "work")
 	req.Start = true
 	work := mcpWork[core.WorkReceipt](t, topic, "create_issue", req)
-	b := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	b := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 	first := peer.next(t, "turn/start")
 	require.Equal(t, b.SessionID, first.session)
-	decodeInternalBatch(t, first, work.Execution.StartEventID)
+	decodeInternalBatch(t, first, work.SessionBinding.StartEventID)
 	return work, b, first
 }
 
-func watchNative(t *testing.T, massd *client.Client, b core.Binding) *client.Subscription {
+func watchNative(t *testing.T, massd *client.Client, b core.SessionBinding) *client.Subscription {
 	t.Helper()
 	sub, err := massd.Subscribe(t.Context(), resource.SessionRef{SessionID: b.SessionID})
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func nextNativeMethod(t *testing.T, sub *client.Subscription, method string) eve
 	}
 }
 
-func checkReminderCall(t *testing.T, peer *nativeSubmitPeer, b core.Binding, observed reminderExecution) nativeSubmitCall {
+func checkReminderCall(t *testing.T, peer *nativeSubmitPeer, b core.SessionBinding, observed bindingObservation) nativeSubmitCall {
 	t.Helper()
 	require.True(t, observed.ReminderScheduled)
 	require.NotEmpty(t, observed.ReminderEventID)
@@ -114,12 +114,12 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	first.idle()
 	nextNativeMethod(t, sub, "thread/status/changed")
 	first.answer <- nativeSubmitAnswer{workID: "work-one"}
-	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
-	initial := waitIssueObservation(t, p, work.Execution, "observing")
+	waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
+	initial := waitIssueObservation(t, p, work.SessionBinding, "observing")
 	require.Equal(t, "work-one", initial.WorkObservation.WorkID)
 	require.True(t, initial.WorkObservation.Continuous)
 	nextNativeMethod(t, sub, "turn/started")
-	require.Equal(t, "awaiting_correlated_end", readRecord[reminderExecution](t, p, "executions/"+work.Execution.ID).ReminderEligibility)
+	require.Equal(t, "awaiting_correlated_end", readRecord[bindingObservation](t, p, "session-bindings/"+work.SessionBinding.ID).ReminderEligibility)
 	peer.quiet(t, 300*time.Millisecond)
 
 	update := updateReminderWork(t, topic, work)
@@ -136,7 +136,7 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	second.answer <- nativeSubmitAnswer{workID: "work-two"}
 	waitWorkEvent(t, p, update.NotificationEventID, "sent")
 	nextNativeMethod(t, sub, "turn/started")
-	proof := waitIssueObservation(t, p, work.Execution, "observing").WorkObservation
+	proof := waitIssueObservation(t, p, work.SessionBinding, "observing").WorkObservation
 	require.Equal(t, "work-two", proof.WorkID)
 	require.NotEqual(t, initial.WorkObservation.AttemptID, proof.AttemptID)
 
@@ -157,10 +157,10 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	second.idle()
 	ev = nextNativeMethod(t, sub, "thread/status/changed")
 	require.Equal(t, events.Idle, *ev.Payload().(events.StateUpdate).State)
-	ended := waitIssueObservation(t, p, work.Execution, "ended")
+	ended := waitIssueObservation(t, p, work.SessionBinding, "ended")
 	require.Equal(t, ev.EventID, ended.WorkObservation.End.EventID)
 	require.Equal(t, "idle", ended.WorkObservation.End.Reason)
-	require.Equal(t, b.ID, ended.WorkObservation.BindingID)
+	require.Equal(t, b.ID, ended.WorkObservation.SessionBindingID)
 	require.Equal(t, b.Generation, ended.WorkObservation.Generation)
 	require.Equal(t, b.SessionUID, ended.WorkObservation.SessionUID)
 	require.Equal(t, b.SessionID, ended.WorkObservation.SessionID)
@@ -173,7 +173,7 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	require.Equal(t, "reminder-turn", ev.Meta["codex"].(map[string]any)["turnId"])
 	peer.quiet(t, 300*time.Millisecond)
 	require.Len(t, workEvents(t, p, reportReminder), 1)
-	saved := readRecord[reminderExecution](t, p, "executions/"+work.Execution.ID)
+	saved := readRecord[bindingObservation](t, p, "session-bindings/"+work.SessionBinding.ID)
 	require.Equal(t, ended.WorkObservation, saved.WorkObservation)
 	require.Equal(t, "sent", saved.Reminder.Status)
 	var history store.HistoryPage
@@ -201,7 +201,7 @@ func TestReportReminderAfterCrashAndDuplicate(t *testing.T) {
 	require.NoError(t, os.Remove(release))
 	first.answer <- nativeSubmitAnswer{workID: "early-finish", endBeforeReply: true}
 	ev := nextNativeMethod(t, sub, "turn/completed")
-	ended := waitIssueObservation(t, p, work.Execution, "ended")
+	ended := waitIssueObservation(t, p, work.SessionBinding, "ended")
 	require.Equal(t, ev.EventID, ended.WorkObservation.End.EventID)
 	require.True(t, ended.ReminderScheduled)
 	require.Empty(t, waitWorkEvent(t, p, ended.ReminderEventID, "pending").SentAt)
@@ -210,7 +210,7 @@ func TestReportReminderAfterCrashAndDuplicate(t *testing.T) {
 
 	settleGate := t.TempDir()
 	p = f.start("SUPERAGENT_TEST_GATE_STAGE=internal_event_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+settleGate)
-	require.Equal(t, ended.WorkObservation, readRecord[reminderExecution](t, p, "executions/"+work.Execution.ID).WorkObservation)
+	require.Equal(t, ended.WorkObservation, readRecord[bindingObservation](t, p, "session-bindings/"+work.SessionBinding.ID).WorkObservation)
 	firstReminder := checkReminderCall(t, peer, b, ended)
 	firstReminder.answer <- nativeSubmitAnswer{workID: "first-reminder", complete: true}
 	waitWorkGate(t, settleGate, "internal_event_before_settlement")
@@ -245,14 +245,14 @@ func TestReportReminderObservationGaps(t *testing.T) {
 	work, b, first := startReminderWorker(t, f, p, peer, topic)
 	sub := watchNative(t, massd, b)
 	first.answer <- nativeSubmitAnswer{workID: "work-before-disconnect"}
-	waitIssueObservation(t, p, work.Execution, "observing")
+	waitIssueObservation(t, p, work.SessionBinding, "observing")
 	select {
 	case cut := <-sockets:
 		cut()
 	case <-time.After(4 * time.Second):
 		t.Fatal("Core subscription was not intercepted")
 	}
-	disconnected := waitIssueObservation(t, p, work.Execution, "unknown")
+	disconnected := waitIssueObservation(t, p, work.SessionBinding, "unknown")
 	require.Equal(t, "live_subscription_interrupted", disconnected.WorkObservation.ObservationGap)
 	require.Equal(t, "work-before-disconnect", disconnected.WorkObservation.WorkID)
 	require.False(t, disconnected.WorkObservation.Continuous)
@@ -270,14 +270,14 @@ func TestReportReminderObservationGaps(t *testing.T) {
 	second := peer.next(t, "turn/start")
 	decodeInternalBatch(t, second, update.NotificationEventID)
 	second.answer <- nativeSubmitAnswer{workID: "work-before-offline"}
-	live := waitIssueObservation(t, p, work.Execution, "observing")
+	live := waitIssueObservation(t, p, work.SessionBinding, "observing")
 	require.Equal(t, "work-before-offline", live.WorkObservation.WorkID)
 	p.stop(t, true)
 	second.end(live.WorkObservation.WorkID)
 	nextNativeMethod(t, sub, "turn/completed")
 	p = f.start()
-	waitBinding(t, p, "issue", b.OwnerID, "ready")
-	restarted := waitIssueObservation(t, p, work.Execution, "unknown")
+	waitBinding(t, p, "issue", b.ID, "ready")
+	restarted := waitIssueObservation(t, p, work.SessionBinding, "unknown")
 	require.Equal(t, "core_observation_interrupted", restarted.WorkObservation.ObservationGap)
 	require.Equal(t, live.WorkObservation.WorkID, restarted.WorkObservation.WorkID)
 	require.False(t, restarted.ReminderScheduled)
@@ -307,13 +307,13 @@ func TestReportReminderReportAndCancellationFences(t *testing.T) {
 			work, b, first := startReminderWorker(t, f, p, peer, topic)
 			sub := watchNative(t, massd, b)
 			first.answer <- nativeSubmitAnswer{workID: "work-with-report-race"}
-			waitIssueObservation(t, p, work.Execution, "observing")
-			req := core.ReportRequest{OperationID: "report", Kind: "ready", Summary: "Work was completed before a reminder was needed.", GoalRevision: work.Execution.Revision}
+			waitIssueObservation(t, p, work.SessionBinding, "observing")
+			req := core.ReportRequest{OperationID: "report", Kind: "ready", Summary: "Work was completed before a reminder was needed.", GoalRevision: work.SessionBinding.StartGoalRevision}
 			token := roleToken(t, f, b)
 			if scenario == "report-first" {
 				submitConcurrentReport(t, p, token, req, gate, release, first, sub)
 				deliverReminderTestReport(t, p, peer, topicBinding)
-				ended := waitIssueObservation(t, p, work.Execution, "ended")
+				ended := waitIssueObservation(t, p, work.SessionBinding, "ended")
 				require.False(t, ended.ReminderScheduled)
 				require.Equal(t, "report_received", ended.ReminderEligibility)
 				require.Empty(t, workEvents(t, p, reportReminder))
@@ -322,25 +322,25 @@ func TestReportReminderReportAndCancellationFences(t *testing.T) {
 			require.NoError(t, os.Remove(release))
 			require.NoError(t, os.Remove(filepath.Join(gate, stage)))
 			first.end("work-with-report-race")
-			ended := waitIssueObservation(t, p, work.Execution, "ended")
+			ended := waitIssueObservation(t, p, work.SessionBinding, "ended")
 			require.True(t, ended.ReminderScheduled)
 			waitWorkGate(t, gate, stage)
 			waitWorkEvent(t, p, ended.ReminderEventID, "pending")
 			if scenario == "reminder-first" {
 				report := roleWork[core.Report](t, p, token, "submit_report", req)
-				require.Equal(t, b.OwnerID, report.ExecutionID)
+				require.Equal(t, b.ID, report.SessionBindingID)
 				require.False(t, report.Historical)
 				deliverReminderTestReport(t, p, peer, topicBinding)
 			} else {
 				canceled := mcpWork[core.WorkReceipt](t, topic, "issue_cancel", issueLifecycle("cancel-reminder", work.Issue))
 				require.Equal(t, "canceled", canceled.Issue.Status)
-				require.Equal(t, "historical", canceled.Execution.Authority)
+				require.Equal(t, "revoked", canceled.SessionBinding.State)
 			}
 			write(t, release, "")
 			require.Empty(t, waitWorkEvent(t, p, ended.ReminderEventID, "superseded").SentAt)
 			peer.quiet(t, 300*time.Millisecond)
 			require.Len(t, workEvents(t, p, reportReminder), 1)
-			require.Equal(t, ended.ReminderEventID, readRecord[reminderExecution](t, p, "executions/"+b.OwnerID).ReminderEventID)
+			require.Equal(t, ended.ReminderEventID, readRecord[bindingObservation](t, p, "session-bindings/"+b.ID).ReminderEventID)
 		})
 	}
 }
@@ -390,7 +390,7 @@ func postReport(ctx context.Context, p *process, token string, report core.Repor
 	return nil
 }
 
-func deliverReminderTestReport(t *testing.T, p *process, peer *nativeSubmitPeer, topic core.Binding) {
+func deliverReminderTestReport(t *testing.T, p *process, peer *nativeSubmitPeer, topic core.SessionBinding) {
 	t.Helper()
 	report := peer.next(t, "turn/start")
 	require.Equal(t, topic.SessionID, report.session)

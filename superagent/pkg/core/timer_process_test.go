@@ -216,7 +216,7 @@ func TestTimerNativeEventAndAuthority(t *testing.T) {
 	require.Len(t, page(t, p, "messages").Items, 3)
 	require.Len(t, page(t, p, "threads").Items, 3)
 	require.Empty(t, page(t, p, "issues").Items)
-	require.Empty(t, page(t, p, "executions").Items)
+	require.Empty(t, issueBindings(t, p))
 	require.Equal(t, 1, readRecord[core.Topic](t, p, "topics/"+binding.OwnerID).Revision)
 	firedTrace := observedTraces(t, p, "messages", fired.TriggerMessageID)
 	require.Len(t, firedTrace, 1)

@@ -61,14 +61,14 @@ type RegisterPRRequest struct {
 }
 
 type PullRequest struct {
-	ID             string `json:"id"`
-	CanonicalURL   string `json:"canonicalUrl"`
-	TopicID        string `json:"topicId"`
-	IssueID        string `json:"issueId,omitempty"`
-	ExecutionID    string `json:"executionId,omitempty"`
-	ThreadKey      string `json:"threadKey"`
-	SubscriptionID string `json:"subscriptionId"`
-	CreatedAt      string `json:"createdAt"`
+	ID               string `json:"id"`
+	CanonicalURL     string `json:"canonicalUrl"`
+	TopicID          string `json:"topicId"`
+	IssueID          string `json:"issueId,omitempty"`
+	SessionBindingID string `json:"sessionBindingId,omitempty"`
+	ThreadKey        string `json:"threadKey"`
+	SubscriptionID   string `json:"subscriptionId"`
+	CreatedAt        string `json:"createdAt"`
 }
 
 type pullRequestLink struct {
@@ -76,7 +76,7 @@ type pullRequestLink struct {
 	Sequence int64 `json:"sequence"`
 }
 
-func (s *Store) registerPR(ctx context.Context, b Binding, raw []byte) (json.RawMessage, error) {
+func (s *Store) registerPR(ctx context.Context, b SessionBinding, raw []byte) (json.RawMessage, error) {
 	if b.Role != "topic" && b.Role != "issue" {
 		return nil, problem("forbidden", "only Topic and current Issue Session can register a PR")
 	}
@@ -98,15 +98,15 @@ func (s *Store) registerPR(ctx context.Context, b Binding, raw []byte) (json.Raw
 		return nil, err
 	}
 	r.URL = canonical
-	return s.commitWork(ctx, b, "pr_register", r.OperationID, func(ctx context.Context, tx *sql.Tx, binding Binding) (any, error) {
+	return s.commitWork(ctx, b, "pr_register", r.OperationID, func(ctx context.Context, tx *sql.Tx, binding SessionBinding) (any, error) {
 		topicID := binding.OwnerID
 		var issue Issue
-		var executionID string
+		var sessionBindingID string
 		var err error
 		if binding.Role == "issue" {
-			var execution Execution
-			issue, execution, err = currentBoundIssue(ctx, tx, binding)
-			topicID, executionID = issue.TopicID, execution.ID
+			var current SessionBinding
+			issue, current, err = currentBoundIssue(ctx, tx, binding)
+			topicID, sessionBindingID = issue.TopicID, current.ID
 		} else if r.IssueID != "" {
 			issue, err = topicIssue(ctx, tx, binding, r.IssueID)
 		}
@@ -117,11 +117,11 @@ func (s *Store) registerPR(ctx context.Context, b Binding, raw []byte) (json.Raw
 		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, topicID); err != nil {
 			return nil, err
 		}
-		return registerWorkPullRequest(ctx, tx, topic, issue, canonical, executionID)
+		return registerWorkPullRequest(ctx, tx, topic, issue, canonical, sessionBindingID)
 	})
 }
 
-func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonical, executionID string) (PullRequest, error) {
+func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonical, sessionBindingID string) (PullRequest, error) {
 	matches := func(link pullRequestLink) bool { return link.CanonicalURL == canonical }
 	topicIndex := slices.IndexFunc(topic.PullRequests, matches)
 	if issue.ID == "" && topicIndex >= 0 {
@@ -157,7 +157,7 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 		link.Sequence++
 	}
 	if issue.ID != "" {
-		link.ID, link.IssueID, link.ExecutionID = newID("pr"), issue.ID, executionID
+		link.ID, link.IssueID, link.SessionBindingID = newID("pr"), issue.ID, sessionBindingID
 		issue.PullRequests = append(issue.PullRequests, link)
 		if err := saveIssue(ctx, tx, issue); err != nil {
 			return PullRequest{}, err

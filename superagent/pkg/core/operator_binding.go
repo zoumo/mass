@@ -13,14 +13,13 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 
-type BindingInspection struct {
-	Binding                Binding      `json:"binding"`
-	Stop                   *StopRequest `json:"stop,omitempty"`
-	SessionState           string       `json:"sessionState,omitempty"`
-	SessionResourceVersion string       `json:"sessionResourceVersion,omitempty"`
-	RuntimeType            string       `json:"runtimeType,omitempty"`
-	RuntimeState           string       `json:"runtimeState,omitempty"`
-	ObservationGap         string       `json:"observationGap,omitempty"`
+type SessionBindingInspection struct {
+	SessionBinding         SessionBinding `json:"sessionBinding"`
+	SessionState           string         `json:"sessionState,omitempty"`
+	SessionResourceVersion string         `json:"sessionResourceVersion,omitempty"`
+	RuntimeType            string         `json:"runtimeType,omitempty"`
+	RuntimeState           string         `json:"runtimeState,omitempty"`
+	ObservationGap         string         `json:"observationGap,omitempty"`
 }
 
 func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool {
@@ -46,16 +45,16 @@ func (s *Server) inspectBinding(w http.ResponseWriter, r *http.Request) {
 	if !readOnly(w, r) || !s.authorizeOperator(w, r) {
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/v1/operator/bindings/")
+	id := strings.TrimPrefix(r.URL.Path, "/v1/operator/session-bindings/")
 	tx, err := s.store.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		s.fail(w, storageError())
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	var inspection BindingInspection
+	var inspection SessionBindingInspection
 	var spec resource.SessionSpec
-	if err := readJSON(r.Context(), tx, "SELECT body FROM session_bindings WHERE id=?", &inspection.Binding, id); err != nil {
+	if err := readJSON(r.Context(), tx, "SELECT body FROM session_bindings WHERE id=?", &inspection.SessionBinding, id); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -67,13 +66,12 @@ func (s *Server) inspectBinding(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, storageError())
 		return
 	}
-	inspection.Stop = inspection.Binding.Stop
 	s.observeBinding(r.Context(), spec, &inspection)
 	s.write(w, http.StatusOK, inspection)
 }
 
-func (s *Server) observeBinding(ctx context.Context, spec resource.SessionSpec, i *BindingInspection) {
-	if !i.Binding.PreparationStarted {
+func (s *Server) observeBinding(ctx context.Context, spec resource.SessionSpec, i *SessionBindingInspection) {
+	if !i.SessionBinding.PreparationStarted {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
@@ -85,14 +83,14 @@ func (s *Server) observeBinding(ctx context.Context, spec resource.SessionSpec, 
 	}
 	defer func() { _ = c.Close() }()
 	var rt resource.Runtime
-	if c.GetRuntime(ctx, i.Binding.RuntimeRef, &rt) == nil {
+	if c.GetRuntime(ctx, i.SessionBinding.RuntimeRef, &rt) == nil {
 		i.RuntimeType, i.RuntimeState = rt.Spec.Type, rt.Status.State
 	}
 	var session resource.Session
-	if c.GetSession(ctx, bindingSessionRef(i.Binding), &session) != nil {
+	if c.GetSession(ctx, bindingSessionRef(i.SessionBinding), &session) != nil {
 		return
 	}
-	if !bindingMatches(i.Binding, spec, session) {
+	if !bindingMatches(i.SessionBinding, spec, session) {
 		i.ObservationGap = "massd_session_binding_mismatch"
 		return
 	}

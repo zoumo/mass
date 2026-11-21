@@ -1,97 +1,59 @@
 import { eventStatusLabel, stateLabel } from '../../workbench'
+import { metricsHref } from '../MetricsView'
 import SessionPreview from './SessionPreview'
 import { identity, reminderBasis, type RecordProps, type Kind } from './records'
 
 export default function SessionEvidence({ kind, detail, navigate }: RecordProps) {
-  const release = detail.close || detail.preparation?.close
+  const isBinding = kind === 'session-bindings'
+  const isIssueBinding = isBinding && detail.role === 'issue'
+  const { close, recovery, workObservation } = detail
   const showRecord = (view: Kind, id: string) => navigate(view, '', undefined, id)
   return (
     <>
-      {kind === 'executions' && (
+      {isBinding && (
         <dl>
-          <dt>执行权</dt>
-          <dd>
-            {stateLabel(detail.authority)} · 第 {detail.generation} 代
-          </dd>
-          <dt>启动时的目标版本</dt>
-          <dd>版本 {detail.goalRevision}</dd>
+          <dt>角色</dt>
+          <dd>{stateLabel(detail.role)}</dd>
           <dt>准备状态</dt>
-          <dd>
-            {stateLabel(String(detail.preparationAtRetirement || detail.preparation?.state || ''))}
-            {detail.preparation?.sessionId ? ' · ' + detail.preparation.sessionId : ''}
-          </dd>
-          <dt>启动输入</dt>
-          <dd>
-            {detail.startup?.event_id
-              ? eventStatusLabel(detail.startup.status)
-              : stateLabel(detail.startup?.status)}
-          </dd>
-          {detail.startup?.receipt && (
-            <>
-              <dt>输入回执</dt>
-              <dd>
-                <pre>{JSON.stringify(detail.startup.receipt, null, 2)}</pre>
-              </dd>
-            </>
-          )}
-          {detail.startup?.lastError && (
-            <>
-              <dt>输入错误</dt>
-              <dd>{detail.startup.lastError}</dd>
-            </>
-          )}
+          <dd>{stateLabel(detail.state)}</dd>
+          <dt>MASS Session</dt>
+          <dd>{detail.sessionId || '尚未准备'}</dd>
+          <dt>运行时</dt>
+          <dd>{detail.runtimeRef}</dd>
+          {detail.model && <><dt>模型</dt><dd>{detail.model}</dd></>}
+          {detail.effort && <><dt>推理强度</dt><dd>{detail.effort}</dd></>}
+          <dt>工作目录</dt>
+          <dd>{detail.workspace}</dd>
+          {detail.retiredAt && <><dt>停用时间</dt><dd>{detail.retiredAt}</dd></>}
+        </dl>
+      )}
+      {isIssueBinding && (
+        <dl>
+          {detail.startGoalRevision && <><dt>启动时的目标版本</dt><dd>{detail.startGoalRevision}</dd></>}
+          {detail.startup && <><dt>启动输入</dt><dd>{eventStatusLabel(detail.startup.status)}</dd></>}
           <dt>报告提醒</dt>
           <dd>
             {reminderBasis[String(detail.reminderEligibility)] || '未知'}
-            {detail.reminder && (
-              <span>
-                {' '}
-                ·{' '}
-                {detail.reminder.event_id
-                  ? eventStatusLabel(detail.reminder.status)
-                  : stateLabel(detail.reminder.status)}
-              </span>
-            )}
+            {detail.reminder && ' · ' + eventStatusLabel(detail.reminder.status)}
           </dd>
-          {detail.workObservation && (
+          {workObservation && (
             <>
               <dt>观测到的任务</dt>
               <dd>
-                {detail.workObservation.provider || '提供方未知'} ·{' '}
-                {detail.workObservation.workId || '任务标识未确认'} · {stateLabel(detail.workObservation.state)}
+                {workObservation.provider || '提供方未知'} ·{' '}
+                {workObservation.workId || '任务标识未确认'} · {stateLabel(workObservation.state)}
               </dd>
-            </>
-          )}
-          {detail.workObservation && (
-            <>
               <dt>观测到的 Session</dt>
-              <dd>
-                {detail.workObservation.sessionId} · {detail.workObservation.sessionUid} · 第{' '}
-                {detail.workObservation.generation} 代
-              </dd>
-            </>
-          )}
-          {detail.workObservation && (
-            <>
+              <dd>{workObservation.sessionId} · {workObservation.sessionUid}</dd>
               <dt>实时观测</dt>
-              <dd>
-                {detail.workObservation.continuous ? '连续' : '未确认'} · {detail.workObservation.observedAt}
-              </dd>
-            </>
-          )}
-          {detail.workObservation?.end && (
-            <>
-              <dt>{detail.workObservation.end.reason === 'idle' ? 'Session 空闲' : '原生任务结束'}</dt>
-              <dd>
-                {detail.workObservation.end.reason} · {detail.workObservation.end.at} ·{' '}
-                {detail.workObservation.end.eventId}
-              </dd>
-            </>
-          )}
-          {detail.workObservation?.observationGap && (
-            <>
-              <dt>任务观测中断</dt>
-              <dd>{detail.workObservation.observationGap}</dd>
+              <dd>{workObservation.continuous ? '连续' : '未确认'} · {workObservation.observedAt}</dd>
+              {workObservation.end && (
+                <>
+                  <dt>{workObservation.end.reason === 'idle' ? 'Session 空闲' : '原生任务结束'}</dt>
+                  <dd>{workObservation.end.reason} · {workObservation.end.at} · {workObservation.end.eventId}</dd>
+                </>
+              )}
+              {workObservation.observationGap && <><dt>任务观测中断</dt><dd>{workObservation.observationGap}</dd></>}
             </>
           )}
         </dl>
@@ -135,54 +97,53 @@ export default function SessionEvidence({ kind, detail, navigate }: RecordProps)
           )}
         </dl>
       )}
-      {release && (
+      {close && (
         <dl data-testid="release-evidence">
           <dt>Session 已确认释放</dt>
           <dd>
-            {release.method} · {release.at}
+            {close.method} · {close.at}
           </dd>
         </dl>
       )}
-      {kind === 'executions' && detail.startEventId && (
-        <button onClick={() => showRecord('internal-events', String(detail.startEventId))} type="button">
+      {recovery && (
+        <dl data-testid="recovery-evidence">
+          <dt>恢复状态</dt>
+          <dd>{stateLabel(recovery.status)} · {recovery.mode}</dd>
+          <dt>请求恢复时间</dt>
+          <dd>{recovery.createdAt}</dd>
+          {recovery.completedAt && <><dt>恢复完成时间</dt><dd>{recovery.completedAt}</dd></>}
+          {recovery.lastError && <><dt>恢复错误</dt><dd>{recovery.lastError}</dd></>}
+        </dl>
+      )}
+      {recovery?.replacementSessionBindingId && (
+        <button onClick={() => showRecord('session-bindings', recovery.replacementSessionBindingId!)} type="button">
+          查看恢复后的会话绑定
+        </button>
+      )}
+      {detail.previousSessionBindingId && (
+        <button onClick={() => showRecord('session-bindings', detail.previousSessionBindingId!)} type="button">
+          查看上一个会话绑定
+        </button>
+      )}
+      {isIssueBinding && detail.startEventId && (
+        <button onClick={() => showRecord('internal-events', detail.startEventId!)} type="button">
           启动事件
         </button>
       )}
-      {kind === 'executions' && detail.reminderEventId && (
-        <button onClick={() => showRecord('internal-events', String(detail.reminderEventId))} type="button">
+      {isIssueBinding && detail.reminderEventId && (
+        <button onClick={() => showRecord('internal-events', detail.reminderEventId!)} type="button">
           提醒事件
         </button>
       )}
-      {kind === 'executions' && detail.issueId && (
+      {isIssueBinding && detail.issueId && (
         <button onClick={() => navigate('reports', String(detail.issueId), 'issueId')} type="button">
           此 Issue 的报告历史
         </button>
       )}
-      {kind === 'bindings' && (
-        <>
-          <dl>
-            <dt>角色</dt>
-            <dd>
-              {stateLabel(detail.role)} · 第 {detail.generation} 代
-            </dd>
-            <dt>MASS Session</dt>
-            <dd>{detail.sessionId || '尚未准备'}</dd>
-            <dt>运行时</dt>
-            <dd>{detail.runtimeRef}</dd>
-            {detail.model && <><dt>模型</dt><dd>{detail.model}</dd></>}
-            {detail.effort && <><dt>推理强度</dt><dd>{detail.effort}</dd></>}
-            <dt>工作目录</dt>
-            <dd>{detail.workspace}</dd>
-          </dl>
-          {detail.sessionId && detail.sessionUid && (
-            <SessionPreview
-              key={identity(detail) + ':' + detail.sessionUid}
-              bindingId={identity(detail)}
-            ></SessionPreview>
-          )}
-          {!(detail.sessionId && detail.sessionUid) && <p>核心服务记录 Session 标识后，即可查看历史。</p>}
-        </>
-      )}
+      {isBinding && <a href={metricsHref('session-binding', identity(detail))}>此会话绑定的工具调用</a>}
+      {isBinding && (detail.sessionId && detail.sessionUid
+        ? <SessionPreview key={identity(detail) + ':' + detail.sessionUid} sessionBindingId={identity(detail)}/>
+        : <p>核心服务记录 Session 标识后，即可查看历史。</p>)}
     </>
   )
 }

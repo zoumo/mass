@@ -75,7 +75,7 @@ func (t *Timer) setDetails(ctx context.Context, tx *sql.Tx, dueAt, content strin
 }
 
 func setTimer(r SetTimerRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		key := creationKey("timer", b.ID, r.OperationID)
 		digest := creationDigest(r)
 		id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM scheduled_tasks WHERE creation_key=?", key)
@@ -113,7 +113,7 @@ func setTimer(r SetTimerRequest) workMutation {
 }
 
 func changeTimer(r CancelTimerRequest, update *UpdateTimerRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		if r.TimerID == "" {
 			return nil, problem("invalid_argument", "timerId is required")
 		}

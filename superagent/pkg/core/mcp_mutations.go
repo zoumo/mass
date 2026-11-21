@@ -10,9 +10,9 @@ import (
 
 const mcpMutationSchema = `
 CREATE TABLE IF NOT EXISTS mcp_mutation_receipts (
- binding_id TEXT NOT NULL REFERENCES session_bindings(id), tool TEXT NOT NULL,
+ session_binding_id TEXT NOT NULL REFERENCES session_bindings(id), tool TEXT NOT NULL,
  operation_id TEXT NOT NULL, digest TEXT NOT NULL, result BLOB NOT NULL,
- PRIMARY KEY(binding_id, tool, operation_id)
+ PRIMARY KEY(session_binding_id, tool, operation_id)
 );`
 
 type mutationRevision struct {
@@ -54,30 +54,30 @@ type changeBlockers struct {
 	UnblockedStatus string              `json:"unblockedStatus,omitempty"`
 }
 
-type executionInput struct {
+type sessionInput struct {
 	Mode    string             `json:"mode"`
 	Content *StructuredContent `json:"content,omitempty"`
 }
 
 type updateIssueArgs struct {
 	editIssueFields
-	IssueID        string            `json:"issueId"`
-	Goal           *string           `json:"goal,omitempty"`
-	Blockers       *changeBlockers   `json:"blockers,omitempty"`
-	ExecutionInput *executionInput   `json:"executionInput,omitempty"`
-	Transition     *changeTransition `json:"transition,omitempty"`
+	IssueID      string            `json:"issueId"`
+	Goal         *string           `json:"goal,omitempty"`
+	Blockers     *changeBlockers   `json:"blockers,omitempty"`
+	SessionInput *sessionInput     `json:"sessionInput,omitempty"`
+	Transition   *changeTransition `json:"transition,omitempty"`
 }
 
 // Save the response with the mutation in the same transaction, so a lost
 // response can be replayed without applying another write or checking a stale revision.
-func (s *Store) commitMCPMutation(ctx context.Context, b Binding, tool, operationID string, args any, apply workMutation) (json.RawMessage, error) {
+func (s *Store) commitMCPMutation(ctx context.Context, b SessionBinding, tool, operationID string, args any, apply workMutation) (json.RawMessage, error) {
 	replayed := false
 	var committed bool
-	result, err := s.commitWork(ctx, b, tool, operationID, func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	result, err := s.commitWork(ctx, b, tool, operationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		digest := creationDigest(args)
 		var recorded string
 		var raw json.RawMessage
-		err := tx.QueryRowContext(ctx, `SELECT digest,result FROM mcp_mutation_receipts WHERE binding_id=? AND tool=? AND operation_id=?`, b.ID, tool, operationID).Scan(&recorded, &raw)
+		err := tx.QueryRowContext(ctx, `SELECT digest,result FROM mcp_mutation_receipts WHERE session_binding_id=? AND tool=? AND operation_id=?`, b.ID, tool, operationID).Scan(&recorded, &raw)
 		if err == nil {
 			if recorded != digest {
 				return nil, problem("conflict", "operationId was already used with other parameters")
@@ -120,7 +120,7 @@ func (s *Store) commitMCPMutation(ctx context.Context, b Binding, tool, operatio
 				if r.Transition != nil {
 					commitGate("lifecycle_after_commit")
 				}
-				if r.Goal != nil && r.ExecutionInput != nil {
+				if r.Goal != nil && r.SessionInput != nil {
 					commitGate("requirements_after_commit")
 				}
 			}
@@ -183,7 +183,7 @@ func canonicalMCPPRs(input *addPullRequests) ([]string, error) {
 	return urls, nil
 }
 
-func (s *Store) updateMCPTopic(ctx context.Context, b Binding, raw []byte) (any, error) {
+func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte) (any, error) {
 	var r updateTopicArgs
 	if err := decodeStrict(raw, &r); err != nil {
 		return nil, err
@@ -202,7 +202,7 @@ func (s *Store) updateMCPTopic(ctx context.Context, b Binding, raw []byte) (any,
 	if r.PullRequests != nil {
 		r.PullRequests.Add = urls
 	}
-	return s.commitMCPMutation(ctx, b, "update_topic", r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return s.commitMCPMutation(ctx, b, "update_topic", r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		var topic Topic
 		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
 			return nil, err
@@ -261,7 +261,7 @@ func (s *Store) updateMCPTopic(ctx context.Context, b Binding, raw []byte) (any,
 	})
 }
 
-func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any, error) {
+func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte) (any, error) {
 	var r updateIssueArgs
 	if b.Role == "issue" {
 		if err := decodeStrict(raw, &r.editIssueFields); err != nil {
@@ -274,8 +274,8 @@ func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any,
 	if err := validateTransition(r.Transition); err != nil {
 		return nil, err
 	}
-	if r.Transition != nil && r.ExecutionInput != nil {
-		return nil, problem("invalid_argument", "an execution input cannot accompany a lifecycle transition")
+	if r.Transition != nil && r.SessionInput != nil {
+		return nil, problem("invalid_argument", "a Session input cannot accompany a lifecycle transition")
 	}
 	urls, err := canonicalMCPPRs(r.PullRequests)
 	if err != nil {
@@ -284,20 +284,20 @@ func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any,
 	if r.Materials != nil && len(r.Materials.Add) == 0 {
 		return nil, problem("invalid_argument", "materials.add requires at least one material")
 	}
-	if r.Title == nil && r.Goal == nil && r.Materials == nil && len(urls) == 0 && r.Blockers == nil && r.ExecutionInput == nil && r.Transition == nil {
+	if r.Title == nil && r.Goal == nil && r.Materials == nil && len(urls) == 0 && r.Blockers == nil && r.SessionInput == nil && r.Transition == nil {
 		return nil, problem("invalid_argument", "provide at least one Issue update")
 	}
 	if r.PullRequests != nil {
 		r.PullRequests.Add = urls
 	}
-	return s.commitMCPMutation(ctx, b, "update_issue", r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return s.commitMCPMutation(ctx, b, "update_issue", r.OperationID, r, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		var issue Issue
 		var topic Topic
-		var executionID string
+		var sessionBindingID string
 		if b.Role == "issue" {
-			var x Execution
-			issue, x, err = currentBoundIssue(ctx, tx, b)
-			executionID = x.ID
+			var binding SessionBinding
+			issue, binding, err = currentBoundIssue(ctx, tx, b)
+			sessionBindingID = binding.ID
 			if err == nil {
 				err = readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, issue.TopicID)
 			}
@@ -342,7 +342,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any,
 			appendMaterials(&issue, materials)
 		}
 		for _, canonical := range urls {
-			if _, err := registerWorkPullRequest(ctx, tx, topic, issue, canonical, executionID); err != nil {
+			if _, err := registerWorkPullRequest(ctx, tx, topic, issue, canonical, sessionBindingID); err != nil {
 				return nil, err
 			}
 			if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, topic.ID); err != nil {
@@ -354,7 +354,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any,
 			}
 			issue.PullRequests = persisted.PullRequests
 		}
-		var retired *Execution
+		var retired *SessionBinding
 		if r.Blockers != nil {
 			var err error
 			retired, err = applyBlockerChanges(ctx, tx, b, &issue, *r.Blockers)
@@ -377,7 +377,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any,
 			}
 			return changeIssueLifecycle("issue_"+t.Action, IssueLifecycleRequest{LifecycleRequest: LifecycleRequest{OperationID: r.OperationID, ExpectedRevision: r.ExpectedRevision, Reason: t.Reason}, IssueID: issue.ID})(ctx, tx, b)
 		}
-		if before == creationDigest(issue) && r.ExecutionInput == nil {
+		if before == creationDigest(issue) && r.SessionInput == nil {
 			if u := mcpUsageFrom(ctx); u != nil {
 				u.noChange = true
 			}
@@ -385,10 +385,10 @@ func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any,
 		}
 		issue.Revision++
 		issue.UpdatedAt = now()
-		if r.ExecutionInput == nil {
-			return WorkReceipt{Issue: issue, Execution: retired}, saveIssue(ctx, tx, issue)
+		if r.SessionInput == nil {
+			return WorkReceipt{Issue: issue, SessionBinding: retired}, saveIssue(ctx, tx, issue)
 		}
-		input := r.ExecutionInput
+		input := r.SessionInput
 		if input.Content != nil {
 			if err := input.Content.normalize(); err != nil {
 				return nil, err
@@ -403,7 +403,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b Binding, raw []byte) (any,
 				return nil, problem("invalid_argument", "context supplement requires content, materials or a goal update")
 			}
 		default:
-			return nil, problem("invalid_argument", "executionInput.mode must be continue or context_supplement")
+			return nil, problem("invalid_argument", "sessionInput.mode must be continue or context_supplement")
 		}
 		prefix := "evt"
 		if r.Goal != nil && kind == issueSessionUpdateKind {

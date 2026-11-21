@@ -24,8 +24,8 @@ func decodeStrict(data []byte, v any) error {
 	return nil
 }
 
-func (s *Store) authenticateRole(ctx context.Context, header string) (Binding, error) {
-	var b Binding
+func (s *Store) authenticateRole(ctx context.Context, header string) (SessionBinding, error) {
+	var b SessionBinding
 	if !strings.HasPrefix(header, "Bearer ") {
 		return b, problem("unauthorized", "role credential is required")
 	}
@@ -42,7 +42,7 @@ func (s *Store) authenticateRole(ctx context.Context, header string) (Binding, e
 	return b, nil
 }
 
-func (s *Server) callRoleTool(ctx context.Context, b Binding, tool string, raw []byte) (any, error) {
+func (s *Server) callRoleTool(ctx context.Context, b SessionBinding, tool string, raw []byte) (any, error) {
 	var result any
 	var err error
 	switch tool {
@@ -99,14 +99,9 @@ func (s *Server) callRoleTool(ctx context.Context, b Binding, tool string, raw [
 			var internalEvent internalEvent
 			internalEvent, err = s.store.getInternalEvent(ctx, b, args.ID)
 			if err == nil {
-				if b.AgentPromptVersion == 0 {
-					result = internalEvent
-				} else {
-					var raw []byte
-					internalEvent.promptVersion = b.AgentPromptVersion
-					raw, err = internalEvent.MarshalAgentPromptJSON()
-					result = json.RawMessage(raw)
-				}
+				var raw []byte
+				raw, err = internalEvent.MarshalAgentPromptJSON()
+				result = json.RawMessage(raw)
 			}
 		}
 	default:
@@ -131,7 +126,7 @@ type QueryRequest struct {
 	status        string
 }
 
-func (s *Store) RoleQuery(ctx context.Context, b Binding, q QueryRequest) (any, error) {
+func (s *Store) RoleQuery(ctx context.Context, b SessionBinding, q QueryRequest) (any, error) {
 	if q.ID != "" {
 		if q.Cursor != "" || q.ThreadKey != "" || q.TopicID != "" || q.IssueID != "" || q.MessageID != "" || q.Limit != 0 {
 			return nil, problem("invalid_argument", "detail query cannot have list parameters")
@@ -144,7 +139,7 @@ func (s *Store) RoleQuery(ctx context.Context, b Binding, q QueryRequest) (any, 
 	return s.listScoped(ctx, q, &b, nil)
 }
 
-func scopeSQL(kind string, b *Binding) (string, []any, error) {
+func scopeSQL(kind string, b *SessionBinding) (string, []any, error) {
 	if b == nil {
 		return "", nil, nil
 	}
@@ -173,14 +168,20 @@ func scopeSQL(kind string, b *Binding) (string, []any, error) {
 		return " AND id=?", []any{b.OwnerID}, nil
 	case "issues", "timers", "pull-requests":
 		return " AND topic_id=?", []any{b.OwnerID}, nil
-	case "reports", "executions":
+	case "reports":
 		return " AND issue_id IN (SELECT id FROM issues WHERE topic_id=?)", []any{b.OwnerID}, nil
 	default:
 		return "", nil, problem("forbidden", "Topic cannot query outside its own sources and Topic")
 	}
 }
 
-func projection(kind string, b *Binding) string {
+const reportCurrentSQL = `EXISTS (
+ SELECT 1 FROM issues WHERE issues.id=reports.issue_id AND json_extract(reports.body,'$.historical')=0
+  AND json_extract(issues.body,'$.currentSessionBindingId')=reports.session_binding_id
+  AND json_extract(issues.body,'$.goalRevision')=json_extract(reports.body,'$.goalRevision')
+)`
+
+func projection(kind string, b *SessionBinding) string {
 	switch kind {
 	case "internal-events":
 		return internalEventProjection
@@ -199,7 +200,7 @@ func projection(kind string, b *Binding) string {
 	case "outbox":
 		return outboxProjection
 	case "messages":
-		if b != nil && b.AgentPromptVersion != 0 {
+		if b != nil {
 			if b.Role == "topic" {
 				return "json_patch(" + agentSourceMessageProjection + ",json_object('quotedReply',json(" + quotedReplyForTopic + ")))"
 			}
@@ -213,36 +214,31 @@ func projection(kind string, b *Binding) string {
  FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))`
 		}
 		base := "json_set(body,'$.routing',json(CASE WHEN " + routingState + " IS NOT NULL THEN json_object('round'," + routingRound + ",'state'," + routingState + ") END))"
-		if b == nil || b.Role == "router" {
-			base = "json_set(" + base + ",'$.relations',json((SELECT json_group_array(json(body)) FROM (SELECT body FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))"
-		}
-		if b != nil {
-			if b.Role != "topic" {
-				return base
-			}
-			// The authorization scope is already bound by the Message query,
-			// but a multi-Topic Thread may host another Topic's questions.
-			return "json_patch(" + base + ",json_object('quotedReply',json(" + quotedReplyForTopic + ")))"
-		}
+		base = "json_set(" + base + ",'$.relations',json((SELECT json_group_array(json(body)) FROM (SELECT body FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))"
 		return "json_patch(" + base + ",json_object('quotedReply',json(" + quotedReplyProjection + ")))"
 	case "topics":
 		if b != nil && b.Role == "router" {
 			return "json_object('id',id,'title',json_extract(body,'$.title'),'description',json_extract(body,'$.description'),'goal',json_extract(body,'$.goal'),'status',json_extract(body,'$.status'),'revision',json_extract(body,'$.revision'),'createdAt',created_at,'updatedAt',json_extract(body,'$.updatedAt'))"
 		}
 		return `json_patch(topics.body,COALESCE((SELECT json_object('stop',json_extract(st.body,'$.stop')) FROM session_bindings st
- WHERE st.id=json_extract(topics.body,'$.cancellation.bindingId')),'{}'))`
-	case "executions":
-		return `json_set(executions.body,'$.preparation',json((SELECT body FROM session_bindings WHERE id=executions.binding_id)),
- '$.stop',json((SELECT json_extract(body,'$.stop') FROM session_bindings WHERE id=executions.binding_id)),
- '$.startup',json(` + workNotificationProjection("executions", "startEventId") + `),
- '$.reminderScheduled',json(CASE WHEN json_extract(executions.body,'$.reminderEventId') IS NULL THEN 'false' ELSE 'true' END),
- '$.reminder',json(` + workNotificationProjection("executions", "reminderEventId") + `),
+ WHERE st.id=json_extract(topics.body,'$.cancellation.sessionBindingId')),'{}'))`
+	case "session-bindings":
+		return `CASE WHEN role<>'issue' THEN body ELSE json_set(body,
+ '$.startup',json(` + workNotificationProjection("session_bindings", "startEventId") + `),
+ '$.reminderScheduled',json(CASE WHEN json_extract(body,'$.reminderEventId') IS NULL THEN 'false' ELSE 'true' END),
+ '$.reminder',json(` + workNotificationProjection("session_bindings", "reminderEventId") + `),
  '$.reminderEligibility',CASE
-  WHEN json_extract(executions.body,'$.authority')='historical' THEN 'execution_retired'
-  WHEN EXISTS (SELECT 1 FROM reports WHERE execution_id=executions.id) THEN 'report_received'
-  WHEN json_extract(executions.body,'$.reminderEventId') IS NOT NULL THEN 'already_scheduled'
-  WHEN json_extract(executions.body,'$.workObservation.state') IN ('awaiting_receipt','observing') THEN 'awaiting_correlated_end'
-  ELSE 'end_unconfirmed' END)`
+  WHEN state='revoked' THEN 'session_binding_retired'
+  WHEN EXISTS (SELECT 1 FROM reports WHERE session_binding_id=session_bindings.id AND ` + reportCurrentSQL + `) THEN 'report_received'
+  WHEN json_extract(body,'$.reminderEventId') IS NOT NULL THEN 'already_scheduled'
+  WHEN json_extract(body,'$.workObservation.state') IN ('awaiting_receipt','observing') THEN 'awaiting_correlated_end'
+  ELSE 'end_unconfirmed' END) END`
+	case "reports":
+		current := `json_set(reports.body,'$.current',json(CASE WHEN ` + reportCurrentSQL + ` THEN 'true' ELSE 'false' END))`
+		if b != nil {
+			return `json_remove(` + current + `,'$.sessionBindingId')`
+		}
+		return current
 	case "issues":
 		return `json_patch(issues.body,json_object('latestRequirementsNotification',json_remove(` + workNotificationProjection("issues", "latestRequirementsEventId") + `,'$.payload','$.content')))`
 	case "timers":
@@ -271,14 +267,14 @@ const agentSourceMessageProjection = `(SELECT json_group_object(field,json(value
  ))`
 
 // Capability comparison is explicit so startup-file identity cannot override the authenticated binding.
-func capabilityMatches(c capability, b Binding) bool {
-	a := sha256.Sum256([]byte(c.BindingID + "\x00" + c.Role + "\x00" + c.OwnerID + "\x00" + c.TopicID + "\x00" + c.IssueID))
+func capabilityMatches(c capability, b SessionBinding) bool {
+	a := sha256.Sum256([]byte(c.SessionBindingID + "\x00" + c.Role + "\x00" + c.OwnerID + "\x00" + c.TopicID + "\x00" + c.IssueID))
 	v := sha256.Sum256([]byte(b.ID + "\x00" + b.Role + "\x00" + b.OwnerID + "\x00" + b.TopicID + "\x00" + b.IssueID))
 	return subtle.ConstantTimeCompare(a[:], v[:]) == 1 && c.Generation == b.Generation
 }
 
 // Projection placeholders precede filter placeholders in both list and detail queries.
-func projectionArgs(kind string, b *Binding) []any {
+func projectionArgs(kind string, b *SessionBinding) []any {
 	if kind == "messages" && b != nil && b.Role == "topic" {
 		return []any{b.OwnerID}
 	}

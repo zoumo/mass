@@ -23,23 +23,23 @@ const contextSupplement = "context_supplement"
 
 const (
 	eventRecipientKind  = `json_extract(recipient,'$.kind')`
-	eventRecipientOwner = `COALESCE(json_extract(recipient,'$.topic_id'),json_extract(recipient,'$.execution_id'),'')`
+	eventRecipientOwner = `COALESCE(json_extract(recipient,'$.topic_id'),json_extract(recipient,'$.session_binding_id'),'')`
 )
 
 type eventIdentity struct {
-	Kind        string `json:"kind"`
-	TopicID     string `json:"topic_id,omitempty"`
-	ExecutionID string `json:"execution_id,omitempty"`
+	Kind             string `json:"kind"`
+	TopicID          string `json:"topic_id,omitempty"`
+	SessionBindingID string `json:"session_binding_id,omitempty"`
 }
 
 func (r eventIdentity) valid() bool {
 	switch r.Kind {
 	case "core", "router":
-		return r.TopicID == "" && r.ExecutionID == ""
+		return r.TopicID == "" && r.SessionBindingID == ""
 	case "topic":
-		return r.TopicID != "" && len(r.TopicID) <= 512 && r.ExecutionID == ""
+		return r.TopicID != "" && len(r.TopicID) <= 512 && r.SessionBindingID == ""
 	case "issue":
-		return r.ExecutionID != "" && len(r.ExecutionID) <= 512 && r.TopicID == ""
+		return r.SessionBindingID != "" && len(r.SessionBindingID) <= 512 && r.TopicID == ""
 	default:
 		return false
 	}
@@ -61,16 +61,15 @@ type internalEvent struct {
 	Body      json.RawMessage    `json:"body,omitempty"`
 	Refs      []eventReference   `json:"refs,omitempty"`
 	// Optional facts on the copy used for dispatch.
-	truncated     bool
-	promptVersion int
-	threadKey     string
-	routing       json.RawMessage
-	quotedReply   json.RawMessage
-	topic         *Topic
-	issue         *Issue
-	report        *Report
-	followup      json.RawMessage
-	messages      []json.RawMessage
+	truncated   bool
+	threadKey   string
+	routing     json.RawMessage
+	quotedReply json.RawMessage
+	topic       *Topic
+	issue       *Issue
+	report      *Report
+	followup    json.RawMessage
+	messages    []json.RawMessage
 }
 
 // AgentPromptView encodes the fields an agent needs to act on the source record.
@@ -99,10 +98,7 @@ func (d internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 			bodyKeys = []string{"materials"}
 		case "topic":
 			refKind = "report"
-			bodyKeys = []string{"type", "dependencyIssueId", "dependentIssueIds", "recovery"}
-			if d.promptVersion >= agentPromptVersion {
-				bodyKeys = append(bodyKeys, "previousStatus", "status")
-			}
+			bodyKeys = []string{"type", "dependencyIssueId", "dependentIssueIds", "recovery", "previousStatus", "status"}
 		}
 	}
 	if refKind != "" {
@@ -121,7 +117,7 @@ func (d internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 		return json.Marshal(event)
 	}
 	if d.Content != nil && (d.Kind == routedMessageKind || d.Kind == issueSessionUpdateKind || d.Kind == contextSupplement ||
-		d.Kind == routeRequestKind && d.promptVersion >= agentPromptVersion) {
+		d.Kind == routeRequestKind) {
 		event["content"] = d.Content
 	}
 	if d.Kind == routeRequestKind && len(d.routing) != 0 {
@@ -216,16 +212,13 @@ func checkEventIdentity(ctx context.Context, tx *sql.Tx, r eventIdentity, recipi
 		var topic Topic
 		return readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, r.TopicID)
 	case "issue":
-		var x Execution
-		if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=?", &x, r.ExecutionID); err != nil {
+		binding, err := loadIssueBinding(ctx, tx, r.SessionBindingID)
+		if err != nil {
 			return err
 		}
 		if recipient {
-			var b Binding
-			if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=? AND state<>'revoked'", &b, x.BindingID); err != nil {
-				return err
-			}
-			return checkBinding(ctx, tx, b)
+			_, err = issueForBinding(ctx, tx, binding)
+			return err
 		}
 	}
 	return nil
@@ -246,7 +239,7 @@ func scanInternalEvent(row interface{ Scan(...any) error }, d *internalEvent, cr
 	return nil
 }
 
-func (s *Store) getInternalEvent(ctx context.Context, b Binding, id string) (internalEvent, error) {
+func (s *Store) getInternalEvent(ctx context.Context, b SessionBinding, id string) (internalEvent, error) {
 	var d internalEvent
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -259,7 +252,7 @@ func (s *Store) getInternalEvent(ctx context.Context, b Binding, id string) (int
 	var at string
 	err = scanInternalEvent(tx.QueryRowContext(ctx, `SELECT `+internalEventColumns+`
  FROM internal_events WHERE event_id=? AND `+eventRecipientKind+`=? AND `+eventRecipientOwner+`=?
- AND status IN ('dispatching','sent')`, id, b.Role, b.OwnerID), &d, &at)
+ AND status IN ('dispatching','sent')`, id, b.Role, b.eventRecipientID()), &d, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, problem("not_found", "event is unavailable to this role")
 	}
@@ -280,9 +273,9 @@ func supersedeInternalEvent(ctx context.Context, tx *sql.Tx, id string) error {
 	return err
 }
 
-func supersedeExecutionEvents(ctx context.Context, tx *sql.Tx, executionID string) error {
+func supersedeIssueBindingEvents(ctx context.Context, tx *sql.Tx, sessionBindingID string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE internal_events SET status='superseded'
- WHERE `+eventRecipientKind+`='issue' AND `+eventRecipientOwner+`=? AND status IN ('pending','dispatching')`, executionID)
+ WHERE `+eventRecipientKind+`='issue' AND `+eventRecipientOwner+`=? AND status IN ('pending','dispatching')`, sessionBindingID)
 	return err
 }
 
@@ -305,11 +298,11 @@ func recoverInternalEvents(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 	for _, id := range ids {
-		err := checkEventIdentity(ctx, tx, eventIdentity{Kind: "issue", ExecutionID: id}, true)
+		err := checkEventIdentity(ctx, tx, eventIdentity{Kind: "issue", SessionBindingID: id}, true)
 		switch errorCode(err) {
 		case "":
 		case "not_found", "stale_binding":
-			if err := supersedeExecutionEvents(ctx, tx, id); err != nil {
+			if err := supersedeIssueBindingEvents(ctx, tx, id); err != nil {
 				return err
 			}
 		default:

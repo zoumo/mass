@@ -50,7 +50,7 @@ test('Topic and Issue link to PR Threads, subscriptions and source messages', as
  await expect(page).toHaveURL(/view=pull-requests&issueId=/)
  await expect(page.getByRole('button', { name: internal, exact: true })).toHaveCount(0)
  await page.getByRole('button', { name: github, exact: true }).click()
- await expect(detail.getByRole('button', { name: '查看执行记录' })).toBeVisible()
+ await expect(detail.getByRole('button', { name: '查看 SessionBinding' })).toBeVisible()
  await detail.getByRole('button', { name: `查看线程 ${github}`, exact: true }).click()
  await detail.getByRole('button', { name: '查看线程消息' }).click()
  await expect(page).toHaveURL(/view=messages&threadKey=/)

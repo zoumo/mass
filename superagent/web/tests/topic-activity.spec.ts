@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 const endpoint = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}`
-type Event = { id: string; kind: string; issueId?: string; messageId?: string; eventId?: string; at: string; status?: string; title?: string; summary?: string; bindingId?: string }
+type Event = { id: string; kind: string; issueId?: string; messageId?: string; eventId?: string; at: string; status?: string; title?: string; summary?: string; sessionBindingId?: string }
 
 test('Topic activity opens source facts, pages both categories and restores the filter', async ({ page, request }, info) => {
   const topics = await (await request.get(endpoint + '/v1/observer/topics')).json()
@@ -139,7 +139,7 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
     await expect(lane(returned).locator('.flow-issue')).toHaveCount(0)
     expect(observed).toEqual(new Set(['all','message','issue']))
     await graph.getByRole('button',{name:/再看/}).click()
-    await expect(lane(report).locator('.flow-execution')).toContainText('Issue Session')
+    await expect(lane(report).locator('.flow-session')).toHaveAttribute('href', `/observer/?view=session-bindings&id=${report.sessionBindingId}`)
     await expect(lane(report).locator('.flow-report')).toContainText(report.summary!)
     await expect(lane(report).locator('.flow-issue')).toHaveAttribute('href',new RegExp(report.issueId!))
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)

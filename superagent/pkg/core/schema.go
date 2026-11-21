@@ -1,6 +1,6 @@
 package core
 
-// Schema 22 is initialized in a new directory. Earlier databases remain in
+// The current schema is initialized in a new directory. Earlier databases remain in
 // their original format and are never opened for writing by this version.
 const schema = `
 CREATE TABLE threads (
@@ -38,12 +38,7 @@ CREATE TABLE issues (
  report_creations TEXT NOT NULL DEFAULT '{}', UNIQUE(topic_id,number)
 );
 CREATE INDEX issues_topic ON issues(topic_id,created_at,id);
-CREATE TABLE executions (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, issue_id TEXT NOT NULL REFERENCES issues(id),
- binding_id TEXT NOT NULL UNIQUE REFERENCES session_bindings(id), generation INTEGER NOT NULL,
- created_at TEXT NOT NULL, body BLOB NOT NULL, UNIQUE(issue_id,generation)
-);
-
+CREATE UNIQUE INDEX current_issue_session_binding ON session_bindings(owner_id) WHERE role='issue' AND state<>'revoked';
 CREATE INDEX session_bindings_stop ON session_bindings(id) WHERE json_extract(body,'$.stop.status')='requested';
 CREATE TABLE scheduled_tasks (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL REFERENCES topics(id),
@@ -68,7 +63,7 @@ CREATE INDEX outbox_native_receipt ON outbox(json_extract(receipt,'$.conversatio
  WHERE status='sent';
 CREATE VIEW reports AS
  SELECT CAST(json_extract(r.value,'$.sequence') AS INTEGER) AS seq, json_extract(r.value,'$.id') AS id,
- json_extract(r.value,'$.executionId') AS execution_id, issues.id AS issue_id,
+ json_extract(r.value,'$.sessionBindingId') AS session_binding_id, issues.id AS issue_id,
  json_extract(r.value,'$.createdAt') AS created_at, r.value AS body
  FROM issues, json_each(issues.body,'$.reports') r;
 CREATE VIEW work_pull_requests AS

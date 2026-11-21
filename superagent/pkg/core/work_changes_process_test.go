@@ -19,9 +19,9 @@ type issueDetail struct {
 	core.Issue
 	LatestRequirementsNotification *workEventRecord `json:"latestRequirementsNotification"`
 	IssueSession                   struct {
-		ExecutionID string `json:"executionId"`
-		State       string `json:"state"`
-		ObservedAt  string `json:"observedAt"`
+		SessionBindingID string `json:"sessionBindingId"`
+		State            string `json:"state"`
+		ObservedAt       string `json:"observedAt"`
 	} `json:"issueSession"`
 }
 
@@ -57,16 +57,16 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	a, b, c := create(topic, "a"), create(topic, "b"), create(topic, "c")
 	other := create(foreign, "foreign")
 	start := mcpWork[core.WorkReceipt](t, topic, "start_issue", startRequest("start-a", a))
-	require.Equal(t, a.RequirementsRevision, start.Execution.Revision)
-	issueBinding := waitBinding(t, p, "issue", start.Execution.ID, "ready")
+	require.Equal(t, a.RequirementsRevision, start.SessionBinding.StartGoalRevision)
+	issueBinding := waitBinding(t, p, "issue", start.SessionBinding.ID, "ready")
 	issue := startRoleMCP(t, f, issueBinding)
 	native := peer.next(t, "turn/start")
 	require.Equal(t, issueBinding.SessionID, native.session)
-	startEvent := decodeInternalBatch(t, native, start.Execution.StartEventID)[0]
+	startEvent := decodeInternalBatch(t, native, start.SessionBinding.StartEventID)[0]
 	require.Equal(t, "issue_session_started", startEvent.Kind)
 	require.Empty(t, startEvent.Refs)
 	native.accept()
-	waitWorkEvent(t, p, start.Execution.StartEventID, "sent")
+	waitWorkEvent(t, p, start.SessionBinding.StartEventID, "sent")
 	a = start.Issue
 	a = blockers(t, topic, a, "block-a", human("Verify logs"), dependency(b), human("Get approval"))
 	c = blockers(t, topic, c, "block-c", human("Confirm handoff"), dependency(a))
@@ -101,7 +101,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		detail := readRecord[issueDetail](t, p, "issues/"+a.ID)
-		return detail.Status == "blocked" && detail.IssueSession.ExecutionID == start.Execution.ID &&
+		return detail.Status == "blocked" && detail.IssueSession.SessionBindingID == start.SessionBinding.ID &&
 			detail.IssueSession.State == "running" && detail.IssueSession.ObservedAt != ""
 	}, 7*time.Second, 20*time.Millisecond)
 
@@ -119,7 +119,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	stale.OperationID = "already-resolved"
 	mcpWorkError(t, topic, "issue_update_blockers", "not_found", stale)
 	require.Equal(t, "blocked", a.Status)
-	require.Equal(t, start.Execution.ID, a.CurrentExecutionID)
+	require.Equal(t, start.SessionBinding.ID, a.CurrentSessionBindingID)
 	require.Equal(t, prior.RequirementsRevision, a.RequirementsRevision)
 	mcpWorkError(t, topic, "start_issue", "conflict", core.StartIssueRequest{
 		OperationID: "duplicate-start-with-resolution", IssueID: a.ID, ExpectedRevision: a.Revision,
@@ -221,7 +221,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	require.NotEmpty(t, waitInternalEvent(t, f, fact.ID, "sent").SentAt)
 	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
 	require.Equal(t, c, readRecord[core.Issue](t, p, "issues/"+c.ID))
-	require.Len(t, page(t, p, "executions").Items, 1)
+	require.Len(t, issueBindings(t, p), 1)
 	peer.quiet(t, 300*time.Millisecond)
 	t.Log("dependency completion injected a context fact into Topic; no dependent state change, native stop or follow-on start")
 
@@ -343,6 +343,26 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	t.Log("Concurrent updates at the same Issue revision committed once, and the Issue Session read the full goal through get_issue.")
 
 	a = updated.Issue
+	require.Equal(t, start.SessionBinding.ID, a.CurrentSessionBindingID)
+	staleReport := mcpWork[core.Report](t, issue, "submit_report", core.ReportRequest{
+		OperationID: "report-before-goal-update", Kind: "ready", Summary: "Verified the previous goal", GoalRevision: start.SessionBinding.StartGoalRevision,
+	})
+	staleNotice := peer.next(t, "thread/inject_items")
+	staleEvent := decodeInternalBatch(t, staleNotice, staleReport.EventID)[0]
+	require.Equal(t, "context_supplement", staleEvent.Kind)
+	require.Empty(t, staleEvent.Report)
+	staleNotice.accept()
+	waitWorkEvent(t, p, staleReport.EventID, "sent")
+	var readback struct {
+		SessionBindingID string `json:"sessionBindingId"`
+		Current          *bool  `json:"current"`
+		GoalRevision     int    `json:"goalRevision"`
+	}
+	require.NoError(t, json.Unmarshal(mcpWork[json.RawMessage](t, topic, "get_report", map[string]string{"reportId": staleReport.ID}), &readback))
+	require.NotNil(t, readback.Current)
+	require.False(t, *readback.Current)
+	require.Equal(t, staleReport.Revision, readback.GoalRevision)
+	require.Empty(t, readback.SessionBindingID)
 	reportReq := core.ReportRequest{OperationID: "report", Kind: "progress", Summary: "Applied updated requirements", GoalRevision: a.Revision}
 	mcpWorkError(t, issue, "submit_report", "invalid_argument", reportReq)
 	reportReq.GoalRevision = a.RequirementsRevision
@@ -366,7 +386,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	rejectedInput.answer <- nativeSubmitAnswer{code: -32602, message: "failed to submit turn input: PlanMode"}
 	require.Empty(t, waitWorkEvent(t, p, rejected.NotificationEventID, "pending").SentAt)
 	observation := readRecord[issueDetail](t, p, "issues/"+a.ID)
-	require.Equal(t, []core.Report{report}, observation.Reports)
+	require.Equal(t, []core.Report{staleReport, report}, observation.Reports)
 	require.Equal(t, rejected.Issue, observation.Issue)
 	require.NotNil(t, observation.LatestRequirementsNotification)
 	require.Equal(t, rejected.NotificationEventID, observation.LatestRequirementsNotification.ID)
@@ -382,11 +402,11 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 		Resolve: []core.BlockerResolution{{BlockerID: waiting.Blockers[0].ID, Reason: "Confirmation received"}},
 	})
 	require.Equal(t, "pending", pending.Issue.Status)
-	require.Empty(t, pending.Issue.CurrentExecutionID)
-	require.Equal(t, "historical", pending.Execution.Authority)
+	require.Empty(t, pending.Issue.CurrentSessionBindingID)
+	require.Equal(t, "revoked", pending.SessionBinding.State)
 	require.Empty(t, pending.NotificationEventID)
-	_ = waitObservedStop(t, p, "executions", issueBinding.OwnerID)
-	require.Len(t, page(t, p, "executions").Items, 1)
+	_ = waitObservedStop(t, p, "session-bindings", issueBinding.ID)
+	require.Len(t, issueBindings(t, p), 1)
 	t.Log("an explicit native rejection left the committed requirements readable and kept the update pending")
 }
 
@@ -402,8 +422,8 @@ func TestIssueRequirementsCommitCrash(t *testing.T) {
 			create := issueInput(f.dir, "create")
 			create.Start = true
 			work := roleWork[core.WorkReceipt](t, p, token, "create_issue", create)
-			binding := waitBinding(t, p, "issue", work.Execution.ID, "ready")
-			waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+			binding := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
+			waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
 			r := core.UpdateRequirementsRequest{
 				OperationID: "crash-update", IssueID: work.Issue.ID,
 				ExpectedRevision: work.Issue.Revision, Goal: "Verify the crash-safe requirements", NotifyIssueSession: true,
@@ -445,7 +465,7 @@ func TestIssueRequirementsCommitCrash(t *testing.T) {
 			require.Equal(t, r.Goal, saved.Issue.Requirements)
 			require.Equal(t, work.Issue.RequirementsRevision+1, saved.Issue.RequirementsRevision)
 			require.Len(t, workEvents(t, p, "issue_session_update"), 1)
-			require.Equal(t, binding.OwnerID, waitWorkEvent(t, p, saved.NotificationEventID, "sent").Recipient.ExecutionID)
+			require.Equal(t, binding.ID, waitWorkEvent(t, p, saved.NotificationEventID, "sent").Recipient.SessionBindingID)
 			t.Logf("%s restart saw %d committed notifications and matching requirements; replay delivered one event", stage, len(events))
 		})
 	}
@@ -465,7 +485,7 @@ func TestIssueUpdateFencesGoalAndBlockersBeforeRPC(t *testing.T) {
 	topic, _ := startReminderTopic(t, f, p, peer)
 	work, b, start := startReminderWorker(t, f, p, peer, topic)
 	start.accept()
-	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+	waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
 	issue := work.Issue
 	for _, change := range []string{"goal", "blocker"} {
 		require.NoError(t, os.Remove(release))
@@ -485,15 +505,15 @@ func TestIssueUpdateFencesGoalAndBlockersBeforeRPC(t *testing.T) {
 		write(t, release, "")
 		require.Empty(t, waitWorkEvent(t, p, queued.NotificationEventID, "superseded").SentAt)
 		peer.quiet(t, 250*time.Millisecond)
-		require.Equal(t, b.OwnerID, readRecord[core.Issue](t, p, "issues/"+issue.ID).CurrentExecutionID)
+		require.Equal(t, b.ID, readRecord[core.Issue](t, p, "issues/"+issue.ID).CurrentSessionBindingID)
 	}
 	recovery := recoveryFor("replace-blocked-issue", "replace", b.ID)
 	recovery.StopRuntime = true
 	released := recoverRoleBinding(t, p, operatorFile, recovery)
 	require.Equal(t, "runtime_stopped", released.Close.Method)
-	require.Empty(t, released.ReplacementBinding)
-	require.Empty(t, readRecord[core.Issue](t, p, "issues/"+issue.ID).CurrentExecutionID)
+	require.Empty(t, released.ReplacementSessionBindingID)
+	require.Empty(t, readRecord[core.Issue](t, p, "issues/"+issue.ID).CurrentSessionBindingID)
 	require.Equal(t, "blocked", readRecord[core.Issue](t, p, "issues/"+issue.ID).Status)
-	require.Equal(t, "historical", readRecord[core.Execution](t, p, "executions/"+b.OwnerID).Authority)
-	require.Len(t, page(t, p, "executions").Items, 1)
+	require.Equal(t, "revoked", readRecord[core.SessionBinding](t, p, "session-bindings/"+b.ID).State)
+	require.Len(t, issueBindings(t, p), 1)
 }

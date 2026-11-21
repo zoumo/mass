@@ -211,8 +211,8 @@ func telemetryRoute(path string) string {
 	switch {
 	case strings.HasPrefix(path, "/v1/channel/outbox/items/"):
 		return "/v1/channel/outbox/items/{id}"
-	case strings.HasPrefix(path, "/v1/operator/bindings/"):
-		return "/v1/operator/bindings/{id}"
+	case strings.HasPrefix(path, "/v1/operator/session-bindings/"):
+		return "/v1/operator/session-bindings/{id}"
 	case strings.HasPrefix(path, observerTracePath):
 		return observerTracePath + "{id}"
 	case strings.HasPrefix(path, "/v1/observer/session-preview/"):
@@ -223,8 +223,8 @@ func telemetryRoute(path string) string {
 	case strings.HasPrefix(path, "/v1/observer/"):
 		collection, _, detail := strings.Cut(strings.TrimPrefix(path, "/v1/observer/"), "/")
 		switch collection {
-		case "messages", "threads", "internal-events", "topics", "issues", "executions", "reports", "timers",
-			"pull-requests", "router-messages", "routing-events", "subscriptions", "relations", "bindings", "outbox":
+		case "messages", "threads", "internal-events", "topics", "issues", "reports", "timers",
+			"pull-requests", "router-messages", "routing-events", "subscriptions", "relations", "session-bindings", "outbox":
 			if detail {
 				return "/v1/observer/" + collection + "/{id}"
 			}

@@ -28,12 +28,12 @@ type IngressEvent = EventIdentity & {
 }
 type IssueCreated = EventIdentity & { kind: 'issue_created'; issueId: string; title: string }
 type IssueSessionDispatch = EventIdentity & {
-  kind: 'issue_session_dispatch'; issueId: string; title: string; executionId: string; generation: number
+  kind: 'issue_session_dispatch'; issueId: string; title: string; sessionBindingId: string
   eventId: string; dispatchKind: keyof typeof dispatchLabels; summary?: string; status: string; content?: StructuredBody
 }
 type IssueReport = EventIdentity & {
-  kind: 'report'; issueId: string; title: string; executionId: string; generation: number
-  reportId: string; reportKind: keyof typeof reportLabels; summary: string; eventId: string
+  kind: 'report'; issueId: string; title: string; sessionBindingId: string
+  reportId: string; historical?: boolean; reportKind: keyof typeof reportLabels; summary: string; eventId: string
 }
 type ConversationEvent = IngressEvent | IssueCreated | IssueSessionDispatch | IssueReport
 type RoutingEvent = { status: string; body?: string }
@@ -48,11 +48,11 @@ type Issue = {
   id: string; title: string; status: string
   completion?: { reason: string; evidence: string[]; completedAt: string }
 }
-type Report = { summary: string; details?: string; evidence?: string[]; questions?: string[]; goalRevision?: number }
-type Execution = { startEventId?: string }
+type Report = { summary: string; details?: string; evidence?: string[]; questions?: string[]; goalRevision?: number; current?: boolean }
+type SessionBinding = { startEventId?: string }
 
 const dispatchLabels = {
-  issue_session_started: '启动 Execution', issue_session_update: '继续执行',
+  issue_session_started: '启动 Issue Session', issue_session_update: '发送指令',
   context_supplement: '补充上下文', goal_notification: '目标更新',
 } as const
 const reportLabels = { progress: '进展', ready: '申请验收', blocked: '受阻', failed: '失败' } as const
@@ -258,12 +258,12 @@ function EventCard({ event, href, selected }: { event: ConversationEvent; href: 
       { label: 'Issue', value: <span className="conversation-card-issue">
         <ObjectAvatar {...issueParticipant(event.issueId, event.title)}/>{event.title}
       </span> },
-      { label: 'Execution', value: `第 ${event.generation} 次` },
     ]
     if (dispatch) facts.push({ label: '投递', value: eventStatusLabel(event.status) })
+    if (!dispatch && event.historical) facts.push({ label: '报告', value: '历史报告' })
     return <ConversationCard {...common}
       kind={dispatch ? dispatchLabels[event.dispatchKind] : `Issue Report · ${reportLabels[event.reportKind]}`}
-      recordId={dispatch ? event.executionId : event.reportId}
+      recordId={dispatch ? event.eventId : event.reportId}
       preview={event.summary || event.title} content={content}
       sender={dispatch ? topic : issue} recipient={dispatch ? issue : topic} facts={facts}/>
   }
@@ -346,12 +346,12 @@ function DispatchDetails({ event }: { event: IssueSessionDispatch }) {
       <dl>
         <Fact label="登记时间"><time dateTime={event.at}>{formatTime(event.at)}</time></Fact>
         <Fact label="发送状态">{eventStatusLabel(internalEvent.data?.status || event.status)}</Fact>
-        <Fact label="Execution"><code>{event.executionId}</code> · 第 {event.generation} 次执行</Fact>
+        <Fact label="SessionBinding"><code>{event.sessionBindingId}</code></Fact>
         {revision && <Fact label="目标修订">{revision}</Fact>}
       </dl>
       <div className="conversation-links">
         <a href={viewHref('issue', event.issueId)}>查看 Issue →</a>
-        <a href={recordHref('executions', event.executionId)}>查看 Execution →</a>
+        <a href={recordHref('session-bindings', event.sessionBindingId)}>查看 SessionBinding →</a>
         <a href={recordHref('internal-events', event.eventId)}>查看事件记录 →</a>
       </div>
     </section>
@@ -370,10 +370,11 @@ function DispatchDetails({ event }: { event: IssueSessionDispatch }) {
 function ReportDetails({ event }: { event: IssueReport }) {
   const report = useRecord<Report>('reports/' + encodeURIComponent(event.reportId))
   const issue = useRecord<Issue>('issues/' + encodeURIComponent(event.issueId))
-  const execution = useRecord<Execution>('executions/' + encodeURIComponent(event.executionId))
+  const binding = useRecord<SessionBinding>('session-bindings/' + encodeURIComponent(event.sessionBindingId))
+  const current = report.data?.current ?? (event.historical ? false : undefined)
   const completion = issue.data?.status === 'completed' ? issue.data.completion : undefined
   return <>
-    {[report, issue, execution].map((result, index) =>
+    {[report, issue, binding].map((result, index) =>
       result.error && <ReadError key={index} error={result.error} stale={!!result.data}/>)}
     <section className="conversation-section">
       <h3>Issue Report · {reportLabels[event.reportKind]}</h3>
@@ -384,16 +385,17 @@ function ReportDetails({ event }: { event: IssueReport }) {
       <dl>
         <Fact label="提交时间"><time dateTime={event.at}>{formatTime(event.at)}</time></Fact>
         <Fact label="Issue">{event.title}</Fact>
-        <Fact label="Execution"><code>{event.executionId}</code> · 第 {event.generation} 次执行</Fact>
+        <Fact label="SessionBinding"><code>{event.sessionBindingId}</code></Fact>
         {report.data?.goalRevision && <Fact label="目标修订">{report.data.goalRevision}</Fact>}
-        {event.reportKind === 'ready' && issue.data && !completion && <Fact label="验收状态">待 Topic 验收</Fact>}
+        {current !== undefined && <Fact label="报告状态">{current ? '当前报告' : '历史报告'}</Fact>}
+        {event.reportKind === 'ready' && current && issue.data && !completion && <Fact label="验收状态">待 Topic 验收</Fact>}
       </dl>
       <div className="conversation-links">
         <a href={viewHref('issue', event.issueId)}>查看 Issue →</a>
-        <a href={recordHref('executions', event.executionId)}>查看 Execution →</a>
+        <a href={recordHref('session-bindings', event.sessionBindingId)}>查看 SessionBinding →</a>
         <a href={recordHref('reports', event.reportId)}>查看 Report →</a>
         <a href={recordHref('internal-events', event.eventId)}>查看通知事件 →</a>
-        {execution.data?.startEventId && <a href={recordHref('internal-events', execution.data.startEventId)}>查看启动事件 →</a>}
+        {binding.data?.startEventId && <a href={recordHref('internal-events', binding.data.startEventId)}>查看启动事件 →</a>}
       </div>
     </section>
     <DetailList title="Report 证据" items={report.data?.evidence}/>

@@ -10,17 +10,17 @@ import (
 )
 
 type RuntimeBindingRelease struct {
-	BindingID  string       `json:"bindingId"`
-	SessionID  string       `json:"sessionId"`
-	SessionUID string       `json:"sessionUid"`
-	Close      BindingClose `json:"close"`
+	SessionBindingID string       `json:"sessionBindingId"`
+	SessionID        string       `json:"sessionId"`
+	SessionUID       string       `json:"sessionUid"`
+	Close            BindingClose `json:"close"`
 }
 
 // A shared Runtime stop can account for another retired binding only if Core
 // recorded the same Runtime instance and massd verifies that binding offline.
 func (s *Server) observeRuntimeReleases(ctx context.Context, c *client.Client, rt resource.Runtime, targetID string) []RuntimeBindingRelease {
 	type candidate struct {
-		binding Binding
+		binding SessionBinding
 		spec    resource.SessionSpec
 	}
 	rows, err := s.store.db.QueryContext(ctx, `SELECT body,spec FROM session_bindings WHERE state='revoked' AND id<>?
@@ -55,7 +55,7 @@ func (s *Server) observeRuntimeReleases(ctx context.Context, c *client.Client, r
 			continue
 		}
 		releases = append(releases, RuntimeBindingRelease{
-			BindingID: b.ID, SessionID: b.SessionID, SessionUID: b.SessionUID,
+			SessionBindingID: b.ID, SessionID: b.SessionID, SessionUID: b.SessionUID,
 			Close: BindingClose{At: now(), ResourceVersion: session.Metadata.ResourceVersion, Method: "runtime_stopped"},
 		})
 	}
@@ -71,7 +71,7 @@ func saveRelatedReleases(ctx context.Context, tx *sql.Tx, releases []RuntimeBind
 		_, err = tx.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,'$.close',json(?))
  WHERE id=? AND state='revoked' AND json_type(body,'$.close') IS NULL
  AND json_extract(body,'$.sessionId')=? AND json_extract(body,'$.sessionUid')=?`,
-			raw, release.BindingID, release.SessionID, release.SessionUID)
+			raw, release.SessionBindingID, release.SessionID, release.SessionUID)
 		if err != nil {
 			return storageError()
 		}

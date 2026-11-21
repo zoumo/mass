@@ -182,7 +182,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	create := issueInput(f.dir, "outbox-issue")
 	create.Start = true
 	work := roleWork[core.WorkReceipt](t, p, topicToken, "create_issue", create)
-	issue := waitBinding(t, p, "issue", work.Execution.ID, "ready")
+	issue := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
 	issueMCP := startRoleMCP(t, f, issue)
 	require.NotContains(t, string(issueMCP.call("tools/list", map[string]any{})["result"]), "send_reply")
 	code, raw = requestMCPTool(t, p.endpoint, "send_reply", roleToken(t, f, issue), args)

@@ -95,7 +95,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.Equal(t, firstPR, association.CanonicalURL)
 	require.Equal(t, first.OwnerID, association.TopicID)
 	require.Empty(t, association.IssueID)
-	require.Empty(t, association.ExecutionID)
+	require.Empty(t, association.SessionBindingID)
 	require.Equal(t, original, readPRThread(t, p, firstPR))
 	require.Equal(t, before, page(t, p, "subscriptions?threadKey="+url.QueryEscape(firstPR)))
 	var sub core.Subscription
@@ -108,7 +108,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	work := issueInput(f.dir, "start-issue")
 	work.Start = true
 	current := mcpWork[core.WorkReceipt](t, primary, "create_issue", work)
-	issueBinding := waitBinding(t, p, "issue", current.Execution.ID, "ready")
+	issueBinding := waitBinding(t, p, "issue", current.SessionBinding.ID, "ready")
 	issue := startRoleMCP(t, f, issueBinding)
 	require.Contains(t, string(issue.call("tools/list", struct{}{})["result"]), "update_issue")
 	require.Len(t, page(t, p, "pull-requests").Items, 1)
@@ -118,13 +118,13 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	forged["issueId"] = current.Issue.ID
 	mcpWorkError(t, issue, "update_issue", "invalid_argument", forged)
 	forged = prUpdate("scope-override", registered.Revision, secondPR)
-	forged["executionId"] = current.Execution.ID
+	forged["sessionBindingId"] = current.SessionBinding.ID
 	mcpWorkError(t, primary, "update_topic", "invalid_argument", forged)
 	linked := mcpWork[core.WorkReceipt](t, issue, "update_issue", issueRequest)
 	issuePR := linked.Issue.PullRequests[0].PullRequest
 	require.Equal(t, first.OwnerID, issuePR.TopicID)
 	require.Equal(t, current.Issue.ID, issuePR.IssueID)
-	require.Equal(t, current.Execution.ID, issuePR.ExecutionID)
+	require.Equal(t, current.SessionBinding.ID, issuePR.SessionBindingID)
 	require.NotEqual(t, firstPR, issuePR.ThreadKey)
 	topicWork := mcpWork[core.Topic](t, primary, "get_topic", map[string][]string{"include": {"pullRequests"}})
 	require.Len(t, topicWork.PullRequests, 2)
@@ -181,7 +181,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.Equal(t, issuePR, readRecord[core.Issue](t, p, "issues/"+current.Issue.ID).PullRequests[0].PullRequest)
 	require.Equal(t, topicWork.PullRequests, readRecord[core.Topic](t, p, "topics/"+first.OwnerID).PullRequests)
 
-	report := core.ReportRequest{OperationID: "url-in-report", Kind: "ready", Summary: "See " + internalPR, Evidence: []string{internalPR}, GoalRevision: current.Execution.Revision}
+	report := core.ReportRequest{OperationID: "url-in-report", Kind: "ready", Summary: "See " + internalPR, Evidence: []string{internalPR}, GoalRevision: current.SessionBinding.StartGoalRevision}
 	mcpWork[core.Report](t, issue, "submit_report", report)
 	require.Len(t, page(t, p, "threads").Items, 2)
 	require.Len(t, page(t, p, "pull-requests").Items, 3)

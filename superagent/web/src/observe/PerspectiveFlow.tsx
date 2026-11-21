@@ -3,7 +3,7 @@ import { ArrowRight, Boxes, ChevronDown, CircleDot, FileText, GitBranch, Mail, M
 import './perspective-flow.css'
 
 export type FlowNode = {
-  kind: 'message' | 'router' | 'topic' | 'issue' | 'execution' | 'report' | 'state'
+  kind: 'message' | 'router' | 'topic' | 'issue' | 'session' | 'report' | 'state'
   label: string
   href?: string
 }
@@ -11,7 +11,7 @@ export type FlowLane = { id: string; nodes: FlowNode[]; edges: string[]; detail?
 
 const types = {
   message: [Mail, 'Message'], router: [GitBranch, 'Router'], topic: [Boxes, 'Topic'],
-  issue: [CircleDot, 'Issue'], execution: [Play, 'Execution'], report: [FileText, '报告'], state: [Milestone, '状态'],
+  issue: [CircleDot, 'Issue'], session: [Play, 'Session'], report: [FileText, '报告'], state: [Milestone, '状态'],
 } as const
 
 function Node({ node }: { node: FlowNode }) {

@@ -196,7 +196,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.recoverInput(w, r)
 	case r.URL.Path == "/v1/operator/echo-release":
 		s.releaseEcho(w, r)
-	case strings.HasPrefix(r.URL.Path, "/v1/operator/bindings/"):
+	case strings.HasPrefix(r.URL.Path, "/v1/operator/session-bindings/"):
 		s.inspectBinding(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/observer/"):
 		if !readOnly(w, r) {

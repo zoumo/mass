@@ -16,7 +16,7 @@ import (
 
 type RecoveryRequest struct {
 	OperationID             string `json:"operationId"`
-	BindingID               string `json:"bindingId"`
+	SessionBindingID        string `json:"sessionBindingId"`
 	Mode                    string `json:"mode"`
 	Reconciliation          string `json:"reconciliation"`
 	AcceptPossibleDuplicate bool   `json:"acceptPossibleDuplicate"`
@@ -25,18 +25,18 @@ type RecoveryRequest struct {
 
 type Recovery struct {
 	RecoveryRequest
-	ID                 string                  `json:"id"`
-	CreatedAt          string                  `json:"createdAt"`
-	CompletedAt        string                  `json:"completedAt,omitempty"`
-	Status             string                  `json:"status"`
-	LastError          string                  `json:"lastError,omitempty"`
-	SessionID          string                  `json:"sessionId,omitempty"`
-	SessionUID         string                  `json:"sessionUid,omitempty"`
-	ClosedResource     string                  `json:"closedResourceVersion,omitempty"`
-	ResumedResource    string                  `json:"resumedResourceVersion,omitempty"`
-	ReplacementBinding string                  `json:"replacementBindingId,omitempty"`
-	Close              *BindingClose           `json:"close,omitempty"`
-	RelatedReleases    []RuntimeBindingRelease `json:"relatedReleases,omitempty"`
+	ID                          string                  `json:"id"`
+	CreatedAt                   string                  `json:"createdAt"`
+	CompletedAt                 string                  `json:"completedAt,omitempty"`
+	Status                      string                  `json:"status"`
+	LastError                   string                  `json:"lastError,omitempty"`
+	SessionID                   string                  `json:"sessionId,omitempty"`
+	SessionUID                  string                  `json:"sessionUid,omitempty"`
+	ClosedResource              string                  `json:"closedResourceVersion,omitempty"`
+	ResumedResource             string                  `json:"resumedResourceVersion,omitempty"`
+	ReplacementSessionBindingID string                  `json:"replacementSessionBindingId,omitempty"`
+	Close                       *BindingClose           `json:"close,omitempty"`
+	RelatedReleases             []RuntimeBindingRelease `json:"relatedReleases,omitempty"`
 }
 
 func ReadOperatorToken(path string) (string, error) {
@@ -63,10 +63,10 @@ func (s *Server) recoverInput(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
 	var req RecoveryRequest
 	if err != nil || decodeStrict(data, &req) != nil || !instanceIDFormat.MatchString(req.OperationID) ||
-		req.BindingID == "" || (req.Mode != "retry" && req.Mode != "replace" && req.Mode != "settle") ||
+		req.SessionBindingID == "" || (req.Mode != "retry" && req.Mode != "replace" && req.Mode != "settle") ||
 		req.Mode == "retry" && req.StopRuntime ||
 		strings.TrimSpace(req.Reconciliation) == "" || len(req.Reconciliation) > 4096 || !req.AcceptPossibleDuplicate {
-		s.fail(w, problem("invalid_argument", "operationId, bindingId, retry/replace/settle, reconciliation and acknowledgement of possible duplication are required"))
+		s.fail(w, problem("invalid_argument", "operationId, sessionBindingId, retry/replace/settle, reconciliation and acknowledgement of possible duplication are required"))
 		return
 	}
 	if req.StopRuntime {
@@ -82,11 +82,11 @@ func (s *Server) recoverInput(w http.ResponseWriter, r *http.Request) {
 		}
 		defer s.runtimeOperations.RUnlock()
 	}
-	if _, busy := s.bindingOperations.LoadOrStore(req.BindingID, struct{}{}); busy {
+	if _, busy := s.bindingOperations.LoadOrStore(req.SessionBindingID, struct{}{}); busy {
 		s.fail(w, problem("conflict", "binding has a Core operation in flight"))
 		return
 	}
-	defer s.bindingOperations.Delete(req.BindingID)
+	defer s.bindingOperations.Delete(req.SessionBindingID)
 	recovery, b, spec, err := s.store.beginRecovery(r.Context(), req)
 	if err != nil {
 		s.fail(w, err)
@@ -120,9 +120,9 @@ func (s *Server) recoverInput(w http.ResponseWriter, r *http.Request) {
 	s.write(w, http.StatusOK, recovery)
 }
 
-func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recovery, Binding, resource.SessionSpec, error) {
+func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recovery, SessionBinding, resource.SessionSpec, error) {
 	var r Recovery
-	var b Binding
+	var b SessionBinding
 	var spec resource.SessionSpec
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -131,7 +131,7 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 		return r, b, spec, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &b, req.BindingID); err != nil {
+	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &b, req.SessionBindingID); err != nil {
 		return r, b, spec, err
 	}
 	known := b.Recovery != nil && b.Recovery.ID == req.OperationID
@@ -170,7 +170,7 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 	if !known {
 		if req.Mode == "retry" {
 			var blocked bool
-			err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM internal_events WHERE "+eventRecipientKind+"=? AND "+eventRecipientOwner+"=? AND status='dispatching')", b.Role, b.OwnerID).Scan(&blocked)
+			err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM internal_events WHERE "+eventRecipientKind+"=? AND "+eventRecipientOwner+"=? AND status='dispatching')", b.Role, b.eventRecipientID()).Scan(&blocked)
 			if err != nil {
 				return r, b, spec, storageError()
 			}
@@ -191,7 +191,7 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 	return r, b, spec, tx.Commit()
 }
 
-func (s *Server) reconcileSession(ctx context.Context, b Binding, spec resource.SessionSpec, r *Recovery) error {
+func (s *Server) reconcileSession(ctx context.Context, b SessionBinding, spec resource.SessionSpec, r *Recovery) error {
 	c, err := s.massClient()
 	if err != nil {
 		return problem("unavailable", "cannot connect to massd")
@@ -243,7 +243,7 @@ func sessionOwnsClose(session resource.Session) bool {
 	return ownedOnlineSession(session) || session.Status.State == "closing" && session.Status.AppliedGeneration != 0
 }
 
-func closeOriginalSession(ctx context.Context, c *client.Client, b Binding, spec resource.SessionSpec, ref resource.SessionRef) (resource.Session, error) {
+func closeOriginalSession(ctx context.Context, c *client.Client, b SessionBinding, spec resource.SessionSpec, ref resource.SessionRef) (resource.Session, error) {
 	var closed resource.Session
 	if err := c.CloseSession(ctx, ref, &closed); err != nil || closed.Status.State != "offline" || !bindingMatches(b, spec, closed) {
 		return closed, problem("failed_precondition", "massd did not confirm close of the original Session")
@@ -264,7 +264,7 @@ func ownedOnlineSession(session resource.Session) bool {
 	}
 }
 
-func (s *Server) reconcileRetirement(ctx context.Context, b Binding, spec resource.SessionSpec, r *Recovery) error {
+func (s *Server) reconcileRetirement(ctx context.Context, b SessionBinding, spec resource.SessionSpec, r *Recovery) error {
 	if b.PreviousOwnerUnknown {
 		return problem("failed_precondition", "a previously unreachable native owner remains unconfirmed after same-binding recovery")
 	}
@@ -357,11 +357,11 @@ func (s *Store) saveRecoveryFailure(ctx context.Context, r Recovery) error {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,'$.recovery',json(?))
- WHERE id=? AND json_extract(body,'$.recovery.id')=? AND json_extract(body,'$.recovery.status')='reconciling'`, raw, r.BindingID, r.ID)
+ WHERE id=? AND json_extract(body,'$.recovery.id')=? AND json_extract(body,'$.recovery.status')='reconciling'`, raw, r.SessionBindingID, r.ID)
 	return err
 }
 
-func (s *Store) completeRecovery(ctx context.Context, b Binding, r Recovery) (Recovery, error) {
+func (s *Store) completeRecovery(ctx context.Context, b SessionBinding, r Recovery) (Recovery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -369,7 +369,7 @@ func (s *Store) completeRecovery(ctx context.Context, b Binding, r Recovery) (Re
 		return r, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	var current Binding
+	var current SessionBinding
 	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &current, b.ID); err != nil {
 		return r, err
 	}
@@ -419,13 +419,13 @@ func (s *Store) completeRecovery(ctx context.Context, b Binding, r Recovery) (Re
 	return r, tx.Commit()
 }
 
-func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Recovery) error {
+func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b SessionBinding, r *Recovery) error {
 	if b.Role == "topic" {
 		var t Topic
 		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
 			return err
 		}
-		if t.BindingID != b.ID {
+		if t.SessionBindingID != b.ID {
 			return problem("stale_binding", "Topic has a newer binding")
 		}
 	}
@@ -437,9 +437,9 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 	if err != nil {
 		return err
 	}
-	r.ReplacementBinding = next.ID
+	r.ReplacementSessionBindingID = next.ID
 	if b.Role == "topic" {
-		if _, err := tx.ExecContext(ctx, "UPDATE topics SET body=json_set(body,'$.bindingId',?) WHERE id=?", next.ID, b.OwnerID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE topics SET body=json_set(body,'$.sessionBindingId',?) WHERE id=?", next.ID, b.OwnerID); err != nil {
 			return storageError()
 		}
 	}
@@ -454,7 +454,7 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 			kind = contextSupplement
 		}
 	}
-	payload, err := json.Marshal(map[string]string{"previousBindingId": b.ID, "recovery": "binding_recovered"})
+	payload, err := json.Marshal(map[string]string{"previousSessionBindingId": b.ID, "recovery": "binding_recovered"})
 	if err != nil {
 		return storageError()
 	}
@@ -464,7 +464,7 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b Binding, r *Re
 	})
 }
 
-func (s *Store) replaceUnrecoverableIssue(ctx context.Context, b Binding, session resource.Session) error {
+func (s *Store) replaceUnrecoverableIssue(ctx context.Context, b SessionBinding, session resource.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -472,7 +472,7 @@ func (s *Store) replaceUnrecoverableIssue(ctx context.Context, b Binding, sessio
 		return storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	var current Binding
+	var current SessionBinding
 	if err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE id=? AND state='pending'`, &current, b.ID); err != nil {
 		return err
 	}
@@ -491,16 +491,16 @@ func (s *Store) replaceUnrecoverableIssue(ctx context.Context, b Binding, sessio
 	return tx.Commit()
 }
 
-func (s *Store) replaceIssue(ctx context.Context, tx *sql.Tx, b Binding, r *Recovery) error {
-	issue, x, err := currentBoundIssue(ctx, tx, b)
+func (s *Store) replaceIssue(ctx context.Context, tx *sql.Tx, b SessionBinding, r *Recovery) error {
+	issue, _, err := currentBoundIssue(ctx, tx, b)
 	if err != nil {
 		return err
 	}
 	at := now()
-	if _, err := retireExecution(ctx, tx, x.ID, at, false); err != nil {
+	if _, err := retireIssueBinding(ctx, tx, issue, at, false); err != nil {
 		return err
 	}
-	issue.CurrentExecutionID = ""
+	issue.CurrentSessionBindingID = ""
 	if !canContinueIssue(issue) {
 		issue.Revision++
 		issue.UpdatedAt = at
@@ -510,6 +510,6 @@ func (s *Store) replaceIssue(ctx context.Context, tx *sql.Tx, b Binding, r *Reco
 	if err != nil {
 		return err
 	}
-	r.ReplacementBinding = next.Execution.BindingID
+	r.ReplacementSessionBindingID = next.SessionBinding.ID
 	return nil
 }

@@ -61,10 +61,10 @@ func New() *cobra.Command {
 	observe.PersistentFlags().StringVar(&thread, "thread-key", "", "Filter Messages, subscriptions or Outbox by exact Thread key")
 	observe.PersistentFlags().StringVar(&message, "message-id", "", "Filter Issue materials, Outbox, Router Messages, relations or routing events by exact Message ID")
 	observe.PersistentFlags().StringVar(&topic, "topic-id", "", "Filter Issues, Timers, PR associations, subscriptions, relations, routing events or Outbox by Topic ID")
-	observe.PersistentFlags().StringVar(&issue, "issue-id", "", "Filter Executions, Reports, internal events or PR associations by exact Issue ID")
+	observe.PersistentFlags().StringVar(&issue, "issue-id", "", "Filter SessionBindings, Reports, internal events or PR associations by exact Issue ID")
 	observe.PersistentFlags().IntVar(&limit, "limit", 50, "Page size (1–200)")
 	observe.PersistentFlags().BoolVar(&newest, "newest", false, "List newest records first")
-	for _, kind := range []string{"messages", "threads", "internal-events", "topics", "issues", "executions", "reports", "timers", "pull-requests", "router-messages", "topic-activity", "routing-events", "subscriptions", "relations", "bindings", "health", "outbox"} {
+	for _, kind := range []string{"messages", "threads", "internal-events", "topics", "issues", "reports", "timers", "pull-requests", "router-messages", "topic-activity", "routing-events", "subscriptions", "relations", "session-bindings", "health", "outbox"} {
 		cmd := &cobra.Command{Use: kind + " [id]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			u, err := url.Parse(endpoint)
 			if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Scheme != "http" {

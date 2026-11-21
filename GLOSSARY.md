@@ -112,11 +112,13 @@ _Avoid_: 将实时事件流等同于完整会话历史或可靠消费进度。
 
 ## Superagent
 
+**SessionBinding**：将 Router、Topic 或 Issue 关联到 MASS Session 的授权记录。Core 通过当前绑定投递内部事件，并按绑定校验角色权限。退役绑定保留历史事件和报告的归属。
+
 **Router Session**：全局 Router 的 MASS Session，负责判断入站 Message 的路由目标。
 
 **Topic Session**：为一个 Topic 绑定的 MASS Session，负责管理 Topic、安排 Issue 和验收报告。
 
-**Issue Session**：Issue 的 Execution 绑定的 MASS Session，按当前目标执行并提交 Report。Issue 保存业务身份，Execution 保存执行代次。
+**Issue Session**：Issue 通过当前 SessionBinding 使用的 MASS Session。它接收启动指令、后续指令和补充材料，并按实际采用的目标版本提交 Report。
 
 **Internal Event（内部事件）**：Superagent 发给一个 Router Session、Topic Session 或 Issue Session 的结构化输入，例如路由请求、消息、执行输入或通知。每个事件有稳定身份，向同一接收方重试时沿用该身份。
 

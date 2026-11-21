@@ -1,4 +1,4 @@
-# Defaults to this directory beside the YAML file. Use an empty directory for schema 23.
+# Defaults to this directory beside the YAML file. Use an empty directory for schema 24.
 dataDir: ./superagent-core-data
 # Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
 listen: 127.0.0.1:24370

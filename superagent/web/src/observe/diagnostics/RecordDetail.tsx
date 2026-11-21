@@ -33,7 +33,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
   const showThread = (key: string) => showRecord('threads', key)
   return (
     <>
-      {(detail.acceptance || detail.status || detail.state) && (
+      {kind !== 'session-bindings' && (detail.acceptance || detail.status || detail.state) && (
         <span className="record-state">
           {kind === 'outbox'
             ? replyLabel(String(detail.status))
@@ -91,11 +91,6 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
               查看订阅
             </button>
           )}
-          {detail.executionId && (
-            <button onClick={() => showRecord('executions', String(detail.executionId))} type="button">
-              查看执行记录
-            </button>
-          )}
         </>
       )}
       {detail.pullRequestId && (
@@ -109,9 +104,9 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           type="button"
         >{`查看 Topic ${detail.topicId}`}</button>
       )}
-      {detail.bindingId && (
-        <button onClick={() => showRecord('bindings', String(detail.bindingId))} type="button">
-          Session 准备记录
+      {detail.sessionBindingId && (
+        <button onClick={() => showRecord('session-bindings', String(detail.sessionBindingId))} type="button">
+          查看 SessionBinding
         </button>
       )}
       {kind === 'topics' && (
@@ -179,8 +174,8 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           )}
         </dl>
       )}
-      {kind === 'topics' && detail.cancellation && detail.cancellation.bindingId !== detail.bindingId && (
-        <button onClick={() => showRecord('bindings', detail.cancellation!.bindingId)} type="button">
+      {kind === 'topics' && detail.cancellation?.sessionBindingId && detail.cancellation.sessionBindingId !== detail.sessionBindingId && (
+        <button onClick={() => showRecord('session-bindings', detail.cancellation!.sessionBindingId)} type="button">
           已停用的 Topic Session
         </button>
       )}
@@ -199,7 +194,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
             {detail.executionProfile && <ExecutionProfileFields profile={detail.executionProfile}/>}
             <dt>Issue Session</dt>
             <dd>
-              {detail.currentExecutionId ? stateLabel(detail.issueSession?.state) : '当前没有执行'}
+              {detail.currentSessionBindingId ? stateLabel(detail.issueSession?.state) : '当前没有会话'}
               {detail.issueSession?.observedAt && <span> · {detail.issueSession.observedAt}</span>}
               {detail.issueSession?.observationGap && <span> · {detail.issueSession.observationGap}</span>}
             </dd>
@@ -319,13 +314,13 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       )}
       {kind === 'issues' && (
         <>
-          {detail.currentExecutionId && (
-            <button onClick={() => showRecord('executions', String(detail.currentExecutionId))} type="button">
-              当前执行
+          {detail.currentSessionBindingId && (
+            <button onClick={() => showRecord('session-bindings', detail.currentSessionBindingId!)} type="button">
+              当前会话
             </button>
           )}
-          <button onClick={() => navigate('executions', identity(detail))} type="button">
-            执行历史
+          <button onClick={() => navigate('session-bindings', identity(detail), 'issueId')} type="button">
+            会话绑定历史
           </button>
           <button onClick={() => navigate('reports', identity(detail))} type="button">
             报告历史
@@ -339,7 +334,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           <p>
             {stateLabel(detail.kind)} · {detail.createdAt}
             {!!detail.goalRevision && <span> · 目标版本 {detail.goalRevision}</span>}
-            {detail.historical && <span> · 历史执行</span>}
+            <span> · {detail.current ? '当前报告' : '历史报告'}</span>
           </p>
           {detail.details && <pre className="body-text">{detail.details}</pre>}
           {!!detail.evidence?.length && <h3>证据</h3>}
@@ -358,9 +353,6 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
               ))}
             </ul>
           )}
-          <button onClick={() => showRecord('executions', String(detail.executionId))} type="button">
-            查看执行记录
-          </button>
           <button onClick={() => showRecord('internal-events', String(detail.eventId))} type="button">
             Topic 通知
           </button>
@@ -377,6 +369,16 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
             ))}
           </ul>
         </>
+      )}
+      {kind === 'internal-events' && detail.sender?.session_binding_id && (
+        <button onClick={() => showRecord('session-bindings', detail.sender!.session_binding_id!)} type="button">
+          查看发送会话
+        </button>
+      )}
+      {kind === 'internal-events' && detail.recipient?.session_binding_id && (
+        <button onClick={() => showRecord('session-bindings', detail.recipient!.session_binding_id!)} type="button">
+          查看接收会话
+        </button>
       )}
       {['routing-events', 'subscriptions', 'relations', 'internal-events'].includes(kind) && (
         <pre data-testid="routing-record">{JSON.stringify(detail, null, 2)}</pre>

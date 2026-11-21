@@ -164,6 +164,6 @@ func initializeMCP(t *testing.T, endpoint, token string) json.RawMessage {
 	require.Equal(t, mcpTestProtocolVersion, result.ProtocolVersion)
 	require.Contains(t, result.Capabilities, "tools")
 	require.NotContains(t, string(response.Result), token)
-	require.Contains(t, result.Meta, "mass.dev/binding")
-	return result.Meta["mass.dev/binding"]
+	require.Contains(t, result.Meta, "mass.dev/session-binding")
+	return result.Meta["mass.dev/session-binding"]
 }

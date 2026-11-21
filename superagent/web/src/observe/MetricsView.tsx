@@ -9,7 +9,7 @@ import './observability.css'
 
 const roles = ['router', 'topic', 'issue'] as const
 type Role = typeof roles[number]
-const dimensions = { all: '全部', message: 'Message', router: 'Router', topic: 'Topic', issue: 'Issue', tool: '工具' } as const
+const dimensions = { all: '全部', message: 'Message', router: 'Router', topic: 'Topic', issue: 'Issue', 'session-binding': 'SessionBinding', tool: '工具' } as const
 type Dimension = keyof typeof dimensions
 const windows = { '1h': '1 小时', '24h': '24 小时', '7d': '7 天', '30d': '30 天' } as const
 type Window = keyof typeof windows
@@ -51,6 +51,7 @@ function metricsParams(filter: Filter) {
   const { scope, id, window, includeIssues } = filter
   const params = new URLSearchParams({ window })
   if (scope === 'message') params.set('messageId', id)
+  if (scope === 'session-binding') params.set('sessionBindingId', id)
   if (scope === 'tool' && id) params.set('tool', id)
   if (scope === 'topic' && includeIssues) params.set('topicId', id)
   else if (scope === 'router' || scope === 'topic' || scope === 'issue') {
@@ -63,7 +64,8 @@ function metricsParams(filter: Filter) {
 function MetricsWorkspace({ filter, before }: { filter: Filter; before: string }) {
   const { scope, id, window, includeIssues } = filter
   const [draft, setDraft] = useState(id)
-  const ready = (scope !== 'message' && !(scope === 'topic' && includeIssues)) || Boolean(id)
+  const requiresID = scope === 'message' || scope === 'session-binding' || (scope === 'topic' && includeIssues)
+  const ready = !requiresID || Boolean(id)
   const params = metricsParams(filter)
   const metrics = useRecord<Metrics>(ready ? 'mcp-tool-usage/metrics?' + params : '')
   const callParams = new URLSearchParams(params)
@@ -71,13 +73,13 @@ function MetricsWorkspace({ filter, before }: { filter: Filter; before: string }
   if (before) callParams.set('before', before)
   const calls = useRecord<Calls>(ready ? 'mcp-tool-usage/calls?' + callParams : '')
   const acceptsID = scope !== 'all' && scope !== 'router'
-  const idLabel = scope === 'tool' ? '工具名称' : scope === 'message' ? 'Message ID' : '调用方 ID'
+  const idLabel = scope === 'tool' ? '工具名称' : scope === 'message' || scope === 'session-binding' ? dimensions[scope] + ' ID' : '调用方 ID'
   return <div className="observability">
     <nav className="panel metrics-scopes" aria-label="Metrics 统计维度">
       {Object.entries(dimensions).map(([name, label]) => <a key={name} href={metricsHref(name as Dimension, name === scope ? id : '', window, name === scope && includeIssues)} aria-current={name === scope ? 'page' : undefined}>{label}</a>)}
     </nav>
     <form className="panel observable-query" onSubmit={event => { event.preventDefault(); navigate(metricsHref(scope, draft.trim(), window, includeIssues)) }}>
-      {acceptsID && <label>{idLabel}<input required={scope === 'message' || includeIssues} value={draft} onChange={event => setDraft(event.target.value)} placeholder={scope === 'message' ? '例如 mass-m1' : '全部'}/></label>}
+      {acceptsID && <label>{idLabel}<input required={requiresID} value={draft} onChange={event => setDraft(event.target.value)} placeholder={requiresID ? undefined : '全部'}/></label>}
       {scope === 'topic' && <label>Topic 用量范围<select aria-label="Topic 用量范围" value={String(includeIssues)} onChange={event => navigate(metricsHref(scope, draft.trim(), window, event.target.value === 'true'))}>
         <option value="false">Topic 自身</option><option value="true">包含下属 Issue</option>
       </select></label>}
@@ -86,14 +88,15 @@ function MetricsWorkspace({ filter, before }: { filter: Filter; before: string }
       </select></label>
       {acceptsID && <Button type="submit">应用筛选</Button>}
       {id && (scope === 'message' || scope === 'topic' || scope === 'issue') && <a href={viewHref(scope, id)}>查看 {dimensions[scope]} →</a>}
+      {id && scope === 'session-binding' && <a href={'/observer/?' + new URLSearchParams({ view: 'session-bindings', id })}>查看 SessionBinding →</a>}
     </form>
     {scope === 'message' && <p className="metric-note">按 Core 已记录的事件和 Trace 统计关联调用。跨消息共用的调用可能出现在多个 Message 视角。</p>}
-    {!ready && <p className="empty">{scope === 'message' ? '输入 Message ID 查看关联工具用量。' : '输入 Topic ID 查看包含下属 Issue 的用量。'}</p>}
+    {!ready && <p className="empty">{scope === 'topic' ? '输入 Topic ID 查看包含下属 Issue 的用量。' : `输入 ${idLabel} 查看关联工具用量。`}</p>}
     {metrics.loading && ready && !metrics.data && !metrics.error && <p className="empty" role="status">正在读取 Metrics…</p>}
     {metrics.error && <p className="read-error" role="alert">{metrics.error}{metrics.data && ' · 上一次查询结果'}</p>}
     {metrics.data && <MetricCharts metrics={metrics.data} filter={filter}/>}
-    {ready && <section className="panel metrics-detail">
-      <header><h2>工具调用记录</h2>{before && <a href={metricsHref(scope, id, window, includeIssues)}>回到最新</a>}</header>
+    {ready && <section className="panel metrics-detail" aria-labelledby="tool-call-records">
+      <header><h2 id="tool-call-records">工具调用记录</h2>{before && <a href={metricsHref(scope, id, window, includeIssues)}>回到最新</a>}</header>
       {calls.error && <p className="read-error" role="alert">{calls.error}</p>}
       {calls.data?.items.length === 0 && <p className="empty">当前范围暂无工具调用。</p>}
       {!!calls.data?.items.length && <div className="metric-table-scroll"><table><thead><tr><th>时间</th><th>调用方</th><th>工具</th><th>结果</th><th>Core 耗时</th><th>Trace</th></tr></thead><tbody>

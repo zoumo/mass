@@ -23,16 +23,16 @@ export type WorkbenchRow = {
  topicId?: string; messageId?: string; threadKey?: string; createdAt?: string; receivedAt?: string
  status?: string; kind?: string; at?: string; updatedAt?: string; summary?: string
  description?: string; acceptance?: string; addressed?: string; goal?: string
- goalRevision?: number; currentExecutionId?: string; executionId?: string; bindingId?: string
- reason?: string; decisionId?: string; action?: string; generation?: number; authority?: string
- completion?: { reason: string; evidence: string[]; completedAt: string }
- cancellation?: { reason: string; at: string; bindingId: string }
- reopening?: { reason: string; at: string }
+ goalRevision?: number; currentSessionBindingId?: string; sessionBindingId?: string
+ reason?: string; decisionId?: string; action?: string
+ completion?: { reason: string; evidence: string[]; completedAt: string; sessionBindingId: string }
+ cancellation?: { reason: string; at: string; sessionBindingId: string }
+ reopening?: { reason: string; at: string; sessionBindingId?: string }
  blockers?: { id: string; kind: 'human' | 'dependency'; reason: string; dependencyIssueId?: string }[]
  materials?: { label?: string; uri?: string; messageId?: string }[]
  pullRequests?: { id: string; canonicalUrl: string; subscriptionId: string }[]
- issueSession?: { state: string; observedAt?: string; observationGap?: string }
- preparation?: WorkbenchRow; startup?: WorkbenchRow
+ issueSession?: { sessionBindingId: string; state: string; observedAt?: string; observationGap?: string }
+ startup?: { status: string }
  targets?: { topicId: string; messageIds: string[]; create?: { title: string } }[]
  echo?: {
   status: string; resolvedAt?: string; releaseReason?: string
@@ -60,7 +60,7 @@ const statusLabels: Record<string, string> = {
  held: '等待发送结果', outbound_echo: '自身回声', echo_unknown: '回声状态未知',
  cleared: '确认发送结果后已路由', released: '已人工放行',
  accepted: '已接收', ignored: '已忽略', routed: '已路由', received: '已收到', returned: '已退回',
- route: '路由', ignore: '忽略', route_request: '路由请求', routed_message: 'Topic 消息', progress: '进展', current: '当前执行', historical: '历史执行',
+ route: '路由', ignore: '忽略', route_request: '路由请求', routed_message: 'Topic 消息', progress: '进展',
  dispatching: '投递中', delivered: '已投递', blocked_unknown: '原生执行结果未确认',
  transport_unknown: '传输结果未确认', superseded: '已替代', reconciling: '核对中', sending: '发送中',
  not_started: '未启动', connecting: '正在连接', connected: '已连接', disconnected: '已断开', stale: '已过期',

@@ -78,12 +78,12 @@ func observerListProjection(kind, full string) string {
  substr(COALESCE(json_extract(outbox.content,'$.data.text'),json_extract(outbox.content,'$.data.prompt')),1,240))`
 	case "issues":
 		return `json_remove(` + full + `,'$.goal','$.materials','$.reports','$.resolvedBlockers')`
-	case "executions":
+	case "session-bindings":
 		return `json_remove(` + full + `,'$.startup.payload','$.startup.receipt','$.startup.content','$.reminder.payload','$.reminder.receipt','$.reminder.content')`
 	case "internal-events":
 		return `json_set(json_remove(` + full + `,'$.body','$.content'),'$.goalUpdate',json(CASE WHEN kind='issue_session_update' AND event_id GLOB 'goal-update_*' THEN 'true' ELSE 'false' END))`
 	case "reports":
-		return `json_remove(body,'$.details','$.evidence','$.questions')`
+		return `json_remove(` + full + `,'$.details','$.evidence','$.questions')`
 	case "timers":
 		return `json_set(json_remove(` + full + `,'$.materials'),'$.content',substr(json_extract(body,'$.content'),1,240))`
 	default:

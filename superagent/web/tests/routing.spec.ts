@@ -11,7 +11,7 @@ test('routing, preparation, subscriptions and returns are visible through read-o
  await expect(page.getByText('核心服务已就绪', { exact: true })).toBeVisible()
  await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
  await expect(page.getByRole('dialog').getByText('进行中', { exact: true })).toBeVisible()
- await page.getByRole('button', { name: 'Session 准备记录', exact: true }).click()
+ await page.getByRole('button', { name: '查看 SessionBinding', exact: true }).click()
  await expect(page.getByRole('dialog').getByText('已就绪', { exact: true })).toBeVisible()
  await expect(page.getByRole('dialog').getByText(/topic-g1/).first()).toBeVisible()
  await expect(page.getByRole('dialog')).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
@@ -33,7 +33,7 @@ test('routing, preparation, subscriptions and returns are visible through read-o
  await expect(page.getByRole('table').getByText('Session 已受理').first()).toBeVisible()
  await page.getByRole('table').getByRole('button', { name: '路由请求', exact: true }).first().click()
  await expect(page.getByTestId('routing-record')).toContainText('"kind": "route_request"')
- for (const collection of ['topics', 'routing-events', 'subscriptions', 'relations', 'bindings']) {
+ for (const collection of ['topics', 'routing-events', 'subscriptions', 'relations', 'session-bindings']) {
   expect((await request.get(`/v1/observer/${collection}`)).status()).toBe(200)
   expect((await request.head(`/v1/observer/${collection}`)).status()).toBe(200)
   expect((await request.post(`/v1/observer/${collection}`, { data: {} })).status()).toBe(405)

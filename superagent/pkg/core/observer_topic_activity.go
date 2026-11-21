@@ -13,15 +13,15 @@ import (
 // and blocker resolutions live inside mutable Issue snapshots and have their
 // own action timestamps. Capture both fences in the first read transaction.
 type topicActivityCursor struct {
-	Topic          string `json:"topic"`
-	Filter         string `json:"filter"`
-	Cutoff         string `json:"cutoff"`
-	Issues         int64  `json:"issues"`
-	Executions     int64  `json:"executions"`
-	InternalEvents int64  `json:"internalEvents"`
-	Reports        int64  `json:"reports"`
-	At             string `json:"at"`
-	ID             string `json:"id"`
+	Topic           string `json:"topic"`
+	Filter          string `json:"filter"`
+	Cutoff          string `json:"cutoff"`
+	Issues          int64  `json:"issues"`
+	SessionBindings int64  `json:"sessionBindings"`
+	InternalEvents  int64  `json:"internalEvents"`
+	Reports         int64  `json:"reports"`
+	At              string `json:"at"`
+	ID              string `json:"id"`
 }
 
 const topicMessageEvents = `
@@ -35,23 +35,23 @@ const topicIssueEvents = `
  SELECT 'issue_created', i.created_at, i.id AS ref, i.id AS issue_id, 'topic', '{}'
  FROM owned i
  UNION ALL
- SELECT 'execution_started', x.created_at, x.id, x.issue_id, json_extract(d.sender,'$.kind'),
- json_object('executionId',x.id,'generation',x.generation,'goalRevision',json_extract(x.body,'$.goalRevision'),
-  'eventId',d.event_id)
- FROM owned i JOIN executions x ON x.issue_id=i.id LEFT JOIN internal_events d ON d.event_id=json_extract(x.body,'$.startEventId')
- WHERE x.seq<=:executions
+ SELECT 'issue_session_started', x.created_at, x.id, x.owner_id, json_extract(d.sender,'$.kind'),
+ json_object('sessionBindingId',x.id,'goalRevision',json_extract(x.body,'$.startGoalRevision'),
+  'eventId',d.event_id,'status',d.status)
+ FROM owned i JOIN session_bindings x ON x.role='issue' AND x.owner_id=i.id LEFT JOIN internal_events d ON d.event_id=json_extract(x.body,'$.startEventId')
+ WHERE x.seq<=:sessionBindings
  UNION ALL
  SELECT CASE WHEN d.event_id=json_extract(i.body,'$.latestRequirementsEventId') OR d.event_id GLOB 'goal-update_*'
   THEN 'goal_notification' ELSE d.kind END, d.created_at,d.event_id,i.id,json_extract(d.sender,'$.kind'),
  json_object('goalRevision',json_extract(d.refs,'$[0].goal_revision'),'eventId',d.event_id,
-  'executionId',json_extract(d.recipient,'$.execution_id'),'status',d.status)
+  'sessionBindingId',json_extract(d.recipient,'$.session_binding_id'),'status',d.status)
  FROM internal_events d JOIN owned i ON i.id=json_extract(d.refs,'$[0].id')
  WHERE d.rowid<=:internalEvents AND d.kind IN ('issue_session_update','context_supplement')
   AND json_extract(d.refs,'$[0].kind')='issue' AND json_extract(d.recipient,'$.kind')='issue'
  UNION ALL
  SELECT 'report_submitted', json_extract(r.value,'$.createdAt'),json_extract(r.value,'$.id'),i.id,'issue',
- json_object('reportId',json_extract(r.value,'$.id'),'bindingId',json_extract(r.value,'$.bindingId'),
-  'executionId',json_extract(r.value,'$.executionId'),'goalRevision',json_extract(r.value,'$.goalRevision'),
+ json_object('reportId',json_extract(r.value,'$.id'),'sessionBindingId',json_extract(r.value,'$.sessionBindingId'),
+  'historical',json(r.value->'$.historical'),'goalRevision',json_extract(r.value,'$.goalRevision'),
   'eventId',json_extract(r.value,'$.eventId'),
   'summary',substr(json_extract(r.value,'$.summary'),1,160))
  FROM owned i,json_each(i.body,'$.reports') r WHERE json_extract(r.value,'$.sequence')<=:reports
@@ -61,7 +61,7 @@ const topicIssueEvents = `
  FROM owned i,json_each(i.body,'$.resolvedBlockers') b
  UNION ALL
  SELECT l.key,coalesce(json_extract(l.value,'$.completedAt'),json_extract(l.value,'$.at')),i.id AS ref,i.id AS issue_id,'topic',
- json_object('bindingId',json_extract(l.value,'$.bindingId'))
+ json_object('sessionBindingId',json_extract(l.value,'$.sessionBindingId'))
  FROM owned i,json_each(i.body) l WHERE l.type='object' AND l.key IN ('completion','cancellation','reopening')
  UNION ALL
  SELECT 'issue_snapshot',json_extract(i.body,'$.updatedAt'),i.id AS ref,i.id AS issue_id,NULL,
@@ -111,9 +111,9 @@ func (s *Store) topicActivity(ctx context.Context, q url.Values) (Page, error) {
 	} else {
 		err = tx.QueryRowContext(ctx, `SELECT
  (SELECT coalesce(max(seq),0) FROM issues WHERE topic_id=?1),
- (SELECT coalesce(max(seq),0) FROM executions),
+ (SELECT coalesce(max(seq),0) FROM session_bindings),
  (SELECT coalesce(max(rowid),0) FROM internal_events),
- (SELECT coalesce(max(json_extract(r.value,'$.sequence')),0) FROM issues i,json_each(i.body,'$.reports') r WHERE i.topic_id=?1)`, topic).Scan(&c.Issues, &c.Executions, &c.InternalEvents, &c.Reports)
+ (SELECT coalesce(max(json_extract(r.value,'$.sequence')),0) FROM issues i,json_each(i.body,'$.reports') r WHERE i.topic_id=?1)`, topic).Scan(&c.Issues, &c.SessionBindings, &c.InternalEvents, &c.Reports)
 		if err != nil {
 			return p, storageError()
 		}
@@ -131,7 +131,7 @@ func (s *Store) topicActivity(ctx context.Context, q url.Values) (Page, error) {
 	if s.hasTraceAssociations {
 		projection = `json_set(` + body + `,'$.traceAssociations',json(CASE
  WHEN kind='issue_created' THEN ` + issueCreationTraces("page.ref") + `
- WHEN kind='execution_started' AND json_extract(extra,'$.eventId') IS NULL THEN ` + observerTraceList("executions", "page.ref") + `
+ WHEN kind='issue_session_started' AND json_extract(extra,'$.eventId') IS NULL THEN ` + observerTraceList("session-bindings", "page.ref") + `
  WHEN kind IN ('completion','cancellation','reopening') THEN ` + issueLifecycleTraces("page.issue_id", "page.at") + `
  ELSE ` + observerTraceList("internal-events", "json_extract(page.extra,'$.eventId')") + ` END))`
 	}
@@ -144,7 +144,7 @@ func (s *Store) topicActivity(ctx context.Context, q url.Values) (Page, error) {
  SELECT event_id,at,` + projection + ` FROM page ORDER BY at DESC,event_id DESC`
 	args := []any{sql.Named("topic", topic), sql.Named("issues", c.Issues), sql.Named("cutoff", c.Cutoff), sql.Named("afterAt", c.At), sql.Named("afterID", c.ID), sql.Named("limit", limit+1), sql.Named("internalEvents", c.InternalEvents)}
 	if filter != "message" {
-		args = append(args, sql.Named("executions", c.Executions), sql.Named("reports", c.Reports))
+		args = append(args, sql.Named("sessionBindings", c.SessionBindings), sql.Named("reports", c.Reports))
 	}
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {

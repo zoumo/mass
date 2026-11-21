@@ -9,10 +9,10 @@ import (
 )
 
 type issueSessionObservation struct {
-	ExecutionID    string `json:"executionId"`
-	State          string `json:"state"`
-	ObservedAt     string `json:"observedAt,omitempty"`
-	ObservationGap string `json:"observationGap,omitempty"`
+	SessionBindingID string `json:"sessionBindingId"`
+	State            string `json:"state"`
+	ObservedAt       string `json:"observedAt,omitempty"`
+	ObservationGap   string `json:"observationGap,omitempty"`
 }
 
 func (s *Server) observeIssue(ctx context.Context, raw json.RawMessage) json.RawMessage {
@@ -20,11 +20,11 @@ func (s *Server) observeIssue(ctx context.Context, raw json.RawMessage) json.Raw
 	if json.Unmarshal(raw, &fields) != nil {
 		return raw
 	}
-	var executionID string
-	if json.Unmarshal(fields["currentExecutionId"], &executionID) != nil || executionID == "" {
+	var sessionBindingID string
+	if json.Unmarshal(fields["currentSessionBindingId"], &sessionBindingID) != nil || sessionBindingID == "" {
 		return raw
 	}
-	state, err := json.Marshal(s.observeIssueSession(ctx, executionID))
+	state, err := json.Marshal(s.observeIssueSession(ctx, sessionBindingID))
 	if err != nil {
 		return raw
 	}
@@ -36,14 +36,13 @@ func (s *Server) observeIssue(ctx context.Context, raw json.RawMessage) json.Raw
 	return data
 }
 
-func (s *Server) observeIssueSession(ctx context.Context, executionID string) issueSessionObservation {
-	observation := issueSessionObservation{ExecutionID: executionID, State: "unknown", ObservationGap: "issue_session_unavailable"}
+func (s *Server) observeIssueSession(ctx context.Context, sessionBindingID string) issueSessionObservation {
+	observation := issueSessionObservation{SessionBindingID: sessionBindingID, State: "unknown", ObservationGap: "issue_session_unavailable"}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	var b Binding
+	var b SessionBinding
 	var body []byte
-	if s.config.Execution == nil || s.store.db.QueryRowContext(ctx, `SELECT session_bindings.body FROM executions
- JOIN session_bindings ON session_bindings.id=executions.binding_id WHERE executions.id=? AND session_bindings.state='ready'`, executionID).Scan(&body) != nil ||
+	if s.config.Execution == nil || s.store.db.QueryRowContext(ctx, "SELECT body FROM session_bindings WHERE id=? AND role='issue' AND state='ready'", sessionBindingID).Scan(&body) != nil ||
 		json.Unmarshal(body, &b) != nil ||
 		b.SessionID == "" || b.SessionUID == "" {
 		return observation

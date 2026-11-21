@@ -18,7 +18,7 @@ type Topic struct {
 	Workspace           string            `json:"workspace"`
 	Status              string            `json:"status"`
 	Revision            int               `json:"revision"`
-	BindingID           string            `json:"bindingId"`
+	SessionBindingID    string            `json:"sessionBindingId"`
 	CreatedAt           string            `json:"createdAt"`
 	UpdatedAt           string            `json:"updatedAt"`
 	Completion          *Completion       `json:"completion,omitempty"`
@@ -27,7 +27,7 @@ type Topic struct {
 	Reopening           *LifecycleChange  `json:"reopening,omitempty"`
 	Stop                *StopRequest      `json:"stop,omitempty"`
 }
-type Binding struct {
+type SessionBinding struct {
 	ID         string `json:"id"`
 	Role       string `json:"role"`
 	OwnerID    string `json:"ownerId"`
@@ -36,28 +36,41 @@ type Binding struct {
 	Namespace  string `json:"namespace"`
 	Name       string `json:"name"`
 	ExecutionProfile
-	AgentPromptVersion   int           `json:"agentPromptVersion,omitempty"`
-	RuntimeType          string        `json:"runtimeType,omitempty"`
-	RuntimeUID           string        `json:"runtimeUid,omitempty"`
-	RuntimeVersion       string        `json:"runtimeResourceVersion,omitempty"`
-	PreviousOwnerUnknown bool          `json:"previousOwnerUnknown,omitempty"`
-	State                string        `json:"state"`
-	CreatedAt            string        `json:"createdAt"`
-	SessionID            string        `json:"sessionId,omitempty"`
-	SessionUID           string        `json:"sessionUid,omitempty"`
-	LastError            string        `json:"lastError,omitempty"`
-	NextAttemptAt        string        `json:"nextAttemptAt,omitempty"`
-	TopicID              string        `json:"topicId,omitempty"`
-	IssueID              string        `json:"issueId,omitempty"`
-	PreparationStarted   bool          `json:"preparationStarted"`
-	CapabilityFileID     string        `json:"capabilityFileId,omitempty"`
-	MCPWorkingDirectory  string        `json:"mcpWorkingDirectory,omitempty"`
-	PreviousBindingID    string        `json:"previousBindingId,omitempty"`
-	Close                *BindingClose `json:"close,omitempty"`
-	ReuseError           string        `json:"reuseError,omitempty"`
-	Stop                 *StopRequest  `json:"stop,omitempty"`
-	Recovery             *Recovery     `json:"recovery,omitempty"`
+	RuntimeType              string           `json:"runtimeType,omitempty"`
+	RuntimeUID               string           `json:"runtimeUid,omitempty"`
+	RuntimeVersion           string           `json:"runtimeResourceVersion,omitempty"`
+	PreviousOwnerUnknown     bool             `json:"previousOwnerUnknown,omitempty"`
+	State                    string           `json:"state"`
+	CreatedAt                string           `json:"createdAt"`
+	SessionID                string           `json:"sessionId,omitempty"`
+	SessionUID               string           `json:"sessionUid,omitempty"`
+	LastError                string           `json:"lastError,omitempty"`
+	NextAttemptAt            string           `json:"nextAttemptAt,omitempty"`
+	TopicID                  string           `json:"topicId,omitempty"`
+	IssueID                  string           `json:"issueId,omitempty"`
+	PreparationStarted       bool             `json:"preparationStarted"`
+	CapabilityFileID         string           `json:"capabilityFileId,omitempty"`
+	MCPWorkingDirectory      string           `json:"mcpWorkingDirectory,omitempty"`
+	PreviousSessionBindingID string           `json:"previousSessionBindingId,omitempty"`
+	Close                    *BindingClose    `json:"close,omitempty"`
+	ReuseError               string           `json:"reuseError,omitempty"`
+	Stop                     *StopRequest     `json:"stop,omitempty"`
+	Recovery                 *Recovery        `json:"recovery,omitempty"`
+	StartEventID             string           `json:"startEventId,omitempty"`
+	StartGoalRevision        int              `json:"startGoalRevision,omitempty"`
+	RetiredGoalRevision      int              `json:"retiredGoalRevision,omitempty"`
+	RetiredAt                string           `json:"retiredAt,omitempty"`
+	WorkObservation          *WorkObservation `json:"workObservation,omitempty"`
+	ReminderEventID          string           `json:"reminderEventId,omitempty"`
 }
+
+func (b SessionBinding) eventRecipientID() string {
+	if b.Role == "issue" {
+		return b.ID
+	}
+	return b.OwnerID
+}
+
 type NewTopic struct {
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`

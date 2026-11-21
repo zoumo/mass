@@ -18,19 +18,18 @@ import (
 // WorkObservation ties the latest observed Issue Session input to a particular
 // subscription and attempt. It does not express business or stop status.
 type WorkObservation struct {
-	ExecutionID    string   `json:"executionId"`
-	BindingID      string   `json:"bindingId"`
-	Generation     int      `json:"generation"`
-	SessionID      string   `json:"sessionId"`
-	SessionUID     string   `json:"sessionUid"`
-	AttemptID      string   `json:"attemptId"`
-	Provider       string   `json:"provider,omitempty"`
-	WorkID         string   `json:"workId,omitempty"`
-	State          string   `json:"state"`
-	ObservedAt     string   `json:"observedAt"`
-	Continuous     bool     `json:"continuous"`
-	ObservationGap string   `json:"observationGap,omitempty"`
-	End            *WorkEnd `json:"end,omitempty"`
+	SessionBindingID string   `json:"sessionBindingId"`
+	Generation       int      `json:"generation"`
+	SessionID        string   `json:"sessionId"`
+	SessionUID       string   `json:"sessionUid"`
+	AttemptID        string   `json:"attemptId"`
+	Provider         string   `json:"provider,omitempty"`
+	WorkID           string   `json:"workId,omitempty"`
+	State            string   `json:"state"`
+	ObservedAt       string   `json:"observedAt"`
+	Continuous       bool     `json:"continuous"`
+	ObservationGap   string   `json:"observationGap,omitempty"`
+	End              *WorkEnd `json:"end,omitempty"`
 }
 
 type WorkEnd struct {
@@ -48,32 +47,32 @@ func (o *WorkObservation) loseContinuity(reason string) {
 }
 
 func recoverIssueObservations(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `UPDATE executions SET body=json_set(body,
+	_, err := tx.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,
  '$.workObservation.state','unknown','$.workObservation.observedAt',?,'$.workObservation.continuous',json('false'),
  '$.workObservation.observationGap','core_observation_interrupted')
- WHERE json_extract(body,'$.workObservation.state') IN ('awaiting_receipt','observing')`, now())
+ WHERE role='issue' AND json_extract(body,'$.workObservation.state') IN ('awaiting_receipt','observing')`, now())
 	return err
 }
 
-func beginIssueObservation(ctx context.Context, tx *sql.Tx, b Binding, observation WorkObservation) (bool, error) {
+func beginIssueObservation(ctx context.Context, tx *sql.Tx, b SessionBinding, observation WorkObservation) (bool, error) {
 	_, x, err := currentBoundIssue(ctx, tx, b)
 	if err != nil || x.ReminderEventID != "" {
 		return false, err
 	}
 	x.WorkObservation = &observation
-	return true, saveExecution(ctx, tx, x)
+	return true, saveWorkObservation(ctx, tx, x)
 }
 
 func settleIssueObservation(ctx context.Context, tx *sql.Tx, observation WorkObservation) error {
-	var x Execution
-	if err := readJSON(ctx, tx, "SELECT body FROM executions WHERE id=?", &x, observation.ExecutionID); err != nil {
+	x, err := loadIssueBinding(ctx, tx, observation.SessionBindingID)
+	if err != nil {
 		return err
 	}
 	if x.WorkObservation == nil || x.WorkObservation.AttemptID != observation.AttemptID || x.WorkObservation.State != "awaiting_receipt" {
 		return nil
 	}
 	x.WorkObservation = &observation
-	return saveExecution(ctx, tx, x)
+	return saveWorkObservation(ctx, tx, x)
 }
 
 type issueWatch struct {
@@ -83,9 +82,9 @@ type issueWatch struct {
 	steered      bool
 }
 
-func (s *Server) prepareIssueWatch(ctx context.Context, b Binding, a Attempt) *issueWatch {
+func (s *Server) prepareIssueWatch(ctx context.Context, b SessionBinding, a Attempt) *issueWatch {
 	w := &issueWatch{evidence: WorkObservation{
-		ExecutionID: b.OwnerID, BindingID: b.ID, Generation: b.Generation,
+		SessionBindingID: b.ID, Generation: b.Generation,
 		SessionID: b.SessionID, SessionUID: b.SessionUID, AttemptID: a.ID,
 		State: "awaiting_receipt", ObservedAt: now(), Provider: b.RuntimeType,
 	}}
@@ -133,7 +132,7 @@ func (s *Server) stopIssueWatch(bindingID string) {
 	}
 }
 
-func (s *Server) startIssueWatch(life context.Context, b Binding, w *issueWatch, settled bool) {
+func (s *Server) startIssueWatch(life context.Context, b SessionBinding, w *issueWatch, settled bool) {
 	if !settled || w.evidence.State != "observing" || life.Err() != nil {
 		w.close()
 		return
@@ -151,7 +150,7 @@ func (s *Server) startIssueWatch(life context.Context, b Binding, w *issueWatch,
 			if err == nil || life.Err() != nil {
 				return
 			}
-			slog.Error("Core could not persist Issue Session observation", "executionId", b.OwnerID, "attemptId", w.evidence.AttemptID)
+			slog.Error("Core could not persist Issue Session observation", "sessionBindingId", b.ID, "attemptId", w.evidence.AttemptID)
 			select {
 			case <-life.Done():
 				return
@@ -161,7 +160,7 @@ func (s *Server) startIssueWatch(life context.Context, b Binding, w *issueWatch,
 	})
 }
 
-func (w *issueWatch) consume(ctx context.Context, b Binding) {
+func (w *issueWatch) consume(ctx context.Context, b SessionBinding) {
 	o := &w.evidence
 	active := w.steered
 	for {
@@ -220,7 +219,7 @@ func inIssueDispatchWindow(at, dispatchedAt time.Time) bool {
 	return !at.Before(dispatchedAt)
 }
 
-func (s *Store) recordIssueObservation(ctx context.Context, b Binding, evidence WorkObservation) (retErr error) {
+func (s *Store) recordIssueObservation(ctx context.Context, b SessionBinding, evidence WorkObservation) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -247,10 +246,10 @@ func (s *Store) recordIssueObservation(ctx context.Context, b Binding, evidence 
 		evidence.loseContinuity("issue_session_changed")
 	}
 	x.WorkObservation = &evidence
-	if evidence.End != nil && x.ReminderEventID == "" && !issueHasExecutionReport(issue, x.ID) {
+	if evidence.End != nil && x.ReminderEventID == "" && !issueHasCurrentReport(issue) {
 		var links []trace.Link
 		if s.telemetry.tracesEnabled {
-			links = executionCreate.links(ctx, tx, nil, x.ID, 0)
+			links = bindingCreation.links(ctx, tx, nil, x.ID, 0)
 		}
 		enqueueCtx, finish := s.telemetry.startOperation(ctx, "report.reminder", b.Role, trace.WithLinks(links...))
 		defer func() { finish(operationOutcome(retErr, "queued")) }()
@@ -258,22 +257,25 @@ func (s *Store) recordIssueObservation(ctx context.Context, b Binding, evidence 
 			return err
 		}
 	}
-	if err := saveExecution(ctx, tx, x); err != nil {
+	if err := saveWorkObservation(ctx, tx, x); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *Execution, issue Issue) error {
+func saveWorkObservation(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
+	return putJSON(ctx, tx, "UPDATE session_bindings SET body=?2 WHERE id=?1", b, b.ID)
+}
+
+func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *SessionBinding, issue Issue) error {
 	payload, err := json.Marshal(struct {
-		ExecutionID string   `json:"executionId"`
 		IssueID     string   `json:"issueId"`
 		WorkID      string   `json:"workId,omitempty"`
 		End         *WorkEnd `json:"end"`
 		Instruction string   `json:"instruction"`
 	}{
-		ExecutionID: x.ID, IssueID: x.IssueID, WorkID: x.WorkObservation.WorkID, End: x.WorkObservation.End,
-		Instruction: "Use submit_report to summarize only results, progress, or blockers from work already done on this Execution. Use an operationId stable for this event_id and the goalRevision you actually used. Do not run the Issue again.",
+		IssueID: x.IssueID, WorkID: x.WorkObservation.WorkID, End: x.WorkObservation.End,
+		Instruction: "Use submit_report to summarize only results, progress, or blockers from work already done on this Issue. Use an operationId stable for this event_id and the goalRevision you actually used. Do not run the Issue again.",
 	})
 	if err != nil {
 		return err
@@ -281,13 +283,13 @@ func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *Execution, issue 
 	x.ReminderEventID = newID("evt")
 	return enqueueInternalEvent(ctx, tx, internalEvent{
 		ID: x.ReminderEventID, Kind: reportReminderKind,
-		Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "issue", ExecutionID: x.ID},
+		Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "issue", SessionBindingID: x.ID},
 		Body: payload, Refs: []eventReference{issueGoalRef(issue)},
 	})
 }
 
-func issueHasExecutionReport(issue Issue, executionID string) bool {
+func issueHasCurrentReport(issue Issue) bool {
 	return slices.ContainsFunc(issue.Reports, func(report Report) bool {
-		return report.ExecutionID == executionID
+		return reportIsCurrent(report, issue)
 	})
 }

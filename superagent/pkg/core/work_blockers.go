@@ -41,7 +41,7 @@ type UpdateBlockersRequest struct {
 }
 
 func updateBlockers(r UpdateBlockersRequest) workMutation {
-	return func(ctx context.Context, tx *sql.Tx, b Binding) (any, error) {
+	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		issue, err := editableIssue(ctx, tx, b, r.IssueID, r.ExpectedRevision)
 		if err != nil {
 			return nil, err
@@ -64,11 +64,11 @@ func updateBlockers(r UpdateBlockersRequest) workMutation {
 			}
 			return notifyIssueSession(ctx, tx, issue, newID("evt"), issueSessionUpdateKind, nil, materials)
 		}
-		return WorkReceipt{Issue: issue, Execution: retired}, nil
+		return WorkReceipt{Issue: issue, SessionBinding: retired}, nil
 	}
 }
 
-func applyBlockerChanges(ctx context.Context, tx *sql.Tx, b Binding, issue *Issue, changes changeBlockers) (*Execution, error) {
+func applyBlockerChanges(ctx context.Context, tx *sql.Tx, b SessionBinding, issue *Issue, changes changeBlockers) (*SessionBinding, error) {
 	if len(changes.Add) == 0 && len(changes.Resolve) == 0 {
 		return nil, problem("invalid_argument", "supply blockers to add or resolve")
 	}
@@ -95,16 +95,16 @@ func applyBlockerChanges(ctx context.Context, tx *sql.Tx, b Binding, issue *Issu
 		}
 		issue.Status = "blocked"
 	}
-	if changes.UnblockedStatus == "active" && issue.CurrentExecutionID == "" {
-		return nil, problem("failed_precondition", "active requires a current Execution")
+	if changes.UnblockedStatus == "active" && issue.CurrentSessionBindingID == "" {
+		return nil, problem("failed_precondition", "active requires a current SessionBinding")
 	}
-	var retired *Execution
-	if changes.UnblockedStatus == "pending" && issue.CurrentExecutionID != "" {
-		x, err := retireExecution(ctx, tx, issue.CurrentExecutionID, now(), false)
+	var retired *SessionBinding
+	if changes.UnblockedStatus == "pending" && issue.CurrentSessionBindingID != "" {
+		x, err := retireIssueBinding(ctx, tx, *issue, now(), false)
 		if err != nil {
 			return nil, err
 		}
-		retired, issue.CurrentExecutionID = &x, ""
+		retired, issue.CurrentSessionBindingID = &x, ""
 	}
 	return retired, nil
 }
@@ -150,7 +150,7 @@ func resolveBlockers(ctx context.Context, tx *sql.Tx, issue *Issue, resolutions 
 	return nil
 }
 
-func validateBlocker(ctx context.Context, tx *sql.Tx, b Binding, issueID string, input BlockerInput) error {
+func validateBlocker(ctx context.Context, tx *sql.Tx, b SessionBinding, issueID string, input BlockerInput) error {
 	if strings.TrimSpace(input.Reason) == "" {
 		return problem("invalid_argument", "blocker reason must not be blank")
 	}

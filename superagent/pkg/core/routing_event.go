@@ -149,7 +149,7 @@ type routeMessage struct {
 	key, state string
 }
 
-func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (_ json.RawMessage, retErr error) {
+func (s *Store) Route(ctx context.Context, b SessionBinding, r RouteRequest) (_ json.RawMessage, retErr error) {
 	ctx, finish := s.telemetry.startOperation(ctx, "routing.decide", "router")
 	outcome := "routed"
 	defer func() { finish(operationOutcome(retErr, outcome)) }()
@@ -225,7 +225,7 @@ func (s *Store) Route(ctx context.Context, b Binding, r RouteRequest) (_ json.Ra
 	return json.Marshal(result)
 }
 
-func (s *Store) routeTargets(ctx context.Context, tx *sql.Tx, b Binding, result *RouteDecision, messages map[string]routeMessage) error {
+func (s *Store) routeTargets(ctx context.Context, tx *sql.Tx, b SessionBinding, result *RouteDecision, messages map[string]routeMessage) error {
 	decision := result.RouteRequest
 	decision.Targets = append([]RouteTarget(nil), result.Targets...)
 	for i := range result.Targets {
@@ -287,7 +287,7 @@ func ignoreMessage(ctx context.Context, tx *sql.Tx, messageID string) error {
 	return setRoutingState(ctx, tx, messageID, "ignored")
 }
 
-func (s *Store) DeclineMessage(ctx context.Context, b Binding, r DeclineMessageRequest) (_ json.RawMessage, retErr error) {
+func (s *Store) DeclineMessage(ctx context.Context, b SessionBinding, r DeclineMessageRequest) (_ json.RawMessage, retErr error) {
 	ctx, finish := s.telemetry.startOperation(ctx, "routing.return", "topic")
 	outcome := "returned"
 	defer func() { finish(operationOutcome(retErr, outcome)) }()

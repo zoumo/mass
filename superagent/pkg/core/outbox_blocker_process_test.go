@@ -18,7 +18,7 @@ type quotedReplyRecord struct {
 	} `json:"quotedReply"`
 }
 
-func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testing.T) {
+func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
 	configureOutboxSource(t, f)
@@ -35,8 +35,8 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testin
 	create := issueInput(f.dir, "question-a")
 	create.Start = true
 	work := roleWork[core.WorkReceipt](t, p, role, "create_issue", create)
-	waitBinding(t, p, "issue", work.Execution.ID, "ready")
-	waitWorkEvent(t, p, work.Execution.StartEventID, "sent")
+	waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")
+	waitWorkEvent(t, p, work.SessionBinding.StartEventID, "sent")
 	second := roleWork[core.WorkReceipt](t, p, role, "create_issue", issueInput(f.dir, "question-b")).Issue
 	add := func(issue core.Issue, operation string, reasons ...core.BlockerInput) core.Issue {
 		return roleWork[core.WorkReceipt](t, p, role, "issue_update_blockers", core.UpdateBlockersRequest{
@@ -140,7 +140,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testin
 	role = roleToken(t, f, topic)
 	require.Equal(t, *date.BlockerRef, match(final).QuotedReply.BlockerRef)
 	continued := roleWork[core.WorkReceipt](t, p, role, "issue_update_blockers", continueWork)
-	require.Equal(t, work.Execution.ID, continued.Issue.CurrentExecutionID)
+	require.Equal(t, work.SessionBinding.ID, continued.Issue.CurrentSessionBindingID)
 	require.Equal(t, "active", continued.Issue.Status)
 	require.Empty(t, continued.Issue.Blockers)
 	require.Equal(t, region.BlockerRef.BlockerID, continued.Issue.ResolvedBlockers[0].ID)
@@ -153,7 +153,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentExecution(t *testin
 	require.Equal(t, continued.Issue, readRecord[core.Issue](t, p, "issues/"+a.ID))
 	delivered := waitWorkEvent(t, p, continued.NotificationEventID, "sent")
 	require.Equal(t, "issue_session_update", delivered.Kind)
-	require.Equal(t, work.Execution.ID, delivered.Recipient.ExecutionID)
+	require.Equal(t, work.SessionBinding.ID, delivered.Recipient.SessionBindingID)
 	require.Len(t, workEvents(t, p, "issue_session_update"), 1)
 	require.Equal(t, b, readRecord[core.Issue](t, p, "issues/"+b.ID))
 
