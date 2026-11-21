@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -125,4 +126,98 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	require.NoError(t, err)
 	wire := `{"events":[{"event_id":"saved-event","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}]}]}`
 	require.JSONEq(t, wire, string(batch.wire))
+}
+
+func TestClaudeRouterReplacementRespectsInputAndOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name, pendingState, wantError string
+		changeBinding                 func(*SessionBinding)
+		changeSession                 func(*resource.Session)
+	}{
+		{name: "one successor under concurrent retries", pendingState: "pending"},
+		{name: "unconfirmed input stays with original authority", pendingState: "dispatching", wantError: "router_input_outcome_unknown"},
+		{name: "unconfirmed previous owner", pendingState: "pending", wantError: "stale_binding",
+			changeBinding: func(b *SessionBinding) { b.PreviousOwnerUnknown = true }},
+		{name: "unconfirmed current owner", pendingState: "pending", wantError: "stale_binding",
+			changeSession: func(s *resource.Session) { s.Status.State = "unknown" }},
+		{name: "different native identity", pendingState: "pending", wantError: "stale_binding",
+			changeSession: func(s *resource.Session) { s.Metadata.UID = "different-uid" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", Sessions: &SessionsConfig{
+				Roles:           ExecutionRoles{Router: ExecutionProfile{RuntimeRef: "agent", Model: "model"}},
+				RouterWorkspace: "/project", Namespace: "routing",
+			}}
+			store, err := Open(config)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, store.Close()) })
+			tx, err := store.db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			var binding SessionBinding
+			require.NoError(t, readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE role='router'", &binding))
+			binding.SessionID, binding.SessionUID, binding.RuntimeType = "native", "uid", "claude"
+			if tc.changeBinding != nil {
+				tc.changeBinding(&binding)
+			}
+			require.NoError(t, putJSON(ctx, tx, "UPDATE session_bindings SET body=?2 WHERE id=?1", binding, binding.ID))
+			for _, id := range []string{"uncertain-or-pending", "already-sent"} {
+				require.NoError(t, enqueueInternalEvent(ctx, tx, internalEvent{
+					ID: id, Kind: routeRequestKind,
+					Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "router"},
+					Refs: []eventReference{{Kind: messageRefKind, ID: "mass-m1"}},
+				}))
+			}
+			_, err = tx.ExecContext(ctx, "UPDATE internal_events SET status=? WHERE event_id='uncertain-or-pending'", tc.pendingState)
+			require.NoError(t, err)
+			_, err = tx.ExecContext(ctx, "UPDATE internal_events SET status='sent' WHERE event_id='already-sent'")
+			require.NoError(t, err)
+			require.NoError(t, tx.Commit())
+
+			session := resource.Session{
+				Metadata: resource.Metadata{UID: binding.SessionUID, ResourceVersion: "released"},
+				Status: resource.SessionStatus{
+					SessionID: binding.SessionID, State: "offline", Reason: resource.SessionReasonRecoveryMissing,
+				},
+			}
+			if tc.changeSession != nil {
+				tc.changeSession(&session)
+			}
+			if tc.wantError != "" {
+				require.Equal(t, tc.wantError, errorCode(store.replaceUnrecoverableBinding(ctx, binding, session)))
+			} else {
+				results := make(chan string, 2)
+				var workers sync.WaitGroup
+				for range 2 {
+					workers.Go(func() { results <- errorCode(store.replaceUnrecoverableBinding(ctx, binding, session)) })
+				}
+				workers.Wait()
+				require.ElementsMatch(t, []string{"", "not_found"}, []string{<-results, <-results})
+			}
+
+			var count int
+			require.NoError(t, store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM session_bindings WHERE role='router'").Scan(&count))
+			if tc.wantError != "" {
+				require.Equal(t, 1, count)
+			} else {
+				require.Equal(t, 2, count)
+				var next SessionBinding
+				read, err := store.db.BeginTx(ctx, nil)
+				require.NoError(t, err)
+				defer read.Rollback()
+				require.NoError(t, readJSON(ctx, read, "SELECT body FROM session_bindings WHERE role='router' AND state='pending'", &next))
+				require.NoError(t, read.Commit())
+				require.Equal(t, binding.Generation+1, next.Generation)
+				require.Equal(t, binding.ID, next.PreviousSessionBindingID)
+				require.Empty(t, next.SessionID)
+				require.Empty(t, next.CapabilityFileID)
+			}
+			var status string
+			require.NoError(t, store.db.QueryRowContext(ctx, "SELECT status FROM internal_events WHERE event_id='uncertain-or-pending'").Scan(&status))
+			require.Equal(t, tc.pendingState, status)
+			require.NoError(t, store.db.QueryRowContext(ctx, "SELECT status FROM internal_events WHERE event_id='already-sent'").Scan(&status))
+			require.Equal(t, "sent", status)
+		})
+	}
 }

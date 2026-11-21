@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -270,7 +271,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if failedNativeCleanup(err) {
 			return runtime.DriverSession{}, cause
 		}
-		if resume != "" && claudeRecoveryMissing(err, resume) {
+		if resume != "" && claudeRecoveryMissing(err, resume, d.options.Env["CLAUDE_CONFIG_DIR"], spec.Cwd) {
 			cause = errors.Join(runtime.ErrRecoveryMaterialMissing, cause)
 		}
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, cause)
@@ -626,7 +627,7 @@ func inputMayBeUnknown(err error) bool {
 	}
 }
 
-func claudeRecoveryMissing(err error, id string) bool {
+func claudeRecoveryMissing(err error, id, configDir, cwd string) bool {
 	var nativeError *agent.Error
 	if !errors.As(err, &nativeError) {
 		return false
@@ -635,11 +636,23 @@ func claudeRecoveryMissing(err error, id string) bool {
 	case agentclaude.ErrorReasonResumePreflightMissing:
 		return true
 	case agentclaude.ErrorReasonResumePreflightQueryFailed:
-		// The SDK may wrap an absent transcript as a query failure. Require
-		// the typed missing error for the transcript itself, not its parent.
 		var query *nativeclaude.SessionQueryError
-		return errors.As(nativeError.Cause, &query) && query.Kind == "missing" &&
-			filepath.Base(query.Path) == id+".jsonl"
+		if !errors.As(nativeError.Cause, &query) || query.Kind != "missing" || !errors.Is(query, os.ErrNotExist) {
+			return false
+		}
+		path := query.Path
+		transcript := filepath.Base(path) == id+".jsonl" &&
+			filepath.Dir(filepath.Dir(path)) == filepath.Join(configDir, "projects")
+		// Scoped SDK queries report "projects" and the project key as relative
+		// names. The configured directory and workspace errors carry absolute paths.
+		projectDirectory := filepath.IsLocal(path) && path != "." && filepath.Base(path) == path
+		if !transcript && !projectDirectory {
+			return false
+		}
+		// The SDK checks "projects" before resolving the workspace.
+		config, configErr := os.Stat(configDir)
+		work, workErr := os.Stat(cwd)
+		return configErr == nil && config.IsDir() && workErr == nil && work.IsDir()
 	default:
 		return false
 	}

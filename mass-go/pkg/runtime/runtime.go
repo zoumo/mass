@@ -72,6 +72,18 @@ type SessionObservation interface {
 	Err() error
 }
 
+// TurnReconciler optionally reads native terminal evidence for the work
+// associated with a failed Session observation. An empty ID is inconclusive.
+type TurnReconciler interface {
+	ReconcileTurn(context.Context, string, events.Source) (TurnReconciliation, error)
+}
+
+type TurnReconciliation struct {
+	TurnID string
+	Status string
+	Latest bool // the bound Turn was the newest in the native Thread
+}
+
 type DriverSession struct {
 	Observation         SessionObservation
 	SessionID           string
