@@ -148,6 +148,7 @@ type Receipt struct {
 	ThreadKey  string `json:"threadKey"`
 	AcceptedAt string `json:"acceptedAt"`
 	EventID    string `json:"eventId,omitempty"`
+	EchoStatus string `json:"echoStatus,omitempty"`
 }
 type Page struct {
 	Items      []json.RawMessage `json:"items"`
@@ -175,8 +176,18 @@ func (m *MessageInput) validate(source Source) error {
 			}
 		}
 	}
-	if (m.Source == "dws" || m.Channel != nil && m.Channel.Type == "dws") && m.Addressed != "direct" {
-		return problem("invalid_argument", "DWS MVP accepts only addressed=direct")
+	if m.Source == "dws" || m.Channel != nil && m.Channel.Type == "dws" {
+		switch m.Addressed {
+		case "direct":
+		case "group":
+			if m.Channel != nil && (m.Channel.Type != "dws" || m.Channel.ActorID != m.Actor ||
+				len(m.Channel.Address) != 2 || m.Channel.Address["groupOpenConversationId"] != m.ThreadRef.ID ||
+				m.Channel.Address["senderOpenDingtalkId"] != m.Actor) {
+				return problem("invalid_argument", "DWS group reply address requires matching native conversation, message and sender IDs")
+			}
+		default:
+			return problem("invalid_argument", "DWS requires addressed=direct or addressed=group")
+		}
 	}
 	if isPR {
 		if m.Source == "dws" || m.Channel != nil && m.Channel.Type == "dws" {
