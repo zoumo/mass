@@ -5,7 +5,7 @@ description: 导入已知原生会话，沿既有校验、提交和分发链异�
 status: draft
 sources:
   - id: sdk-evidence
-    resource: ../../../mass-go/docs/native-history-sdk.md
+    resource: ../../../massd/docs/native-history-sdk.md
     title: 原生 SDK 加载接口与离线验证边界
   - id: direction
     resource: 项目负责人在 2026-10-21 授权 SDK 异步历史加载及相关 harness 更新

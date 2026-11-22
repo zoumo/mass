@@ -36,9 +36,9 @@ JSON v4 state. Use the original executable to inspect retained MVP history.
 Configuration uses [Viper](https://github.com/spf13/viper), CLI commands use
 [Cobra](https://github.com/spf13/cobra), and SQLite uses the pure-Go
 [modernc driver](https://pkg.go.dev/modernc.org/sqlite). Dependencies are pinned
-in go.mod/go.sum. Core consumes the public mass-go client/resource/runtime packages through the
-monorepo module path; no private mass-go package or direct SDK operation is used.
-The transitive Agent SDK Go version matches the pin in `mass-go/go.mod`.
+in the root [`go.mod`](../go.mod) and `go.sum`. The [command package](../cmd/superagent)
+builds Core and both [Triggers](triggers/README.md). Core uses the public MASS
+Go packages and calls [`massd.Start`](../massd/instance.go) for in-process assembly.
 
 ## Configuration
 
@@ -284,10 +284,10 @@ record. Navigation retains the selected record and filter in the URL.
 
 ## Checks
 
-Root `make check` covers mass-go plus this independent module and Observer:
-Go lint, race tests (including race-built real subprocesses), vet, build, format,
-React/TypeScript typecheck and Vite build and Chrome browser tests. `make test`, `make build`,
-`make lint` and `make fmt` also include superagent explicitly.
+Run these checks from the repository root. `make check` covers MASS,
+Superagent, and Observer. `make check-superagent` runs Go lint, race tests, vet,
+build, and format checks for Superagent. It also typechecks and builds Observer
+and runs its Chrome browser tests.
 
 ```sh
 make check-superagent

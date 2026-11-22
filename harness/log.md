@@ -2,6 +2,7 @@
 
 ## 2026-11-22
 
+- 更新 [Go 应用目录规范](principles/golang/application-directory-structure.md)，统一模块根 `cmd/`，按组件组织业务包，并明确进程内装配与共用私有代码的归属。
 - 增加 Core 的可选 [`/massd/` 挂载](bindings/websocket.md)，沿用 MASS handler 的认证、探针、订阅和退出流程。
 - 明确 [MASS 内嵌部署](architecture.md) 的数据目录所有权和 [进程内 JSON-RPC 连接](bindings/jsonrpc.md) 的行为。
 - 独立 massd 的 [WebSocket 业务入口](bindings/websocket.md)改为 `/jsonrpc`。客户端可用源地址、挂载前缀或完整业务地址连接同一个实例。
