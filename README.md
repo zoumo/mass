@@ -174,8 +174,7 @@ Superagent is experimental.
 | 🧭 [Project harness](harness/index.md) | Authoritative design, principles, and API contracts |
 | 🌐 [API contract](harness/bindings/jsonrpc.md) | JSON-RPC 2.0 methods, subscription events, and transport rules |
 | [Superagent guide](superagent/README.md) | Configuration, execution, and the Observer |
-| 📡 [Historical HTTP implementation](https://github.com/zoumo/mass/blob/1218a4ce63787b0b470f1ad16fce5955930552ac/massd/docs/http-service-v1.md) | Superseded REST/SSE binding; retained for migration history only |
-| 🧪 [Historical HTTP acceptance](https://github.com/zoumo/mass/blob/1218a4ce63787b0b470f1ad16fce5955930552ac/massd/docs/http-v1-acceptance.md) | Superseded HTTP v1 validation and its scope |
+| [Historical HTTP documentation](massd/docs/history.md#rest-and-sse) | REST/SSE implementation and acceptance records |
 
 `massd` exposes `/jsonrpc`, `/livez`, and `/readyz`. The retired `/rpc` and
 `/apis/v1` routes return `404` for authenticated requests. See the
