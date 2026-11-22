@@ -18,10 +18,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	"github.com/zoumo/mass/mass-go/pkg/client"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 
+	"github.com/zoumo/mass/massd/pkg/client"
+	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -459,7 +459,7 @@ func startClaudeBindingPeer(t *testing.T) (endpoint string, c *client.Client, na
 	require.NoError(t, os.Mkdir(config, 0o700))
 	peer := filepath.Join(temp, "claude-wire-peer")
 	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", peer, "./tests/integration/testdata/ticket14-recovery-peer")
-	cmd.Dir = "../../../mass-go"
+	cmd.Dir = "../../../massd"
 	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)

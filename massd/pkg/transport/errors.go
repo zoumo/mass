@@ -1,0 +1,94 @@
+package transport
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/massd/pkg/store"
+)
+
+type Error = runtime.OperationError
+
+func Invalid() *Error {
+	return &Error{Code: "invalid_argument", Reason: "invalid_request", Message: "Invalid request"}
+}
+
+// PublicError classifies only explicit sentinels. Native diagnostics never escape.
+func PublicError(err error) *Error {
+	if public, ok := publicError(err); ok {
+		return public
+	}
+	return &Error{Code: "outcome_unknown", Reason: "operation_unconfirmed", Message: "Operation result unconfirmed; inspect state before further action"}
+}
+
+// publicError reports whether err has an explicit public mapping.
+func publicError(err error) (*Error, bool) {
+	var public *Error
+	if errors.As(err, &public) {
+		return public, true
+	}
+	switch {
+	case errors.Is(err, events.ErrSlowSubscriber):
+		return &Error{Code: "resource_exhausted", Reason: "slow_subscriber", Message: "Observation capacity exceeded"}, true
+	case errors.Is(err, events.ErrLegacyEventSchema):
+		return &Error{Code: "unsupported", Reason: "legacy_event_schema", Message: "Stored event schema is not supported"}, true
+	case errors.Is(err, runtime.ErrInvalidArgument):
+		return Invalid(), true
+	case errors.Is(err, runtime.ErrFailedPrecondition):
+		return &Error{Code: "conflict", Reason: "operation_rejected", Message: "Operation rejected by current resource state"}, true
+	case errors.Is(err, runtime.ErrResourcesReleased):
+		return &Error{Code: "conflict", Reason: "native_open_failed", Message: "Native open failed; owned resources released"}, true
+	case errors.Is(err, store.ErrNotFound):
+		return &Error{Code: "not_found", Reason: "resource_not_found", Message: "Resource not found"}, true
+	case errors.Is(err, store.ErrConflict):
+		return &Error{Code: "conflict", Reason: "resource_conflict", Message: "Resource conflict"}, true
+	case errors.Is(err, store.ErrReadOnly):
+		return &Error{Code: "unavailable", Reason: "read_only", Message: "Store is read only"}, true
+	default:
+		return nil, false
+	}
+}
+
+func statusFor(code string) int {
+	switch code {
+	case "invalid_argument":
+		return 400
+	case "unauthenticated":
+		return 401
+	case "permission_denied":
+		return 403
+	case "not_found":
+		return 404
+	case "already_exists", "conflict":
+		return 409
+	case "unsupported", "native_rejected":
+		return 422
+	case "resource_exhausted":
+		return 429
+	case "unavailable":
+		return 503
+	case "deadline_exceeded":
+		return 504
+	default:
+		return 500
+	}
+}
+
+func fail(w http.ResponseWriter, status int, err *Error) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now())
+	w.Header().Del("Location")
+	// Do not let net/http drain an unread body before sending an error.
+	w.Header().Set("Connection", "close")
+	w.Header().Set("Content-Type", "application/json")
+	if status == 401 {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+	}
+	w.WriteHeader(status)
+	if encodeErr := json.NewEncoder(w).Encode(err); encodeErr != nil {
+		return // The response is already committed; the client may have disconnected.
+	}
+}

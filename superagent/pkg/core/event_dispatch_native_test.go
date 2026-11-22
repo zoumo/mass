@@ -17,9 +17,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	"github.com/zoumo/mass/mass-go/pkg/client"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
+
+	"github.com/zoumo/mass/massd/pkg/client"
+	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
 var dispatchBuild struct {
@@ -35,9 +36,9 @@ func dispatchBinaries(t *testing.T) (string, string) {
 		dir := filepath.Dir(binary)
 		dispatchBuild.massd = filepath.Join(dir, "massd")
 		dispatchBuild.relay = filepath.Join(dir, "live-config-peer")
-		for target, pkg := range map[string]string{dispatchBuild.massd: "./cmd/massd", dispatchBuild.relay: "./tests/integration/testdata/live-config-peer"} {
+		for target, pkg := range map[string]string{dispatchBuild.massd: "./cmd/massd", dispatchBuild.relay: "./massd/tests/integration/testdata/live-config-peer"} {
 			cmd := exec.CommandContext(t.Context(), "go", "build", "-race", "-o", target, pkg)
-			cmd.Dir = "../../../mass-go"
+			cmd.Dir = "../../.."
 			cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 			dispatchBuild.log, dispatchBuild.err = cmd.CombinedOutput()
 			if dispatchBuild.err != nil {

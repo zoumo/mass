@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
 type inputBatch struct {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
 type SessionBindingInspection struct {

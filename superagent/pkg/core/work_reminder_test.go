@@ -5,7 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
+
+	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
 func TestIssueSubmissionReceipt(t *testing.T) {
