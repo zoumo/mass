@@ -25,10 +25,11 @@ func (s *interactionAnswerer) Answer(_ context.Context, ref agent.InteractionRef
 
 func TestURLClosesOnCorrelatedCompletionInEitherOrder(t *testing.T) {
 	for _, early := range []bool{false, true} {
+		address := runtime.Address{Namespace: "one", SessionName: "mcp"}
 		pending, source := Interactions{}, events.NewSource()
 		event := func(payload any, meta map[string]any) events.SessionEvent {
 			e, err := events.NewEvent(events.EventBase{
-				EventID: uuid.NewString(), Time: time.Now().UTC(), SessionID: "native", Namespace: "one", SessionName: "mcp", Meta: meta,
+				EventID: uuid.NewString(), Time: time.Now().UTC(), SessionID: "native", Namespace: address.Namespace, SessionName: address.SessionName, Meta: meta,
 			}, payload, source)
 			require.NoError(t, err)
 			return e
@@ -53,16 +54,29 @@ func TestURLClosesOnCorrelatedCompletionInEitherOrder(t *testing.T) {
 
 		ack := event(events.InteractionClosed{Interaction: "mcp-url", Outcome: agent.InteractionAnswered}, nil)
 		completion := func(key string) events.SessionEvent {
-			return event(events.SessionError{Reason: "native_event_unsupported", Message: "SDK retained raw system observation"}, map[string]any{
-				"claude": map[string]any{"type": "system", "subtype": "elicitation_complete", "raw": map[string]any{
-					"session_id": "native", "mcp_server_name": "fixture", "elicitation_id": key,
-				}},
-			})
+			native := agent.Event{
+				EventID: uuid.NewString(), Time: time.Now().UTC(), SessionID: "native",
+				Payload: agent.UnsupportedNativeEventPayload{
+					Provider: "claude", NativeType: "system", NativeSubtype: "elicitation_complete",
+				},
+				Meta: map[string]any{
+					"claude": map[string]any{"type": "system", "subtype": "elicitation_complete", "raw": map[string]any{
+						"session_id": "native", "mcp_server_name": "fixture", "elicitation_id": key,
+					}},
+				},
+			}
+			mapped, err := MapEvent(address, source, native)
+			require.NoError(t, err)
+			require.Equal(t, native.EventID, mapped.EventID)
+			require.Equal(t, native.Time, mapped.Time)
+			require.Equal(t, native.SessionID, mapped.SessionID)
+			require.Equal(t, native.Meta, mapped.Meta)
+			return mapped
 		}
 		got, publish, err := pending.observe(completion("other-flow"))
 		require.NoError(t, err)
 		require.True(t, publish)
-		require.IsType(t, events.SessionError{}, got.Payload())
+		require.Equal(t, "unsupported_native_event", got.Payload().(events.SessionError).Reason)
 
 		if !early {
 			_, publish, err = pending.observe(ack)
@@ -78,12 +92,19 @@ func TestURLClosesOnCorrelatedCompletionInEitherOrder(t *testing.T) {
 		require.Equal(t, nativeCompletion.Time, got.Time)
 		require.Nil(t, got.Meta)
 		if early {
+			_, publish, err = pending.observe(completion("flow-id"))
+			require.NoError(t, err)
+			require.False(t, publish, "a repeated completion must not settle a second time before acknowledgment")
 			_, publish, err = pending.observe(ack)
 			require.NoError(t, err)
 			require.False(t, publish)
 		}
+		got, publish, err = pending.observe(completion("flow-id"))
+		require.NoError(t, err)
+		require.True(t, publish)
+		require.Equal(t, "unsupported_native_event", got.Payload().(events.SessionError).Reason)
 
-		require.NoError(t, pending.Expire(t.Context(), "native", runtime.Address{Namespace: "one", SessionName: "mcp"}, source,
+		require.NoError(t, pending.Expire(t.Context(), "native", address, source,
 			func(context.Context, events.SessionEvent) error {
 				t.Error("completed flow must not expire")
 				return nil

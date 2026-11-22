@@ -161,7 +161,7 @@ func TestReportReminderIssueIdle(t *testing.T) {
 		"item":          map[string]string{"type": "futureNativeItem", "id": "future-1"},
 	})
 	ev = nextNativeMethod(t, sub, "item/completed")
-	require.Equal(t, "unsupported_native_item", ev.Payload().(events.SessionError).Reason)
+	require.Equal(t, "unsupported_native_event", ev.Payload().(events.SessionError).Reason)
 	require.Equal(t, b.SessionID, ev.SessionID)
 	require.Equal(t, "work-two", ev.Meta["codex"].(map[string]any)["turnId"])
 

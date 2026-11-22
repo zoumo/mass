@@ -268,7 +268,7 @@ func TestTicket04CodexCloseAndStopAfterUnsupportedItem(t *testing.T) {
 	require.NoError(t, err)
 	select {
 	case problem := <-failure:
-		require.Equal(t, "unsupported_native_item", problem.Reason)
+		require.Equal(t, "unsupported_native_event", problem.Reason)
 	case <-ctx(t).Done():
 		t.Fatal("unsupported native item diagnostic was not surfaced")
 	}
