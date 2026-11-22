@@ -1,39 +1,16 @@
 # Core v1 API
 
-This document describes the current Core implementation.
+This reference covers the Core interfaces for channel adapters, Observer readers,
+and role MCP clients. See the [deployment guide](README.md) for startup and
+configuration. MASS Runtime and Session operations follow the
+[MASS JSON-RPC contract](../harness/bindings/jsonrpc.md).
 
 ## Start and ownership
 
-`superagent serve --config FILE` acquires exclusive ownership of
-`dataDir`, opens `core.sqlite` and starts HTTP. The default directory is
-`./superagent-core-data` relative to the YAML file. Startup prints one JSON
-object with `endpoint`, `observerEndpoint`, and `status: ready`.
-Schema 25 uses SQLite WAL, FULL synchronous durability and foreign keys.
-
-The database has eight business tables. `threads` and `trigger_messages`
-record ingress and Thread subscriptions. `topics`, `issues`,
-`session_bindings` and `scheduled_tasks` record work, ownership and timing.
-`internal_events` records delivery to Sessions. `outbox` records
-external replies. Reports and PR associations are embedded and exposed
-through read views.
-When tracing is enabled, Core stores trace associations. Core keeps private
-role credentials in `dataDir/mcp-files`.
-
-Core upgrades schema 24 in one startup transaction. The upgrade drops
-`mcp_tool_calls` and `mcp_mutation_receipts`. It preserves business records,
-internal events and saved Trace associations. A failed startup validation
-rolls back both table removals and the schema version change.
-
-Choose a new empty `dataDir` for schema 23 or earlier, or for JSON v4 state.
-Startup rejects those directories and preserves their contents.
-Also use an empty `dataDir` when switching from Core's stdio role MCP.
-Keep the old directories for access through their original versions.
-If both directories use the same massd, configure a distinct
-`sessions.namespace` for the new directory.
-
-SIGTERM/SIGINT stop admission and wait up to ten seconds for active HTTP
-requests. Accepted records survive normal or forced exit. After a lost
-response, retry ingestion by original native message identity.
+One Core process owns `dataDir` at a time. A successful start returns
+`status: ready`, `endpoint`, and `observerEndpoint`. Accepted records survive
+process exit. For a lost intake response, use the Message's original identity.
+See [data directory upgrades](README.md#reuse-an-existing-core-data-directory).
 
 ## Submit Message
 
@@ -67,7 +44,7 @@ actor and nonblank text. No identity is synthesized. Optional fields: absolute
 RFC3339 `at`, tri-state `human`, `addressed`, `channel`, absolute HTTP(S) `url`
 without credentials, JSON object `meta`, JSON `quotedMessage`, `sourceEventId`,
 `collectedAt` and `collectorInstance`. Core generates `receivedAt`.
-No unknown request fields or trailing JSON values are accepted.
+Core rejects unknown request fields and trailing JSON values.
 
 `channel` is optional: absence means there is no supplied reply address, and
 Core never guesses one. A provided channel needs a `type`; its `address` object
@@ -103,7 +80,7 @@ Message, Thread update and the initial internal event commit together.
 The receipt identifies the accepted Message and Thread. Its optional
 `eventId` is the initial event ID for routable input and can be read
 through `/v1/observer/routing-events/{event_id}`. Echo handling may admit a
-Message without a event ID.
+Message without an event ID.
 
 Zero or multiple Thread subscriptions enqueue a `route_request` to Router.
 Exactly one queues a `routed_message` to that Topic. Both reference the
@@ -131,14 +108,14 @@ original acceptance facts.
 
 Errors are JSON `{"error":{"code":"...","message":"...","retryable":false}}`.
 HTTP mapping: invalid_argument=400, unauthorized=401, forbidden=403,
-not_found=404, conflict/failed_precondition/unsupported/stale_binding=409, unavailable=503.
+not_found=404, conflict/failed_precondition/unsupported/stale_binding=409,
+and unavailable=503.
 All error bodies omit credentials and raw storage/upstream errors.
 
 Missing native identity fails invalid_argument. Wrong authenticated source or
-account fails forbidden. Storage errors never return accepted. An unavailable
-storage result or lost connection must be reconciled by retrying the same
-operationId; do not create another native identity. A response lost after commit
-can be replayed after restart with its original native identity.
+account fails forbidden. Storage errors never return accepted. After an
+unavailable storage result or lost connection, retry with the same `operationId`
+and native identity. The retry can recover an acceptance after restart.
 
 ## Read-only observation
 
@@ -166,9 +143,6 @@ No write credential is needed or sent by these trusted-reader endpoints:
 - GET/HEAD `/v1/observer/session-preview/{sessionBindingId}/history`
 - GET/HEAD `/v1/observer/session-preview/{sessionBindingId}/live`
 - GET/HEAD `/observer/` and its static assets
-
-Use `superagent observe session-bindings --issue-id ISSUE_ID` to list an
-Issue's SessionBindings, or `superagent observe session-bindings ID` to read one.
 
 `trace=true` includes saved Trace associations in supported Observer record
 reads. Topic activity timelines include the associations with each event.
@@ -268,12 +242,9 @@ state, not capabilities; malformed or scope-mismatched cursors fail. Set
 `order=newest` on Observer lists for descending time and ID order. Reuse the
 same order when following a continuation cursor.
 
-`superagent observe COLLECTION [id] --endpoint ORIGIN --limit N --cursor TOKEN`
-prints the same JSON. List-filter flags are `--thread-key`, `--topic-id`,
-`--issue-id` and `--message-id`. Use `--newest` for descending order. `observe health` prints
-health. COLLECTION is any collection listed above. The read-only CLI never loads channel config or source token files.
-Use `observe topic-activity --topic-id ID --filter message` for Topic receipts and returns. The filter also accepts `issue` or `all`.
-Only a numeric HTTP origin is accepted; redirects are not followed.
+Run `superagent observe --help` for CLI collections, and request the chosen
+collection's `--help` for filters. The CLI accepts a numeric HTTP origin and
+uses the same read API without loading the channel configuration or tokens.
 
 By default, `Host` must match the connection's numeric local endpoint.
 `observerAllowedHosts` also accepts exact `Host` values for `GET` and `HEAD`
@@ -305,57 +276,12 @@ headers without opening a massd connection.
 
 ## Session configuration and preparation
 
-Omit `sessions` for intake-only operation. To start role Sessions, configure
-the Router workspace, fixed role profiles and at least one Issue template.
-
-```yaml
-# externalURL: https://core.example.com  # Core's address as seen by massd
-massd:
-  endpoint: ws://127.0.0.1:24368/jsonrpc
-  # tokenFile: /private/massd.token
-# operatorTokenFile: /private/operator.token  # enables local input recovery
-sessions:
-  routerWorkspace: /absolute/workspace
-  namespace: superagent
-  roles:
-    router:
-      runtimeRef: codex-fast
-      model: gpt-6.2-sol
-      effort: low
-    topic:
-      runtimeRef: codex-standard
-      model: gpt-6.2-sol
-  issueTemplates:
-    - runtimeRef: codex-deepseek
-      model: deepseek-chat
-      description: Implement and verify code.
-      effort: medium
-    - runtimeRef: codex-standard
-      model: gpt-6.2-astra
-      description: Evaluate architecture and diagnose complex problems.
-```
-
-`massd.endpoint` accepts a WebSocket origin, proxy mount base, or full
-`/jsonrpc` URL. See the [endpoint upgrade steps](../massd/README.md#upgrade-the-websocket-endpoint)
-when switching an existing deployment. For an embedded instance, use
-`massd.embedded.dataDir` in place of `massd.endpoint` and `massd.tokenFile`.
-With `massd.embedded.expose` enabled, `GET /massd/jsonrpc` accepts WebSocket
-Upgrade with the dedicated MASS bearer. `GET /massd/livez` and
-`GET /massd/readyz` expose MASS probes without a bearer. Core checks `Host`
-against its listener address and then strips `/massd` before dispatching to
-the embedded MASS handler. The handler applies the MASS bearer and Origin
-rules and manages external connections for the same instance that Core uses.
-The mount is disabled by default and available in embedded mode.
-See [embedded deployment](README.md#running-mass-inside-core) for startup and
-ownership handoff or [massctl access](README.md#accessing-embedded-mass-with-massctl)
-for proxy configuration.
-
-Both role profiles require a legal Runtime name and a nonblank model.
-An Issue template also requires a nonblank description. Each
-`(runtimeRef, model)` pair must be unique in the list. Several templates
-may use the same Runtime with different models. Effort is optional, and model
-and effort are passed literally to massd. A configured pair permits a
-Topic to select it. Core checks Runtime availability during Session preparation.
+See the [Core configuration example](config.example.yaml) for Session profiles
+and Issue templates, the [embedded deployment guide](README.md#running-mass-inside-core)
+for data ownership, and the [WebSocket binding](../harness/bindings/websocket.md)
+for the optional host mount and token boundary. Core validates Runtime availability
+when it prepares a Session. Issue templates identify an allowed Runtime and model
+pair. Core sends the literal configured values and the optional effort to MASS.
 
 New Router Sessions, Topic Sessions and Issue Sessions use `config.permissionPreset: fullAccess`
 and `features.agentQuestions: false`. This applies to replacement Sessions and
@@ -381,22 +307,13 @@ startup with `failed_precondition`. Existing Topic generation specs stay
 fixed. A newly created Topic binding uses the current Topic profile. Enabling execution on an intake-only
 directory processes its pending Router events.
 
-Use a fixed listener port with execution enabled and keep that endpoint stable
-for existing role Sessions. An occupied configured port fails startup.
-Core ownership is still single
-process. Preparation queries massd by fixed namespace/name before creating,
-never includes initial business input in create, and re-queries the same name
-when a create receipt is lost. Full Session spec, resource UID and native
-Session identity must match; conflicts become `blocked` and are never adopted.
-Offline matching Sessions use public resume without new input.
-
-Preparation failure retains the original binding, fixed name and visible pending
-operation, retried after two seconds in this slice. On restart, ready bindings
-are reconciled before dispatch resumes. Topic Sessions receive Issue and
-acceptance instructions in their fixed prompt.
-MCP capability files are private, atomically replaced and read once per MCP
-process. Authentication is checked by Core on every role call. Runtime/model/
-effort are never options in a route decision.
+Core prepares a binding before submitting business input. It queries MASS by
+fixed namespace and name, then creates the Session without initial business
+input if needed. If a create response is lost, Core resolves the same name again.
+It compares the saved Session spec, resource UID, and native Session identity
+before reuse. Conflicts block the existing binding. Offline matches resume
+without business input. On restart, Core reconciles existing bindings before
+resuming dispatch.
 
 ## Role MCP and source scope
 
@@ -432,8 +349,8 @@ cannot select permissions.
 
 MASS-managed role Sessions connect directly to Core `/v1/mcp` over HTTP.
 `externalURL` optionally sets the base URL for native Session clients. Core
-appends `/v1/mcp`. If a reverse proxy terminates TLS, forward `/v1/mcp` to Core
-and set the upstream `Host` to the local address that receives the request.
+appends `/v1/mcp`. If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
+upstream `Host` to the local address that receives the request.
 Core writes a private file containing the scoped bearer under `dataDir/mcp-files`
 and passes its absolute path in `headers[].valueFrom.fileKeyRef`. Run Core and
 massd on the same host under the same operating-system account. For separate
@@ -442,27 +359,15 @@ an explicit `externalURL`, use a fixed Core listen port. A wildcard Core listene
 maps to `127.0.0.1` or `::1` for native Session MCP connections. Core persists the
 MCP URL and credential path in the Session spec. Keep both stable across restarts.
 
-| Tool | Router | Topic | Arguments |
-| --- | --- | --- | --- |
-| `get_internal_event` | Own event | Own event | `event_id` |
-| `get_message` | Source Messages | Associated Messages | `messageId`, optional `include` with `thread` and `replies`. Router can also include `routing`. |
-| `list_messages` | Source history | Associated history | Optional `threadKey,cursor,limit` |
-| `list_topics` | Topic summaries | | Optional `query,cursor,limit` |
-| `route_messages` | Route or ignore | | Route request below |
-| `send_reply` | Scoped Message | Associated Message | `operationId,messageId,content`, optional Topic-only `blockerRef` |
-| `decline_message` | | Own routing event | `event_id,reason` |
+Call `tools/list` with the same bearer used to call tools. The server advertises
+role-specific input schemas from [`roleTools`](pkg/core/mcp_tools.go). Core
+assembles the role instructions from [`bindingSystemPrompt`](pkg/core/execution.go).
 
-Topic summaries expose the Topic ID, title, description, goal, state, revision
-and timestamps. Topic Message history follows the Topic's routing associations,
-including when a Thread has multiple subscribers. List cursors bind the
-collection, filters and authenticated role. An unavailable scoped record
-returns `not_found`.
-
-Message views include `id`, `source`, `text`, `threadKey` and `actor`, with
-`at` and `url` when available. Router can request the routing round, state and
-relations. Topic also sees `quotedReply` for a matched answer in its scope.
-Followup and PR Messages can include event facts under `meta`. Forwarded DWS
-Messages can include `meta.forwardMessages`.
+Router can read source Messages and routing rounds. Topic reads follow its
+routing associations even when several Topics subscribe to the Thread. Issue
+Sessions can read Messages listed in their Issue materials. In-scope callers can
+read Internal Events addressed to their binding. Cursor scope includes the role
+and the filters. An unavailable scoped record returns `not_found`.
 
 ## Atomic RouteDecision
 
@@ -513,20 +418,9 @@ or waking a Topic preserves its business status. Use `update_topic` with the `co
 
 ## Issue, SessionBinding, Report and acceptance
 
-Core assigns IDs with decimal counters starting at 1.
-
-| Object | Example | Numbering |
-| --- | --- | --- |
-| Message | `mass-m42` | `trigger_messages.seq` within the Core database |
-| Topic | `mass-t42` | Topic sequence within the Core database |
-| Issue | `mass-t42-i3` | Issue sequence within the Topic |
-| Report | `mass-t42-i3-r5` | Report submission sequence within the Issue |
-| Timer | `mass-t42-tm3` | Timer sequence within the Topic, across Topic generations |
-| Blocker | `mass-t42-i3-b2` | Blocker sequence within the Issue, including resolved blockers |
-
-These IDs stay fixed after creation, including when an Issue or Topic is
-reopened. Each SessionBinding gets an opaque ID. Reports use their own IDs
-and reference their Topic notification with `eventId`.
+Core resource IDs stay fixed after creation, including when an Issue or Topic
+reopens. Treat SessionBinding IDs as opaque. A Report has its own ID and references
+its Topic notification with `eventId`.
 
 All changes require an `operationId`. Creation tools such as `create_issue`
 and `schedule_followup` use it within the authenticated SessionBinding to
@@ -542,34 +436,11 @@ mutation.
 
 ### Topic tools
 
-A new Topic can supply `create.goal` in `route_messages`. Router reads it in
-`list_topics` summaries. If omitted, Core uses the description or title.
-
-| Tool | Arguments | Result |
-| --- | --- | --- |
-| `get_topic` | Optional `include` with `executionTemplates`, `followups`, or `pullRequests` | The bound Topic and requested expansions. |
-| `update_topic` | `operationId,expectedRevision`, optional `title,description,goal,pullRequests,transition,triggerEventId` | The Topic after one transactional update. |
-| `create_issue` | `operationId,title,goal,runtimeRef,model`, optional `workspace,materials,start,triggerEventId` | `{issue, sessionBinding?}`. The Issue belongs to the authenticated Topic. |
-| `get_issue` | `issueId`, optional `include` with `reports` or `pullRequests` | The scoped Issue and requested expansions. |
-| `list_issues` | Optional `status,cursor,limit` | Issues in the bound Topic. |
-| `start_issue` | `operationId,issueId,expectedRevision`, optional `resolve`, `runtimeRef,model` as a pair, and `triggerEventId` | `{issue, sessionBinding}`. Resolves supplied blockers and starts the Issue Session in one transaction. |
-| `update_issue` | `operationId,issueId,expectedRevision`, optional `title,goal,materials,blockers,sessionInput,pullRequests,transition,triggerEventId` | `{issue, sessionBinding?, notificationEventId?}`. Applies the update in one transaction. |
-| `get_report` | `reportId` | The scoped Report and its evidence. |
-
-Use `materials: {add:[...]}` to append materials and `pullRequests: {add:[...]}`
-to add absolute PR URLs. Use `blockers: {add?,resolve?,unblockedStatus?}` to
-edit blockers and `sessionInput: {mode,content?}` to send input to the current Issue Session.
-Use `transition: {action,reason,evidence?}` in `update_topic` or `update_issue`.
-Actions are `complete`, `cancel`, and `reopen`. Completion requires an evidence
-list. Topic completion also requires every Issue to be terminal. Issue reopen
-requires a later explicit start. Topic cancellation requests stops for its
-Sessions and cancels its nonterminal Issues.
-
-Supply a nonblank Issue goal. When `workspace` is omitted, Core uses the
-current Topic's workspace. Supply an existing absolute path to override it.
-Each material is `{label?,uri}` or `{label?,messageId}`. The Message must
-already belong to the Topic's reception history. A stale `expectedRevision`
-returns `conflict` with `resource` and `currentRevision`.
+For tool arguments, use [role MCP discovery](#role-mcp-and-source-scope). A
+new Topic uses `create.goal` or falls back to the description or title.
+An Issue inherits the Topic workspace unless the request supplies an existing
+absolute path. Message materials must belong to the Topic's reception history.
+A stale `expectedRevision` returns `conflict` with `resource` and `currentRevision`.
 
 For each explicit selection, Core validates the complete Runtime and model
 pair against the current list and takes effort from that entry. An incomplete
@@ -582,13 +453,15 @@ returns the original Issue identity and, for `start: true`, its initial SessionB
 `start: true` uses the same scheduling transaction as `start_issue`. Core
 saves the Issue's profile and `currentSessionBindingId`, creates the
 SessionBinding and registers an `issue_session_started` event in one
+transaction. `start_issue` also resolves any supplied blockers in that
 transaction. Another start with a current SessionBinding returns `conflict`.
 Each SessionBinding retains its starting goal revision, Runtime, model and
 effort. Its Observer detail includes the `startup` event state.
 
-Completion requires a reason and at least one evidence reference, such as a
-Report ID or artifact path. Core stores the acceptance author and timestamp.
-Topic verifies the result before issuing the explicit acceptance command.
+Topic verifies the result and records acceptance with a reason and evidence.
+Core saves the author and timestamp. Topic completion also requires all Issues
+to be terminal. Topic cancellation requests stops for its Sessions and cancels
+its nonterminal Issues. A reopened Issue requires an explicit start.
 
 ### Goal, blockers and Issue Session inputs
 
@@ -627,13 +500,9 @@ including observation time or an unknown-state reason.
 
 ### Issue Session tools
 
-| Tool | Arguments | Result |
-| --- | --- | --- |
-| `get_issue` | `{}` | Bound Issue with its current goal, materials, blockers and business state. |
-| `get_message` | `messageId` | Message listed in the Issue materials. |
-| `update_issue` | `operationId,expectedRevision`, optional `title,materials,pullRequests,triggerEventId` | The bound Issue after applying edits. |
-| `submit_report` | `operationId,kind,summary,goalRevision`, optional `details,evidence,questions,triggerEventId` | Appended Report with its Topic notification ID. |
-| `get_internal_event` | `event_id` | Complete Agent view of the event addressed to this binding. |
+Call `tools/list` for the Issue Session tool schemas. `get_issue` resolves the
+bound Issue. `get_message` requires a Message in its materials. Use
+`submit_report` with the `goalRevision` used during work.
 
 Report kinds are `progress`, `ready`, `blocked` and `failed`. The Issue Session
 supplies the goal revision it used. Core records the authenticated
@@ -720,76 +589,33 @@ canceled until that owner explicitly reopens it with `update_topic`.
 Core sends each Session a JSON object with ordered `events`. Read `kind` to
 select the action. Deduplicate by `event_id`.
 
-For a Router `route_request`, use the `trigger_message` ID, `content.data.text`,
-`threadKey`, and `routing` when supplied. Pass `routing.round` in
-`route_messages.rounds` keyed by Message ID. For a reference-only event or a stale
-round error, call `get_message` with the Message ID and `include: ["routing"]` to read
-the current state and any return reason.
+For a Router `route_request`, use the Message ID from `refs`. Pass the current
+round in `route_messages.rounds`. After a stale round error or when the event
+contains only a reference, use `get_message` with `include: ["routing"]`.
 
 ```json
 {"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"content":{"type":"markdown","data":{"text":"Verify the report."}},"threadKey":"dws:release","routing":{"round":1,"state":"pending"}}]}
 ```
 
-For a Topic `routed_message`, use `content` when present. Core inlines ordinary
-short Message text as Markdown when the encoded `content` fits within 2 KiB
-and the batch has space. A matched short quoted reply can include `quotedReply`
-and the relevant Issue's `revision`, `status`, and open `blockers`. On a
-reference-only event, including an unmatched quote, call `get_message` with the `trigger_message` ID. Use the same query to read source facts such as Timer
-materials or PR observations. Each
-`routed_message` carries one such reference, including when it has `content`.
-Pass its `event_id` to `decline_message` when the Message belongs elsewhere.
+For a Topic `routed_message`, Core may inline short content, matched quoted
+answers, and associated Issue context. Use `get_message` to read a referenced
+Message, its source facts, and any available quote association. When handling
+`report_submitted`, check whether the Report is current and verify its evidence
+against the current Issue goal. Use `get_report` and `get_issue` for readback.
 
-```json
-{"events":[{"event_id":"evt_topic","kind":"routed_message","refs":[{"kind":"trigger_message","id":"mass-m1"}],"content":{"type":"markdown","data":{"text":"Verify the report."}}}]}
-```
+Issue Session events can inline the Issue goal, `goalRevision`, blockers, and
+short material Messages. Use `get_issue` for current Issue state and
+`get_message` for referenced material. If `truncated` is true, use
+`get_internal_event` with `event_id` to read the complete Agent view. See the
+[role instructions](pkg/core/execution.go) for the actions associated with
+individual event kinds. Pass `event_id` as `triggerEventId` on supported
+mutations that respond to an event.
 
-On `report_submitted`, check `report.current` and the Issue goal revision.
-Verify the evidence against the current goal before accepting the Issue. When either view is missing,
-read the relevant record with `get_report` or `get_issue`. For an Issue mutation, supply the
-Issue's `revision` as `expectedRevision`; read current state on a conflict.
-
-For an Issue Session `issue_session_started` or `issue_session_update`, use the supplied `issue`
-for the current goal, `goalRevision`, status, blockers and materials. Call
-`get_issue` when the Issue view is absent or current state is in doubt.
-Find material Messages in `messages` by `id`, and use `get_message` for
-referenced Messages that need readback. Workspace is the Session's `Cwd`.
-
-```json
-{"events":[{"event_id":"evt_issue","kind":"issue_session_started","issue":{"id":"mass-t1-i1","goal":"Verify the report.","goalRevision":1,"status":"active","materials":[{"messageId":"mass-m1"}]},"messages":[{"id":"mass-m1","text":"Verify the report.","actor":"sender-1"}]}]}
-```
-
-| Event | Additional fields |
-| --- | --- |
-| `route_request` | `refs` with `trigger_message`; eligible initial requests also carry `content`, `threadKey`, and `routing`. A return carries the original `internal_event` reference. |
-| `routed_message` | One `trigger_message` in `refs`, Markdown `content` when eligible, and `quotedReply` and `issue` for an eligible matched reply. |
-| `report_submitted` | `refs` with `report`; eligible notifications include `report` and `issue`. |
-| Prior goal or historical Report `context_supplement` | `refs` with `report`. |
-| `issue_session_started` and `issue_session_update` | Eligible `issue` and short material `messages`. An update can include `content` and `body.materials`. |
-| Issue Session `context_supplement` | Provided `content`, `body.materials`, and eligible short material `messages`. |
-| `report_reminder`, `binding_recovered` | `event_id` and `kind`. |
-| Topic dependency `context_supplement` | `body.type`, `body.dependencyIssueId`, `body.dependentIssueIds`, `body.previousStatus`, and `body.status`. |
-| Terminal Topic recovery `context_supplement` | `body.recovery`. |
-| `outbox_failed` | `refs` with `outbox`. |
-
-Structured `content` uses the Outbox schemas, including Markdown prompts for
-`options`. If an event's content or body exceeds the event budget, Core sends
-`truncated: true`. Call `get_internal_event` with the event's `event_id` to read
-its complete Agent view. Its stored record and Observer detail retain the
-original fields.
-
-Topic instructions include the configured Issue template choices. Use
-`get_topic` with `include: ["executionTemplates"]` to read the current choices.
-Session reuse requires matching saved Session instructions.
-
-When a supported mutation responds to an event, pass its `event_id` as
-`triggerEventId` so the operation continues the event's trace.
-
-All-`context_supplement` batches use `session.inject`. Any other kind selects
-`session.prompt` (StartOrSteer). Acceptance settles the rows as `sent`.
-A restart can submit unconfirmed rows again using the same IDs. Issue Session
-startup and updates, Report notifications, Report reminders and Issue
-dependency changes use this path. The Observer exposes the acceptance state
-and timestamp separately from work completion.
+Batches of `context_supplement` use `session.inject`. A batch containing any
+other kind uses `session.prompt`. Core records `sent` after it confirms input
+acceptance, and may redeliver an unsettled event with the original ID. The
+Observer records input acceptance separately from work completion. See
+[ADR 0002](docs/adr/0002-settle-session-input-with-evidence.md).
 
 ### Local operator reconciliation
 
@@ -866,11 +692,8 @@ arguments. The latest completed recovery returns its saved result on replay.
 Only the current Topic binding may manage its Timers. The Topic must be active.
 MCP clients call these tools through `/v1/mcp`.
 
-| Tool | Arguments | Result |
-| --- | --- | --- |
-| `schedule_followup` | `operationId,dueAt,content`, optional `materials` | A new `scheduled` Timer at revision 1. |
-| `update_followup` | `operationId,followupId,expectedRevision`, optional `dueAt,content,materials` | The next revision. Supply at least one change. An empty materials array clears materials. |
-| `cancel_followup` | `operationId,followupId,expectedRevision` | The next revision with status `canceled`. |
+Use `schedule_followup`, `update_followup`, or `cancel_followup`. Call
+`tools/list` for the current tool schemas.
 
 `dueAt` accepts RFC3339 with `Z` or a numeric offset and up to nine fractional
 digits. The record stores the UTC instant. Content must be nonblank. Materials
@@ -958,11 +781,8 @@ the source contract using synthetic Messages.
 Use `get_message` with `include: ["replies"]` to read authorized replies.
 A successful queue receipt confirms local persistence.
 
-The `send_reply` input schema advertises the supported content types and fields. Each reply has one object
-with `type` and `data`. `markdown` carries `data.text`. `options` carries a
-Markdown `data.prompt` and at least two ordered `data.options` with distinct
-`id` values and a display `label`. Supply this object as `content` when
-queueing the reply.
+Call `tools/list` for the `send_reply` content schema. The content type can be
+`markdown` or `options`.
 
 Router may give one explicit `messageId` or the distinct `messageIds` of its
 current routing input. Topic may give an explicit associated Message or omit
@@ -1081,9 +901,3 @@ and `reason`, authenticated with `operatorTokenFile` on the
 loopback listener. A replay of that release returns its recorded routing
 event. A later match on an already routed Message is recorded for inspection
 without another delivery.
-
-## Harness relationship
-
-The MASS harness defines the massd Runtime and Session contracts, including
-input receipts. This API describes the Superagent Core, SQLite schema and role
-interfaces.
