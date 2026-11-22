@@ -183,7 +183,7 @@ func run(parent context.Context, o options) (result error) {
 func main() {
 	if err := newCommand().Execute(); err != nil {
 		if errors.Is(err, errConflictingDataFields) {
-			fmt.Fprintln(os.Stderr, errConflictingDataFields)
+			fmt.Fprintln(os.Stderr, err)
 		} else {
 			fmt.Fprintln(os.Stderr, transport.PublicError(err))
 		}

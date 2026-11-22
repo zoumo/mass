@@ -244,13 +244,13 @@ func assertCutoverSchema(t *testing.T, path string) {
 }
 
 func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
-	trigger, dws := os.Getenv("SUPERAGENT_CUTOVER_TRIGGER"), os.Getenv("SUPERAGENT_CUTOVER_DWS")
+	dws := os.Getenv("SUPERAGENT_CUTOVER_DWS")
 	coreExe := os.Getenv("SUPERAGENT_CUTOVER_CORE")
-	if trigger == "" && dws == "" && coreExe == "" {
+	if dws == "" && coreExe == "" {
 		t.Skip("explicit three-process cutover acceptance")
 	}
-	for _, path := range []string{trigger, dws, coreExe} {
-		require.True(t, filepath.IsAbs(path), "provide all three executable paths")
+	for _, path := range []string{dws, coreExe} {
+		require.True(t, filepath.IsAbs(path), "provide Superagent and DWS fixture executable paths")
 		require.FileExists(t, path)
 	}
 	peer := newNativeSubmitPeer(t)
@@ -267,11 +267,11 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	const conversation = "cutover:test-direct"
 	const firstNative = "cutover-request"
 	const questionNative = "cutover-native-question"
-	triggerStatus := startCutoverTrigger(t, f, p.endpoint, trigger, dws, conversation)
+	triggerStatus := startCutoverTrigger(t, f, p.endpoint, coreExe, dws)
 	feed := func(index int, id, body, quote string) {
 		t.Helper()
 		data := map[string]any{
-			"type": "user_im_message_receive_o2o", "message_id": id, "conversation_id": conversation,
+			"type": "user_im_message_receive_o2o_all", "message_id": id, "conversation_id": conversation,
 			"sender_open_dingtalk_id": "peer", "content": body,
 		}
 		if quote != "" {
@@ -420,7 +420,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	}
 	require.Equal(t, 1, sends)
 	require.Positive(t, queries)
-	status, err := exec.CommandContext(t.Context(), trigger, "status", "--endpoint", triggerStatus).Output()
+	status, err := exec.CommandContext(t.Context(), coreExe, "triggers", "dws", "status", "--endpoint", triggerStatus).Output()
 	require.NoError(t, err)
 	require.Contains(t, string(status), `"accepted":2`)
 	require.Contains(t, string(status), `"backlog":0`)
@@ -439,21 +439,25 @@ func writeCutoverFile(t *testing.T, path string, content []byte) {
 	require.NoError(t, os.Rename(path+".next", path))
 }
 
-func startCutoverTrigger(t *testing.T, f *fixture, coreEndpoint, trigger, dws, conversation string) string {
+func startCutoverTrigger(t *testing.T, f *fixture, coreEndpoint, superagent, dws string) string {
 	t.Helper()
-	config := filepath.Join(f.dir, "trigger.json")
+	config := filepath.Join(f.dir, "trigger.yaml")
 	body, err := json.Marshal(map[string]any{
 		"dwsExecutable": dws, "profile": "corp:account", "source": "dws", "accountId": "account",
-		"selfOpenDingtalkId": "self", "nativeQuote": true, "instanceId": "collector-1",
+		"selfOpenDingtalkId": "self", "instanceId": "collector-1",
 		"coreEndpoint": coreEndpoint, "coreTokenEnv": "CUTOVER_TEST_TOKEN", "retryMillis": 25,
-		"allowedChats": []map[string]string{{"conversationId": conversation, "peerOpenDingtalkId": "peer"}},
+		"databasePath": filepath.Join(f.dir, "dws.sqlite"),
+		"direct": map[string]any{
+			"enabled": true,
+			"match":   []map[string]string{{"regex": ".+"}},
+		},
 	})
 	require.NoError(t, err)
 	writeCutoverFile(t, config, body)
 	logPath := filepath.Join(f.dir, "trigger.log")
 	log, err := os.Create(logPath)
 	require.NoError(t, err)
-	cmd := exec.CommandContext(context.Background(), trigger, "serve", "--config", config)
+	cmd := exec.CommandContext(context.Background(), superagent, "triggers", "dws", "serve", "--config", config)
 	cmd.Env = []string{
 		"HOME=" + f.dir, "PATH=" + f.dir, "CUTOVER_TEST_TOKEN=" + f.token,
 		"DWS_FIXTURE_MODE=feed", "DWS_FIXTURE_INPUT=" + f.dir, "DWS_FIXTURE_EGRESS=" + f.dir,
@@ -469,6 +473,9 @@ func startCutoverTrigger(t *testing.T, f *fixture, coreEndpoint, trigger, dws, c
 		case err := <-done:
 			data, _ := os.ReadFile(logPath)
 			require.NoError(t, err, "%s", data)
+			if t.Failed() {
+				t.Logf("DWS Trigger log:\n%s", data)
+			}
 		case <-time.After(8 * time.Second):
 			_ = cmd.Process.Kill()
 			<-done

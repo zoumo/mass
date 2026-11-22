@@ -41,7 +41,8 @@ type Server struct {
 	listener                     net.Listener
 }
 
-const massdMount = "/massd"
+// MassdMountPath is the Core HTTP prefix for an explicitly exposed MASS instance.
+const MassdMountPath = "/massd"
 
 func Start(c Config) (*Server, error) {
 	return StartWithTelemetry(c, TelemetryOptions{})
@@ -59,8 +60,8 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 		embedded = c.Massd.Embedded
 	}
 	if embedded != nil {
-		if c.Sessions == nil || c.Massd.Endpoint != "" || c.Massd.TokenFile != "" {
-			return nil, problem("invalid_argument", "embedded MASS requires sessions and exclusive MASS configuration")
+		if c.Massd.Endpoint != "" || c.Massd.TokenFile != "" {
+			return nil, problem("invalid_argument", "embedded MASS requires exclusive MASS configuration")
 		}
 		if err := embedded.validate(); err != nil {
 			return nil, err
@@ -118,7 +119,7 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	}()
 	s := &Server{store: store, config: c, listener: l, embeddedMassd: instance, observerTelemetry: gateway, observerTraces: traces}
 	if exposureToken != "" {
-		s.massdHTTP = http.StripPrefix(massdMount, instance.Handler())
+		s.massdHTTP = http.StripPrefix(MassdMountPath, instance.Handler())
 		s.massdHTTPToken = exposureToken
 	}
 	if c.Sessions != nil {
@@ -211,7 +212,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 		return
 	}
-	if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, massdMount+"/") {
+	if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, MassdMountPath+"/") {
 		// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
 		s.massdHTTP.ServeHTTP(w, r)
 		return

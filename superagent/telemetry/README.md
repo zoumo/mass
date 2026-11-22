@@ -33,14 +33,13 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318
 bin/superagent serve --config /absolute/run/core.yaml
 ```
 
-To start Core and massd together, use the same `OTEL_*` variables with
-`superagent compose`. massd inherits the variables from `superagent compose`.
-Set `SUPERAGENT_OBSERVER_OTLP_ENDPOINT` separately to enable browser telemetry.
+Use the same `OTEL_*` variables with `superagent compose`. Embedded MASS
+uses the trace and metric providers from Core. Set
+`SUPERAGENT_OBSERVER_OTLP_ENDPOINT` separately for browser telemetry.
 
 ```sh
 SUPERAGENT_OBSERVER_OTLP_ENDPOINT=http://127.0.0.1:14320 \
-  bin/superagent compose --massd-bin ./bin/massd \
-    --massd-config /absolute/run/massd.yaml --core-config /absolute/run/core.yaml
+  bin/superagent compose --config /absolute/run/stack.yaml
 ```
 
 The Core resource has `service.name=superagent-core`. Submit a Message or
@@ -52,9 +51,9 @@ to shorten the export interval for a smoke test.
 In **Traces**, search by the Message's `trace_id` across services. A Message
 submission produces `POST /v1/channel/messages` and its `superagent.message.admit`
 child span. A single-source workflow continues through role input, routing, Issue
-creation, Issue Session preparation and the Report. To include massd's RPC,
-Service and SDK spans, run a matching massd build with traces enabled and send
-its OTLP data to the same Collector.
+creation, Issue Session preparation, and the Report. Embedded MASS sends its
+RPC, Service, and SDK spans through Core's trace provider. If you run massd
+independently, enable traces for massd and use the same Collector.
 
 Use these PromQL expressions in **Metrics**.
 

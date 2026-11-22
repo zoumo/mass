@@ -38,10 +38,10 @@ type MassdExposure struct {
 	AllowedOrigins []string `mapstructure:"allowedOrigins"`
 }
 
-func (c *MassdConfig) validate(resolve func(string) string, composed bool) error {
+func (c *MassdConfig) validate(resolve func(string) string) error {
 	if c.Embedded != nil {
-		if composed || c.Endpoint != "" || c.TokenFile != "" {
-			return problem("invalid_argument", "massd.embedded cannot be combined with compose, massd.endpoint or massd.tokenFile")
+		if c.Endpoint != "" || c.TokenFile != "" {
+			return problem("invalid_argument", "massd.embedded cannot be combined with massd.endpoint or massd.tokenFile")
 		}
 		c.Embedded.DataDir = resolve(c.Embedded.DataDir)
 		if c.Embedded.Expose != nil {
@@ -49,10 +49,8 @@ func (c *MassdConfig) validate(resolve func(string) string, composed bool) error
 		}
 		return c.Embedded.validate()
 	}
-	if !composed {
-		if _, err := client.WebSocketEndpoint(c.Endpoint); err != nil {
-			return problem("invalid_argument", "massd.endpoint must be a ws/wss MASS endpoint")
-		}
+	if _, err := client.WebSocketEndpoint(c.Endpoint); err != nil {
+		return problem("invalid_argument", "massd.endpoint must be a ws/wss MASS endpoint")
 	}
 	if c.TokenFile != "" {
 		c.TokenFile = resolve(c.TokenFile)

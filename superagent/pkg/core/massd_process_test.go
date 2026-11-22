@@ -333,8 +333,6 @@ func TestEmbeddedMASSConfigAndStartupFailure(t *testing.T) {
 		require.Error(t, err, "%q", extra)
 	}
 	write(t, f.config, strings.Replace(string(saved), external, embedded, 1))
-	_, err = core.LoadComposeConfig(f.config)
-	require.ErrorContains(t, err, "cannot be combined with compose")
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
 	require.NotNil(t, cfg.Massd.Embedded.SessionIdleTimeout)

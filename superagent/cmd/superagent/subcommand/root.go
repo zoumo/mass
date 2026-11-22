@@ -22,6 +22,8 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
+const coreShutdownTimeout = 10 * time.Second
+
 func Execute() int {
 	cmd := New()
 	if err := cmd.Execute(); err != nil {
@@ -41,18 +43,27 @@ func Execute() int {
 func New() *cobra.Command {
 	root := &cobra.Command{Use: "superagent", Short: "Superagent Core and read-only observation", SilenceUsage: true, SilenceErrors: true}
 	var config string
+	var composed bool
 	serve := &cobra.Command{Use: "serve", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := core.LoadConfig(config)
+		signals, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		var c core.Config
+		var err error
+		if composed {
+			c, err = core.LoadComposeConfig(config, cmd.InOrStdin())
+		} else {
+			c, err = core.LoadConfig(config)
+		}
 		if err != nil {
 			return err
 		}
-		signals, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		return runCore(signals, cmd, c, "", nil)
+		return runCore(signals, cmd, c)
 	}}
 	serve.Flags().StringVar(&config, "config", "", "YAML configuration file")
+	serve.Flags().BoolVar(&composed, "compose-config-stdin", false, "Read the Core configuration section from Compose")
+	_ = serve.Flags().MarkHidden("compose-config-stdin")
 	_ = serve.MarkFlagRequired("config")
-	root.AddCommand(serve, newCompose())
+	root.AddCommand(serve, newCompose(), newTriggers())
 	var endpoint, cursor, thread, topic, issue, message, activityFilter string
 	var limit int
 	var newest bool
@@ -141,7 +152,10 @@ func New() *cobra.Command {
 	return root
 }
 
-func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoint string, daemon *massdProcess) (result error) {
+func runCore(ctx context.Context, cmd *cobra.Command, config core.Config) (result error) {
+	if ctx.Err() != nil {
+		return nil
+	}
 	config.ObserverOTLPEndpoint = os.Getenv("SUPERAGENT_OBSERVER_OTLP_ENDPOINT")
 	logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
 	telemetry, err := newTelemetryRuntime(ctx, logger)
@@ -160,7 +174,7 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoi
 		serveErr = server.Serve()
 	}()
 	defer func() {
-		budget := 10 * time.Second
+		budget := coreShutdownTimeout
 		if config.Massd != nil && config.Massd.Embedded != nil {
 			budget += massd.ShutdownTimeout
 		}
@@ -173,34 +187,17 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoi
 		<-done
 	}()
 
-	var massdDone <-chan struct{}
 	addresses := map[string]string{"endpoint": server.Endpoint(), "observerEndpoint": server.Endpoint() + "/observer/", "status": "ready"}
-	if daemon != nil {
-		massdDone = daemon.done
-		addresses["massdEndpoint"] = endpoint
-	}
-	select {
-	case <-ctx.Done():
+	if ctx.Err() != nil {
 		return nil
-	case <-massdDone:
-		return daemon.unexpectedExit()
-	default:
 	}
 	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(addresses); err != nil {
 		return err
 	}
 	select {
 	case <-done:
-		if serveErr == nil && daemon != nil {
-			return errors.New("core exited unexpectedly")
-		}
 		return serveErr
 	case <-ctx.Done():
 		return nil
-	case <-massdDone:
-		if ctx.Err() != nil {
-			return nil
-		}
-		return daemon.unexpectedExit()
 	}
 }
