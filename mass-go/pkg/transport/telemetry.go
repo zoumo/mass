@@ -148,6 +148,11 @@ func observeRPCOutcome(ctx context.Context, outcome string) {
 
 func sendRPCResponse(ctx context.Context, conn *rpc2.Conn, response *rpc2.Response) error {
 	err := conn.SendResponse(ctx, response)
+	recordRPCResponse(ctx, response, err)
+	return err
+}
+
+func recordRPCResponse(ctx context.Context, response *rpc2.Response, err error) {
 	if o, ok := ctx.Value(rpcObservationKey{}).(*rpcObservation); ok {
 		if response.Error != nil {
 			if o.status == "" {
@@ -164,5 +169,4 @@ func sendRPCResponse(ctx context.Context, conn *rpc2.Conn, response *rpc2.Respon
 		}
 		o.responseFailure = o.responseFailure || err != nil
 	}
-	return err
 }

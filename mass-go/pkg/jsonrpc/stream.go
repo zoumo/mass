@@ -17,6 +17,8 @@ type Stream struct {
 	role         Role
 	writeTimeout time.Duration
 	writeMu      sync.Mutex
+	writes       chan streamWrite
+	closed       bool
 
 	closeOnce sync.Once
 	errMu     sync.Mutex
@@ -37,11 +39,25 @@ type messageTransport interface {
 	close(int, string) error
 }
 
+const serverWriteQueueCapacity = 32
+
+var errWriteQueueFull = errors.New("JSON-RPC write queue is full")
+
+type streamWrite struct {
+	data []byte
+	done func(error)
+}
+
 func newStream(messages messageTransport, role Role, writeTimeout time.Duration) (*Stream, error) {
 	if writeTimeout <= 0 {
 		return nil, errors.New("write timeout must be positive")
 	}
-	return &Stream{messages: messages, role: role, writeTimeout: writeTimeout}, nil
+	s := &Stream{messages: messages, role: role, writeTimeout: writeTimeout}
+	if role == RoleServer {
+		s.writes = make(chan streamWrite, serverWriteQueueCapacity)
+		go s.writeLoop()
+	}
+	return s, nil
 }
 
 // ReadObject reads and validates the next message before jsonrpc2 decodes it.
@@ -67,7 +83,7 @@ func (s *Stream) ReadObject(out any) error {
 				return profileErr
 			}
 			if !profileErr.Suppress {
-				if err := s.WriteObject(profileErr.response()); err != nil {
+				if err := s.WriteResponseAsync(profileErr.response(), nil); err != nil {
 					return err
 				}
 			}
@@ -80,7 +96,7 @@ func (s *Stream) ReadObject(out any) error {
 				s.closeWith(websocket.CloseProtocolError, profileErr.Message)
 				return profileErr
 			}
-			if err := s.WriteObject(profileErr.response()); err != nil {
+			if err := s.WriteResponseAsync(profileErr.response(), nil); err != nil {
 				return err
 			}
 			continue
@@ -89,20 +105,81 @@ func (s *Stream) ReadObject(out any) error {
 	}
 }
 
-// WriteObject marshals and writes one text message under the shared write lock.
+// WriteObject writes one complete message and waits for the transport result.
 func (s *Stream) WriteObject(object any) error {
-	if err := ValidateLossless(object); err != nil {
-		return err
+	if s.writes != nil {
+		done := make(chan error, 1)
+		if err := s.WriteResponseAsync(object, func(err error) { done <- err }); err != nil {
+			return err
+		}
+		return <-done
 	}
-	data, err := json.Marshal(object)
+	data, err := encodeMessage(object)
 	if err != nil {
 		return err
 	}
-	if !utf8.Valid(data) || !validJSONStringEscapes(data) {
-		return ErrLossyJSON
-	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	return s.write(data)
+}
+
+// WriteResponseAsync places a server message in the same FIFO as WriteObject.
+// A full queue closes the slow connection. If queued, done runs after the
+// write completes or is interrupted by closure. The callback must not write.
+func (s *Stream) WriteResponseAsync(object any, done func(error)) error {
+	if s.writes == nil {
+		return errors.New("asynchronous writes require a server stream")
+	}
+	data, err := encodeMessage(object)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	if s.closed {
+		s.writeMu.Unlock()
+		return io.ErrClosedPipe
+	}
+	select {
+	case s.writes <- streamWrite{data: data, done: done}:
+		s.writeMu.Unlock()
+		return nil
+	default:
+		s.writeMu.Unlock()
+		s.closeWith(websocket.CloseInternalServerErr, "write queue full")
+		return errWriteQueueFull
+	}
+}
+
+func encodeMessage(object any) ([]byte, error) {
+	if err := ValidateLossless(object); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(data) || !validJSONStringEscapes(data) {
+		return nil, ErrLossyJSON
+	}
+	return data, nil
+}
+
+func (s *Stream) writeLoop() {
+	for request := range s.writes {
+		s.writeMu.Lock()
+		closed := s.closed
+		s.writeMu.Unlock()
+		err := io.ErrClosedPipe
+		if !closed {
+			err = s.write(request.data)
+		}
+		if request.done != nil {
+			request.done(err)
+		}
+	}
+}
+
+func (s *Stream) write(data []byte) error {
 	if err := s.messages.write(data, s.writeTimeout); err != nil {
 		s.closeWith(websocket.CloseInternalServerErr, "write failed")
 		return err
@@ -112,11 +189,7 @@ func (s *Stream) WriteObject(object any) error {
 
 // Close terminates the connection and releases blocked readers and writers.
 func (s *Stream) Close() error {
-	var err error
-	s.closeOnce.Do(func() {
-		err = s.messages.close(websocket.CloseNormalClosure, "")
-	})
-	return err
+	return s.close(websocket.CloseNormalClosure, "")
 }
 
 // ProtocolError returns the malformed-message cause recorded before closure.
@@ -133,9 +206,21 @@ func (s *Stream) setProtocolError(err *ProfileError) {
 }
 
 func (s *Stream) closeWith(code int, text string) {
+	_ = s.close(code, text)
+}
+
+func (s *Stream) close(code int, text string) error {
+	var err error
 	s.closeOnce.Do(func() {
-		_ = s.messages.close(code, text)
+		if s.writes != nil {
+			s.writeMu.Lock()
+			s.closed = true
+			close(s.writes)
+			s.writeMu.Unlock()
+		}
+		err = s.messages.close(code, text)
 	})
+	return err
 }
 
 func (e *ProfileError) response() any {

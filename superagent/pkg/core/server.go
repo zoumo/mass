@@ -65,9 +65,6 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 		if err := embedded.validate(); err != nil {
 			return nil, err
 		}
-		if err := validateMassdDirectories(c.DataDir, embedded.DataDir); err != nil {
-			return nil, err
-		}
 	}
 	exposureToken, err := c.massdExposureToken()
 	if err != nil {
@@ -80,6 +77,11 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	traces, err := newObserverTraceReader(c.ObserverTrace)
 	if err != nil {
 		return nil, err
+	}
+	if embedded != nil {
+		if err := validateMassdDirectories(c.DataDir, embedded.DataDir); err != nil {
+			return nil, err
+		}
 	}
 	store, err := openStore(c, options)
 	if err != nil {
@@ -150,7 +152,8 @@ func (s *Server) Serve() error {
 
 func (s *Server) Shutdown(ctx context.Context) (result error) {
 	if s.embeddedMassd != nil {
-		s.embeddedMassd.Handler().CloseAdmission()
+		// Stop admitting WebSocket work while Core drains its own calls.
+		s.embeddedMassd.Handler().CloseExternalAdmission()
 		defer func() {
 			if result != nil {
 				s.embeddedMassd.Handler().Shutdown()

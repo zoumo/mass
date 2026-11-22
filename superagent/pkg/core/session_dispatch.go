@@ -148,6 +148,7 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b SessionBinding, spe
 			watch = nil
 		}
 	}
+	commitGate("after_session_input_admission")
 	input := runtime.Input{Content: []events.ContentBlock{events.Text(string(wire))}}
 	if method == "inject" {
 		var receipt runtime.InjectReceipt

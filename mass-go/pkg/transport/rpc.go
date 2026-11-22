@@ -28,9 +28,10 @@ type rpcEndpoint struct {
 	origins       map[string]struct{}
 	telemetry     *rpcTelemetry
 
-	mu     sync.Mutex
-	closed bool
-	conns  map[*rpc2.Conn]rpcConnectionEntry
+	mu             sync.Mutex
+	closed         bool
+	externalClosed bool
+	conns          map[*rpc2.Conn]rpcConnectionEntry
 }
 
 type rpcConnectionEntry struct {
@@ -60,7 +61,7 @@ func newRPCEndpoint(life context.Context, api API, opts Options) *rpcEndpoint {
 }
 
 func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
-	if s.isClosed() {
+	if s.isExternalClosed() {
 		fail(w, http.StatusServiceUnavailable, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
 		return
 	}
@@ -83,19 +84,21 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 		_ = socket.Close()
 		return
 	}
-	_ = s.attach(stream)
+	_ = s.attach(stream, true)
 }
 
-func (s *rpcEndpoint) attach(stream *rpcwire.Stream) error {
+func (s *rpcEndpoint) attach(stream *rpcwire.Stream, external bool) error {
 	ctx, cancel := context.WithCancel(s.life)
 	rpcConnection := &rpcConnection{
 		api:           s.api,
 		serverVersion: s.serverVersion,
+		stream:        stream,
 		inflight:      map[string]struct{}{},
 		endpoint:      s,
+		external:      external,
 	}
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || external && s.externalClosed {
 		s.mu.Unlock()
 		cancel()
 		_ = stream.Close()
@@ -128,15 +131,21 @@ func (s *rpcEndpoint) originAllowed(r *http.Request) bool {
 	return ok
 }
 
-func (s *rpcEndpoint) isClosed() bool {
+func (s *rpcEndpoint) isExternalClosed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.closed
+	return s.closed || s.externalClosed
 }
 
 func (s *rpcEndpoint) untrack(conn *rpc2.Conn) {
 	s.mu.Lock()
 	delete(s.conns, conn)
+	s.mu.Unlock()
+}
+
+func (s *rpcEndpoint) closeExternalAdmission() {
+	s.mu.Lock()
+	s.externalClosed = true
 	s.mu.Unlock()
 }
 
@@ -178,15 +187,20 @@ func (s *rpcEndpoint) drain(ctx context.Context) error {
 type rpcConnection struct {
 	api           API
 	serverVersion string
+	stream        *rpcwire.Stream
+
+	// Only the connection's reader changes protocol state.
+	initialized bool
+	terminal    bool
 
 	mu               sync.Mutex
-	initialized      bool
 	inflight         map[string]struct{}
 	disconnected     bool
 	subscription     *rpcSubscription
 	nextSubscription uint64
 	drainWaiters     []chan struct{}
 	endpoint         *rpcEndpoint
+	external         bool
 }
 
 func (c *rpcConnection) shutdownSubscription(ctx context.Context) {
@@ -244,6 +258,9 @@ func (h *rpcHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Requ
 }
 
 func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request) {
+	if c.terminal {
+		return
+	}
 	if req.Notif {
 		slog.Default().Debug("ignored JSON-RPC notification", "method", req.Method)
 		return
@@ -253,65 +270,78 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 		telemetry = c.endpoint.telemetry
 	}
 	ctx, finish := telemetry.start(ctx, req)
-	async := false
-	defer func() {
-		if !async {
-			finish()
+	key := req.ID.String()
+	admitted, unique := c.beginRequest(key)
+	if admitted && !unique {
+		_ = conn.Close()
+		finish()
+		return
+	}
+	complete := func() {
+		finish()
+		if admitted {
+			c.end(key)
 		}
-	}()
-	dispatch := func(key string, call func()) {
-		async = true
+	}
+	reply := func(response *rpc2.Response, closeAfterWrite bool) bool {
+		written := func(err error) {
+			recordRPCResponse(ctx, response, err)
+			if closeAfterWrite {
+				_ = conn.Close()
+			}
+			complete()
+		}
+		if err := c.stream.WriteResponseAsync(response, written); err != nil {
+			written(err)
+			return false
+		}
+		return true
+	}
+	dispatch := func(call func()) {
 		go func() {
-			defer c.end(key)
-			defer finish()
+			defer complete()
 			call()
 		}()
 	}
-	key := req.ID.String()
-	admitted, unique := c.beginRequest(key)
 	if !admitted {
-		replyServiceError(ctx, conn, req.ID, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
-		return
-	}
-	if !unique {
-		_ = conn.Close()
+		reply(serviceErrorResponse(ctx, req.ID, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"}), false)
 		return
 	}
 
 	if req.Method == "initialize" {
-		defer c.end(key)
-		c.initialize(ctx, conn, req)
+		response, initialize, closeAfterWrite := c.prepareInitialize(req)
+		c.terminal = closeAfterWrite
+		// Put the success response in send order before permitting dispatch.
+		if reply(response, closeAfterWrite) && initialize {
+			c.initialized = true
+		}
 		return
 	}
-	if !c.isInitialized() {
-		c.end(key)
-		replyError(ctx, conn, req.ID, rpcwire.CodeProtocolState, "Connection is not initialized", "not_initialized")
+	if !c.initialized {
+		reply(rpcErrorResponse(req.ID, rpcwire.CodeProtocolState, "Connection is not initialized", "not_initialized"), false)
 		return
 	}
 	if req.Method == "session.subscribe" {
 		ref, err := decodeSessionRefParams(req.Params)
 		if err != nil {
-			c.end(key)
-			replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
+			reply(rpcErrorResponse(req.ID, rpc2.CodeInvalidParams, "Invalid params", ""), false)
 			return
 		}
 		subscription, ok := c.reserveSubscription(conn)
 		if !ok {
-			c.end(key)
-			replyServiceError(ctx, conn, req.ID, subscriptionAlreadyActive())
+			reply(serviceErrorResponse(ctx, req.ID, subscriptionAlreadyActive()), false)
 			return
 		}
-		dispatch(key, func() { c.dispatchSubscribe(ctx, conn, req, ref, subscription) })
+		dispatch(func() { c.dispatchSubscribe(ctx, conn, req, ref, subscription) })
 		return
 	}
 	if req.Method == "session.unsubscribe" {
 		subscriptionID, err := decodeSubscriptionID(req.Params)
 		if err != nil {
-			c.end(key)
-			replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
+			reply(rpcErrorResponse(req.ID, rpc2.CodeInvalidParams, "Invalid params", ""), false)
 			return
 		}
-		dispatch(key, func() { c.dispatchUnsubscribe(ctx, conn, req, subscriptionID) })
+		dispatch(func() { c.dispatchUnsubscribe(ctx, conn, req, subscriptionID) })
 		return
 	}
 	call, known, paramsErr := c.prepareRuntimeCall(req.Method, req.Params)
@@ -319,16 +349,14 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 		call, known, paramsErr = c.prepareSessionCall(req.Method, req.Params)
 	}
 	if !known {
-		c.end(key)
-		replyError(ctx, conn, req.ID, rpc2.CodeMethodNotFound, "Method not found", "")
+		reply(rpcErrorResponse(req.ID, rpc2.CodeMethodNotFound, "Method not found", ""), false)
 		return
 	}
 	if paramsErr != nil {
-		c.end(key)
-		replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
+		reply(rpcErrorResponse(req.ID, rpc2.CodeInvalidParams, "Invalid params", ""), false)
 		return
 	}
-	dispatch(key, func() { c.dispatchCall(ctx, conn, req, call) })
+	dispatch(func() { c.dispatchCall(ctx, conn, req, call) })
 }
 
 // Admit and register under the endpoint lock so closing admission cannot miss
@@ -337,7 +365,7 @@ func (c *rpcConnection) beginRequest(id string) (admitted, unique bool) {
 	if c.endpoint != nil {
 		c.endpoint.mu.Lock()
 		defer c.endpoint.mu.Unlock()
-		if c.endpoint.closed {
+		if c.endpoint.closed || c.external && c.endpoint.externalClosed {
 			return false, false
 		}
 	}
@@ -418,29 +446,19 @@ func (c *rpcConnection) waitDrained(ctx context.Context) error {
 	}
 }
 
-func (c *rpcConnection) isInitialized() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.initialized
-}
-
-func (c *rpcConnection) initialize(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request) {
-	if c.isInitialized() {
-		replyError(ctx, conn, req.ID, rpcwire.CodeProtocolState, "Connection is already initialized", "already_initialized")
-		return
+func (c *rpcConnection) prepareInitialize(req *rpc2.Request) (response *rpc2.Response, initialize, closeAfterWrite bool) {
+	if c.initialized {
+		return rpcErrorResponse(req.ID, rpcwire.CodeProtocolState, "Connection is already initialized", "already_initialized"), false, false
 	}
 	params, unsupported := decodeInitialize(req.Params)
 	if params == nil && !unsupported {
-		replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
-		return
+		return rpcErrorResponse(req.ID, rpc2.CodeInvalidParams, "Invalid params", ""), false, false
 	}
 	if unsupported {
-		replyError(ctx, conn, req.ID, rpcwire.CodeProtocolState, "Unsupported protocol version", "unsupported_protocol_version")
-		_ = conn.Close()
-		return
+		return rpcErrorResponse(req.ID, rpcwire.CodeProtocolState, "Unsupported protocol version", "unsupported_protocol_version"), false, true
 	}
 
-	response := &rpc2.Response{ID: req.ID}
+	response = &rpc2.Response{ID: req.ID}
 	if err := response.SetResult(rpcwire.Initialized{
 		ProtocolVersion: rpcwire.Version,
 		ServerInfo: rpcwire.PeerInfo{
@@ -448,14 +466,9 @@ func (c *rpcConnection) initialize(ctx context.Context, conn *rpc2.Conn, req *rp
 			Version: c.serverVersion,
 		},
 	}); err != nil {
-		return
+		return internalErrorResponse(req.ID), false, false
 	}
-	if err := sendRPCResponse(ctx, conn, response); err != nil {
-		return
-	}
-	c.mu.Lock()
-	c.initialized = true
-	c.mu.Unlock()
+	return response, true, false
 }
 
 func decodeInitialize(raw *json.RawMessage) (*rpcwire.InitializeParams, bool) {
@@ -490,16 +503,16 @@ func decodeInitialize(raw *json.RawMessage) (*rpcwire.InitializeParams, bool) {
 	return &params, false
 }
 
-func replyError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, code int64, message, reason string) {
+func rpcErrorResponse(id rpc2.ID, code int64, message, reason string) *rpc2.Response {
 	rpcErr := &rpc2.Error{Code: code, Message: message}
 	if reason != "" {
 		data, err := json.Marshal(rpcwire.ProtocolErrorData{Reason: reason})
 		if err != nil {
-			return
+			return internalErrorResponse(id)
 		}
 		rpcErr.Data = (*json.RawMessage)(&data)
 	}
-	_ = sendRPCResponse(ctx, conn, &rpc2.Response{ID: id, Error: rpcErr})
+	return &rpc2.Response{ID: id, Error: rpcErr}
 }
 
 type rpcLogger struct{}
