@@ -160,7 +160,7 @@ func (p *Interactions) observe(event events.SessionEvent) (events.SessionEvent, 
 			delete(p.pending, payload.Interaction)
 		}
 	case events.SessionError:
-		if payload.Reason == "native_event_unsupported" {
+		if payload.Reason == unsupportedNativeEventReason {
 			return p.claudeCompletion(event)
 		}
 	}

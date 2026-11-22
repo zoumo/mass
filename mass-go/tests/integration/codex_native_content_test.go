@@ -69,14 +69,25 @@ settled:
 }
 
 func (s *failureSuite) TestCodexUnsupportedNativeImage() {
-	s.codexUnsupportedNativeContent("native-image", []string{"userMessage"})
+	s.codexUnsupportedNativeContent("native-image", []codexDiagnostic{
+		{itemID: "user-1", nativeType: "userMessage", nativeSubtype: "localImage"},
+	})
 }
 
 func (s *failureSuite) TestCodexUnsupportedNativeFutureContent() {
-	s.codexUnsupportedNativeContent("native-unknown", []string{"userMessage", "futureNativeItem"})
+	s.codexUnsupportedNativeContent("native-unknown", []codexDiagnostic{
+		{itemID: "user-1", nativeType: "userMessage", nativeSubtype: "futureUserContent"},
+		{itemID: "future-1", nativeType: "futureNativeItem"},
+	})
 }
 
-func (s *failureSuite) codexUnsupportedNativeContent(scenario string, itemTypes []string) {
+type codexDiagnostic struct {
+	itemID        string
+	nativeType    string
+	nativeSubtype string
+}
+
+func (s *failureSuite) codexUnsupportedNativeContent(scenario string, wantDiagnostics []codexDiagnostic) {
 	recorder := tracetest.NewSpanRecorder()
 	traceProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	s.T().Cleanup(func() { s.NoError(traceProvider.Shutdown(context.Background())) })
@@ -93,18 +104,20 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string, itemTypes 
 	observer, err := c.Subscribe(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	defer observer.Close()
-	s.Require().NoError(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
 	observation := s.sessionObservation(ref)
-	diagnostics := 0
+	s.Require().NoError(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
+	var diagnostics []events.SessionEvent
 	var answered bool
 	for {
 		e, err := observer.Next(ctx(s.T()))
 		s.Require().NoError(err)
+		s.Equal(ref.SessionID, e.SessionID)
 		s.Require().NotEqual("user.message", e.Type(), "a mixed supported/unsupported message must not be partially emitted")
 		switch problem := e.Payload().(type) {
 		case events.SessionError:
-			s.Equal("unsupported_native_item", problem.Reason)
-			diagnostics++
+			s.Equal("unsupported_native_event", problem.Reason)
+			s.NotEmpty(problem.Message)
+			diagnostics = append(diagnostics, e)
 		case events.AgentMessage:
 			s.Equal([]events.ContentBlock{events.Text("complete answer")}, problem.Content)
 			answered = true
@@ -118,7 +131,7 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string, itemTypes 
 		}
 	}
 settled:
-	s.Equal(len(itemTypes), diagnostics)
+	s.Require().Len(diagnostics, len(wantDiagnostics))
 	s.True(answered)
 	select {
 	case <-observation.Done():
@@ -128,29 +141,38 @@ settled:
 	s.Require().NoError(observation.Err())
 	s.Require().Eventually(func() bool {
 		var current resource.Session
-		return c.GetSession(ctx(s.T()), ref, &current) == nil && current.Status.State == events.Idle
+		return c.GetSession(ctx(s.T()), ref, &current) == nil &&
+			current.Status.SessionID == ref.SessionID && current.Status.State == events.Idle
 	}, time.Second, time.Millisecond)
 
-	var tracedTypes []string
+	var diagnosticSpans []sdktrace.ReadOnlySpan
 	for _, span := range recorder.Ended() {
-		if span.Name() != "codex.unsupported_native_item" {
-			continue
+		s.NotEqual("codex.unsupported_native_item", span.Name())
+		if span.Name() == "agent.unsupported_native_event" {
+			diagnosticSpans = append(diagnosticSpans, span)
 		}
-		var itemType string
-		for _, attr := range span.Attributes() {
-			if attr.Key == "codex.item.type" {
-				itemType = attr.Value.AsString()
-			}
-		}
-		tracedTypes = append(tracedTypes, itemType)
-		s.ElementsMatch([]attribute.KeyValue{
-			attribute.String("reason", "unsupported_native_item"),
-			attribute.String("codex.method", "item/completed"),
-			attribute.String("codex.item.type", itemType),
-		}, span.Attributes())
-		s.Empty(span.Events())
 	}
-	s.Equal(itemTypes, tracedTypes)
+	s.Require().Len(diagnosticSpans, len(wantDiagnostics))
+	for i, want := range wantDiagnostics {
+		event := diagnostics[i]
+		s.Equal(want.itemID, event.ItemID)
+		meta := event.Meta["codex"].(map[string]any)
+		s.Equal("item/completed", meta["method"])
+		item := meta["raw"].(map[string]any)["params"].(map[string]any)["item"].(map[string]any)
+		s.Equal(want.nativeType, item["type"])
+
+		wantAttrs := []attribute.KeyValue{
+			attribute.String("provider", "codex"),
+			attribute.String("session.id", ref.SessionID),
+			attribute.String("native.method", "item/completed"),
+			attribute.String("native.type", want.nativeType),
+		}
+		if want.nativeSubtype != "" {
+			wantAttrs = append(wantAttrs, attribute.String("native.subtype", want.nativeSubtype))
+		}
+		s.ElementsMatch(wantAttrs, diagnosticSpans[i].Attributes())
+		s.Empty(diagnosticSpans[i].Events())
+	}
 
 	var history store.HistoryPage
 	s.Require().NoError(c.History(ctx(s.T()), ref, store.HistoryQuery{}, &history))

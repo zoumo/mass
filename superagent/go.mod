@@ -11,7 +11,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	github.com/zoumo/agent-sdk-go v0.1.1-0.20261121213752-24fa5a787527
+	github.com/zoumo/agent-sdk-go v0.1.1-0.20261122053355-04650cf68be8
 	github.com/zoumo/mass/mass-go v0.0.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.47.0
