@@ -14,12 +14,6 @@ import (
 	"github.com/shurcooL/githubv4"
 )
 
-const (
-	githubIssueCommentsPrefix  = "issue-comments/issues/"
-	githubPullCommentsPrefix   = "issue-comments/pull/"
-	githubInlineCommentsPrefix = "review-comments/"
-)
-
 type githubAuthor struct {
 	Login string
 	Type  string `graphql:"__typename" json:"__typename"`
@@ -179,7 +173,8 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 	}
 	var observations []githubObservation
 	for id, comment := range byID {
-		key := strconv.FormatInt(id, 10)
+		nativeID := strconv.FormatInt(id, 10)
+		key := objectType + "/" + nativeID
 		previous, known := scope.Items[key]
 		if known && comment.UpdatedAt.Before(previous.UpdatedAt) {
 			continue
@@ -198,10 +193,12 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 		kind := ""
 		if !known && !comment.CreatedAt.Before(scope.EnabledAt) {
 			kind = "comment_created"
+		} else if !known && !comment.UpdatedAt.Before(scope.EnabledAt) {
+			kind = "comment_edited"
 		} else if known && string(data) != string(previous.Data) {
 			kind = "comment_edited"
 		}
-		meta := map[string]any{"objectType": objectType, "objectId": key, "number": number}
+		meta := map[string]any{"objectType": objectType, "objectId": nativeID, "number": number}
 		if comment.ReplyTo > 0 {
 			meta["inReplyToId"] = strconv.FormatInt(comment.ReplyTo, 10)
 			meta["inReplyToURL"] = thread.ID + "#discussion_r" + strconv.FormatInt(comment.ReplyTo, 10)

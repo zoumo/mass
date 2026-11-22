@@ -24,9 +24,6 @@ import (
 var triggerBinary, fixtureBinary string
 
 func TestMain(m *testing.M) {
-	if endpoint := os.Getenv("TEST_GITHUB_ENDPOINT"); endpoint != "" {
-		os.Exit(runGitHubFixtureProcess(endpoint))
-	}
 	dir, err := os.MkdirTemp("", "superagent-trigger-tests-")
 	if err != nil {
 		panic(err)

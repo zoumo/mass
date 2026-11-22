@@ -4,277 +4,227 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-func TestGitHubCITracksOpenPRRevisionsAndRecovery(t *testing.T) {
+func TestGitHubDiscoveredPullTracksActionsAndStopsOnClosure(t *testing.T) {
 	t.Parallel()
 	f := newEgressFixture(t, false, githubSource)
-	old := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
-	headSHA := strings.Repeat("a", 40)
-	mergeSHA := strings.Repeat("b", 40)
-	newHeadSHA := strings.Repeat("c", 40)
-	var phase atomic.Int32
-	var blockedPage atomic.Bool
-	var rateHits atomic.Int32
-	var checkReads atomic.Int32
-	var lastPage atomic.Int32
-	fixture := httptest.NewServer(githubFixtureHandler(t, func(w http.ResponseWriter, q githubFixtureQuery) {
-		step := phase.Load()
-		first := githubCIPullFixture(old, 42, step, headSHA, mergeSHA, newHeadSHA)
-		second := githubCIPullFixture(old, 43, step, headSHA, mergeSHA, newHeadSHA)
-		sha := q.Variables.OID
-		conn := q.connection()
-		respond := func(fields map[string]any) {
-			fields["oid"] = sha
-			githubFixtureRepo(w, map[string]any{"object": fields})
+	const repo = "demo/sdk"
+	old := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	recent := time.Now().UTC().Truncate(time.Second).Add(5 * time.Second)
+	head, merge := strings.Repeat("a", 40), strings.Repeat("e", 40)
+	prURL := githubObjectURL(repo, "pull", 42)
+	var notices, pullState, actionState atomic.Int32
+	var unavailable atomic.Bool
+	var suiteReads, neverDiscovered, mergeReads, assocPages atomic.Int32
+	fixture := httptest.NewServer(githubFixtureHandler(t, func(w http.ResponseWriter, _ *http.Request) {
+		items := []githubNotification{githubFixtureNotice(300, 43, repo, "PullRequest", "mention", old)}
+		switch notices.Load() {
+		case 1:
+			items = append(items,
+				githubFixtureNotice(301, 42, repo, "PullRequest", "comment", recent),
+				githubFixtureNotice(302, 44, repo, "PullRequest", "mention", recent))
+		case 2:
+			items = append(items, githubFixtureNotice(301, 42, repo, "PullRequest", "state_change", recent.Add(time.Second)))
 		}
-		switch conn {
-		case "pullRequests":
-			pulls := []githubPull{first, second}
-			if step >= 8 && len(q.Variables.States) == 1 {
-				pulls = pulls[1:]
-			}
-			githubFixtureRepo(w, map[string]any{conn: githubFixturePage(pulls, "")})
+		githubFixtureJSON(w, items)
+	}, func(w http.ResponseWriter, q githubFixtureQuery) {
+		if q.Variables.Number != 0 && q.Variables.Number != 42 && q.Variables.Number != 44 {
+			neverDiscovered.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		switch q.connection() {
 		case "":
-			if q.Variables.Number == 42 {
-				githubFixtureObject(w, q, first)
+			pull := githubFixturePull("fork-owner/sdk", q.Variables.Number, old)
+			pull.Mergeable = "MERGEABLE"
+			pull.PotentialMergeCommit = &githubCommitOID{OID: merge}
+			if q.Variables.Number == 44 {
+				pull.State = "CLOSED"
 			} else {
-				githubFixtureObject(w, q, second)
-			}
-		case "contexts":
-			contextPage := func(items []any, cursor string) {
-				respond(map[string]any{"statusCheckRollup": map[string]any{conn: githubFixturePage(items, cursor)}})
-			}
-			if sha == newHeadSHA {
-				checkReads.Add(1)
-				githubFixtureEmpty(w, q)
-				return
-			}
-			if q.Variables.Cursor != "" {
-				if q.Variables.Cursor != "next-context" || sha != headSHA {
-					w.WriteHeader(http.StatusBadRequest)
+				if unavailable.Load() {
+					w.WriteHeader(http.StatusServiceUnavailable)
 					return
 				}
-				lastPage.Add(1)
-				if blockedPage.Load() {
-					rateHits.Add(1)
-					w.Header().Set("Retry-After", "2")
-					w.WriteHeader(http.StatusTooManyRequests)
-					return
+				switch pullState.Load() {
+				case 1:
+					pull.State, pull.UpdatedAt = "MERGED", recent.Add(time.Second)
+				case 2:
+					pull.State, pull.UpdatedAt = "OPEN", recent.Add(2*time.Second)
+				case 3:
+					pull.State, pull.UpdatedAt = "CLOSED", recent.Add(3*time.Second)
 				}
-				contextPage([]any{map[string]any{"__typename": "CheckRun", "databaseId": 2, "name": "Complete pagination", "status": "COMPLETED", "conclusion": "SKIPPED"}}, "")
-				return
 			}
-			if sha == mergeSHA {
-				contextPage([]any{
-					map[string]any{"__typename": "StatusContext", "id": "24", "context": "External CI", "state": "PENDING", "updatedAt": old.Add(time.Minute), "targetUrl": "https://example.org/ci/24"},
-					map[string]any{"__typename": "StatusContext", "id": "23", "context": "External CI", "state": "SUCCESS", "updatedAt": old},
-				}, "")
-				return
-			}
-			status, conclusion := "COMPLETED", "SUCCESS"
-			switch step {
-			case 1:
-				status, conclusion = "IN_PROGRESS", ""
-			case 2:
-				conclusion = "FAILURE"
-			case 4, 5:
-				conclusion = "CANCELLED" //nolint:misspell // GitHub GraphQL enum value.
-			}
-			contextPage([]any{map[string]any{"__typename": "CheckRun", "databaseId": 1, "name": "Unit test", "status": status, "conclusion": conclusion, "permalink": "https://github.com/demo/sdk/runs/123"}}, "next-context")
+			githubFixtureObject(w, q, pull)
 		case "checkSuites":
-			if sha != headSHA {
+			if q.repository() != repo {
+				t.Errorf("Actions were queried outside the base repository: %s", q.repository())
+			}
+			suiteReads.Add(1)
+			if q.Variables.OID == merge {
+				mergeReads.Add(1)
 				githubFixtureEmpty(w, q)
 				return
 			}
-			if step == 5 {
-				w.WriteHeader(http.StatusForbidden)
-				return
+			if q.Variables.OID != head {
+				t.Errorf("queried an unrelated SHA: %s", q.Variables.OID)
 			}
-			suite := func(id int, status, conclusion string, attempt int, association string) map[string]any {
-				return map[string]any{
-					"id": fmt.Sprintf("suite-%d", id), "status": status, "conclusion": conclusion,
-					"workflowRun":          map[string]any{"databaseId": id, "runAttempt": attempt, "event": "pull_request", "workflow": map[string]any{"name": "Workflow"}, "url": fmt.Sprintf("https://github.com/demo/sdk/actions/runs/%d", id)},
-					"matchingPullRequests": githubFixturePage([]githubWorkflowPull{}, association),
-					"checkRuns":            githubFixturePage([]any{}, ""),
-				}
+			status, conclusion, attempt := "IN_PROGRESS", "", 1
+			switch actionState.Load() {
+			case 1:
+				status, conclusion = "COMPLETED", "FAILURE"
+			case 2:
+				status, attempt = "QUEUED", 2
+			case 3:
+				status, conclusion, attempt = "COMPLETED", "SUCCESS", 2
+			case 4:
+				status, conclusion, attempt = "COMPLETED", "NEUTRAL", 2
+			case 5:
+				status, conclusion, attempt = "COMPLETED", "SUCCESS", 2
 			}
-			if q.Variables.Cursor == "" {
-				status, conclusion, attempt := "COMPLETED", "SUCCESS", 1
-				if step >= 4 {
-					status, conclusion, attempt = "WAITING", "", 2
-				}
-				respond(map[string]any{conn: githubFixturePage([]any{suite(60, status, conclusion, attempt, "association-next")}, "suite-next")})
-				return
-			}
-			if q.Variables.Cursor != "suite-next" {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			secondSuite := suite(61, "COMPLETED", "SUCCESS", 1, "")
-			secondSuite["checkRuns"] = githubFixturePage([]any{map[string]any{"databaseId": 2, "name": "Complete pagination", "status": "COMPLETED", "conclusion": "SKIPPED"}}, "checks-next")
-			ambiguous := suite(62, "COMPLETED", "SUCCESS", 1, "")
-			ambiguous["matchingPullRequests"] = githubFixturePage([]githubWorkflowPull{
-				{DatabaseID: 742, Number: 42, HeadRefOID: headSHA},
-				{DatabaseID: 743, Number: 43, HeadRefOID: headSHA},
-			}, "")
-			respond(map[string]any{conn: githubFixturePage([]any{secondSuite, ambiguous}, "")})
-		case "checkRuns":
-			if q.Variables.ID != "suite-61" || q.Variables.Cursor != "checks-next" {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			check := map[string]any{"databaseId": 3, "name": "Check missing from rollup", "status": "COMPLETED", "conclusion": "SUCCESS"}
-			githubFixtureRespond(w, map[string]any{"node": map[string]any{conn: githubFixturePage([]any{check}, "")}})
+			existing := githubFixtureSuite(80, "COMPLETED", "SUCCESS", 1, githubFixturePage([]any{githubFixtureAssociation(42, head)}, ""))
+			observed := githubFixtureSuite(90, status, conclusion, attempt, githubFixturePage([]any{}, "pull-associations"))
+			unlinked := githubFixtureSuite(95, "COMPLETED", "FAILURE", 1, githubFixturePage([]any{githubFixtureAssociation(43, head)}, ""))
+			githubFixtureRepo(w, map[string]any{
+				"object": map[string]any{"oid": head, "checkSuites": githubFixturePage([]any{existing, observed, unlinked}, "")},
+			})
 		case "matchingPullRequests":
-			if q.Variables.ID != "suite-60" || q.Variables.Cursor != "association-next" {
-				w.WriteHeader(http.StatusBadRequest)
-				return
+			if q.Variables.Cursor != "pull-associations" || q.Variables.ID != "suite-90" {
+				t.Errorf("wrong Actions association page: %+v", q.Variables)
 			}
-			page := githubFixturePage([]githubWorkflowPull{{DatabaseID: 742, Number: 42, HeadRefOID: headSHA}}, "")
-			githubFixtureRespond(w, map[string]any{"node": map[string]any{conn: page}})
+			assocPages.Add(1)
+			githubFixtureRespond(w, map[string]any{"node": map[string]any{"matchingPullRequests": githubFixturePage([]any{githubFixtureAssociation(42, head)}, "")}})
 		default:
 			githubFixtureEmpty(w, q)
 		}
 	}))
 	t.Cleanup(fixture.Close)
-	cfg := githubConfig{
-		AccountID: "account", InstanceID: "fixture-instance", CoreEndpoint: f.endpoint,
-		DatabasePath: filepath.Join(f.dir, "github.sqlite"), TokenEnv: "TEST_CORE_TOKEN", PollSeconds: 1, RequestMillis: 2500,
-		Repositories: []githubRepository{{"demo/sdk", "Example SDK CI"}},
-	}
-	p, statusURL := startGitHubFixture(t, f.dir, fixture.URL, cfg)
-	ciStatus := func(number int) githubStreamStatus {
-		return readGitHubStatus(t, statusURL).Repositories["demo/sdk"].Streams[fmt.Sprintf("ci/%d", number)]
-	}
-	wait(t, "silent CI baseline for both open PRs", func() bool { return ciStatus(42).State == "ready" && ciStatus(43).State == "ready" })
-	initial := ciStatus(42).CI
-	other := ciStatus(43).CI
-	if initial == nil || len(initial.Head.Checks) != 3 || initial.Head.Checks[2].ID != "3" || len(initial.Head.Actions) != 1 || initial.Head.UnassociatedActions != 2 || initial.Merge == nil || initial.Merge.SHA != mergeSHA || len(initial.Merge.Statuses) != 1 || initial.Merge.Statuses[0].ID != "24" || other == nil || len(other.Head.Actions) != 0 || other.Head.UnassociatedActions != 2 || lastPage.Load() == 0 {
-		t.Fatalf("unexpected group or attribution in CI baseline: first=%+v second=%+v", initial, other)
-	}
-	if len(readMessages(t, f.endpoint)) != 0 {
-		t.Fatalf("the initial CI baseline generated messages: %s", p.text())
-	}
-	phase.Store(1)
-	first := githubWaitCI(t, f, 42, 1)
-	otherFirst := githubWaitCI(t, f, 43, 1)
-	for _, message := range []map[string]any{first, otherFirst} {
-		if !strings.Contains(message["text"].(string), "in_progress") || !strings.Contains(message["text"].(string), "Example SDK CI") || message["actor"] != "github-trigger" || message["human"] != false {
-			t.Fatalf("invalid running CI message: %v", message)
+	var corePRReads atomic.Int32
+	coreProxy := f.proxy(func(_ http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "pull") {
+			corePRReads.Add(1)
 		}
-		f.assertRouted(message, 1)
-		view := githubRouterMessage(t, f, message["id"].(string))
-		if view["text"] != message["text"] {
-			t.Fatalf("Router read changed CI text: %v", view)
-		}
-	}
-	prURL := githubObjectURL("demo/sdk", "pull", 42)
-	topic := githubCreateTopic(t, f, "SDK CI", first["id"].(string))
+		return false
+	}, nil)
+	c := githubTestConfig(f)
+	c.CoreEndpoint = coreProxy.URL
+	proc, endpoint := startGitHubFixture(t, fixture.URL, c)
+	status := func() githubRepositoryStatus { return readGitHubStatus(t, endpoint).Repositories[repo] }
+	tracked := func() githubStreamStatus { return status().Streams["tracked/42"] }
+	wait(t, "historical PR notice baseline", func() bool {
+		return readGitHubStatus(t, endpoint).Notifications.State == "ready"
+	})
+	require.Zero(t, suiteReads.Load())
+	notices.Store(1)
+	wait(t, "first Actions snapshots and both PR notification Messages", func() bool {
+		return tracked().State == "ready" && tracked().CI != nil && status().Accepted == 2
+	})
+	discovered := githubMessage(t, f, repo, "notification_received", "742")
+	require.NotEmpty(t, discovered)
+	require.NotEmpty(t, githubMessage(t, f, repo, "notification_received", "744"))
+	require.NotContains(t, status().Streams, "tracked/43")
+	require.NotContains(t, status().Streams, "tracked/44")
+	require.Equal(t, prURL, discovered["threadKey"])
+	require.Equal(t, merge, tracked().TestMergeSHA)
+	require.Positive(t, mergeReads.Load())
+	require.Positive(t, assocPages.Load())
+	require.Len(t, tracked().CI.Head.Actions, 2)
+	topic := githubCreateTopic(t, f, discovered)
 	githubRegisterFixturePR(t, f, topic, prURL)
-	phase.Store(2)
-	failure := githubWaitCI(t, f, 42, 2)
-	_ = githubWaitCI(t, f, 43, 2)
-	if !strings.Contains(failure["text"].(string), "failure") || failure["threadKey"] != prURL {
-		t.Fatalf("invalid failed CI Message: %v", failure)
-	}
+	githubRegisterFixturePR(t, f, topic, githubObjectURL(repo, "pull", 45))
+	notices.Store(0)
+	actionState.Store(1)
+	wait(t, "first attempt completion", func() bool { return status().Accepted == 3 })
+	failure := githubActionMessage(t, f, "failure")
+	require.Equal(t, prURL, failure["threadKey"])
 	githubAssertTopicDelivery(t, f, failure, topic)
-	phase.Store(3)
-	recovery := githubWaitCI(t, f, 42, 3)
-	_ = githubWaitCI(t, f, 43, 3)
-	if !strings.Contains(recovery["text"].(string), "success") || recovery["sourceMessageId"] == failure["sourceMessageId"] {
-		t.Fatalf("A→B→A did not generate a distinct recovery Message: %v", recovery)
-	}
-	githubAssertTopicDelivery(t, f, recovery, topic)
+	terminate(t, proc)
 
-	blockedPage.Store(true)
-	phase.Store(4)
-	wait(t, "rate-limited second CI page", func() bool {
-		return rateHits.Load() > 0 && readGitHubStatus(t, statusURL).RateLimitedUntil.After(time.Now())
+	actionState.Store(2)
+	proc, endpoint = startGitHubFixture(t, fixture.URL, c)
+	wait(t, "restarted tracker samples the same head and queued rerun", func() bool {
+		ci := tracked().CI
+		return ci != nil && ci.Head.SHA == head && ci.Head.Actions[1].Attempt == 2 && ci.Head.Actions[1].Status == "queued"
 	})
-	prior := ciStatus(42)
-	wait(t, "failed CI page is marked stale without replacing the snapshot", func() bool {
-		return ciStatus(42).State == "stale" || ciStatus(43).State == "stale"
+	require.Equal(t, uint64(3), status().Accepted)
+	actionState.Store(3)
+	wait(t, "rerun success", func() bool { return status().Accepted == 4 })
+	success := githubActionMessage(t, f, "success")
+	require.NotEmpty(t, success)
+	require.NotEqual(t, success["id"], failure["id"])
+	githubAssertTopicDelivery(t, f, success, topic)
+	actionState.Store(4)
+	wait(t, "conclusion changes on the same run and attempt", func() bool { return status().Accepted == 5 })
+	require.NotEmpty(t, githubActionMessage(t, f, "neutral"))
+	actionState.Store(5)
+	seen := tracked().LastSuccessAt
+	wait(t, "known run, attempt, and conclusion do not replay", func() bool {
+		ci := tracked()
+		return ci.LastSuccessAt.After(seen) && ci.CI.Head.Actions[1].Conclusion == "success"
 	})
-	if prior.CI == nil || prior.CI.Head.Checks[0].Conclusion != "success" || githubCIMessage(t, f, 42, 4) != nil {
-		t.Fatalf("incomplete pagination published a CI change: %+v", prior)
-	}
-	blockedPage.Store(false)
-	rerun := githubWaitCI(t, f, 42, 4)
-	_ = githubWaitCI(t, f, 43, 4)
-	if text := rerun["text"].(string); !strings.Contains(text, "cancelled") || !strings.Contains(text, "waiting (attempt 2)") { //nolint:misspell // Rendered GitHub GraphQL enum value.
-		t.Fatalf("rerun or waiting state unavailable: %v", rerun)
-	}
-	phase.Store(5)
-	wait(t, "Actions permission gap retains the last complete snapshot", func() bool {
-		return ciStatus(42).LastError == "github_http_403"
+	require.Equal(t, uint64(5), status().Accepted)
+
+	unavailable.Store(true)
+	wait(t, "readback failure preserves the tracked snapshot", func() bool {
+		s := tracked()
+		return s.LastError == "github_http_503" && s.CI != nil && s.CI.Head.Actions[1].Conclusion == "success"
 	})
-	retained := ciStatus(42)
-	if retained.State != "stale" || retained.CI == nil || len(retained.CI.Head.Actions) != 1 || retained.CI.Head.Actions[0].Attempt != 2 || githubCIMessage(t, f, 42, 5) != nil {
-		t.Fatalf("Actions permission failure discarded or routed past evidence: %+v", retained)
-	}
-	phase.Store(7)
-	updated := githubWaitCI(t, f, 42, 5)
-	if text := updated["text"].(string); !strings.Contains(text, newHeadSHA) || !strings.Contains(text, "No Check Runs or Commit Statuses observed") || strings.Contains(text, headSHA) || strings.Contains(text, "Workflow Run Workflow") {
-		t.Fatalf("new CI version mixed prior head results: %v", updated)
-	}
-	if snapshot := ciStatus(42).CI; snapshot.Head.SHA != newHeadSHA || snapshot.Merge != nil {
-		t.Fatalf("new CI version retained the previous test merge: %v", snapshot)
-	}
-	phase.Store(8)
-	_ = githubWaitObservation(t, f, "demo/sdk", "closed", "pull_request", "42")
-	wait(t, "closed PR exits the open CI scheduler", func() bool { return ciStatus(42).State == "inactive" })
-	closedReads := checkReads.Load()
-	last := ciStatus(43).LastSuccessAt
-	wait(t, "other open PR is sampled independently", func() bool { return ciStatus(43).LastSuccessAt.After(last) })
-	if checkReads.Load() != closedReads {
-		t.Fatal("closed PR continued to collect CI")
+	pullState.Store(1)
+	unavailable.Store(false)
+	wait(t, "merged PR is removed without a merge notification", func() bool { return tracked().State == "inactive" })
+	closedReads := suiteReads.Load()
+	last := readGitHubStatus(t, endpoint).Notifications.LastSuccessAt
+	pullState.Store(2)
+	wait(t, "reopened PR waits for a qualifying notification", func() bool {
+		return readGitHubStatus(t, endpoint).Notifications.LastSuccessAt.After(last)
+	})
+	require.Equal(t, closedReads, suiteReads.Load())
+	notices.Store(2)
+	wait(t, "updated notification resumes tracking the reopened PR", func() bool {
+		return tracked().State == "ready" && suiteReads.Load() > closedReads && status().Accepted == 6
+	})
+	notices.Store(0)
+	pullState.Store(3)
+	wait(t, "closed PR leaves tracked Actions polling", func() bool { return tracked().State == "inactive" })
+	closedReads = suiteReads.Load()
+	last = readGitHubStatus(t, endpoint).Notifications.LastSuccessAt
+	wait(t, "closed PR remains quiet", func() bool { return readGitHubStatus(t, endpoint).Notifications.LastSuccessAt.After(last) })
+	require.Equal(t, closedReads, suiteReads.Load())
+	require.Zero(t, neverDiscovered.Load())
+	require.Zero(t, corePRReads.Load())
+	require.Len(t, readMessages(t, f.endpoint), 6)
+	terminate(t, proc)
+}
+
+func githubFixtureAssociation(number int, sha string) map[string]any {
+	return map[string]any{"number": number, "fullDatabaseId": strconv.Itoa(700 + number), "headRefOid": sha}
+}
+
+func githubFixtureSuite(id int, status, conclusion string, attempt int, associations map[string]any) map[string]any {
+	return map[string]any{
+		"id": fmt.Sprintf("suite-%d", id), "status": status, "conclusion": conclusion,
+		"matchingPullRequests": associations,
+		"workflowRun": map[string]any{
+			"id": fmt.Sprintf("workflow-run-%d", id), "displayTitle": "CI", "event": "pull_request", "runAttempt": attempt,
+			"url": fmt.Sprintf("https://github.com/demo/sdk/actions/runs/%d", id),
+		},
 	}
 }
 
-func githubCIPullFixture(old time.Time, number int, phase int32, head, merge, updatedHead string) githubPull {
-	pull := githubFixturePull("demo/sdk", old, 0)
-	pull.ID, pull.Number = githubDatabaseID(number+700), number
-	pull.HeadRefOID = head
-	if number == 42 {
-		pull.Mergeable = "MERGEABLE"
-		pull.PotentialMergeCommit = &githubCommitOID{OID: merge}
-	} else {
-		pull.Mergeable = "CONFLICTING"
-		pull.HeadRepository.NameWithOwner = "contributor/sdk"
-	}
-	if number == 42 && phase >= 7 {
-		pull.HeadRefOID, pull.PotentialMergeCommit, pull.Mergeable = updatedHead, nil, "CONFLICTING"
-		pull.UpdatedAt = old.Add(7 * time.Second)
-		if phase >= 8 {
-			pull.State = "CLOSED"
-			pull.UpdatedAt = old.Add(8 * time.Second)
-		}
-	}
-	return pull
-}
-
-func githubWaitCI(t *testing.T, f *egressFixture, number, version int) map[string]any {
+func githubActionMessage(t *testing.T, f *egressFixture, conclusion string) map[string]any {
 	t.Helper()
-	var found map[string]any
-	wait(t, fmt.Sprintf("CI for PR %d observation %d", number, version), func() bool {
-		found = githubCIMessage(t, f, number, version)
-		return found != nil
-	})
-	return found
-}
-
-func githubCIMessage(t *testing.T, f *egressFixture, number, version int) map[string]any {
-	t.Helper()
-	for _, message := range readMessages(t, f.endpoint) {
-		meta, _ := message["meta"].(map[string]any)
-		if meta["observation"] == "ci_changed" && meta["number"] == float64(number) && meta["observationVersion"] == float64(version) {
-			return message
+	for _, m := range readMessages(t, f.endpoint) {
+		meta, _ := m["meta"].(map[string]any)
+		run, _ := meta["workflowRun"].(map[string]any)
+		if meta["observation"] == "actions_completed" && run["id"] == "workflow-run-90" && run["conclusion"] == conclusion {
+			return m
 		}
 	}
 	return nil

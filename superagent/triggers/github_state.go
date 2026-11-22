@@ -19,20 +19,14 @@ type githubDeliveryState struct {
 }
 
 type githubStreamState struct {
-	DiscussionPriority bool                    `json:"discussionPriority,omitempty"`
-	DiscussionClosed   bool                    `json:"discussionClosed,omitempty"`
-	EnabledAt          time.Time               `json:"enabledAt"`
-	LastSuccessAt      time.Time               `json:"lastSuccessAt,omitzero"`
-	LastFullAt         time.Time               `json:"lastFullAt,omitzero"`
-	NextAttemptAt      time.Time               `json:"nextAttemptAt,omitzero"`
-	LastError          string                  `json:"lastError,omitempty"`
-	Failures           int                     `json:"failures,omitempty"`
-	Items              map[string]githubRecord `json:"items"`
-	ItemCount          int                     `json:"-"`
-	Active             bool                    `json:"-"`
-	SilentBaseline     bool                    `json:"-"`
-	MatchKey           string                  `json:"-"`
-	Match              githubMatch             `json:"-"`
+	EnabledAt     time.Time
+	LastSuccessAt time.Time
+	NextAttemptAt time.Time
+	LastError     string
+	Failures      int
+	Items         map[string]githubRecord
+	ItemCount     int
+	Active        bool
 }
 
 type githubRecord struct {
@@ -54,7 +48,6 @@ type githubObservation struct {
 	SourceEventID          string
 	At                     time.Time
 	Meta                   map[string]any
-	Excluded, Rebaseline   bool
 }
 
 func (o githubObservation) submission(c githubConfig, repo githubRepository, stream string, version uint64) Submission {

@@ -1,95 +1,80 @@
 package triggers
 
 import (
-	"context"
-	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
-	"modernc.org/sqlite"
+	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
-const githubFixtureToken = "github-fixture-token"
-
-func runGitHubFixtureProcess(endpoint string) int {
-	if marker := os.Getenv("TEST_GITHUB_PAUSE_SNAPSHOT"); marker != "" {
-		err := sqlite.RegisterScalarFunction("pause_github_snapshot", 0, func(*sqlite.FunctionContext, []driver.Value) (driver.Value, error) {
-			if err := os.WriteFile(marker, []byte("transaction open"), 0o600); err != nil {
-				return nil, err
-			}
-			select {}
-		})
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-	}
-	component, err := Load(GitHub, os.Getenv("TEST_GITHUB_CONFIGURATION"), nil, "")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := component.serve(ctx, os.Stdout, endpoint); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	return 0
-}
+const githubFixtureToken = "fixture-token-github"
 
 type githubFixtureQuery struct {
 	Query     string `json:"query"`
 	Variables struct {
-		Owner   string
-		Name    string
-		Number  int
-		Since   string
-		Cursor  string
-		States  []string
-		OID     string
-		ID      string
-		IsIssue bool
+		Owner  string
+		Name   string
+		Number int
+		Cursor string
+		OID    string
+		ID     string
 	} `json:"variables"`
 }
 
+func (q githubFixtureQuery) repository() string { return q.Variables.Owner + "/" + q.Variables.Name }
+
 func (q githubFixtureQuery) connection() string {
-	for _, name := range []string{"matchingPullRequests", "checkRuns", "issues", "pullRequests", "reviewThreads", "reviews", "comments", "contexts", "checkSuites"} {
-		// matchingPullRequests is also nested under checkSuites, where it does
-		// not include the independently paginated $cursor.
-		if strings.Contains(q.Query, name+"(") && ((name != "matchingPullRequests" && name != "checkRuns") || strings.Contains(q.Query, "node(id:")) {
+	for _, name := range []string{"checkSuites", "matchingPullRequests", "reviewThreads", "reviews", "comments"} {
+		if strings.Contains(q.Query, name+"(") {
 			return name
 		}
 	}
 	return ""
 }
 
-func githubFixtureHandler(t *testing.T, handle func(http.ResponseWriter, githubFixtureQuery)) http.Handler {
+func githubFixtureHandler(t *testing.T, notifications http.HandlerFunc, graph func(http.ResponseWriter, githubFixtureQuery)) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var q githubFixtureQuery
-		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+githubFixtureToken || json.NewDecoder(r.Body).Decode(&q) != nil {
-			t.Error("invalid GitHub fixture request")
-			w.WriteHeader(http.StatusBadRequest)
+		if r.Header.Get("Authorization") != "Bearer "+githubFixtureToken {
+			t.Error("GitHub fixture received an unexpected token")
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		handle(w, q)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/notifications" && r.URL.Query().Get("all") == "true":
+			notifications(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql" && graph != nil:
+			var q githubFixtureQuery
+			if json.NewDecoder(r.Body).Decode(&q) != nil || strings.Contains(q.Query, "issues(") || strings.Contains(q.Query, "pullRequests(") || strings.Contains(q.Query, "statusCheckRollup") {
+				t.Error("GitHub fixture received an unexpected collection query")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			graph(w, q)
+		default:
+			t.Errorf("unexpected GitHub request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
 	})
 }
 
-func githubFixtureRespond(w http.ResponseWriter, data any) {
-	if err := json.NewEncoder(w).Encode(map[string]any{"data": data}); err != nil {
+func githubFixtureJSON(w http.ResponseWriter, data any) {
+	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, "cannot encode fixture response", http.StatusInternalServerError)
 	}
+}
+
+func githubFixtureRespond(w http.ResponseWriter, data any) {
+	githubFixtureJSON(w, map[string]any{"data": data})
 }
 
 func githubFixturePage[T any](nodes []T, cursor string) map[string]any {
@@ -119,16 +104,12 @@ func githubFixtureEmpty(w http.ResponseWriter, q githubFixtureQuery) {
 	conn := q.connection()
 	page := githubFixturePage([]any{}, "")
 	switch conn {
-	case "issues", "pullRequests":
-		githubFixtureRepo(w, map[string]any{conn: page})
 	case "comments", "reviews", "reviewThreads":
 		if q.Variables.ID != "" {
 			githubFixtureRespond(w, map[string]any{"node": map[string]any{conn: page}})
 			return
 		}
 		githubFixtureObject(w, q, map[string]any{conn: page})
-	case "contexts":
-		githubFixtureRepo(w, map[string]any{"object": map[string]any{"oid": q.Variables.OID, "statusCheckRollup": nil}})
 	case "checkSuites":
 		githubFixtureRepo(w, map[string]any{"object": map[string]any{"oid": q.Variables.OID, conn: page}})
 	default:
@@ -136,57 +117,140 @@ func githubFixtureEmpty(w http.ResponseWriter, q githubFixtureQuery) {
 	}
 }
 
-func githubFixtureAuthor() map[string]any {
+func githubFixtureNotice(id, number int, repo, kind, reason string, updated time.Time) githubNotification {
+	n := githubNotification{ID: strconv.Itoa(id), Reason: reason, UpdatedAt: updated}
+	n.Repository.FullName = repo
+	n.Subject.Type = kind
+	collection := map[string]string{"Issue": "issues", "PullRequest": "pulls", "CheckSuite": "check-suites"}[kind]
+	n.Subject.URL = fmt.Sprintf("https://api.github.com/repos/%s/%s/%d", repo, collection, number)
+	return n
+}
+
+func githubFixtureIssue(id int64, number int, old time.Time) githubIssue {
+	return githubIssue{ID: githubDatabaseID(id), Number: number, Title: "Old Issue", Body: "Existing issue body", State: "OPEN", CreatedAt: old, UpdatedAt: old}
+}
+
+func githubFixturePull(repo string, number int, old time.Time) githubPull {
+	return githubPull{
+		ID: githubDatabaseID(700 + number), Number: number, State: "OPEN", Title: "Old PR", Body: "Existing pull body", CreatedAt: old, UpdatedAt: old,
+		BaseRefOID: strings.Repeat("d", 40), BaseRefName: "main", HeadRefOID: strings.Repeat("a", 40),
+		HeadRepository: &githubRepositoryName{NameWithOwner: repo}, Mergeable: "CONFLICTING",
+	}
+}
+
+func githubFixtureAuthor(kind string) map[string]any {
+	if kind == "Bot" {
+		return map[string]any{"login": "fixture-bot", "__typename": "Bot"}
+	}
 	return map[string]any{"login": "reviewer", "__typename": "User", "databaseId": 444}
 }
 
-func githubFixtureComment(c githubComment) map[string]any {
+func githubFixtureComment(id int, url, body, actor string, at time.Time) map[string]any {
 	return map[string]any{
-		"fullDatabaseId": strconv.FormatInt(c.ID, 10), "body": c.Body, "url": c.URL,
-		"author": githubFixtureAuthor(), "createdAt": c.CreatedAt, "updatedAt": c.UpdatedAt,
+		"fullDatabaseId": strconv.Itoa(id), "body": body, "url": url, "author": githubFixtureAuthor(actor), "createdAt": at, "updatedAt": at,
 	}
 }
 
-func TestGitHubDiscussionRefreshKeepsBothPrioritiesMoving(t *testing.T) {
-	const repoName = "demo/project"
-	repo := githubRepository{Repository: repoName}
-	c := githubConfig{DatabasePath: filepath.Join(t.TempDir(), "github.sqlite"), Repositories: []githubRepository{repo}}
-	store, closeDB, err := openGitHubStore(c)
-	if err != nil {
-		t.Fatal(err)
+func githubTestConfig(f *egressFixture) githubConfig {
+	return githubConfig{
+		AccountID: "account", InstanceID: "fixture-instance", CoreEndpoint: f.endpoint,
+		DatabasePath: filepath.Join(f.dir, "github.sqlite"), TokenEnv: "TEST_CORE_TOKEN",
+		GitHubTokenEnv: "TEST_GITHUB_TOKEN", PollSeconds: 1, RequestMillis: 2500,
 	}
-	defer closeDB()
-	now := time.Now().UTC()
-	commit := func(observations ...githubObservation) {
-		t.Helper()
-		stream, err := store.stream(repoName, "issues")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.commitScan(c, repo, "issues", stream, observations, now, now.Add(time.Minute), time.Time{}, true); err != nil {
-			t.Fatal(err)
+}
+
+func githubTestConfigFile(t *testing.T, c githubConfig) string {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(c.DatabasePath), "github.yaml")
+	cfg, err := yaml.Marshal(c)
+	require.NoError(t, err)
+	testWrite(t, path, cfg)
+	return path
+}
+
+func githubTestBinary(t *testing.T) string {
+	t.Helper()
+	bin := os.Getenv("SUPERAGENT_CORE_CLOCK")
+	require.NotEmpty(t, bin, "SUPERAGENT_CORE_CLOCK must name a same-tree superagent build with the coretest GitHub fixture endpoint")
+	return bin
+}
+
+func githubFixtureEnv(endpoint string) []string {
+	return []string{
+		"TEST_CORE_TOKEN=" + testToken, "TEST_GITHUB_TOKEN=" + githubFixtureToken,
+		"TEST_GITHUB_ENDPOINT=" + endpoint, "GORACE=atexit_sleep_ms=0",
+	}
+}
+
+func startGitHubFixture(t *testing.T, upstream string, c githubConfig) (*process, string) {
+	t.Helper()
+	path := githubTestConfigFile(t, c)
+	p := start(t, githubTestBinary(t), []string{"triggers", "github", "serve", "--config", path}, githubFixtureEnv(upstream))
+	endpoint := p.endpoint(t, "statusEndpoint")
+	return p, endpoint
+}
+
+func readGitHubStatus(t *testing.T, endpoint string) githubStatus {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), githubTestBinary(t), "triggers", "github", "status", "--endpoint", endpoint)
+	cmd.Env = append(os.Environ(), "GORACE=atexit_sleep_ms=0")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	var status githubStatus
+	require.NoError(t, json.Unmarshal(out, &status), string(out))
+	return status
+}
+
+func githubMessage(t *testing.T, f *egressFixture, repo, observation, objectID string) map[string]any {
+	t.Helper()
+	for _, msg := range readMessages(t, f.endpoint) {
+		meta, _ := msg["meta"].(map[string]any)
+		if meta["repository"] == repo && meta["observation"] == observation && meta["objectId"] == objectID {
+			return msg
 		}
 	}
-	check := func(priority bool, want string, closed bool) {
-		t.Helper()
-		next, err := store.nextScope(repoName, "discussion", priority, now, "")
-		if err != nil || next != want {
-			t.Fatalf("discussion schedule priority=%v: %q, %v", priority, next, err)
-		}
-		if next != "" {
-			stream, err := store.stream(repoName, next)
-			if err != nil || stream.DiscussionClosed != closed {
-				t.Fatalf("discussion closure for %q: closed=%v, %v", next, stream.DiscussionClosed, err)
-			}
-		}
+	return nil
+}
+
+func githubCreateTopic(t *testing.T, f *egressFixture, message map[string]any) string {
+	t.Helper()
+	id := message["id"].(string)
+	ids := []string{id}
+	body := map[string]any{
+		"operationId": "route-" + id, "messageIds": ids, "rounds": map[string]int{id: 1}, "kind": "route", "reason": "Fixture routing",
+		"targets": []map[string]any{{"create": map[string]string{"title": "Fixture Topic", "workspace": f.dir}, "messageIds": ids}},
 	}
-	commit(
-		githubObservation{Key: "10", Data: json.RawMessage(`{"number":10,"state":"closed"}`), UpdatedAt: now.Add(-time.Hour)},
-		githubObservation{Key: "20", Data: json.RawMessage(`{"number":20,"state":"open"}`), UpdatedAt: now},
-	)
-	check(true, githubIssueCommentsPrefix+"20", false)
-	check(false, githubIssueCommentsPrefix+"10", true)
-	commit(githubObservation{Key: "10", Data: json.RawMessage(`{"number":10,"state":"open"}`), UpdatedAt: now})
-	check(true, githubIssueCommentsPrefix+"10", false)
-	check(false, "", false)
+	type decision struct{ Targets []struct{ TopicID string } }
+	reply := callRoleTool[decision](t, f.endpoint, f.role, "route_messages", body)
+	require.Len(t, reply.Targets, 1)
+	require.NotEmpty(t, reply.Targets[0].TopicID)
+	return reply.Targets[0].TopicID
+}
+
+func githubRegisterFixturePR(t *testing.T, f *egressFixture, topicID, prURL string) {
+	t.Helper()
+	token := f.waitRoleToken("topic", topicID)
+	type topicView struct {
+		ID           string
+		Revision     int
+		PullRequests []struct{ CanonicalURL, ThreadKey, TopicID string }
+	}
+	before := callRoleTool[topicView](t, f.endpoint, token, "get_topic", struct{}{})
+	body := map[string]any{
+		"operationId":      "register-" + topicID + "-" + prURL,
+		"expectedRevision": before.Revision,
+		"pullRequests":     map[string][]string{"add": {prURL}},
+	}
+	topic := callRoleTool[topicView](t, f.endpoint, token, "update_topic", body)
+	require.Equal(t, topicID, topic.ID)
+	require.Equal(t, before.Revision+1, topic.Revision)
+	require.Contains(t, topic.PullRequests, struct{ CanonicalURL, ThreadKey, TopicID string }{prURL, prURL, topicID})
+}
+
+func githubAssertTopicDelivery(t *testing.T, f *egressFixture, message map[string]any, topic string) {
+	t.Helper()
+	events := f.routingEvents(message)
+	require.Len(t, events, 1)
+	require.Equal(t, "routed_message", events[0].Kind)
+	require.Equal(t, topic, events[0].Recipient.TopicID)
 }

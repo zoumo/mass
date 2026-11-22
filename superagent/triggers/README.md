@@ -198,30 +198,22 @@ DWS has no dependable ACK/offset replay contract. Recovery starts at the SQLite
 enqueue commit. Messages that arrive during a subscription interruption or
 before an enqueue commit depend on upstream redelivery.
 
-## Follow GitHub repositories
+## Follow GitHub account notifications
 
-Copy `github.config.example.yaml` outside the checkout. Set `repositories` to
-the GitHub.com repositories you want to follow. Use `owner/repo` names. Each
-repository may include a multiline `prompt` of up to 4096 UTF-8 bytes. The
-Trigger includes that prompt in a separate context block after the GitHub
-content in `Message.text`. Each repository keeps separate Threads.
+Copy `github.config.example.yaml` outside the checkout, or use the
+`triggers.github` section of `../compose.example.yaml`. Both accept an optional
+`repositories` list. Omit it or use `[]` to accept Issue and PR notifications
+from all repositories in the account's inbox. Each entry matches the exact
+`owner/repo` name, ignoring case, before the Trigger reads the object.
+An entry can include a multiline `prompt` of up to 4096 UTF-8 bytes, which the
+Trigger adds to the Message as repository context. Remove legacy `match`
+settings before starting.
 
-Use the optional top-level `match` to select Issues and PRs across every
-listed repository. A match on any configured label, assignee login or author
-login is sufficient. Matching ignores case. Omit `match` to follow every
-Issue and PR in the listed repositories.
-
-```yaml
-match:
-  labels: [superagent]
-  assignees: [alice]
-  authors: [my-github-login]
-```
-
-Set `githubTokenEnv` to the name of the environment variable that supplies
-the GitHub token. Use a separate variable for the Core token. Grant the
-GitHub credential read access to the selected repositories, Issues, Pull
-requests, Checks, Commit statuses, and Actions.
+Set `githubTokenEnv` to the name of a variable that supplies a GitHub classic
+personal access token with `notifications` or `repo` scope. Select a token
+with access to the repositories and Actions data you want to read. Private
+repository readback requires the corresponding `repo` access, including any
+authorization required by the organization. Use a separate Core token.
 
 Use the existing Core `sources` configuration. Match `accountId` and
 `instanceId` to the Trigger configuration. Set `coreTokenEnv` to the name of
@@ -241,30 +233,33 @@ bin/superagent triggers github serve --config /absolute/path/to/github.yaml
 bin/superagent triggers github status --endpoint http://127.0.0.1:24372
 ```
 
-`check` validates the YAML configuration and credentials supplied through the
-environment. `serve` uses `githubv4` with Resty's underlying HTTP client to
-query GitHub GraphQL. A fresh database starts with a silent baseline for
-historical activity.
-`pollIntervalSeconds` defaults to 60. Issue and PR lists normally read an
-overlapping window of recent updates. The Trigger periodically reconciles
-the full lists. It also samples open PRs and reconciles each object's
-discussions independently so it can detect edits to older comments.
-Only matching objects get discussion, review and CI scans. When an
-existing object enters or reenters the match, the Trigger records its
-current state as a silent baseline. When it leaves, the Trigger stops
-those scans and continues delivering Messages already queued for it.
-Retry backoff, the API rate limit, and the number of tracked objects affect
-when each scope is read again. `status` shows the last successful read, the
-next attempt, errors, the Message backlog, and Core receipts.
+`check` makes a read-only request to the GitHub Notifications API.
+`serve` polls `GET /notifications` with `all=true`, which includes read
+notifications. It accepts Issue and PullRequest subjects for every
+notification reason. The Trigger leaves the GitHub inbox unchanged.
+`pollIntervalSeconds` defaults to 60. The poller follows pagination, honors
+longer `X-Poll-Interval` values and backs off when GitHub rate limits requests.
+The `status` command shows notification polling, pending or failed readbacks,
+tracked PRs, delivery backlog, and Core receipts.
+
+A fresh database ignores notifications from before its startup boundary. For
+a new notification version, the Trigger retrieves the object body and
+discussion, including PR reviews and inline comments. It can send multiple
+Messages for changes aggregated in one notification. Older discussion
+provides context on first readback. If no change is attributable, the Trigger
+sends a system Message with the object link and notification reason. GitHub
+aggregates notifications by thread, so polling can recover only the content
+and states that GitHub still exposes.
 
 Set `databasePath` to an absolute path on local persistent storage, such as
 `/var/lib/superagent-triggers/github.sqlite`. The GitHub Trigger uses its own
 private SQLite database with WAL and a process lock. Use the same database
-and identities when restarting. Each successful scan commits its progress,
-changed snapshots, schedules, and pending Messages in one transaction. The
-Trigger submits each repository's pending Messages in order and preserves the
-original payload through restarts and unknown delivery outcomes. Prompt
-changes apply to Messages queued after the change.
+and identities when restarting. The Trigger saves each notification page
+before reading objects, keeps the previous poll checkpoint when pagination
+fails, and retries failed object readbacks independently. Each successful
+readback commits its progress, snapshots, and pending Messages in one
+transaction. Delivery keeps the original Message IDs and payloads through
+restarts and unknown outcomes. Prompt changes apply to newly queued Messages.
 
 Issue observations and comments use the Issue URL as their Thread ID. PR
 observations, comments, reviews, and CI share the PR URL in a `pr:url`
@@ -272,10 +267,14 @@ Thread. A single existing Thread subscription delivers to its Topic. With
 zero or multiple subscriptions, Router reads the Message and chooses the
 Topic or ignores the request.
 
-CI summaries identify the PR head SHA and the test merge SHA when available.
-They include Check Runs, Commit Statuses, and Workflow Runs with a confirmed
-PR relationship. Rate limits, incomplete pages, and permission errors
-appear in status. Polling can miss transitions between two samples.
+When a notification identifies an open PR, the Trigger starts tracking it.
+After discovery, the Trigger polls that PR's state and checks GitHub Actions
+runs associated with its head or test merge commit. The first Actions read
+establishes a silent baseline. The Trigger sends a Message when it observes a
+workflow run complete or its conclusion change, using the run ID, attempt and
+conclusion for deduplication. Queued and running phases update status.
+When the PR closes or merges, polling stops. A reopened PR requires a new
+qualifying notification to resume tracking.
 
 ## Replace deployed Triggers
 
@@ -307,15 +306,15 @@ make test-superagent
 ```
 
 Tests run real Trigger and Core processes with `internal/testdws` and a local
-GitHub GraphQL HTTP fixture. DingTalk tests cover replay/conflict, filtering, native identities,
+GitHub HTTP fixture for REST Notifications and GraphQL. DingTalk tests cover replay/conflict, filtering, native identities,
 quote/self input, Core outage/backoff/full-buffer recovery, readiness, malformed
 input, disconnect, restart persistence and owned-consumer shutdown. They verify local status and shutdown logs, including recovery after Core becomes
 unavailable. Outbound cases use a production
 Core to verify task durability, definitive errors, exact echoes and lost write
 receipts. The Core build with `-tags coretest` lets crash/restart cases advance
 the same Core clock across retry and echo deadlines. GitHub tests cover
-repository isolation, pagination, restart recovery, Message replay, PR
-registration, routing, and CI transitions. The fixture runs use isolated Core
+notification filtering, pagination, restart recovery, Message replay, PR
+registration, routing, and Actions completion. The fixture runs use isolated Core
 state and exercise its public API. To run the Trigger suite directly, supply
 same-tree binaries in `SUPERAGENT_CORE` and `SUPERAGENT_CORE_CLOCK`. To
 include the DWS CLI fixture in race checks, set `TRIGGER_TEST_RACE=1`.

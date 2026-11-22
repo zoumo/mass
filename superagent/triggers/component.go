@@ -105,9 +105,16 @@ func (c Component) Check(ctx context.Context, out io.Writer) error {
 			return errors.New("feedback.statePath must be a regular file")
 		}
 	}
-	_, _, result, err := c.preflight(ctx)
+	_, token, result, err := c.preflight(ctx)
 	if err != nil {
 		return err
+	}
+	if c.kind == GitHub {
+		api := newGitHubAPI(githubEndpoint(), token, time.Duration(c.github.RequestMillis)*time.Millisecond)
+		if _, _, _, err := api.notificationPage(ctx, time.Time{}, 1, 1); err != nil {
+			return fmt.Errorf("cannot read GitHub Notifications (classic PAT with notifications or repo scope): %w", err)
+		}
+		result = map[string]string{"status": "notifications_checked"}
 	}
 	return json.NewEncoder(out).Encode(result)
 }
@@ -125,16 +132,12 @@ func checkStateParent(path string) error {
 }
 
 func (c Component) Serve(ctx context.Context, out io.Writer) error {
-	return c.serve(ctx, out, githubGraphQLEndpoint)
-}
-
-func (c Component) serve(ctx context.Context, out io.Writer, githubEndpoint string) error {
 	core, token, _, err := c.preflight(ctx)
 	if err != nil {
 		return err
 	}
 	if c.kind == GitHub {
-		api := newGitHubAPI(githubEndpoint, token, time.Duration(c.github.RequestMillis)*time.Millisecond)
+		api := newGitHubAPI(githubEndpoint(), token, time.Duration(c.github.RequestMillis)*time.Millisecond)
 		return runGitHub(ctx, c.github, api, core, out)
 	}
 	return run(ctx, c.dws, core, out)
