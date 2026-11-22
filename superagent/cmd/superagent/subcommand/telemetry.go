@@ -24,6 +24,8 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
+const telemetryShutdownTimeout = 5 * time.Second
+
 type telemetryRuntime struct {
 	options   core.TelemetryOptions
 	logger    *slog.Logger
@@ -118,7 +120,7 @@ func validateTelemetryEndpoint(signal string) error {
 }
 
 func (t *telemetryRuntime) shutdown() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
 	defer cancel()
 	var workers sync.WaitGroup
 	for _, shutdown := range t.shutdowns {

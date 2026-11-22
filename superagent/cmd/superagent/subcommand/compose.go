@@ -16,7 +16,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,33 +24,32 @@ import (
 
 	"github.com/spf13/cobra"
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
+	"github.com/zoumo/mass/mass-go/pkg/massd"
 
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
 const (
-	componentStartupTimeout = 30 * time.Second
-	massdShutdownTimeout    = 30 * time.Second
-	coreShutdownTimeout     = 20 * time.Second
+	componentStartupTimeout    = 30 * time.Second
+	composeCoreShutdownTimeout = coreShutdownTimeout + massd.ShutdownTimeout + telemetryShutdownTimeout + 5*time.Second
 )
 
 func newCompose() *cobra.Command {
-	var massdBin, config string
+	var config string
 	cmd := &cobra.Command{
 		Use:   "compose",
-		Short: "Run massd, Superagent Core and enabled triggers together",
+		Short: "Run Core with embedded MASS and enabled triggers",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCompose(cmd, massdBin, config)
+			return runCompose(cmd, config)
 		},
 	}
-	cmd.Flags().StringVar(&massdBin, "massd-bin", "massd", "massd executable (defaults to massd on PATH)")
 	cmd.Flags().StringVar(&config, "config", "", "Compose YAML configuration file")
 	_ = cmd.MarkFlagRequired("config")
 	return cmd
 }
 
-func runCompose(cmd *cobra.Command, massdBin, path string) (result error) {
+func runCompose(cmd *cobra.Command, path string) (result error) {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	path, err := filepath.Abs(path)
@@ -93,26 +91,7 @@ func runCompose(cmd *cobra.Command, massdBin, path string) (result error) {
 		diagnostics = &composeDiagnostics{output: diagnostics}
 	}
 
-	// The supervisor signals and reaps each child in dependency order.
-	massdCommand := exec.CommandContext(context.Background(), massdBin, "--config", path, "--compose-config-stdin")
-	massdCommand.Stdin, massdCommand.Stderr = bytes.NewReader(config.massd), diagnostics
-	massdCommand.Env = sharedEnvironment
-	daemon, err := startChild("massd", massdCommand)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		result = errors.Join(result, daemon.stop(massdShutdownTimeout))
-	}()
-	massdEndpoint, err := awaitStartup(ctx, daemon, massdStartupEndpoint, "/readyz")
-	if ctx.Err() != nil {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	coreCommand := exec.CommandContext(context.Background(), superagent, "serve", "--config", path, "--compose-massd-endpoint", massdEndpoint)
+	coreCommand := exec.CommandContext(context.Background(), superagent, "serve", "--config", path, "--compose-config-stdin")
 	coreCommand.Stdin, coreCommand.Stderr = bytes.NewReader(config.core), diagnostics
 	coreCommand.Env = sharedEnvironment
 	server, err := startChild("core", coreCommand)
@@ -120,12 +99,12 @@ func runCompose(cmd *cobra.Command, massdBin, path string) (result error) {
 		return err
 	}
 	defer func() {
-		result = errors.Join(result, server.stop(coreShutdownTimeout))
+		result = errors.Join(result, server.stop(composeCoreShutdownTimeout))
 	}()
 	parseCoreEndpoint := func(line []byte) (*url.URL, error) {
 		return coreStartupEndpoint(line, coreConfig.Listen)
 	}
-	coreEndpoint, err := awaitStartup(ctx, server, parseCoreEndpoint, "/v1/observer/health", daemon)
+	coreEndpoint, err := awaitStartup(ctx, server, parseCoreEndpoint, "/v1/observer/health")
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -136,11 +115,13 @@ func runCompose(cmd *cobra.Command, massdBin, path string) (result error) {
 	addresses := composeStartup{
 		Endpoint:         coreEndpoint,
 		ObserverEndpoint: coreEndpoint + "/observer/",
-		MassdEndpoint:    massdEndpoint,
 		TriggerEndpoints: make(map[string]string, len(triggers)),
 		Status:           "ready",
 	}
-	children := []*childProcess{daemon, server}
+	if coreConfig.Massd.Embedded.Expose != nil {
+		addresses.MassdEndpoint = "ws" + strings.TrimPrefix(coreEndpoint, "http") + core.MassdMountPath + rpcwire.WebSocketPath
+	}
+	children := []*childProcess{server}
 	var triggerChildren []*childProcess
 	startupComplete := false
 	defer func() {
@@ -182,13 +163,13 @@ func runCompose(cmd *cobra.Command, massdBin, path string) (result error) {
 	}
 	startupComplete = true
 	logger := slog.New(slog.NewJSONHandler(diagnostics, nil))
-	return observeCompose(ctx, logger, daemon, server, triggerChildren)
+	return observeCompose(ctx, logger, server, triggerChildren)
 }
 
 type composeStartup struct {
 	Endpoint         string            `json:"endpoint"`
 	ObserverEndpoint string            `json:"observerEndpoint"`
-	MassdEndpoint    string            `json:"massdEndpoint"`
+	MassdEndpoint    string            `json:"massdEndpoint,omitempty"`
 	Status           string            `json:"status"`
 	TriggerEndpoints map[string]string `json:"triggerEndpoints,omitempty"`
 }
@@ -215,7 +196,7 @@ func runningComposeChildren(children []*childProcess) error {
 	return nil
 }
 
-func observeCompose(ctx context.Context, logger *slog.Logger, daemon, server *childProcess, triggers []*childProcess) error {
+func observeCompose(ctx context.Context, logger *slog.Logger, server *childProcess, triggers []*childProcess) error {
 	exits := make(chan *childProcess, len(triggers))
 	for _, child := range triggers {
 		go func() {
@@ -229,8 +210,6 @@ func observeCompose(ctx context.Context, logger *slog.Logger, daemon, server *ch
 			return nil
 		case <-server.done:
 			return server.unexpectedExit()
-		case <-daemon.done:
-			return daemon.unexpectedExit()
 		case child := <-exits:
 			logger.Error("Trigger exited", "component", child.name, "error", child.unexpectedExit())
 		}
@@ -376,12 +355,7 @@ func (d *childProcess) waitReady(ctx context.Context, parse func([]byte) (*url.U
 
 	probe := *endpoint
 	probe.Path = healthPath
-	switch probe.Scheme {
-	case "ws":
-		probe.Scheme = "http"
-	case "wss":
-		probe.Scheme = "https"
-	}
+
 	transport := &http.Transport{}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
@@ -423,20 +397,6 @@ func (d *childProcess) waitReady(ctx context.Context, parse func([]byte) (*url.U
 	}
 }
 
-func massdStartupEndpoint(line []byte) (*url.URL, error) {
-	var record struct {
-		URL string `json:"url"`
-	}
-	if err := json.Unmarshal(line, &record); err != nil {
-		return nil, errors.New("invalid massd startup record")
-	}
-	endpoint := childEndpoint(record.URL, rpcwire.WebSocketPath, "ws", "wss")
-	if endpoint == nil {
-		return nil, errors.New("invalid massd startup RPC endpoint")
-	}
-	return endpoint, nil
-}
-
 func coreStartupEndpoint(line []byte, listen string) (*url.URL, error) {
 	var record struct {
 		Endpoint string `json:"endpoint"`
@@ -445,7 +405,7 @@ func coreStartupEndpoint(line []byte, listen string) (*url.URL, error) {
 	if err := json.Unmarshal(line, &record); err != nil || record.Status != "ready" {
 		return nil, errors.New("invalid core startup record")
 	}
-	endpoint := childEndpoint(record.Endpoint, "", "http")
+	endpoint := childHTTPOrigin(record.Endpoint)
 	if endpoint == nil {
 		return nil, errors.New("invalid core startup HTTP endpoint")
 	}
@@ -458,10 +418,10 @@ func coreStartupEndpoint(line []byte, listen string) (*url.URL, error) {
 	return endpoint, nil
 }
 
-func childEndpoint(raw, path string, schemes ...string) *url.URL {
+func childHTTPOrigin(raw string) *url.URL {
 	endpoint, err := url.Parse(raw)
-	if err != nil || !slices.Contains(schemes, endpoint.Scheme) || endpoint.User != nil ||
-		endpoint.Path != path || endpoint.RawPath != "" || endpoint.ForceQuery || endpoint.RawQuery != "" || strings.Contains(raw, "#") {
+	if err != nil || endpoint.Scheme != "http" || endpoint.User != nil ||
+		endpoint.Path != "" || endpoint.RawPath != "" || endpoint.ForceQuery || endpoint.RawQuery != "" || strings.Contains(raw, "#") {
 		return nil
 	}
 	address := net.ParseIP(endpoint.Hostname())

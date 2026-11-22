@@ -51,7 +51,7 @@ func LoadConfig(path string) (Config, error) {
 	return loadConfig(path, nil)
 }
 
-// LoadComposeConfig prepares Core for a supervised massd whose endpoint is assigned at startup.
+// LoadComposeConfig reads a Core section from Compose and defaults to embedded MASS.
 func LoadComposeConfig(path string, section io.Reader) (Config, error) {
 	return loadConfig(path, section)
 }
@@ -145,35 +145,46 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if err := c.Sessions.validate(resolve); err != nil {
 			return c, err
 		}
-		if c.Massd == nil && composed {
-			c.Massd = &MassdConfig{}
-		}
-		if c.Massd == nil {
+		if c.Massd == nil && !composed {
 			return c, problem("invalid_argument", "sessions require massd configuration")
 		}
-	} else if c.Massd != nil || c.OperatorTokenFile != "" {
+	} else if (!composed && c.Massd != nil) || c.OperatorTokenFile != "" {
 		return c, problem("invalid_argument", "massd and operatorTokenFile require sessions configuration")
 	}
-	if c.Massd != nil {
-		if v.IsSet("massd") {
-			var massd MassdConfig
-			decodeMassd := func(d *mapstructure.DecoderConfig) {
-				strict(d)
-				d.DecodeHook = mapstructure.StringToTimeDurationHookFunc()
-			}
-			if err := v.UnmarshalKey("massd", &massd, decodeMassd); err != nil {
-				return c, problem("invalid_argument", "massd configuration contains unknown or invalid fields")
-			}
-			for _, field := range []string{"sessionIdleTimeout", "writeTimeout"} {
-				if value := v.Get("massd.embedded." + field); value != nil {
-					if _, ok := value.(string); !ok {
-						return c, problem("invalid_argument", "massd.embedded durations must be strings")
-					}
+	if c.Massd != nil && v.IsSet("massd") {
+		var massd MassdConfig
+		decodeMassd := func(d *mapstructure.DecoderConfig) {
+			strict(d)
+			d.DecodeHook = mapstructure.StringToTimeDurationHookFunc()
+		}
+		if err := v.UnmarshalKey("massd", &massd, decodeMassd); err != nil {
+			return c, problem("invalid_argument", "massd configuration contains unknown or invalid fields")
+		}
+		for _, field := range []string{"sessionIdleTimeout", "writeTimeout"} {
+			if value := v.Get("massd.embedded." + field); value != nil {
+				if _, ok := value.(string); !ok {
+					return c, problem("invalid_argument", "massd.embedded durations must be strings")
 				}
 			}
-			c.Massd = &massd
 		}
-		if err := c.Massd.validate(resolve, composed); err != nil {
+		c.Massd = &massd
+	}
+	if composed {
+		if c.Massd != nil && (c.Massd.Endpoint != "" || c.Massd.TokenFile != "") {
+			return c, problem("invalid_argument", "Compose uses core.massd.embedded for MASS settings")
+		}
+		if c.Massd == nil {
+			c.Massd = &MassdConfig{}
+		}
+		if c.Massd.Embedded == nil {
+			c.Massd.Embedded = &EmbeddedMassdConfig{}
+		}
+		if c.Massd.Embedded.DataDir == "" {
+			c.Massd.Embedded.DataDir = "./massd-data"
+		}
+	}
+	if c.Massd != nil {
+		if err := c.Massd.validate(resolve); err != nil {
 			return c, err
 		}
 	}

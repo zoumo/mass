@@ -71,7 +71,7 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		return nil, "", nil
 	}
 	coreHost, corePort, _ := net.SplitHostPort(config.Listen) // Validated by Core.
-	probe := childEndpoint("http://"+net.JoinHostPort(coreHost, "1"), "", "http")
+	probe := childHTTPOrigin("http://" + net.JoinHostPort(coreHost, "1"))
 	if probe == nil {
 		return nil, "", errors.New("core configuration: cannot determine the Trigger connection origin")
 	}
@@ -81,6 +81,9 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		return nil, "", err
 	}
 	if err := reserveComposePath(statePaths, config.DataDir, "core dataDir"); err != nil {
+		return nil, "", err
+	}
+	if err := reserveComposePath(statePaths, config.Massd.Embedded.DataDir, "core.massd.embedded dataDir"); err != nil {
 		return nil, "", err
 	}
 	statusListeners := make(map[string]string)
@@ -227,7 +230,7 @@ func triggerStartupEndpoint(line []byte) (*url.URL, error) {
 	if err := json.Unmarshal(line, &record); err != nil || record.Status != "starting" {
 		return nil, errors.New("invalid Trigger startup record")
 	}
-	endpoint := childEndpoint(record.Endpoint, "", "http")
+	endpoint := childHTTPOrigin(record.Endpoint)
 	if endpoint == nil || endpoint.String() != record.Endpoint || !net.ParseIP(endpoint.Hostname()).IsLoopback() {
 		return nil, errors.New("invalid Trigger status endpoint")
 	}

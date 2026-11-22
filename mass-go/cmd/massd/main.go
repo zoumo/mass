@@ -57,9 +57,6 @@ func newCommand() *cobra.Command {
 			}
 			configured, err := readOptions(cmd, configPath)
 			if err != nil {
-				if composed, _ := cmd.Flags().GetBool("compose-config-stdin"); composed {
-					return fmt.Errorf("%w: %w", errInvalidComposeConfig, err)
-				}
 				return err
 			}
 			return run(cmd.Context(), configured)
@@ -67,8 +64,6 @@ func newCommand() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&configPath, "config", defaultConfig, "YAML configuration file (flags override configuration)")
-	f.Bool("compose-config-stdin", false, "Read the massd configuration section from Compose")
-	_ = f.MarkHidden("compose-config-stdin")
 	f.StringVar(&o.Data, "data", filepath.Join(home, ".mass"), "absolute owned data directory")
 	f.StringVar(&o.Listen, "listen", "127.0.0.1:24368", "loopback listen address (port 0 supported)")
 	f.BoolVar(&o.Approve, "prototype-auto-approve-permissions", false, "explicit synthetic prototype policy; questions remain manual")
@@ -187,7 +182,7 @@ func run(parent context.Context, o options) (result error) {
 
 func main() {
 	if err := newCommand().Execute(); err != nil {
-		if errors.Is(err, errConflictingDataFields) || errors.Is(err, errInvalidComposeConfig) {
+		if errors.Is(err, errConflictingDataFields) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
 			fmt.Fprintln(os.Stderr, transport.PublicError(err))
