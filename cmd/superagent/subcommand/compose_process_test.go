@@ -564,7 +564,11 @@ func TestComposeProcessCombinations(t *testing.T) {
 				require.Contains(t, composeHTTPBody(t, endpoint+"/status"), `"connection":"connecting"`)
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "consumer-ready"), nil, 0o600))
 				require.Eventually(t, func() bool {
-					var status triggers.Snapshot
+					var status struct {
+						Connection    string `json:"connection"`
+						ConsumerReady bool   `json:"consumerReady"`
+						Accepted      int    `json:"accepted"`
+					}
 					return json.Unmarshal([]byte(composeHTTPBody(t, endpoint+"/status")), &status) == nil &&
 						status.Connection == "ready" && status.ConsumerReady && status.Accepted == 1
 				}, 5*time.Second, 20*time.Millisecond)
