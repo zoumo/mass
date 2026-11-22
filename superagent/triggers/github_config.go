@@ -25,8 +25,7 @@ type githubConfig struct {
 	PollSeconds           int                `yaml:"pollIntervalSeconds"`
 	RequestMillis         int                `yaml:"requestTimeoutMillis"`
 	Repositories          []githubRepository `yaml:"repositories"`
-	MatchYAML             yaml.Node          `yaml:"match,omitempty"`
-	Match                 githubMatch        `yaml:"-"`
+	LegacyMatch           yaml.Node          `yaml:"match,omitempty"`
 }
 
 type githubRepository struct {
@@ -48,11 +47,9 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 		c.CoreEndpoint = coreEndpoint
 		c.DatabasePath = resolveSectionPath(path, c.DatabasePath)
 	}
-	match, err := readGitHubMatch(c.MatchYAML)
-	if err != nil {
-		return c, err
+	if c.LegacyMatch.Kind != 0 {
+		return c, errors.New("GitHub match is no longer supported; use repositories to filter Notifications")
 	}
-	c.Match = match
 	if c.PollSeconds == 0 {
 		c.PollSeconds = 60
 	}
@@ -78,14 +75,11 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		return c, errors.New("statusListen must be numeric loopback")
 	}
-	if len(c.Repositories) == 0 {
-		return c, errors.New("at least one GitHub repository is required")
-	}
 	seen := make(map[string]bool)
 	for i := range c.Repositories {
 		repo := &c.Repositories[i]
 		repo.Repository = strings.ToLower(repo.Repository)
-		if !githubRepositoryPattern.MatchString(repo.Repository) || strings.HasSuffix(repo.Repository, "/.") || strings.HasSuffix(repo.Repository, "/..") || seen[repo.Repository] {
+		if !validGitHubRepository(repo.Repository) || seen[repo.Repository] {
 			return c, errors.New("repositories must contain unique GitHub.com owner/repo names")
 		}
 		if len(repo.Prompt) > 4096 {
@@ -94,4 +88,20 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 		seen[repo.Repository] = true
 	}
 	return c, nil
+}
+
+func validGitHubRepository(repo string) bool {
+	return githubRepositoryPattern.MatchString(repo) && !strings.HasSuffix(repo, "/.") && !strings.HasSuffix(repo, "/..")
+}
+
+func (c githubConfig) repository(name string) (githubRepository, bool) {
+	if len(c.Repositories) == 0 {
+		return githubRepository{Repository: name}, true
+	}
+	for _, repo := range c.Repositories {
+		if repo.Repository == name {
+			return repo, true
+		}
+	}
+	return githubRepository{}, false
 }

@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -54,14 +56,16 @@ func TestGitHubConfigAndOptionalContext(t *testing.T) {
 	if err := exec.CommandContext(t.Context(), triggerBinary, "triggers", "github", "check", "--config", path).Run(); err == nil {
 		t.Fatal("check accepted a missing GitHub token")
 	}
-	t.Setenv("TEST_GITHUB_TOKEN", githubFixtureToken)
-	output, err := exec.CommandContext(t.Context(), triggerBinary, "triggers", "github", "check", "--config", path).CombinedOutput()
-	if err != nil || !strings.Contains(string(output), "configuration_checked") {
-		t.Fatalf("GitHub check with distinct credentials failed: %s %v", output, err)
-	}
+	cfg.Repositories = nil
+	write()
+	require.NoError(t, configCheck(path))
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, legacy := range []string{"match: {}\n", "match: {labels: [ci]}\n", "match: null\n"} {
+		testWrite(t, path, append(append([]byte(nil), data...), legacy...))
+		require.ErrorContains(t, configCheck(path), "match is no longer supported")
 	}
 	testWrite(t, path, append(data, []byte("githubEndpoint: http://127.0.0.1:1\n")...))
 	if _, err := loadGitHubConfig(path, nil, ""); err == nil {
@@ -75,6 +79,50 @@ func TestGitHubConfigAndOptionalContext(t *testing.T) {
 	if text := githubMessageText("source", "body", " \t\n"); strings.Contains(text, "repository-context") {
 		t.Fatalf("a blank prompt produced a context section: %s", text)
 	}
+}
+
+func configCheck(path string) error {
+	_, err := loadGitHubConfig(path, nil, "")
+	return err
+}
+
+func TestGitHubCheckProbesNotifications(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := githubConfig{
+		AccountID: "account", InstanceID: "fixture-instance", CoreEndpoint: "http://127.0.0.1:1",
+		DatabasePath: filepath.Join(dir, "github.sqlite"), TokenEnv: "TEST_CORE_TOKEN", GitHubTokenEnv: "TEST_GITHUB_TOKEN",
+	}
+	path := githubTestConfigFile(t, cfg)
+	for _, code := range []int{http.StatusOK, http.StatusForbidden} {
+		provider := httptest.NewServer(githubFixtureHandler(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("per_page") != "1" {
+				t.Error("check must make a minimal read")
+			}
+			w.WriteHeader(code)
+			githubFixtureJSON(w, []any{})
+		}, nil))
+		cmd := exec.CommandContext(t.Context(), githubTestBinary(t), "triggers", "github", "check", "--config", path)
+		cmd.Env = append(os.Environ(), githubFixtureEnv(provider.URL)...)
+		out, err := cmd.CombinedOutput()
+		provider.Close()
+		if code == http.StatusOK {
+			require.NoError(t, err, string(out))
+			require.Contains(t, string(out), "notifications_checked")
+		} else {
+			require.Error(t, err)
+			require.Contains(t, string(out), "cannot read GitHub Notifications")
+			require.Contains(t, string(out), "github_http_403")
+		}
+	}
+	_, err := os.Stat(cfg.DatabasePath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	testWrite(t, path, append(data, []byte("match: {labels: [ci]}\n")...))
+	out, err := exec.CommandContext(t.Context(), githubTestBinary(t), "triggers", "github", "check", "--config", path).CombinedOutput()
+	require.Error(t, err)
+	require.Contains(t, string(out), "match is no longer supported")
 }
 
 // The local proxy refuses the HTTPS tunnel before the client can send a token.
@@ -124,7 +172,7 @@ func TestGitHubStandaloneServeAndStatus(t *testing.T) {
 			t.Fatalf("GitHub status was not JSON: %s %v", output, err)
 		}
 		return status.Source == githubSource && status.InstanceID == "fixture-instance" &&
-			status.Repositories["demo/project"].Streams["issues"].State == "stale"
+			status.Notifications.State == "stale"
 	})
 	terminate(t, process)
 }

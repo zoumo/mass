@@ -83,6 +83,21 @@ func runComposeFixture(dir string, args []string) int {
 			return runComposeHTTPFixture(dir, "github")
 		}
 		recordComposeEvent(dir, role)
+		if role == "github:check" {
+			// The Trigger process tests exercise the actual HTTP preflight.
+			// This fixture verifies Compose's isolated configuration and wiring.
+			path, endpoint := slices.Index(args, "--config"), slices.Index(args, "--compose-core-endpoint")
+			if path < 0 || endpoint < 0 {
+				return 1
+			}
+			_, err := triggers.Load(triggers.GitHub, args[path+1], os.Stdin, args[endpoint+1])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			recordComposeEvent(dir, role+":stop")
+			return 0
+		}
 		code := Execute()
 		recordComposeEvent(dir, role+":stop")
 		return code
@@ -159,7 +174,7 @@ func runComposeHTTPFixture(dir, name string) int {
 			w.WriteHeader(http.StatusOK)
 		case "/status":
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintln(w, `{"source":"github","repositories":{"fixture/example":{"streams":{"issues":{"state":"stale","lastError":"github_unavailable","nextAttemptAt":"2026-11-22T12:00:00Z"}}}}}`)
+			fmt.Fprintln(w, `{"source":"github","notifications":{"state":"stale","lastError":"github_notifications_request_failed","nextAttemptAt":"2026-11-22T12:00:00Z"},"repositories":{}}`)
 		case "/v1/channel/messages":
 			composeFixtureAdmission(dir, w, r)
 		default:

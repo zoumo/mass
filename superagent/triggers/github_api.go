@@ -17,12 +17,14 @@ import (
 	"github.com/shurcooL/githubv4"
 )
 
-const githubGraphQLEndpoint = "https://api.github.com/graphql"
+const githubAPIOrigin = "https://api.github.com"
 
 var errGitHubRateLimited = errors.New("github_rate_limited")
 
 type githubAPI struct {
 	client     *githubv4.Client
+	http       *http.Client
+	origin     string
 	pauseUntil time.Time
 }
 
@@ -30,12 +32,13 @@ type githubHTTPError struct{ status int }
 
 func (e githubHTTPError) Error() string { return fmt.Sprintf("github_http_%d", e.status) }
 
-func newGitHubAPI(endpoint, token string, timeout time.Duration) *githubAPI {
-	api := new(githubAPI)
+func newGitHubAPI(origin, token string, timeout time.Duration) *githubAPI {
+	api := &githubAPI{origin: origin}
 	client := resty.New().SetTimeout(timeout).GetClient()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	client.Transport = &githubTransport{base: client.Transport, token: token, api: api}
-	api.client = githubv4.NewEnterpriseClient(endpoint, client)
+	api.http = client
+	api.client = githubv4.NewEnterpriseClient(origin+"/graphql", client)
 	return api
 }
 
@@ -50,6 +53,9 @@ type githubTransport struct {
 func (t *githubTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	request = request.Clone(request.Context())
 	request.Header.Set("Authorization", "Bearer "+t.token)
+	if request.Method == http.MethodGet {
+		request.Header.Set("Accept", "application/vnd.github+json")
+	}
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
 		return nil, errors.New("github_request_failed")
@@ -63,10 +69,18 @@ func (t *githubTransport) RoundTrip(request *http.Request) (*http.Response, erro
 		if response.StatusCode == http.StatusForbidden && bytes.Contains(bytes.ToLower(body), []byte("secondary rate limit")) && !t.api.pauseUntil.After(now) {
 			t.api.pauseUntil = now.Add(time.Minute)
 		}
+		if request.Method == http.MethodGet {
+			response.Body = http.NoBody
+			return response, nil
+		}
 		return nil, githubHTTPError{response.StatusCode}
 	}
 	if err != nil || len(body) > maximumResponse {
 		return nil, errors.New("github_invalid_response")
+	}
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	if request.Method == http.MethodGet {
+		return response, nil
 	}
 	var envelope struct {
 		Data   *json.RawMessage `json:"data"`
@@ -96,7 +110,6 @@ func (t *githubTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	if envelope.Data == nil {
 		return nil, errors.New("github_invalid_response")
 	}
-	response.Body = io.NopCloser(bytes.NewReader(body))
 	return response, nil
 }
 
@@ -186,8 +199,6 @@ type githubConnection[T any] struct {
 	PageInfo githubPageInfo
 }
 
-var errGitHubStopPagination = errors.New("reached GitHub polling window")
-
 func githubPages[T any](read func(*githubv4.String) (githubConnection[T], error), consume func([]T) error) error {
 	var cursor *githubv4.String
 	seen := make(map[githubv4.String]bool)
@@ -204,9 +215,6 @@ func githubPages[T any](read func(*githubv4.String) (githubConnection[T], error)
 			return errors.New("github_invalid_pagination_cursor")
 		}
 		if err := consume(page.Nodes); err != nil {
-			if errors.Is(err, errGitHubStopPagination) {
-				return nil
-			}
 			return err
 		}
 		if !*info.HasNextPage {

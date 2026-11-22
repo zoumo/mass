@@ -6,11 +6,8 @@ githubTokenEnv: GITHUB_TOKEN
 statusListen: 127.0.0.1:24372
 databasePath: /absolute/path/to/github.sqlite
 pollIntervalSeconds: 60
-# Optional. Any matching label, assignee or author selects the Issue or PR.
-# match:
-#   labels: [superagent]
-#   assignees: [alice]
-#   authors: [my-github-login]
+# Optional. Omit repositories or set it to [] to accept notifications from
+# every repository accessible to the GitHub account.
 repositories:
   - repository: example-org/example-sdk
     prompt: |

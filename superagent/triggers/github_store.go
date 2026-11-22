@@ -84,8 +84,7 @@ CREATE TRIGGER github_uncount_pending AFTER DELETE ON github_pending BEGIN
 END;
 `
 
-const githubStreamColumns = `active, discussion_priority, discussion_closed, enabled_at,
-	last_success_at, last_full_at, next_attempt_at, last_error, failures, item_count, match_key, silent_baseline`
+const githubStreamColumns = `active, enabled_at, last_success_at, next_attempt_at, last_error, failures, item_count`
 
 const githubUpsertSnapshot = `INSERT INTO github_snapshots (repository, scope, object_key, version, updated_at, data)
 	VALUES (?, ?, ?, ?, ?, ?)
@@ -98,6 +97,27 @@ type githubStore struct{ db *sql.DB }
 
 type githubRowReader interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func githubRepositoryNames(db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, pendingOnly bool,
+) ([]string, error) {
+	rows, err := db.QueryContext(context.Background(), `SELECT name FROM github_repositories
+		WHERE name <> ? AND (NOT ? OR backlog > 0) ORDER BY name`, githubInboxRepository, pendingOnly)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }
 
 type githubPendingItem struct {
@@ -118,34 +138,80 @@ func openGitHubStore(c githubConfig) (githubStore, func(), error) {
 		return githubStore{}, nil, err
 	}
 	store := githubStore{db}
-	if err := store.configureRepositories(c.Repositories, c.Match.key()); err != nil {
+	if err := store.configureRepositories(c.Repositories); err != nil {
 		closeDB()
 		return githubStore{}, nil, errors.New("cannot configure GitHub database repositories")
 	}
 	return store, closeDB, nil
 }
 
-func (s githubStore) configureRepositories(repositories []githubRepository, matchKey string) error {
+func (s githubStore) configureRepositories(repositories []githubRepository) error {
 	// GitHub API timestamps for these observations have second precision.
 	enabled := time.Now().UTC().Truncate(time.Second)
 	return triggerTransaction(s.db, func(tx *sql.Tx) error {
+		if err := ensureGitHubRepository(tx, githubInboxRepository); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(context.Background(), `INSERT INTO github_streams (repository, scope, kind, active, enabled_at)
+			VALUES (?, ?, 'parent', 1, ?) ON CONFLICT DO NOTHING`, githubInboxRepository, githubInboxScope, githubTimeValue(enabled)); err != nil {
+			return err
+		}
 		for _, repo := range repositories {
-			if _, err := tx.ExecContext(context.Background(), `INSERT INTO github_repositories (name) VALUES (?) ON CONFLICT DO NOTHING`, repo.Repository); err != nil {
-				return err
-			}
-			for _, scope := range githubScopes {
-				if _, err := tx.ExecContext(context.Background(), `INSERT INTO github_streams (repository, scope, kind, active, enabled_at)
-					VALUES (?, ?, 'parent', 1, ?) ON CONFLICT DO NOTHING`, repo.Repository, scope.name, githubTimeValue(enabled)); err != nil {
-					return err
-				}
-			}
-			if _, err := tx.ExecContext(context.Background(), `UPDATE github_streams SET next_attempt_at = 0
-				WHERE repository = ? AND kind = 'parent' AND match_key <> ? AND last_error = ''`, repo.Repository, matchKey); err != nil {
+			if err := ensureGitHubRepository(tx, repo.Repository); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+func ensureGitHubRepository(tx *sql.Tx, repo string) error {
+	_, err := tx.ExecContext(context.Background(), `INSERT INTO github_repositories (name) VALUES (?) ON CONFLICT DO NOTHING`, repo)
+	return err
+}
+
+func (s githubStore) acceptNotifications(c githubConfig, enabled time.Time, items []githubNotification, pause time.Time) error {
+	return triggerTransaction(s.db, func(tx *sql.Tx) error {
+		for _, item := range items {
+			repo := strings.ToLower(item.Repository.FullName)
+			notice, valid := item.notice(repo)
+			if _, allowed := c.repository(repo); !allowed || !validGitHubRepository(repo) || !valid || item.UpdatedAt.Before(enabled) {
+				continue
+			}
+			if err := saveGitHubNotice(tx, repo, enabled, notice); err != nil {
+				return err
+			}
+		}
+		return writeGitHubRateLimit(tx, pause)
+	})
+}
+
+func saveGitHubNotice(tx *sql.Tx, repo string, enabled time.Time, notice githubNotice) error {
+	if err := ensureGitHubRepository(tx, repo); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	scope := githubNoticePrefix + notice.ID
+	if _, err := tx.ExecContext(ctx, `INSERT INTO github_streams (repository, scope, kind, active, enabled_at)
+		VALUES (?, ?, 'discussion', 1, ?) ON CONFLICT DO NOTHING`, repo, scope, githubTimeValue(enabled)); err != nil {
+		return err
+	}
+	data, err := json.Marshal(notice)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, githubUpsertSnapshot+` WHERE excluded.updated_at > github_snapshots.updated_at`,
+		repo, scope, githubNoticeKey, 0, githubTimeValue(notice.UpdatedAt), data)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed == 0 {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE github_streams SET active = 1,
+		next_attempt_at = CASE WHEN active = 0 THEN 0 ELSE next_attempt_at END WHERE repository = ? AND scope = ?`, repo, scope)
+	return err
 }
 
 func githubTimeValue(t time.Time) int64 {
@@ -181,40 +247,20 @@ func (s githubStore) stream(repository, scope string) (githubStreamState, error)
 
 func readGitHubStream(row interface{ Scan(...any) error }, prefix ...any) (githubStreamState, error) {
 	var stream githubStreamState
-	var enabled, lastSuccess, lastFull, nextAttempt int64
-	err := row.Scan(append(prefix, &stream.Active, &stream.DiscussionPriority, &stream.DiscussionClosed,
-		&enabled, &lastSuccess, &lastFull, &nextAttempt, &stream.LastError, &stream.Failures, &stream.ItemCount,
-		&stream.MatchKey, &stream.SilentBaseline)...)
+	var enabled, lastSuccess, nextAttempt int64
+	err := row.Scan(append(prefix, &stream.Active, &enabled, &lastSuccess, &nextAttempt, &stream.LastError, &stream.Failures, &stream.ItemCount)...)
 	stream.EnabledAt = githubTimeFromValue(enabled)
 	stream.LastSuccessAt = githubTimeFromValue(lastSuccess)
-	stream.LastFullAt = githubTimeFromValue(lastFull)
 	stream.NextAttemptAt = githubTimeFromValue(nextAttempt)
 	return stream, err
 }
 
-func writeGitHubStream(tx *sql.Tx, repository, scope, kind string, stream githubStreamState) error {
-	_, err := tx.ExecContext(context.Background(), `INSERT INTO github_streams (repository, scope, kind, active, discussion_priority,
-		discussion_closed, enabled_at, last_success_at, last_full_at, next_attempt_at, last_error, failures, match_key, silent_baseline)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (repository, scope) DO UPDATE SET active = excluded.active,
-			discussion_priority = excluded.discussion_priority, discussion_closed = excluded.discussion_closed,
-			enabled_at = excluded.enabled_at, last_success_at = excluded.last_success_at, last_full_at = excluded.last_full_at,
-			next_attempt_at = excluded.next_attempt_at, last_error = excluded.last_error, failures = excluded.failures,
-			match_key = excluded.match_key, silent_baseline = excluded.silent_baseline`,
-		repository, scope, kind, stream.Active, stream.DiscussionPriority, stream.DiscussionClosed,
-		githubTimeValue(stream.EnabledAt), githubTimeValue(stream.LastSuccessAt), githubTimeValue(stream.LastFullAt),
-		githubTimeValue(stream.NextAttemptAt), stream.LastError, stream.Failures, stream.MatchKey, stream.SilentBaseline)
+func writeGitHubStream(tx *sql.Tx, repository, scope string, stream githubStreamState) error {
+	_, err := tx.ExecContext(context.Background(), `UPDATE github_streams SET active = ?, last_success_at = ?,
+		next_attempt_at = ?, last_error = ?, failures = ? WHERE repository = ? AND scope = ?`,
+		stream.Active, githubTimeValue(stream.LastSuccessAt), githubTimeValue(stream.NextAttemptAt),
+		stream.LastError, stream.Failures, repository, scope)
 	return err
-}
-
-func githubStreamKind(scope string) string {
-	if strings.HasPrefix(scope, githubCIPrefix) {
-		return "ci"
-	}
-	if _, ok := githubDiscussionScope(scope); ok {
-		return "discussion"
-	}
-	return "parent"
 }
 
 func (s githubStore) scopeItems(repository, scope string) (map[string]githubRecord, error) {
@@ -238,38 +284,44 @@ func (s githubStore) scopeItems(repository, scope string) (map[string]githubReco
 	return items, rows.Err()
 }
 
-func (s githubStore) nextScope(repository, kind string, priority bool, now time.Time, matchKey string) (string, error) {
-	var scope string
-	// A changed rule must finish reconciling the parent list before any of
-	// its child scans run. Issue and PR schedules advance independently.
-	err := s.db.QueryRowContext(context.Background(), `SELECT child.scope FROM github_streams AS child
-		WHERE child.repository = ? AND child.kind = ? AND child.active = 1
-			AND child.discussion_priority = ? AND child.next_attempt_at <= ?
-			AND EXISTS (
-				SELECT 1 FROM github_streams AS parent
-				WHERE parent.repository = child.repository AND parent.match_key = ?
-					AND parent.scope = CASE WHEN substr(child.scope, 1, ?) = ? THEN 'issues' ELSE ? END
-			)
-		ORDER BY child.last_success_at, child.scope LIMIT 1`,
-		repository, kind, priority, githubTimeValue(now), matchKey, len(githubIssueCommentsPrefix), githubIssueCommentsPrefix, githubPullsScope).Scan(&scope)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	return scope, err
+type githubDueScope struct {
+	repository string
+	scope      string
 }
 
-func (s githubStore) savePollFailure(repository, scope string, stream githubStreamState, pause time.Time) error {
+func (s githubStore) dueScopes(c githubConfig, kind, prefix string, now time.Time) ([]githubDueScope, error) {
+	rows, err := s.db.QueryContext(context.Background(), `SELECT repository, scope FROM github_streams
+		WHERE kind = ? AND scope GLOB ? AND active = 1 AND next_attempt_at <= ?
+		ORDER BY last_success_at, next_attempt_at, repository, scope`, kind, prefix+"*", githubTimeValue(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var due []githubDueScope
+	for rows.Next() && len(due) < 16 {
+		var next githubDueScope
+		if err := rows.Scan(&next.repository, &next.scope); err != nil {
+			return nil, err
+		}
+		if _, allowed := c.repository(next.repository); allowed {
+			due = append(due, next)
+		}
+	}
+	return due, rows.Err()
+}
+
+func (s githubStore) savePoll(repository, scope string, stream githubStreamState, pause time.Time) error {
 	return triggerTransaction(s.db, func(tx *sql.Tx) error {
-		if err := writeGitHubStream(tx, repository, scope, githubStreamKind(scope), stream); err != nil {
+		if err := writeGitHubStream(tx, repository, scope, stream); err != nil {
 			return err
 		}
 		return writeGitHubRateLimit(tx, pause)
 	})
 }
 
-// commitScan records the observation set only after every provider page succeeds.
-func (s githubStore) commitScan(c githubConfig, repo githubRepository, scope string, stream githubStreamState,
-	observations []githubObservation, started, nextAttempt, pause time.Time, full bool,
+// commitReadback advances the scope and queues its Messages in the same transaction.
+func (s githubStore) commitReadback(c githubConfig, repo githubRepository, scope string, stream githubStreamState,
+	observations []githubObservation, pause time.Time, pull *githubPullRecord,
 ) (int, error) {
 	queued := 0
 	err := triggerTransaction(s.db, func(tx *sql.Tx) error {
@@ -278,16 +330,12 @@ func (s githubStore) commitScan(c githubConfig, repo githubRepository, scope str
 		if err != nil {
 			return err
 		}
-		stream.LastSuccessAt = started
-		if full {
-			stream.LastFullAt = started
+		if pull != nil {
+			if err := trackGitHubPull(tx, repo.Repository, *pull, stream.EnabledAt); err != nil {
+				return err
+			}
 		}
-		stream.NextAttemptAt = nextAttempt
-		stream.LastError = ""
-		stream.Failures = 0
-		stream.DiscussionPriority = false
-		stream.SilentBaseline = false
-		if err := writeGitHubStream(tx, repo.Repository, scope, githubStreamKind(scope), stream); err != nil {
+		if err := writeGitHubStream(tx, repo.Repository, scope, stream); err != nil {
 			return err
 		}
 		return writeGitHubRateLimit(tx, pause)
@@ -309,7 +357,7 @@ func applyGitHubObservations(tx *sql.Tx, c githubConfig, repo githubRepository, 
 	queued := 0
 	for _, item := range observations {
 		version := stream.Items[item.Key].Version
-		if item.Kind != "" && !stream.SilentBaseline {
+		if item.Kind != "" {
 			version++
 			submission := item.submission(c, repo, scope, version)
 			payload, err := json.Marshal(submission)
@@ -322,9 +370,6 @@ func applyGitHubObservations(tx *sql.Tx, c githubConfig, repo githubRepository, 
 			queued++
 		}
 		if _, err := record.ExecContext(context.Background(), repo.Repository, scope, item.Key, version, githubTimeValue(item.UpdatedAt), item.Data); err != nil {
-			return 0, err
-		}
-		if err := reconcileGitHubSchedules(tx, repo.Repository, scope, stream, item); err != nil {
 			return 0, err
 		}
 	}
@@ -359,10 +404,11 @@ func readGitHubRepositoryStatus(tx *sql.Tx, repository string) (githubRepository
 	rows, err := tx.QueryContext(context.Background(), `SELECT s.scope, s.kind, pull.data, ci.data, `+githubStreamColumns+`
 		FROM github_streams AS s
 		LEFT JOIN github_snapshots AS pull ON s.kind = 'ci' AND pull.repository = s.repository
-			AND pull.scope = ? AND pull.object_key = substr(s.scope, ?)
+			AND pull.scope = s.scope AND pull.object_key = ?
 		LEFT JOIN github_snapshots AS ci ON s.kind = 'ci' AND ci.repository = s.repository
 			AND ci.scope = s.scope AND ci.object_key = ?
-		WHERE s.repository = ?`, githubPullsScope, len(githubCIPrefix)+1, githubCISnapshotKey, repository)
+		WHERE s.repository = ? AND (s.scope GLOB ? OR (s.active = 1 AND s.scope GLOB ?))`,
+		githubTrackedPull, githubCISnapshotKey, repository, githubTrackedPrefix+"*", githubNoticePrefix+"*")
 	if err != nil {
 		return githubRepositoryStatus{}, err
 	}
@@ -377,10 +423,33 @@ func readGitHubRepositoryStatus(tx *sql.Tx, repository string) (githubRepository
 		if kind == "ci" {
 			status.Streams[scope] = githubCIStatusFor(stream, pull, snapshot)
 		} else {
+			status.PendingReadbacks++
 			status.Streams[scope] = githubStreamStatusFor(stream)
 		}
 	}
 	return status, rows.Err()
+}
+
+func githubCIStatusFor(stream githubStreamState, pullData, snapshotData []byte) githubStreamStatus {
+	status := githubStreamStatusFor(stream)
+	var pull githubPullRecord
+	if json.Unmarshal(pullData, &pull) != nil || pull.ID <= 0 {
+		status.State, status.LastError = "stale", "invalid tracked GitHub pull snapshot"
+		return status
+	}
+	status.HeadSHA, status.TestMergeSHA = pull.HeadSHA, pull.MergeSHA
+	var snapshot githubCISnapshot
+	if len(snapshotData) > 0 && json.Unmarshal(snapshotData, &snapshot) == nil {
+		status.CI = &snapshot
+		mergeSHA := ""
+		if snapshot.Merge != nil {
+			mergeSHA = snapshot.Merge.SHA
+		}
+		if stream.Active && (snapshot.Head.SHA != pull.HeadSHA || mergeSHA != pull.MergeSHA && pull.MergeSHA != pull.HeadSHA) {
+			status.State = "stale"
+		}
+	}
+	return status
 }
 
 func (s githubStore) pendingHead(repository string) (githubPendingItem, error) {

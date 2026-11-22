@@ -29,6 +29,8 @@ triggers:
     githubTokenEnv: SUPERAGENT_GITHUB_TOKEN
     statusListen: 127.0.0.1:24372
     databasePath: ./trigger-state/github.sqlite
+    # Optional. Omit to accept notifications from every repository accessible
+    # to this GitHub account.
     repositories:
       - repository: example-org/example-repo
   dws:

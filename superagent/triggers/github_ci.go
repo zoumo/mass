@@ -6,16 +6,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shurcooL/githubv4"
 )
 
 const (
-	githubCIPrefix      = "ci/"
+	githubTrackedPrefix = "tracked/"
+	githubTrackedPull   = "pull"
 	githubCISnapshotKey = "snapshot"
 )
+
+var githubCISHA = regexp.MustCompile(`^[a-fA-F0-9]{40}$`)
 
 type githubCISnapshot struct {
 	Head  githubCIRevision  `json:"head"`
@@ -24,8 +31,6 @@ type githubCISnapshot struct {
 
 type githubCIRevision struct {
 	SHA                 string           `json:"sha"`
-	Checks              []githubCISignal `json:"checks"`
-	Statuses            []githubCISignal `json:"statuses"`
 	Actions             []githubCISignal `json:"actions"`
 	UnassociatedActions int              `json:"unassociatedActions,omitempty"`
 }
@@ -36,177 +41,253 @@ type githubCISignal struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion,omitempty"`
 	URL        string `json:"url,omitempty"`
-	Provider   string `json:"provider,omitempty"`
-	Attempt    int    `json:"attempt,omitempty"`
+	Attempt    int    `json:"attempt"`
 	Event      string `json:"event,omitempty"`
 }
 
-func (s githubCISnapshot) matches(pull githubPullRecord) bool {
-	if s.Head.SHA != pull.HeadSHA {
-		return false
-	}
-	if pull.MergeSHA == "" || pull.MergeSHA == pull.HeadSHA {
-		return s.Merge == nil
-	}
-	return s.Merge != nil && s.Merge.SHA == pull.MergeSHA
-}
-
-func scheduleGitHubCI(tx *sql.Tx, repo, number string, enabled time.Time, active bool) error {
-	if !active {
-		_, err := tx.ExecContext(context.Background(), `UPDATE github_streams SET active = 0
-			WHERE repository = ? AND scope = ? AND active = 1`, repo, githubCIPrefix+number)
+func trackGitHubPull(tx *sql.Tx, repo string, pull githubPullRecord, enabled time.Time) error {
+	ctx := context.Background()
+	scope := githubTrackedPrefix + strconv.Itoa(pull.Number)
+	var previous []byte
+	err := tx.QueryRowContext(ctx, `SELECT data FROM github_snapshots WHERE repository = ? AND scope = ? AND object_key = ?`,
+		repo, scope, githubTrackedPull).Scan(&previous)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err := tx.ExecContext(context.Background(), `INSERT INTO github_streams (repository, scope, kind, active, enabled_at)
-		VALUES (?, ?, 'ci', 1, ?) ON CONFLICT (repository, scope) DO UPDATE SET active = 1 WHERE active = 0`,
-		repo, githubCIPrefix+number, githubTimeValue(enabled))
+	if len(previous) > 0 {
+		var old githubPullRecord
+		if json.Unmarshal(previous, &old) != nil || old.ID != pull.ID {
+			return errors.New("invalid tracked GitHub pull snapshot")
+		}
+		if pull.UpdatedAt.Before(old.UpdatedAt) {
+			// Do not reactivate a PR using a read older than the tracked state.
+			return nil
+		}
+	}
+	if pull.State != "open" && len(previous) == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO github_streams (repository, scope, kind, active, enabled_at)
+		VALUES (?, ?, 'ci', ?, ?)
+		ON CONFLICT (repository, scope) DO UPDATE SET
+			next_attempt_at = CASE WHEN active = 0 AND excluded.active = 1 THEN 0 ELSE next_attempt_at END,
+			last_success_at = CASE WHEN active = 0 AND excluded.active = 1 THEN 0 ELSE last_success_at END,
+			active = excluded.active`, repo, scope, pull.State == "open", githubTimeValue(enabled)); err != nil {
+		return err
+	}
+	data, err := json.Marshal(pull)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, githubUpsertSnapshot, repo, scope, githubTrackedPull, 0, githubTimeValue(pull.UpdatedAt), data)
 	return err
 }
 
-func (t *githubTrigger) pollNextGitHubCI(ctx context.Context, repo githubRepository) error {
-	now := time.Now()
-	if ctx.Err() != nil || now.Before(t.api.pauseUntil) {
-		return nil //nolint:nilerr // Cancellation ends polling normally.
+func readGitHubTrackedPR(ctx context.Context, api *githubAPI, repo string, stream *githubStreamState) ([]githubObservation, *githubPullRecord, error) {
+	var old githubPullRecord
+	if json.Unmarshal(stream.Items[githubTrackedPull].Data, &old) != nil || old.ID <= 0 || old.Number <= 0 {
+		return nil, nil, errors.New("invalid tracked GitHub pull snapshot")
 	}
-	next, err := t.store.nextScope(repo.Repository, "ci", false, now, t.matchKey)
+	p, err := readGitHubPull(ctx, api, repo, old.Number, old.ID)
 	if err != nil {
-		return errors.New("cannot read GitHub CI schedule")
+		return nil, nil, err
 	}
-	if next == "" {
-		return nil
+	pull := p.record(old)
+	if pull.UpdatedAt.Before(old.UpdatedAt) {
+		return nil, nil, errors.New("github_outdated_pull_detail")
 	}
-	var raw []byte
-	if err := t.store.db.QueryRowContext(context.Background(), `SELECT data FROM github_snapshots
-		WHERE repository = ? AND scope = ? AND object_key = ?`,
-		repo.Repository, githubPullsScope, strings.TrimPrefix(next, githubCIPrefix)).Scan(&raw); err != nil {
-		return errors.New("cannot read GitHub CI pull snapshot")
-	}
-	target, err := githubPullFromSnapshot(raw)
-	if err != nil {
-		return err
-	}
-	scope := githubScope{name: next, poll: func(ctx context.Context, api *githubAPI, repo string, stream *githubStreamState, _ time.Time) ([]githubObservation, error) {
-		return pollGitHubCI(ctx, api, repo, target, stream)
-	}}
-	return t.poll(ctx, repo, scope)
-}
-
-func githubPullFromSnapshot(data []byte) (githubPullRecord, error) {
-	var pull githubPullRecord
-	if json.Unmarshal(data, &pull) != nil || pull.Number <= 0 {
-		return pull, errors.New("invalid saved GitHub pull scope")
-	}
-	return pull, nil
-}
-
-func pollGitHubCI(ctx context.Context, api *githubAPI, repo string, pull githubPullRecord, scope *githubStreamState) ([]githubObservation, error) {
-	previous, known := scope.Items[githubCISnapshotKey]
-	var old githubCISnapshot
-	if known && json.Unmarshal(previous.Data, &old) != nil {
-		return nil, errors.New("invalid saved GitHub CI snapshot")
+	if pull.State != "open" {
+		return nil, &pull, nil
 	}
 	head, err := readGitHubCIRevision(ctx, api, repo, pull.HeadSHA, pull)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	snapshot := githubCISnapshot{Head: head}
 	if pull.MergeSHA != "" && pull.MergeSHA != pull.HeadSHA {
 		merge, err := readGitHubCIRevision(ctx, api, repo, pull.MergeSHA, pull)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		snapshot.Merge = &merge
 	}
-	data, _ := json.Marshal(snapshot) //nolint:errchkjson // Snapshot contains only typed CI fields.
-	if known && string(data) == string(previous.Data) {
-		return nil, nil
-	}
-	kind := ""
-	if known && snapshot.hasChanges(old) {
-		kind = "ci_changed"
-	}
-	at := time.Now().UTC()
-	prURL := githubObjectURL(repo, "pull", pull.Number)
-	return []githubObservation{{
-		Key: githubCISnapshotKey, Data: data, Kind: kind, UpdatedAt: at, At: at,
-		URL: prURL + "/checks", Thread: ThreadRef{githubPRThreadSource, prURL},
-		Title: fmt.Sprintf("GitHub CI changed for %s#%d\n%s/checks", repo, pull.Number, prURL),
-		Body:  snapshot.summary(pull.HeadRepo),
-		Meta: map[string]any{
-			"objectType": "pull_request_ci", "objectId": strconv.FormatInt(pull.ID, 10), "number": pull.Number,
-			"headRepository": pull.HeadRepo, "ci": snapshot,
-		},
-	}}, nil
+	observations, err := githubCIObservations(repo, pull, stream, snapshot)
+	return observations, &pull, err
 }
 
-func (s githubCISnapshot) hasChanges(old githubCISnapshot) bool {
-	if s.Head.hasChanges(old.Head) || (s.Merge == nil) != (old.Merge == nil) {
-		return true
-	}
-	return s.Merge != nil && s.Merge.hasChanges(*old.Merge)
-}
-
-func (r githubCIRevision) hasChanges(old githubCIRevision) bool {
-	return r.SHA != old.SHA || !slices.Equal(r.Checks, old.Checks) || !slices.Equal(r.Statuses, old.Statuses) ||
-		!slices.Equal(r.Actions, old.Actions)
-}
-
-func (s githubCISnapshot) summary(headRepo string) string {
-	var b strings.Builder
-	s.Head.writeSummary(&b, "Head "+headRepo)
-	if s.Merge != nil {
-		b.WriteString("\n")
-		s.Merge.writeSummary(&b, "Test merge")
-	}
-	return b.String()
-}
-
-func (r githubCIRevision) writeSummary(b *strings.Builder, title string) {
-	fmt.Fprintf(b, "%s SHA %s\n", title, r.SHA)
-	if len(r.Checks)+len(r.Statuses) == 0 {
-		b.WriteString("No Check Runs or Commit Statuses observed.\n")
-	}
-	writeSignals := func(source string, signals []githubCISignal) {
-		for _, s := range signals {
-			fmt.Fprintf(b, "- %s %s [%s]: %s", source, s.Name, s.ID, s.Status)
-			if s.Conclusion != "" {
-				fmt.Fprintf(b, " / %s", s.Conclusion)
-			}
-			if s.Attempt > 0 {
-				fmt.Fprintf(b, " (attempt %d)", s.Attempt)
-			}
-			if s.URL != "" {
-				fmt.Fprintf(b, " %s", s.URL)
-			}
-			b.WriteByte('\n')
-		}
-	}
-	writeSignals("Check Run", r.Checks)
-	writeSignals("Commit Status", r.Statuses)
-	if r.UnassociatedActions > 0 {
-		fmt.Fprintf(b, "Workflow Run association unknown for %d result(s).\n", r.UnassociatedActions)
-	}
-	writeSignals("Workflow Run", r.Actions)
-}
-
-func githubCIStatusFor(stream githubStreamState, pullData, snapshotData []byte) githubStreamStatus {
-	status := githubStreamStatusFor(stream)
-	pull, err := githubPullFromSnapshot(pullData)
+func githubCIObservations(repo string, pull githubPullRecord, stream *githubStreamState, snapshot githubCISnapshot) ([]githubObservation, error) {
+	data, err := json.Marshal(snapshot)
 	if err != nil {
-		status.State, status.LastError = "stale", err.Error()
-		return status
+		return nil, err
 	}
-	status.HeadSHA = pull.HeadSHA
-	status.TestMergeSHA = pull.MergeSHA
-	if !stream.Active {
-		status.State = "inactive"
+	now := time.Now().UTC()
+	var observations []githubObservation
+	if string(data) != string(stream.Items[githubCISnapshotKey].Data) {
+		observations = append(observations, githubObservation{Key: githubCISnapshotKey, Data: data, UpdatedAt: now})
 	}
-	var snapshot githubCISnapshot
-	if len(snapshotData) != 0 && json.Unmarshal(snapshotData, &snapshot) == nil {
-		if stream.Active && !snapshot.matches(pull) {
-			status.State = "stale"
+	prURL := githubObjectURL(repo, "pull", pull.Number)
+	revisions := []githubCIRevision{snapshot.Head}
+	if snapshot.Merge != nil {
+		revisions = append(revisions, *snapshot.Merge)
+	}
+	for _, revision := range revisions {
+		for _, run := range revision.Actions {
+			if run.Status != "completed" || run.Conclusion == "" {
+				continue
+			}
+			key := fmt.Sprintf("run/%s/%d/%s", run.ID, run.Attempt, run.Conclusion)
+			if _, seen := stream.Items[key]; seen {
+				continue
+			}
+			// One run can be returned for both the head and test merge.
+			stream.Items[key] = githubRecord{}
+			item := githubObservation{Key: key, UpdatedAt: now, At: now, Data: json.RawMessage(`null`)}
+			if !stream.LastSuccessAt.IsZero() {
+				item.Kind = "actions_completed"
+				item.URL = run.URL
+				if item.URL == "" {
+					item.URL = prURL + "/checks"
+				}
+				item.Thread = ThreadRef{githubPRThreadSource, prURL}
+				item.Title = fmt.Sprintf("GitHub Actions for %s#%d\n%s", repo, pull.Number, item.URL)
+				item.Body = fmt.Sprintf("%s completed with %s (attempt %d)\nCommit %s", run.Name, run.Conclusion, run.Attempt, revision.SHA)
+				item.SourceEventID = "github:actions:" + key
+				item.Meta = map[string]any{
+					"objectType": "pull_request_ci", "objectId": strconv.FormatInt(pull.ID, 10),
+					"number": pull.Number, "headSha": pull.HeadSHA, "sha": revision.SHA, "workflowRun": run,
+				}
+			}
+			observations = append(observations, item)
 		}
-		status.CI = &snapshot
 	}
-	return status
+	return observations, nil
+}
+
+type githubWorkflowRun struct {
+	ID           string
+	DisplayTitle string
+	Event        string
+	URL          string
+	RunAttempt   int
+	Workflow     *struct{ Name string }
+}
+
+type githubCheckSuite struct {
+	ID                   string
+	Status               string
+	Conclusion           string
+	WorkflowRun          *githubWorkflowRun
+	MatchingPullRequests githubConnection[githubWorkflowPull] `graphql:"matchingPullRequests(first:20)"`
+}
+
+type githubWorkflowPull struct {
+	DatabaseID githubDatabaseID `graphql:"fullDatabaseId" json:"fullDatabaseId"`
+	Number     int
+	HeadRefOID string `graphql:"headRefOid" json:"headRefOid"`
+}
+
+func readGitHubCIRevision(ctx context.Context, api *githubAPI, repo, sha string, pull githubPullRecord) (githubCIRevision, error) {
+	revision := githubCIRevision{SHA: sha}
+	if !githubCISHA.MatchString(sha) {
+		return revision, errors.New("github_invalid_ci_sha")
+	}
+	variables := githubRepositoryVariables(repo)
+	variables["oid"] = githubv4.GitObjectID(sha)
+	suites, err := githubReadConnection(func(cursor *githubv4.String) (githubConnection[githubCheckSuite], error) {
+		variables["cursor"] = cursor
+		var q struct {
+			Repository struct {
+				Object struct {
+					Commit struct {
+						OID         string                             `graphql:"oid"`
+						CheckSuites githubConnection[githubCheckSuite] `graphql:"checkSuites(first:20,after:$cursor)"`
+					} `graphql:"... on Commit"`
+				} `graphql:"object(oid:$oid)"`
+			} `graphql:"repository(owner:$owner,name:$name)"`
+		}
+		if err := api.query(ctx, &q, variables); err != nil {
+			return githubConnection[githubCheckSuite]{}, err
+		}
+		commit := q.Repository.Object.Commit
+		if commit.OID != sha {
+			return githubConnection[githubCheckSuite]{}, errors.New("github_ci_commit_unavailable")
+		}
+		return commit.CheckSuites, nil
+	})
+	if err != nil {
+		return revision, err
+	}
+	revision.Actions, revision.UnassociatedActions, err = githubActionSignals(ctx, api, suites, pull)
+	return revision, err
+}
+
+func githubActionSignals(ctx context.Context, api *githubAPI, suites []githubCheckSuite, pull githubPullRecord) ([]githubCISignal, int, error) {
+	byID := make(map[string]githubCISignal)
+	unknown := make(map[string]bool)
+	for _, suite := range suites {
+		run := suite.WorkflowRun
+		if run == nil {
+			continue
+		}
+		if run.ID == "" || suite.ID == "" || suite.Status == "" || run.RunAttempt <= 0 {
+			return nil, 0, errors.New("github_invalid_workflow_run")
+		}
+		linked, missing, err := githubSuiteMatchesPull(ctx, api, suite, pull)
+		if err != nil {
+			return nil, 0, err
+		}
+		prior, seen := byID[run.ID]
+		if !linked {
+			if !seen && missing {
+				unknown[run.ID] = true
+			}
+			continue
+		}
+		if !seen || run.RunAttempt > prior.Attempt {
+			name := run.DisplayTitle
+			if run.Workflow != nil && run.Workflow.Name != "" {
+				name = run.Workflow.Name
+			}
+			byID[run.ID] = githubCISignal{
+				ID: run.ID, Name: name, Status: strings.ToLower(suite.Status),
+				Conclusion: strings.ToLower(suite.Conclusion), URL: run.URL, Attempt: run.RunAttempt, Event: run.Event,
+			}
+		}
+		delete(unknown, run.ID)
+	}
+	out := make([]githubCISignal, 0, len(byID))
+	for _, id := range slices.Sorted(maps.Keys(byID)) {
+		out = append(out, byID[id])
+	}
+	return out, len(unknown), nil
+}
+
+func githubSuiteMatchesPull(ctx context.Context, api *githubAPI, suite githubCheckSuite, pull githubPullRecord) (bool, bool, error) {
+	associations := make(map[githubDatabaseID]bool)
+	err := githubPages(func(cursor *githubv4.String) (githubConnection[githubWorkflowPull], error) {
+		if cursor == nil {
+			return suite.MatchingPullRequests, nil
+		}
+		var q struct {
+			Node struct {
+				Suite struct {
+					MatchingPullRequests githubConnection[githubWorkflowPull] `graphql:"matchingPullRequests(first:20,after:$cursor)"`
+				} `graphql:"... on CheckSuite"`
+			} `graphql:"node(id:$id)"`
+		}
+		err := api.query(ctx, &q, map[string]any{"id": suite.ID, "cursor": cursor})
+		return q.Node.Suite.MatchingPullRequests, err
+	}, func(nodes []githubWorkflowPull) error {
+		for _, association := range nodes {
+			if association.DatabaseID <= 0 || association.Number <= 0 || association.HeadRefOID == "" {
+				return errors.New("github_invalid_workflow_association")
+			}
+			if association.HeadRefOID == pull.HeadSHA {
+				associations[association.DatabaseID] = association.Number == pull.Number
+			}
+		}
+		return nil
+	})
+	// A shared head does not resolve attribution.
+	return len(associations) == 1 && associations[githubDatabaseID(pull.ID)], len(associations) != 1, err
 }
