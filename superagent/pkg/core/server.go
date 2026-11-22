@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zoumo/mass/mass-go/pkg/massd"
+	"github.com/zoumo/mass/massd"
 )
 
 type Server struct {

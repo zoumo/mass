@@ -17,12 +17,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zoumo/mass/mass-go/pkg/client"
-	"github.com/zoumo/mass/mass-go/pkg/massd"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 
+	"github.com/zoumo/mass/massd"
+	"github.com/zoumo/mass/massd/pkg/client"
+	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/massd/pkg/transport"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 

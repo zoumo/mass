@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
 type issueSessionObservation struct {

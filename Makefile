@@ -1,34 +1,41 @@
 .PHONY: fmt lint test build check fmt-massctl lint-massctl test-massctl build-massctl check-massctl
 
+# Use go.mod even if a checkout retains a local vendor directory.
+export GOFLAGS := $(strip $(GOFLAGS) -mod=readonly)
+
+mass_commands := ./cmd/massd/... ./cmd/massctl/... ./cmd/mass-record-diagnose/...
+mass_packages := ./massd/... ./internal/... $(mass_commands)
+superagent_packages := ./superagent/... ./cmd/superagent/...
+
 fmt: fmt-go fmt-superagent
 lint: lint-go lint-superagent
 test: test-go test-superagent observer-check
 build: build-go build-superagent
 check: check-go check-superagent
 
-# Go experimental Service-backed CLI and HTTP/SSE.
+# MASS session service and CLI.
 .PHONY: fmt-go lint-go test-go test-unit-go test-integration-go test-simulation-go test-e2e-go build-go check-go
 fmt-go:
-	cd mass-go && golangci-lint fmt
+	golangci-lint fmt $(mass_packages)
 
 lint-go:
-	cd mass-go && golangci-lint run ./...
+	golangci-lint run $(mass_packages)
 
 # Package-local tests: no integration suite or recorded material.
 test-unit-go:
-	cd mass-go && GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -timeout=600s ./pkg/... ./cmd/... ./internal/...
+	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -timeout=600s ./massd ./massd/pkg/... ./internal/... $(mass_commands)
 
 # Constructed multi-module scenarios and strict SDK protocol probes.
 test-integration-go:
-	cd mass-go && GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -timeout=900s ./tests/integration ./examples/sdkprobe
+	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -timeout=900s ./massd/tests/integration ./massd/examples/sdkprobe
 
 # Recorded consumer material through agent-sdk-testify; never launches an Agent.
 test-simulation-go:
-	cd mass-go && MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./tests/simulation
+	MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./massd/tests/simulation
 
 # Explicit real-CLI/model recording and E2E. Never part of test-go or check-go.
 test-e2e-go:
-	cd mass-go && MASS_RECORD=1 GOWORK=off GOPROXY=off GOSUMDB=off go test -tags=e2e -count=1 -v -timeout=600s ./tests/e2e
+	MASS_RECORD=1 GOWORK=off GOPROXY=off GOSUMDB=off go test -tags=e2e -count=1 -v -timeout=600s ./massd/tests/e2e
 
 test-go:
 	$(MAKE) test-unit-go
@@ -37,13 +44,13 @@ test-go:
 
 build-massctl:
 	mkdir -p bin
-	cd mass-go && go build -trimpath -o ../bin/massctl ./cmd/massctl
+	go build -trimpath -o bin/massctl ./cmd/massctl
 
 build-go: build-massctl
-	cd mass-go && go build -trimpath -o ../bin/massd ./cmd/massd
+	go build -trimpath -o bin/massd ./cmd/massd
 
 check-go: lint-go test-go build-go
-	cd mass-go && golangci-lint fmt --diff
+	golangci-lint fmt --diff $(mass_packages)
 
 .PHONY: recording-gate-go
 recording-gate-go: test-simulation-go
@@ -57,22 +64,22 @@ check-massctl: check-go
 # massd/massctl, exercises the product entrypoints, and reads cleanup back.
 .PHONY: prototype-go
 prototype-go:
-	cd mass-go && GOWORK=off GOPROXY=off GOSUMDB=off go test -count=1 -v -timeout=600s ./tests/integration -run '^TestEntrypointSuite$$'
+	GOWORK=off GOPROXY=off GOSUMDB=off go test -count=1 -v -timeout=600s ./massd/tests/integration -run '^TestEntrypointSuite$$'
 
 # Offline cross-capability combinations; no recording or real-model fallback.
 .PHONY: acceptance-sdk-go
 acceptance-sdk-go:
-	cd mass-go && GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./tests/integration -run '^TestTicket08'
+	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./massd/tests/integration -run '^TestTicket08'
 
-# The Superagent Go module and read-only Observer are part of the root offline gates.
+# Superagent and the read-only Observer are part of the root offline gates.
 .PHONY: fmt-superagent lint-superagent test-superagent vet-superagent build-superagent check-superagent observer-build observer-check
 fmt-superagent:
-	cd superagent && golangci-lint fmt
+	golangci-lint fmt $(superagent_packages)
 lint-superagent: observer-build
-	cd superagent && golangci-lint run ./...
-	cd superagent && golangci-lint run --build-tags observerweb,coretest ./...
+	golangci-lint run $(superagent_packages)
+	golangci-lint run --build-tags observerweb,coretest $(superagent_packages)
 test-superagent:
-	set -eu; cd superagent; \
+	set -eu; \
 		export GOWORK=off GOPROXY=off GOSUMDB=off; \
 		test_bin=$$(mktemp -d "$${TMPDIR:-/tmp}/superagent-test.XXXXXX"); \
 		trap 'rm -rf "$$test_bin"' EXIT; \
@@ -80,17 +87,17 @@ test-superagent:
 		go build -race -trimpath -o "$$test_bin/superagent" ./cmd/superagent; \
 		go build -race -trimpath -tags coretest -o "$$test_bin/superagent-coretest" ./cmd/superagent; \
 		SUPERAGENT_CORE="$$test_bin/superagent" SUPERAGENT_CORE_CLOCK="$$test_bin/superagent-coretest" \
-			SUPERAGENT_TRIGGER_BINARY= TRIGGER_TEST_RACE=1 go test -race -count=1 -v -timeout=600s ./...
+			SUPERAGENT_TRIGGER_BINARY= TRIGGER_TEST_RACE=1 go test -race -count=1 -v -timeout=600s $(superagent_packages)
 vet-superagent:
-	cd superagent && GOWORK=off GOPROXY=off GOSUMDB=off go vet ./...
-	cd superagent && GOWORK=off GOPROXY=off GOSUMDB=off go vet -tags observerweb,coretest ./...
+	GOWORK=off GOPROXY=off GOSUMDB=off go vet $(superagent_packages)
+	GOWORK=off GOPROXY=off GOSUMDB=off go vet -tags observerweb,coretest $(superagent_packages)
 observer-build:
 	cd superagent/web && npm ci --offline --no-audit --no-fund
 	cd superagent/web && npm run build
 build-superagent: observer-build
 	mkdir -p bin
-	cd superagent && GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -tags observerweb -o ../bin/superagent ./cmd/superagent
+	GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -tags observerweb -o bin/superagent ./cmd/superagent
 observer-check: observer-build
 	cd superagent/web && npm run test:e2e
 check-superagent: lint-superagent test-superagent vet-superagent build-superagent observer-check
-	cd superagent && golangci-lint fmt --diff
+	golangci-lint fmt --diff $(superagent_packages)

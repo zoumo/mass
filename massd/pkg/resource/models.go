@@ -1,0 +1,155 @@
+// Package resource contains shared persistent values, not Service operations.
+package resource
+
+import (
+	"time"
+	"unicode/utf8"
+
+	"github.com/zoumo/agent-sdk-go/agent"
+
+	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/massd/pkg/runtime"
+)
+
+type Metadata struct {
+	Namespace       string    `json:"namespace"`
+	Name            string    `json:"name" minLength:"1" maxLength:"253" pattern:"^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"`
+	UID             string    `json:"uid" readOnly:"true"`
+	CreatedAt       time.Time `json:"createdAt" readOnly:"true"`
+	Generation      uint64    `json:"generation" readOnly:"true" minimum:"1"`
+	ResourceVersion string    `json:"resourceVersion" readOnly:"true"`
+}
+type RuntimeSpec struct {
+	Type             string                   `json:"type"`
+	Config           runtime.Config           `json:"config" nullable:"false"`
+	Features         *runtime.SessionFeatures `json:"features,omitempty"`
+	MCPServers       *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
+	PermissionPreset agent.PermissionPreset   `json:"permissionPreset,omitempty"`
+}
+type RuntimeStatus struct {
+	State             string               `json:"state" enum:"stopped,starting,running,stopping,unknown"`
+	AppliedGeneration uint64               `json:"appliedGeneration,omitempty"`
+	Capabilities      runtime.Capabilities `json:"capabilities,omitempty"`
+}
+type Runtime struct {
+	Metadata Metadata      `json:"metadata"`
+	Spec     RuntimeSpec   `json:"spec"`
+	Status   RuntimeStatus `json:"status"`
+}
+type SessionSpec struct {
+	runtime.SessionSpec
+	RuntimeRef string `json:"runtimeRef"`
+}
+
+const (
+	SessionReasonOwnerReleased   = "session_owner_released"
+	SessionReasonRecoveryMissing = "session_recovery_missing"
+)
+
+type SessionStatus struct {
+	HistoryLoad       *HistoryLoadStatus       `json:"historyLoad,omitempty"`
+	SessionID         string                   `json:"sessionId"`
+	State             events.SessionState      `json:"state"`
+	Reason            string                   `json:"reason,omitempty"`
+	AppliedGeneration uint64                   `json:"appliedGeneration,omitempty"`
+	RuntimeGeneration uint64                   `json:"runtimeGeneration,omitempty"`
+	Capabilities      runtime.Capabilities     `json:"capabilities,omitempty"`
+	EffectiveFeatures *runtime.SessionFeatures `json:"effectiveFeatures,omitempty"`
+}
+
+type SessionLoad struct {
+	Config     *runtime.InitialSessionConfig `json:"config,omitempty"`
+	Metadata   Metadata                      `json:"metadata"`
+	RuntimeRef string                        `json:"runtimeRef"`
+	Cwd        string                        `json:"cwd"`
+	SessionID  string                        `json:"sessionId"`
+	Features   *runtime.SessionFeatures      `json:"features,omitempty"`
+	MCPServers *[]runtime.MCPServer          `json:"mcpServers,omitempty"`
+}
+type HistoryLoadStatus struct {
+	LoadID               string                  `json:"loadId"`
+	Phase                string                  `json:"phase" enum:"accepted,replaying,native_completed,completed,failed,canceled"`
+	NativeVerified       bool                    `json:"nativeVerified"`
+	NativeResumed        bool                    `json:"nativeResumed"`
+	NativeCompleted      bool                    `json:"nativeCompleted"`
+	DeliveryCompleted    bool                    `json:"deliveryCompleted"`
+	CleanupCompleted     bool                    `json:"cleanupCompleted"`
+	LastCommittedEventID string                  `json:"lastCommittedEventId,omitempty"`
+	Error                *runtime.OperationError `json:"error,omitempty"`
+}
+type SessionLoadAccepted struct {
+	Session Session `json:"session"`
+	LoadID  string  `json:"loadId"`
+}
+type Session struct {
+	Metadata Metadata      `json:"metadata"`
+	Spec     SessionSpec   `json:"spec"`
+	Status   SessionStatus `json:"status"`
+}
+
+// SessionCreateInput is transient operation data, not a persistent Session.
+type SessionCreateInput struct {
+	Metadata     Metadata       `json:"metadata"`
+	Spec         SessionSpec    `json:"spec"`
+	InitialInput *runtime.Input `json:"initialInput,omitempty"`
+}
+
+// SessionCreated preserves the resource response shape without persisting receipt.
+type SessionCreated struct {
+	Session
+	InitialInputReceipt *runtime.InputReceipt `json:"initialInputReceipt,omitempty"`
+}
+
+type SessionResume struct {
+	InitialInput *runtime.Input `json:"initialInput,omitempty"`
+}
+
+// SessionResumed is an operation result, not a durable Session resource.
+type SessionResumed struct {
+	Session
+	InitialInputReceipt *runtime.InputReceipt `json:"initialInputReceipt,omitempty"`
+}
+
+type SessionRef struct {
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
+}
+
+type RuntimeQuery struct {
+	Type  string `json:"type,omitempty"`
+	State string `json:"state,omitempty"`
+}
+type SessionQuery struct {
+	Namespace  string              `json:"namespace,omitempty"`
+	RuntimeRef string              `json:"runtimeRef,omitempty"`
+	State      events.SessionState `json:"state,omitempty"`
+	SessionID  string              `json:"sessionId,omitempty"`
+	After      string              `json:"after,omitempty"`
+	Limit      int                 `json:"limit,omitempty"`
+}
+type SessionPage struct {
+	Items []Session `json:"items"`
+	Next  string    `json:"next,omitempty"`
+}
+
+// ValidateSessionState accepts only current public Session states. Empty is a
+// query wildcard; archived remains readable as legacy data but is never written
+// or selected through the current API.
+func ValidateSessionState(state events.SessionState) error {
+	switch state {
+	case "", "offline", "opening", "idle", "running", "requires_action", "closing", "unknown":
+		return nil
+	default:
+		return runtime.InvalidArgument("invalid session state")
+	}
+}
+
+// ValidateSessionID preserves opaque native identity, including whitespace and
+// embedded separators, while rejecting empty, non-UTF-8 and dot-segment IDs.
+func ValidateSessionID(id string) error {
+	if id == "" || id == "." || id == ".." || !utf8.ValidString(id) {
+		return &runtime.OperationError{Code: "invalid_argument", Reason: "invalid_session_id", Message: "Invalid session ID"}
+	}
+	return nil
+}

@@ -13,10 +13,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/mcp"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/store"
 
+	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/massd/pkg/store"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 

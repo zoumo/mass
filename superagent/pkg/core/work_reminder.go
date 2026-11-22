@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/zoumo/agent-sdk-go/agent"
-	"github.com/zoumo/mass/mass-go/pkg/client"
-	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zoumo/mass/massd/pkg/client"
+	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
 // WorkObservation ties the latest observed Issue Session input to a particular

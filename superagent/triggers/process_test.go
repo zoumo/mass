@@ -36,7 +36,7 @@ func TestMain(m *testing.M) {
 	builds := [][2]string{{fixtureBinary, "./internal/testdws"}}
 	if triggerBinary == "" {
 		triggerBinary = filepath.Join(dir, "superagent")
-		builds = append(builds, [2]string{triggerBinary, "../cmd/superagent"})
+		builds = append(builds, [2]string{triggerBinary, "../../cmd/superagent"})
 	}
 	for _, pair := range builds {
 		args := []string{"build"}

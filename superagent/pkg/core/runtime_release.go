@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/client"
+	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
 type RuntimeBindingRelease struct {

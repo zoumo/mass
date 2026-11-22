@@ -1,0 +1,1032 @@
+package service_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/massd/pkg/service"
+	"github.com/zoumo/mass/massd/pkg/store"
+	"github.com/zoumo/mass/massd/pkg/store/file"
+)
+
+type manualTimer struct {
+	clock    *manualClock
+	deadline time.Duration
+	callback func()
+	stopped  bool
+	fired    bool
+}
+
+func (t *manualTimer) Stop() bool {
+	t.clock.mu.Lock()
+	defer t.clock.mu.Unlock()
+	if t.stopped || t.fired {
+		return false
+	}
+	t.stopped = true
+	delete(t.clock.timers, t)
+	return true
+}
+
+type manualClock struct {
+	mu     sync.Mutex
+	now    time.Duration
+	timers map[*manualTimer]struct{}
+}
+
+func newManualClock() *manualClock {
+	return &manualClock{timers: map[*manualTimer]struct{}{}}
+}
+
+func (c *manualClock) AfterFunc(delay time.Duration, callback func()) service.Timer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	timer := &manualTimer{clock: c, deadline: c.now + delay, callback: callback}
+	c.timers[timer] = struct{}{}
+	return timer
+}
+
+func (c *manualClock) Advance(elapsed time.Duration) {
+	c.mu.Lock()
+	c.now += elapsed
+	var due []*manualTimer
+	for timer := range c.timers {
+		if timer.deadline <= c.now {
+			timer.fired = true
+			delete(c.timers, timer)
+			due = append(due, timer)
+		}
+	}
+	c.mu.Unlock()
+	for _, timer := range due {
+		timer.callback()
+	}
+}
+
+func (c *manualClock) Active() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.timers)
+}
+
+type idleFixture struct {
+	clock  *manualClock
+	driver *closeDriver
+	store  *file.Store
+	svc    *service.Service
+	ref    resource.SessionRef
+}
+
+func newIdleFixture(t *testing.T, timeout time.Duration, configure ...func(*service.Options)) *idleFixture {
+	t.Helper()
+	st, err := file.Open(t.TempDir(), false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	clock := newManualClock()
+	d := &closeDriver{
+		pipe:          events.NewEventPipe(64),
+		promptEntered: make(chan context.Context, 4),
+		promptRelease: make(chan struct{}),
+		resumeEntered: make(chan struct{}, 4),
+		resumeRelease: make(chan struct{}),
+		closeEntered:  make(chan struct{}, 4),
+		closeRelease:  make(chan struct{}),
+	}
+	options := service.Options{SessionIdleTimeout: timeout, Clock: clock}
+	for _, apply := range configure {
+		apply(&options)
+	}
+	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}), options)
+	t.Cleanup(func() {
+		d.releasePrompt()
+		d.releaseResume()
+		d.releaseClose()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, svc.Shutdown(ctx))
+	})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
+	require.NoError(t, err)
+	_, err = svc.StartRuntime(context.Background(), "agent")
+	require.NoError(t, err)
+	created, err := svc.CreateSession(context.Background(), resource.Session{
+		Metadata: resource.Metadata{Namespace: "one", Name: "demo"},
+		Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}},
+	})
+	require.NoError(t, err)
+	return &idleFixture{clock: clock, driver: d, store: st, svc: svc, ref: resource.SessionRef{SessionID: created.Status.SessionID}}
+}
+
+func (f *idleFixture) emitState(t *testing.T, state events.SessionState) {
+	t.Helper()
+	f.emit(t, events.StateUpdate{State: &state})
+}
+
+func (f *idleFixture) emit(t *testing.T, payload events.Payload) {
+	t.Helper()
+	f.emitWork(t, payload, "", false)
+}
+
+func (f *idleFixture) emitWork(t *testing.T, payload events.Payload, work string, terminal bool) {
+	t.Helper()
+	f.driver.mu.Lock()
+	source := f.driver.source.WithWork(work)
+	if terminal {
+		source = source.WithTerminalWork(work)
+	}
+	f.driver.mu.Unlock()
+	event, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   "one",
+		SessionName: "demo",
+		SessionID:   f.ref.SessionID,
+		Time:        time.Now().UTC(),
+		ItemID:      "idle-test",
+	}, payload, source)
+	require.NoError(t, err)
+	require.NoError(t, f.driver.pipe.Send(context.Background(), event))
+	require.NoError(t, f.driver.pipe.Flush(context.Background()))
+}
+
+func (f *idleFixture) waitIdle(t *testing.T) {
+	t.Helper()
+	f.emitState(t, events.Idle)
+	require.Eventually(t, func() bool {
+		r, err := f.svc.GetSession(f.ref)
+		return err == nil && r.Status.State == events.Idle
+	}, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleSessionAutoClosesWithoutStoppingRuntime(t *testing.T) {
+	f := newIdleFixture(t, 5*time.Second)
+	f.driver.releaseClose()
+	beforeRuntime, err := f.svc.GetRuntime("agent")
+	require.NoError(t, err)
+	beforeSession := mustSession(t, f.svc, f.ref)
+	f.waitIdle(t)
+
+	f.clock.Advance(5 * time.Second)
+	require.Eventually(t, func() bool {
+		current, getErr := f.svc.GetSession(f.ref)
+		return getErr == nil && current.Status.State == "offline"
+	}, time.Second, time.Millisecond)
+
+	current := mustSession(t, f.svc, f.ref)
+	require.Equal(t, beforeSession.Metadata.Generation, current.Metadata.Generation)
+	require.EqualValues(t, 1, f.driver.closes.Load())
+	require.Zero(t, f.driver.stops.Load())
+	afterRuntime, err := f.svc.GetRuntime("agent")
+	require.NoError(t, err)
+	require.Equal(t, "running", afterRuntime.Status.State)
+	require.Equal(t, beforeRuntime.Metadata.Generation, afterRuntime.Metadata.Generation)
+	require.Equal(t, beforeRuntime.Status.AppliedGeneration, afterRuntime.Status.AppliedGeneration)
+}
+
+func TestIdleSessionKnownEventResetsDeadline(t *testing.T) {
+	f := newIdleFixture(t, 5*time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+
+	f.clock.Advance(4 * time.Second)
+	f.waitIdle(t)
+	f.clock.Advance(4 * time.Second)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("idle timer was not reset by a known runtime event")
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.Equal(t, events.Idle, mustSession(t, f.svc, f.ref).Status.State)
+
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleReadsDoNotResetDeadline(t *testing.T) {
+	f := newIdleFixture(t, 5*time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+	f.clock.Advance(4 * time.Second)
+
+	_, err := f.svc.GetSession(f.ref)
+	require.NoError(t, err)
+	_, err = f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{})
+	require.NoError(t, err)
+	subscription, err := f.svc.SubscribeEvents(f.ref)
+	require.NoError(t, err)
+	require.NoError(t, subscription.Close())
+
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleSessionNonIdleStateDoesNotAutoClose(t *testing.T) {
+	for _, state := range []events.SessionState{events.Running, events.RequiresAction} {
+		t.Run(string(state), func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.releaseClose()
+			f.emitState(t, state)
+			require.Eventually(t, func() bool {
+				current, err := f.svc.GetSession(f.ref)
+				return err == nil && current.Status.State == state
+			}, time.Second, time.Millisecond)
+			require.Eventually(t, func() bool { return f.clock.Active() == 0 }, time.Second, time.Millisecond)
+
+			f.clock.Advance(time.Hour)
+			select {
+			case <-f.driver.closeEntered:
+				t.Fatalf("%s Session was automatically closed", state)
+			case <-time.After(50 * time.Millisecond):
+			}
+			require.Zero(t, f.driver.closes.Load())
+		})
+	}
+}
+
+func TestIdleSessionUnknownWithoutObservationDoesNotAutoClose(t *testing.T) {
+	f := newIdleFixture(t, time.Second)
+	f.driver.releaseClose()
+	require.Eventually(t, func() bool {
+		current, err := f.svc.GetSession(f.ref)
+		return err == nil && current.Status.State == events.Unknown
+	}, time.Second, time.Millisecond)
+	require.Zero(t, f.clock.Active())
+
+	f.clock.Advance(time.Hour)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("unknown Session was automatically closed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.Zero(t, f.driver.closes.Load())
+}
+
+func TestIdleExpiryRevalidatesPersistedState(t *testing.T) {
+	for _, state := range []events.SessionState{"opening", events.Running, events.RequiresAction, "closing", "offline", events.Unknown} {
+		t.Run(string(state), func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.releaseClose()
+			f.waitIdle(t)
+
+			current := mustSession(t, f.svc, f.ref)
+			current.Status.State = state
+			_, err := f.store.UpdateSession(current)
+			require.NoError(t, err)
+
+			f.clock.Advance(time.Second)
+			select {
+			case <-f.driver.closeEntered:
+				t.Fatalf("expired idle observation closed a Session persisted as %s", state)
+			case <-time.After(50 * time.Millisecond):
+			}
+			require.Zero(t, f.driver.closes.Load())
+		})
+	}
+}
+
+func TestIdleWaitsForBlockingInteractionToClose(t *testing.T) {
+	f := newIdleFixture(t, time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+
+	subscription, err := f.svc.SubscribeEvents(f.ref)
+	require.NoError(t, err)
+	defer subscription.Close()
+	f.emit(t, events.InteractionRequested{Interaction: "ask", Request: events.PermissionRequest("tool", "Allow?"), Blocking: true})
+	select {
+	case <-subscription.Events():
+	case <-time.After(time.Second):
+		t.Fatal("interaction event was not processed")
+	}
+	require.Eventually(t, func() bool { return f.clock.Active() == 0 }, time.Second, time.Millisecond)
+	f.clock.Advance(time.Hour)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("Session with a waiting interaction was automatically closed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	f.emit(t, events.InteractionClosed{Interaction: "ask", Outcome: "answered"})
+	require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleWaitsForKnownToolWorkToFinish(t *testing.T) {
+	f := newIdleFixture(t, time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+
+	subscription, err := f.svc.SubscribeEvents(f.ref)
+	require.NoError(t, err)
+	defer subscription.Close()
+	f.emit(t, events.ToolChunk{ID: "tool-1", Content: []events.ContentBlock{events.Text("working")}})
+	select {
+	case <-subscription.Events():
+	case <-time.After(time.Second):
+		t.Fatal("tool chunk was not processed")
+	}
+	require.Eventually(t, func() bool { return f.clock.Active() == 0 }, time.Second, time.Millisecond)
+	f.emit(t, events.ToolCall{ID: "tool-1", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "unknown", RawInput: map[string]any{"command": "sleep"}})
+	select {
+	case <-subscription.Events():
+	case <-time.After(time.Second):
+		t.Fatal("tool event was not processed")
+	}
+	require.Eventually(t, func() bool { return f.clock.Active() == 0 }, time.Second, time.Millisecond)
+	f.clock.Advance(time.Hour)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("Session with known tool work was automatically closed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	f.emit(t, events.ToolResult{ID: "tool-1", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "completed"})
+	require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleCancelWithoutWorkRestartsDeadline(t *testing.T) {
+	f := newIdleFixture(t, 5*time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+	f.clock.Advance(4 * time.Second)
+
+	receipt, err := f.svc.Cancel(context.Background(), f.ref)
+	require.NoError(t, err)
+	require.Equal(t, "noActiveWork", receipt.Result)
+	require.EqualValues(t, 1, f.driver.cancels.Load())
+	require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+
+	f.clock.Advance(4 * time.Second)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("idle deadline was not reset by accepted cancel activity")
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleAcceptedPromptInvalidatesTimer(t *testing.T) {
+	f := newIdleFixture(t, 5*time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+	f.clock.Advance(4 * time.Second)
+
+	promptDone := make(chan error, 1)
+	go func() {
+		_, err := f.svc.SendPrompt(context.Background(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+		promptDone <- err
+	}()
+	select {
+	case <-f.driver.promptEntered:
+	case err := <-promptDone:
+		t.Fatalf("prompt was not admitted: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("prompt was not admitted")
+	}
+
+	f.clock.Advance(5 * time.Second)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("idle close overtook an in-flight prompt")
+	case <-time.After(50 * time.Millisecond):
+	}
+	receipt, err := f.svc.Cancel(t.Context(), f.ref)
+	require.NoError(t, err)
+	require.Equal(t, "noActiveWork", receipt.Result)
+	f.driver.releasePrompt()
+	require.NoError(t, <-promptDone)
+	require.Zero(t, f.clock.Active(), "a control operation cannot authorize idle close before the admitted Prompt's next native state")
+	require.Zero(t, f.driver.closes.Load())
+
+	// An unrelated canceled operation or an ordinary stream event may not
+	// turn the last known idle state into authorization to close after input.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	answer := &workDispatchContext{Context: ctx, pauseAt: 3, paused: make(chan struct{}), resume: make(chan struct{})}
+	resumeAnswer := sync.OnceFunc(func() { close(answer.resume) })
+	t.Cleanup(resumeAnswer)
+	answered := make(chan error, 1)
+	go func() {
+		_, err := f.svc.AnswerInteraction(answer, f.ref, "question", nil)
+		answered <- err
+	}()
+	select {
+	case <-answer.paused:
+	case <-time.After(time.Second):
+		t.Fatal("Answer did not reach the post-admission checkpoint")
+	}
+	cancel()
+	resumeAnswer()
+	require.ErrorIs(t, <-answered, context.Canceled)
+	require.Zero(t, f.clock.Active(), "canceling unrelated work cannot use the stale pre-Prompt idle state")
+
+	subscription, err := f.svc.SubscribeEvents(f.ref)
+	require.NoError(t, err)
+	defer subscription.Close()
+	f.emit(t, events.AgentMessage{MessageID: "idle-test", Content: []events.ContentBlock{events.Text("follow-up output")}})
+	select {
+	case <-subscription.Events():
+	case <-time.After(time.Second):
+		t.Fatal("message was not published")
+	}
+	require.Zero(t, f.clock.Active(), "a message is not a state observation")
+
+	f.emitState(t, events.Idle)
+	require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+	f.clock.Advance(5 * time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdleNativeObservationAtPromptSettlement(t *testing.T) {
+	for _, queuedBefore := range []bool{false, true} {
+		name := "arrived during prompt"
+		if queuedBefore {
+			name = "queued before prompt"
+		}
+		t.Run(name, func(t *testing.T) {
+			testIdleObservationAtPromptSettlement(t, queuedBefore)
+		})
+	}
+}
+
+func testIdleObservationAtPromptSettlement(t *testing.T, queuedBefore bool) {
+	t.Helper()
+	f := newIdleFixture(t, time.Second)
+	f.driver.releaseClose()
+	f.waitIdle(t)
+	subscription, err := f.svc.SubscribeEvents(f.ref)
+	require.NoError(t, err)
+	defer subscription.Close()
+
+	var releasePublication func()
+	if queuedBefore {
+		broadcast, err := f.svc.EventBroadcast(f.ref)
+		require.NoError(t, err)
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		releasePublication = sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releasePublication)
+		require.NoError(t, broadcast.AddHandler(&observingHandler{required: true, handle: func(e events.SessionEvent) error {
+			if _, ok := e.Payload().(events.AgentMessage); ok {
+				close(entered)
+				<-release
+			}
+			return nil
+		}}))
+		f.emit(t, events.AgentMessage{MessageID: "idle-test", Content: []events.ContentBlock{events.Text("publication barrier")}})
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("required handler did not hold publication")
+		}
+		// The stream reader receives this StateUpdate while the delivery
+		// owner is blocked in the earlier handler.
+		f.emitState(t, events.Idle)
+	}
+
+	promptDone := make(chan error, 1)
+	go func() {
+		_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+		promptDone <- err
+	}()
+	select {
+	case <-f.driver.promptEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Prompt did not reach the driver")
+	}
+
+	if queuedBefore {
+		releasePublication()
+		// The barrier message precedes the queued state in the subscription.
+		select {
+		case <-subscription.Events():
+		case <-time.After(time.Second):
+			t.Fatal("barrier message was not published")
+		}
+	} else {
+		f.emitState(t, events.Idle)
+	}
+	select {
+	case event := <-subscription.Events():
+		require.IsType(t, events.StateUpdate{}, event.Payload())
+	case <-time.After(time.Second):
+		t.Fatal("idle state was not published")
+	}
+	require.Zero(t, f.clock.Active(), "the in-flight Prompt still holds admission")
+
+	f.driver.releasePrompt()
+	require.NoError(t, <-promptDone)
+	if queuedBefore {
+		require.Zero(t, f.clock.Active(), "an idle state queued before the Prompt cannot settle it")
+		f.emitState(t, events.Idle)
+		require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
+	} else {
+		require.Equal(t, 1, f.clock.Active(), "the new idle observation must schedule close at settlement")
+	}
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestIdlePromptSettlementUsesNativeWorkAssociation(t *testing.T) {
+	const newWork = "close-test"
+	const oldWork = "earlier-turn"
+	type observation struct {
+		state     events.SessionState
+		work      string
+		terminal  bool
+		wantRearm bool
+	}
+	oldIdle := observation{state: events.Idle, work: oldWork}
+	untaggedIdle := observation{state: events.Idle}
+	matchingIdle := observation{state: events.Idle, work: newWork, terminal: true, wantRearm: true}
+	matchingWithoutTerminal := observation{state: events.Idle, work: newWork}
+	for _, scenario := range []struct {
+		name         string
+		during       []observation
+		after        []observation
+		wantAtReturn bool
+	}{
+		{
+			name:   "old work during dispatch",
+			during: []observation{oldIdle},
+			after:  []observation{oldIdle, untaggedIdle, matchingIdle},
+		},
+		{
+			name:   "untagged during dispatch",
+			during: []observation{untaggedIdle},
+			after:  []observation{untaggedIdle, matchingIdle},
+		},
+		{
+			name:         "matching idle during dispatch",
+			during:       []observation{matchingIdle},
+			wantAtReturn: true,
+		},
+		{
+			name:         "matching then untagged idle during dispatch",
+			during:       []observation{matchingIdle, untaggedIdle},
+			wantAtReturn: true,
+		},
+		{
+			name:   "child settlement shares the root turn ID",
+			during: []observation{untaggedIdle, matchingWithoutTerminal},
+			after:  []observation{matchingWithoutTerminal, matchingIdle},
+		},
+		{
+			name:   "matching completion with a pending child interaction",
+			during: []observation{{state: events.RequiresAction, work: newWork, terminal: true}},
+			after:  []observation{{state: events.Idle, work: "child-turn", wantRearm: true}},
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.promptWork = newWork
+			f.driver.releaseClose()
+			f.waitIdle(t)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			emitState := func(observed observation) {
+				t.Helper()
+				f.emitWork(t, events.StateUpdate{State: &observed.state}, observed.work, observed.terminal)
+				event, err := nextSubscription(subscription, ctx)
+				require.NoError(t, err)
+				require.Equal(t, events.StateUpdate{State: &observed.state}, event.Payload())
+				require.Eventually(t, func() bool {
+					current, err := f.svc.GetSession(f.ref)
+					return err == nil && current.Status.State == observed.state
+				}, time.Second, time.Millisecond)
+			}
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the native submit gate")
+			}
+
+			for _, observed := range scenario.during {
+				emitState(observed)
+				require.Zero(t, f.clock.Active(), "the Prompt still holds admission")
+			}
+			f.driver.releasePrompt()
+			require.NoError(t, <-promptDone)
+			require.Equal(t, scenario.wantAtReturn, f.clock.Active() == 1, "timer eligibility when the receipt settles")
+
+			for _, observed := range scenario.after {
+				emitState(observed)
+				require.Equal(t, observed.wantRearm, f.clock.Active() == 1, "timer eligibility after the native state")
+			}
+			require.Equal(t, 1, f.clock.Active())
+			f.clock.Advance(time.Second)
+			require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+		})
+	}
+}
+
+func TestIdlePromptUnknownRequiresExplicitRelease(t *testing.T) {
+	for _, work := range []string{"earlier-turn", ""} {
+		name := "tagged"
+		if work == "" {
+			name = "untagged"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.promptErr = &runtime.OperationError{Code: "outcome_unknown", Reason: "synthetic_native_submit"}
+			f.driver.releaseClose()
+			f.waitIdle(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			emitIdle := func() {
+				t.Helper()
+				idle := events.Idle
+				f.emitWork(t, events.StateUpdate{State: &idle}, work, false)
+				event, err := nextSubscription(subscription, ctx)
+				require.NoError(t, err)
+				require.IsType(t, events.StateUpdate{}, event.Payload())
+			}
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("uncertain")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the native submit gate")
+			}
+			emitIdle()
+			f.driver.releasePrompt()
+			require.ErrorIs(t, <-promptDone, f.driver.promptErr)
+			require.Zero(t, f.clock.Active(), "an unresolved Prompt must keep automatic close fenced")
+			emitIdle()
+			require.Zero(t, f.clock.Active(), "later state without settlement proof cannot lift the fence")
+			f.clock.Advance(time.Hour)
+			require.Zero(t, f.driver.closes.Load())
+
+			_, err = f.svc.CloseSession(ctx, f.ref)
+			require.NoError(t, err)
+			f.driver.releaseResume()
+			_, err = f.svc.ResumeSession(ctx, f.ref)
+			require.NoError(t, err)
+			f.waitIdle(t)
+		})
+	}
+}
+
+func TestIdlePromptSettlementWithQueuedNativeEvents(t *testing.T) {
+	running := events.Running
+	idle := events.Idle
+	for _, scenario := range []struct {
+		name     string
+		queued   events.Payload
+		finished events.Payload
+	}{
+		{
+			name:     "running state",
+			queued:   events.StateUpdate{State: &running},
+			finished: events.StateUpdate{State: &idle},
+		},
+		{
+			name:     "tool work",
+			queued:   events.ToolChunk{ID: "tool-1", Content: []events.ContentBlock{events.Text("working")}},
+			finished: events.ToolResult{ID: "tool-1", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "completed"},
+		},
+		{
+			name:     "interaction",
+			queued:   events.InteractionRequested{Interaction: "ask", Request: events.PermissionRequest("tool", "Allow?"), Blocking: true},
+			finished: events.InteractionClosed{Interaction: "ask", Outcome: "answered"},
+		},
+		{
+			name:   "message",
+			queued: events.AgentMessage{MessageID: "idle-test", Content: []events.ContentBlock{events.Text("follow-up output")}},
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newIdleFixture(t, time.Second)
+			f.driver.releaseClose()
+			f.waitIdle(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			subscription, err := f.svc.SubscribeEvents(f.ref)
+			require.NoError(t, err)
+			defer subscription.Close()
+			broadcast, err := f.svc.EventBroadcast(f.ref)
+			require.NoError(t, err)
+			publishing := make(chan struct{})
+			release := make(chan struct{})
+			releasePublication := sync.OnceFunc(func() { close(release) })
+			t.Cleanup(releasePublication)
+			holdPublication := sync.OnceFunc(func() {
+				close(publishing)
+				<-release
+			})
+			require.NoError(t, broadcast.AddHandler(&observingHandler{required: true, handle: func(e events.SessionEvent) error {
+				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+					holdPublication()
+				}
+				return nil
+			}}))
+
+			promptDone := make(chan error, 1)
+			go func() {
+				_, err := f.svc.SendPrompt(t.Context(), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("accepted")}})
+				promptDone <- err
+			}()
+			select {
+			case <-f.driver.promptEntered:
+			case <-ctx.Done():
+				t.Fatal("Prompt did not reach the driver")
+			}
+			f.emitState(t, events.Idle)
+			select {
+			case <-publishing:
+			case <-ctx.Done():
+				t.Fatal("required handler did not hold idle publication")
+			}
+			f.emit(t, scenario.queued)
+			f.driver.releasePrompt()
+			require.NoError(t, <-promptDone)
+
+			if scenario.finished == nil {
+				require.Equal(t, 1, f.clock.Active(), "a queued message does not supersede the native idle observation")
+			} else {
+				require.Zero(t, f.clock.Active(), "queued activity must be processed before idle close can be armed")
+				f.clock.Advance(time.Second)
+				require.Zero(t, f.driver.closes.Load())
+			}
+			releasePublication()
+			first, err := nextSubscription(subscription, ctx)
+			require.NoError(t, err)
+			require.IsType(t, events.StateUpdate{}, first.Payload())
+			second, err := nextSubscription(subscription, ctx)
+			require.NoError(t, err)
+			require.IsType(t, scenario.queued, second.Payload())
+			if scenario.finished != nil {
+				require.Zero(t, f.clock.Active())
+				if state, ok := scenario.queued.(events.StateUpdate); ok {
+					require.Eventually(t, func() bool {
+						current, err := f.svc.GetSession(f.ref)
+						return err == nil && current.Status.State == *state.State
+					}, time.Second, time.Millisecond)
+				}
+				f.emit(t, scenario.finished)
+			}
+			require.Eventually(t, func() bool {
+				current, err := f.svc.GetSession(f.ref)
+				return err == nil && current.Status.State == events.Idle && f.clock.Active() == 1
+			}, time.Second, time.Millisecond)
+			f.clock.Advance(time.Second)
+			require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+		})
+	}
+}
+
+func TestIdleCloseFailureStaysClosingWithoutRetry(t *testing.T) {
+	f := newIdleFixture(t, time.Second)
+	f.driver.closeErrors = []error{errors.New("private close failure")}
+	f.driver.releaseClose()
+	f.waitIdle(t)
+
+	f.clock.Advance(time.Second)
+	require.Eventually(t, func() bool {
+		current, err := f.svc.GetSession(f.ref)
+		return err == nil && current.Status.State == "closing" && current.Status.Reason == "session_close_failed"
+	}, time.Second, time.Millisecond)
+	require.EqualValues(t, 1, f.driver.closes.Load())
+
+	select {
+	case <-f.driver.closeEntered:
+	default:
+	}
+	f.clock.Advance(time.Hour)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("failed automatic close was retried")
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.EqualValues(t, 1, f.driver.closes.Load())
+	require.Equal(t, events.SessionState("closing"), mustSession(t, f.svc, f.ref).Status.State)
+}
+
+func TestIdleExpiryDoesNotDuplicateInFlightManualClose(t *testing.T) {
+	f := newIdleFixture(t, time.Second)
+	f.waitIdle(t)
+
+	closed := make(chan error, 1)
+	go func() {
+		_, err := f.svc.CloseSession(context.Background(), f.ref)
+		closed <- err
+	}()
+	select {
+	case <-f.driver.closeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("manual close did not enter the SDK")
+	}
+
+	f.clock.Advance(time.Hour)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("idle expiry dispatched a duplicate close")
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.EqualValues(t, 1, f.driver.closes.Load())
+
+	f.driver.releaseClose()
+	require.NoError(t, <-closed)
+	require.Equal(t, events.SessionState("offline"), mustSession(t, f.svc, f.ref).Status.State)
+	f.clock.Advance(time.Hour)
+	require.EqualValues(t, 1, f.driver.closes.Load())
+}
+
+func TestRestartDoesNotCreateIdleTimersForHistoricalSessions(t *testing.T) {
+	st := openTicket03Store(t)
+	createTicket03Runtime(t, st, "agent", "stopped")
+	createTicket03Session(t, st, "agent", "idle-history", events.Idle)
+	createTicket03Session(t, st, "agent", "running-history", events.Running)
+
+	clock := newManualClock()
+	factory := &ticket03Factory{}
+	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}), service.Options{
+		SessionIdleTimeout: time.Second,
+		Clock:              clock,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, svc.Shutdown(ctx))
+	})
+	require.NoError(t, svc.Prepare(context.Background()))
+	require.Zero(t, factory.created.Load())
+	require.Zero(t, clock.Active())
+
+	clock.Advance(24 * time.Hour)
+	require.Zero(t, clock.Active())
+	require.Zero(t, factory.created.Load())
+	for _, name := range []string{"idle-history", "running-history"} {
+		current, err := svc.GetSession(resource.SessionRef{Namespace: "default", Name: name})
+		require.NoError(t, err)
+		require.Equal(t, events.Unknown, current.Status.State)
+	}
+}
+
+type idleReplayDriver struct {
+	runtime.Driver
+	pipe   *events.EventPipe
+	mu     sync.Mutex
+	source events.Source
+	closes atomic.Int32
+}
+
+func (d *idleReplayDriver) Events() (events.Stream, error) { return d.pipe, nil }
+func (*idleReplayDriver) Start(context.Context) (runtime.Capabilities, error) {
+	return runtime.Capabilities{}, nil
+}
+
+func (d *idleReplayDriver) LoadSession(ctx context.Context, id string, address runtime.Address, _ runtime.SessionSpec, loadID string) error {
+	source := events.NewSource()
+	d.mu.Lock()
+	d.source = source
+	d.mu.Unlock()
+	for _, payload := range []events.Payload{
+		events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}, EffectiveFeatures: events.ResumedSessionFeatures{}}},
+		events.ToolCall{ID: "old-tool", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "in_progress", RawInput: map[string]any{"command": "old"}},
+		events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}, EffectiveFeatures: events.ResumedSessionFeatures{}}},
+	} {
+		event, err := events.NewEvent(events.EventBase{
+			EventID:     uuid.NewString(),
+			Namespace:   address.Namespace,
+			SessionName: address.SessionName,
+			SessionID:   id,
+			Time:        time.Now(),
+			ItemID:      "old-tool",
+			Replay:      &events.ReplaySource{LoadID: loadID, NativeRecordID: "old-tool"},
+		}, payload, source)
+		if err != nil {
+			return err
+		}
+		if err := d.pipe.Send(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (*idleReplayDriver) CancelHistoryLoad(context.Context, string, string) error { return nil }
+func (d *idleReplayDriver) CloseSession(context.Context, string) error {
+	d.closes.Add(1)
+	return nil
+}
+
+func (d *idleReplayDriver) Stop(context.Context) error {
+	d.pipe.End(nil)
+	return nil
+}
+
+type idleReplayFactory struct{ driver *idleReplayDriver }
+
+func (idleReplayFactory) Validate(runtime.Config) error { return nil }
+func (f idleReplayFactory) New(string, runtime.Config) (runtime.Driver, error) {
+	return f.driver, nil
+}
+
+func TestIdleHistoryReplayToolWorkDoesNotSuppressClose(t *testing.T) {
+	st, err := file.Open(t.TempDir(), false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	clock := newManualClock()
+	driver := &idleReplayDriver{pipe: events.NewEventPipe(64)}
+	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": idleReplayFactory{driver: driver}}), service.Options{
+		SessionIdleTimeout: time.Second,
+		Clock:              clock,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, svc.Shutdown(ctx))
+	})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
+	require.NoError(t, err)
+	_, err = svc.StartRuntime(context.Background(), "agent")
+	require.NoError(t, err)
+
+	loaded, err := svc.LoadSession(context.Background(), resource.SessionLoad{
+		Metadata:   resource.Metadata{Namespace: "one", Name: "imported"},
+		RuntimeRef: "agent",
+		Cwd:        "/remote",
+		SessionID:  "native-idle",
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		current, getErr := svc.GetSession(resource.SessionRef{SessionID: "native-idle"})
+		return getErr == nil && current.Status.HistoryLoad != nil && current.Status.HistoryLoad.Phase == "completed"
+	}, time.Second, time.Millisecond)
+
+	driver.mu.Lock()
+	source := driver.source
+	driver.mu.Unlock()
+	state := events.Idle
+	event, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   "one",
+		SessionName: "imported",
+		SessionID:   "native-idle",
+		Time:        time.Now(),
+	}, events.StateUpdate{State: &state}, source)
+	require.NoError(t, err)
+	require.NoError(t, driver.pipe.Send(context.Background(), event))
+	require.NoError(t, driver.pipe.Flush(context.Background()))
+	require.Eventually(t, func() bool {
+		current, getErr := svc.GetSession(resource.SessionRef{SessionID: "native-idle"})
+		return getErr == nil && current.Status.State == events.Idle
+	}, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return clock.Active() == 1 }, time.Second, time.Millisecond)
+
+	clock.Advance(time.Second)
+	require.Eventually(t, func() bool { return driver.closes.Load() == 1 }, time.Second, time.Millisecond)
+	current, err := svc.GetSession(resource.SessionRef{SessionID: loaded.Session.Status.SessionID})
+	require.NoError(t, err)
+	require.Equal(t, events.SessionState("offline"), current.Status.State)
+}
+
+func TestZeroIdleTimeoutDisablesAutomaticClose(t *testing.T) {
+	f := newIdleFixture(t, 0)
+	f.driver.releaseClose()
+	f.emitState(t, events.Idle)
+	require.Eventually(t, func() bool {
+		current, err := f.svc.GetSession(f.ref)
+		return err == nil && current.Status.State == events.Idle
+	}, time.Second, time.Millisecond)
+	require.Zero(t, f.clock.Active())
+
+	f.clock.Advance(24 * time.Hour)
+	select {
+	case <-f.driver.closeEntered:
+		t.Fatal("zero idle timeout must disable automatic close")
+	case <-time.After(50 * time.Millisecond):
+	}
+	require.Zero(t, f.driver.closes.Load())
+}
