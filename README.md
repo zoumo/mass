@@ -117,8 +117,9 @@ compatibility, see the [Superagent guide](superagent/README.md).
 
 ## Build
 
-Build `massd` and `massctl` with `make build-go` and **Go 1.26.9 or later**.
-The full build also builds Superagent and its Observer. It requires Node.js
+Run build commands from the repository root with **Go 1.26.9 or later**.
+`make build-go` builds `massd` and `massctl` as separate executables. The full
+build also builds Superagent and its Observer. It requires Node.js
 20.19 or later in the 20.x series, or 22.12 or later, and a populated npm cache.
 
 ```sh
@@ -131,6 +132,21 @@ make build
 | `bin/massd` | 🛠️ Daemon for the WebSocket JSON-RPC API and health probes. |
 | `bin/massctl` | ⌨️ CLI for managing Runtimes and Sessions. |
 | `bin/superagent` | Experimental message routing and work coordination service with a read-only Observer. |
+
+To build a single executable, select its package in `cmd/`.
+
+```sh
+mkdir -p bin
+go build -mod=readonly -o bin/massd ./cmd/massd
+go build -mod=readonly -o bin/massctl ./cmd/massctl
+go build -mod=readonly -o bin/mass-record-diagnose ./cmd/mass-record-diagnose
+```
+
+The repository uses one Go module, [`github.com/zoumo/mass`](go.mod). Command
+entries live in [`cmd/`](cmd/). The [`massd/`](massd/README.md) component owns
+the session service, public Go client, and in-process assembly. Core, the
+[Trigger packages](superagent/triggers/README.md), and Observer live under
+[`superagent/`](superagent/README.md).
 
 ## Quick start
 
@@ -173,12 +189,11 @@ bin/massctl session --help
 
 Without a token file, `massd` logs a warning and accepts unauthenticated
 RPC connections over loopback. Configure `tokenFile` to require a Bearer token.
-See the [Go implementation guide](mass-go/README.md) for configuration and API
+See the [Go implementation guide](massd/README.md) for configuration and API
 usage, subject to the driver limits below.
 
 ## Current status
 
-`massd` and `massctl` are implemented in Go under [`mass-go/`](mass-go/README.md).
 Superagent is experimental.
 
 | Area | Available today | Current limit |
@@ -202,23 +217,23 @@ Superagent is experimental.
 | `make test-simulation-go` | Replay recorded Agent material through `agent-sdk-testify` |
 | `make test-e2e-go` | Run the separate end-to-end suite with real Codex and Claude CLIs |
 | `make build` | Build the daemon, CLI, and Superagent with its Observer |
-| `make check` | Check the Go modules and Observer with lint, tests, builds, and formatting checks |
+| `make check` | Check the Go module and Observer with lint, tests, builds, and formatting checks |
 | `make prototype-go` | Run the isolated synthetic end-to-end demonstration |
 
 ## Documentation
 
 | Guide | Read it for |
 |---|---|
-| 📘 [Go implementation](mass-go/README.md) | Configuration, commands, and implementation limits |
+| 📘 [Go implementation](massd/README.md) | Configuration, commands, and implementation limits |
 | 🧭 [Project harness](harness/index.md) | Authoritative design, principles, and API contracts |
 | 🌐 [API contract](harness/bindings/jsonrpc.md) | JSON-RPC 2.0 methods, subscription events, and transport rules |
 | [Superagent guide](superagent/README.md) | Configuration, execution, and the Observer |
-| 📡 [Historical HTTP implementation](mass-go/docs/http-service-v1.md) | Superseded REST/SSE binding; retained for migration history only |
-| 🧪 [Historical HTTP acceptance](mass-go/docs/http-v1-acceptance.md) | Superseded HTTP v1 validation and its scope |
+| 📡 [Historical HTTP implementation](massd/docs/http-service-v1.md) | Superseded REST/SSE binding; retained for migration history only |
+| 🧪 [Historical HTTP acceptance](massd/docs/http-v1-acceptance.md) | Superseded HTTP v1 validation and its scope |
 
 `massd` exposes `/jsonrpc`, `/livez`, and `/readyz`. The retired `/rpc` and
 `/apis/v1` routes return `404` for authenticated requests. See the
-[WebSocket endpoint upgrade steps](mass-go/README.md#upgrade-the-websocket-endpoint).
+[WebSocket endpoint upgrade steps](massd/README.md#upgrade-the-websocket-endpoint).
 
 ## License
 

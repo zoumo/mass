@@ -11,7 +11,7 @@ sources:
     resource: /Users/jim/code/github/agent/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts
     title: Claude Agent SDK 流式 assistant frame 声明
   - id: transcript
-    resource: /Users/jim/code/zoumo/mass/mass-go/tests/testdata/simulation/recordings/claude/basic/material/raw/raw.jsonl
+    resource: ../../../massd/tests/testdata/simulation/recordings/claude/basic/material/raw/raw.jsonl
     title: Claude CLI 实时帧与 transcript apiBlockIndex 对照
   - id: acp
     resource: /Users/jim/code/github/agent/claude-agent-acp/src/v2/message-blocks.ts

@@ -37,9 +37,9 @@ material ID, SDK version, testify version, and project:
 | Claude permission | `recordings-09d4ddf1ff20` | `21e27325e989edaf20923eade3fada20` | passed |
 
 The active suites are under
-`tests/testdata/simulation/recordings-4959190bc518/codex/<case>/` and
-`tests/testdata/simulation/recordings-09d4ddf1ff20/claude/<case>/`.
-All four historical cases remain in `tests/testdata/simulation/recordings/`
+`massd/tests/testdata/simulation/recordings-4959190bc518/codex/<case>/` and
+`massd/tests/testdata/simulation/recordings-09d4ddf1ff20/claude/<case>/`.
+All four historical cases remain in `massd/tests/testdata/simulation/recordings/`
 with their original bytes, indexes, hashes and provenance. Each suite has an
 exact provider/case inventory. Audits reject missing or extra suites, providers,
 cases and files, wrong active selections, material identity, versions, hashes,
@@ -58,18 +58,18 @@ real resume/load acceptance is not claimed. See the
 
 ## Focused offline acceptance
 
-Run from `mass-go/`. First confirm that selection is nonempty:
+From the repository root, list the tests that match the selection.
 
 ```sh
 MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off \
-  go test -list '^(Test(Codex|Claude)(Basic|Permission)Replay|TestRecordingRejectsIncompleteExecution|TestRecordingGate|TestRecordingAuditRejects.*|TestRecordingRejectsInvalidMaterial)$' ./tests/simulation
+  go test -mod=readonly -list '^(Test(Codex|Claude)(Basic|Permission)Replay|TestRecordingRejectsIncompleteExecution|TestRecordingGate|TestRecordingAuditRejects.*|TestRecordingRejectsInvalidMaterial)$' ./massd/tests/simulation
 ```
 
 Then run the same focused selection with race checks:
 
 ```sh
 MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off \
-  go test -race -count=1 -timeout=600s ./tests/simulation \
+  go test -mod=readonly -race -count=1 -timeout=600s ./massd/tests/simulation \
   -run '^(Test(Codex|Claude)(Basic|Permission)Replay|TestRecordingRejectsIncompleteExecution|TestRecordingGate|TestRecordingAuditRejects.*|TestRecordingRejectsInvalidMaterial)$'
 ```
 
@@ -91,7 +91,7 @@ MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-basic \
   MASS_RECORD_DIAGNOSTICS=/var/tmp/new-mass-codex-basic-diagnosis \
   GOWORK=off GOPROXY=off GOSUMDB=off \
-  go test -tags=e2e -count=1 -v -timeout=300s ./tests/e2e -run '^TestRecordCodexBasic$'
+  go test -mod=readonly -tags=e2e -count=1 -v -timeout=300s ./massd/tests/e2e -run '^TestRecordCodexBasic$'
 ```
 
 For permission, use unique permission output/diagnostics paths and select

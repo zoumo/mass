@@ -167,10 +167,10 @@ Finished subscriptions and input admission remain sealed as documented in
 Opt-in scale acceptance (four Sessions, bounded 64-event input batches, varying
 history counts and payload sizes) reports startup, query, retry, append, status
 update and Reconcile timing, total allocation, retained/sample-peak Go heap and
-process RSS high-water mark:
+process RSS high-water mark. Run the test from the repository root.
 
 ```sh
-MASS_TEST_REPLICA_SCALE=1 go test ./pkg/store/file -run '^TestReplicaScaleAcceptance$' -v -count=1
+MASS_TEST_REPLICA_SCALE=1 go test -mod=readonly ./massd/pkg/store/file -run '^TestReplicaScaleAcceptance$' -v -count=1
 ```
 
 This uses owned temporary files/SQLite and synthetic facts. Startup/Reconcile

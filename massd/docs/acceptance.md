@@ -80,7 +80,8 @@ are not scale PASS results.
 
 ## Product Combination Map
 
-All paths below are relative to `mass-go/`. The named tests are scenario
+The scenario files are under `massd/tests/integration/` unless their paths
+name another directory under `massd/`. The named tests are scenario
 selectors, not a blanket claim that every event originates natively on both
 providers. Answers through the Go client are deliberate: this CLI has no answer
 command.
@@ -108,7 +109,7 @@ The source of truth is the current
 events package decodes and re-encodes every current example:
 
 ```sh
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./pkg/events -run "^TestHarnessEventExamplesRoundTrip$"'
+rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go test -mod=readonly -race -count=1 -v -timeout=180s ./massd/pkg/events -run "^TestHarnessEventExamplesRoundTrip$"'
 ```
 
 The model test compares JSON field fidelity. RPC transport tests exercise live
@@ -154,8 +155,8 @@ a claim each native CLI emits all 17 branches.
 ## Consumer Simulation
 
 Active consumer-provenance recordings live in
-`tests/testdata/simulation/recordings-4959190bc518/codex/` and
-`tests/testdata/simulation/recordings-09d4ddf1ff20/claude/`. The historical
+`massd/tests/testdata/simulation/recordings-4959190bc518/codex/` and
+`massd/tests/testdata/simulation/recordings-09d4ddf1ff20/claude/`. The historical
 `recordings/` suite remains immutable for audit provenance. Each case binds an
 adjacent `index.json` to a `material/` export. The offline gate replays the
 active four through a real MASS daemon and public WebSocket JSON-RPC client, checks that the mock
@@ -277,5 +278,5 @@ native open because it cannot observe identity. Answering is available through
 `pkg/client.Client.Answer` (`session.answer` over WebSocket JSON-RPC); there is
 no HTTP answer route. See the
 [client implementation notes](../pkg/client/README.md),
-[runtime configuration](../README.md#runtime-launch-configuration) and
+[runtime configuration](../README.md#runtime-configuration) and
 [load boundaries](../README.md#retained-history-load). Never print Bearer tokens.

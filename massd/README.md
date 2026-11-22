@@ -1,9 +1,12 @@
-# MASS Go experiment
+# MASS session service in Go
 
 [harness](../harness/index.md) is the read-only project contract. This implementation
 uses **CLI → WebSocket JSON-RPC → Service → Store / Runtime**. It has one SessionEvent model,
 one Driver consumer, independent live subscriptions, and file-authoritative history.
-Executable assembly lives under `cmd/`; CLI and other library modules live under `pkg/`.
+The [massd](../cmd/massd) and [massctl](../cmd/massctl) command packages live
+under the root `cmd/`. The `massd` Go package provides `Start` for in-process
+callers such as Superagent. The session service, stores, drivers, transport,
+and [public Go client](pkg/client/README.md) live in `massd/pkg/`.
 
 ## Layered verification
 
@@ -53,6 +56,8 @@ the SDK `applied_best_effort` result without upgrading native acceptance.
 See [layered acceptance](docs/acceptance.md).
 
 ## Daemon and CLI
+
+Run the commands below from the repository root.
 
 The default listen address is `127.0.0.1:24368`. The daemon uses [Viper](https://github.com/spf13/viper) to read
 `~/.mass/config.yaml` when present and defaults its storage root to `~/.mass` (without a `data/` subdirectory).
@@ -313,18 +318,18 @@ material hashes and MASS public events. The older `recordings/` exports are avai
 ### Real Agent preflight and diagnosis
 
 Before starting a long recording, check the selected native executable and, only
-when its prerequisites are present, send one no-tool model request. Run this
-from `mass-go/`; the output directory must be absolute and must not already
-exist. A model is never read from personal settings:
+when its prerequisites are present, send one no-tool model request. Run the
+command from the repository root. Use a new absolute output path and select
+the model explicitly.
 
 ```sh
-go run ./cmd/mass-record-diagnose \
+go run -mod=readonly ./cmd/mass-record-diagnose \
   --provider codex \
   --executable /absolute/path/to/native/codex \
   --model gpt-6.1-sol \
   --output /var/tmp/new-mass-diagnosis-codex
 
-go run ./cmd/mass-record-diagnose \
+go run -mod=readonly ./cmd/mass-record-diagnose \
   --provider codex \
   --executable /absolute/path/to/native/codex \
   --model gpt-6.1-sol \
@@ -369,7 +374,7 @@ cases use `auto/deepseek-v4.1-flash-1017`. Real recording lives behind both the
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CODEX=/absolute/path/to/native/codex \
   MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-basic \
-  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordCodexBasic$'
+  go test -mod=readonly -tags=e2e -count=1 -v ./massd/tests/e2e -run '^TestRecordCodexBasic$'
 ```
 
 The permission case selects `manualReview` in `SessionSpec.Config`. It requests
@@ -381,7 +386,7 @@ allow-once option offered by Codex and verifies the file contents.
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CODEX=/absolute/path/to/native/codex \
   MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-permission \
-  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordCodexPermission$'
+  go test -mod=readonly -tags=e2e -count=1 -v ./massd/tests/e2e -run '^TestRecordCodexPermission$'
 ```
 
 Use the native CLI executable to avoid package-launcher environment injection.
@@ -395,16 +400,16 @@ as private because testify stages authentication there. The output contains
 native session metadata; inspect it before sharing outside the repository.
 
 Claude recording uses the same lifecycle and exports to
-`tests/testdata/simulation/recordings-09d4ddf1ff20/claude/<case>/`:
+`massd/tests/testdata/simulation/recordings-09d4ddf1ff20/claude/<case>/`.
 
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
-  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordClaudeBasic$'
+  go test -mod=readonly -tags=e2e -count=1 -v ./massd/tests/e2e -run '^TestRecordClaudeBasic$'
 
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
-  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordClaudePermission$'
+  go test -mod=readonly -tags=e2e -count=1 -v ./massd/tests/e2e -run '^TestRecordClaudePermission$'
 ```
 
 Set `MASS_RECORD_CLAUDE_BASIC_OUTPUT` or
@@ -423,11 +428,9 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.1.0`,
-source commit `c169f237a1a119712563082b359a836d8089c19d`, without a local
-replacement. Consumer recording and offline replay use `agent-sdk-testify`
-`v0.2.2`. Testify forwards the SDK's arguments after `--` to the native process
-during recording and ignores them during replay. Capture metadata stores the
+The root [Go module](../go.mod) pins `agent-sdk-go` for the runtime and
+`agent-sdk-testify` for consumer recording and offline replay. Testify forwards the SDK's arguments after `--` to the native
+process during recording and ignores them during replay. Capture metadata stores the
 native version and omits those arguments.
 The active Claude fixtures retain SDK `09d4ddf1ff20` and testify `v0.2.1` as recording provenance. The
 current Codex suite and the historical `recordings/` exports retain their

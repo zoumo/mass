@@ -336,7 +336,7 @@ sessions:
 ```
 
 `massd.endpoint` accepts a WebSocket origin, proxy mount base, or full
-`/jsonrpc` URL. See the [endpoint upgrade steps](../mass-go/README.md#upgrade-the-websocket-endpoint)
+`/jsonrpc` URL. See the [endpoint upgrade steps](../massd/README.md#upgrade-the-websocket-endpoint)
 when switching an existing deployment. For an embedded instance, use
 `massd.embedded.dataDir` in place of `massd.endpoint` and `massd.tokenFile`.
 With `massd.embedded.expose` enabled, `GET /massd/jsonrpc` accepts WebSocket
