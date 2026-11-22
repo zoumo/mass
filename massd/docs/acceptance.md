@@ -21,5 +21,3 @@ Use an authenticated native executable, an explicit model, and fresh test-owned 
 Subscribe before sending work. Observe native identity and completion separately from the input receipt. For a permission or question scenario, answer a live interaction with an option the Agent actually offers. Confirm that close and resume use the same native identity. For a load scenario, use only the native history created for the check. Verify durable delivery through `session get` and `session history` before continuing on the restored connection.
 
 After each run, stop the owned Runtime and daemon. Check the process and listener after exit. Report failures, skipped conditions, and unconfirmed cleanup with their actual evidence. See the [test and acceptance principles](../../harness/principles/testing.md) and [recording guide](recording.md) for the test contract and capture entry points.
-
-See [historical evidence](history.md) for reports tied to earlier code and SDK pins.
