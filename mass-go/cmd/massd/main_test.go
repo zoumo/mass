@@ -135,6 +135,39 @@ func (s *commandSuite) TestMetadataConfiguration() {
 	}
 }
 
+func (s *commandSuite) TestComposeConfigurationSection() {
+	path := filepath.Join(s.T().TempDir(), "stack.yaml")
+	cmd := newCommand()
+	s.Require().NoError(cmd.Flags().Set("config", path))
+	s.Require().NoError(cmd.Flags().Set("compose-config-stdin", "true"))
+	cmd.SetIn(strings.NewReader(`
+dataDir: daemon
+tokenFile: private/token
+tlsCert: private/cert
+tlsKey: private/key
+sessionIdleTimeout: 5s
+`))
+	got, err := readOptions(cmd, path)
+	s.Require().NoError(err)
+	s.Equal(filepath.Join(filepath.Dir(path), "daemon"), got.Data)
+	s.Equal(filepath.Join(filepath.Dir(path), "private", "token"), got.TokenFile)
+	s.Equal(filepath.Join(filepath.Dir(path), "private", "cert"), got.TLSCert)
+	s.Equal(filepath.Join(filepath.Dir(path), "private", "key"), got.TLSKey)
+	s.Equal(5*time.Second, got.SessionIdleTimeout)
+
+	for _, invalid := range []string{
+		`unknown: null`,
+		`metaStore: {unknown: {}}`,
+		`tokenFile: [PRIVATE-FIXTURE-CONFIG-VALUE]`,
+		`tokenFile: [PRIVATE-FIXTURE-CONFIG-VALUE`,
+	} {
+		cmd.SetIn(strings.NewReader(invalid))
+		_, err = readOptions(cmd, path)
+		s.Require().Error(err)
+		s.NotContains(err.Error(), "PRIVATE-FIXTURE-CONFIG-VALUE")
+	}
+}
+
 func (s *commandSuite) TestDataDirConfiguration() {
 	home := s.T().TempDir()
 	s.T().Setenv("HOME", home)

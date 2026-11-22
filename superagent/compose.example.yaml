@@ -1,0 +1,44 @@
+# Replace the example account, profile, repository, and executable path.
+# Supply private Core token files and inject the matching environment variables.
+massd:
+  dataDir: ./massd-data
+  listen: 127.0.0.1:0
+
+core:
+  dataDir: ./superagent-core-data
+  listen: 127.0.0.1:24370
+  sources:
+    - source: github
+      accountId: github-local
+      instanceId: github-trigger-1
+      tokenFile: ./secrets/github-core.token
+    - source: dws
+      accountId: ACCOUNT_ID
+      instanceId: dws-trigger-1
+      tokenFile: ./secrets/dws-core.token
+      outboxConsumer: true
+
+triggers:
+  github:
+    accountId: github-local
+    instanceId: github-trigger-1
+    coreTokenEnv: SUPERAGENT_GITHUB_CORE_TOKEN
+    githubTokenEnv: SUPERAGENT_GITHUB_TOKEN
+    statusListen: 127.0.0.1:24372
+    databasePath: ./trigger-state/github.sqlite
+    repositories:
+      - repository: example-org/example-repo
+  dws:
+    dwsExecutable: /absolute/path/to/dws
+    profile: "CORP_ID:ACCOUNT_ID"
+    source: dws
+    accountId: ACCOUNT_ID
+    selfOpenDingtalkId: ACCOUNT_OPEN_DINGTALK_ID
+    instanceId: dws-trigger-1
+    coreTokenEnv: SUPERAGENT_DWS_CORE_TOKEN
+    statusListen: 127.0.0.1:24371
+    databasePath: ./trigger-state/dws.sqlite
+    direct:
+      enabled: true
+      match:
+        - prefix: "Assistant "

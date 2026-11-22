@@ -39,8 +39,7 @@ Set `SUPERAGENT_OBSERVER_OTLP_ENDPOINT` separately to enable browser telemetry.
 
 ```sh
 SUPERAGENT_OBSERVER_OTLP_ENDPOINT=http://127.0.0.1:14320 \
-  bin/superagent compose --massd-bin ./bin/massd \
-    --massd-config /absolute/run/massd.yaml --core-config /absolute/run/core.yaml
+  bin/superagent compose --config /absolute/run/stack.yaml --massd-bin ./bin/massd
 ```
 
 The Core resource has `service.name=superagent-core`. Submit a Message or

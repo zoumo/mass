@@ -1,0 +1,42 @@
+dwsExecutable: /absolute/path/to/dws
+profile: CORP_ID:ACCOUNT_ID
+source: dws
+accountId: ACCOUNT_ID
+selfOpenDingtalkId: ACCOUNT_OPEN_DINGTALK_ID
+instanceId: dws-adapter-1
+coreEndpoint: http://127.0.0.1:24370
+coreTokenEnv: SUPERAGENT_DWS_TOKEN
+statusListen: 127.0.0.1:24371
+databasePath: /absolute/path/to/dws.sqlite
+direct:
+  enabled: true
+  match:
+    - prefix: "助理 "
+selfChat:
+  enabled: false
+  conversationId: NATIVE_SELF_CONVERSATION_ID
+  match:
+    - prefix: "记录 "
+# groups:
+#   - conversationId: NATIVE_GROUP_CONVERSATION_ID
+#     replyEnabled: true
+#     match:
+#       - contains: "请跟进"
+#       - regex: "^告警 [A-Z]+-[0-9]+"
+#     prompt: |
+#       汇总需要跟进的事项及其负责人。
+# feedback:
+#   statePath: /absolute/path/to/dws-feedback.json
+#   thinking:
+#     emotionId: "THINKING_TEMPLATE_ID"
+#     backgroundId: THINKING_BACKGROUND_ID
+#     name: thinking
+#     text: thinking
+#   done:
+#     emotionId: "DONE_TEMPLATE_ID"
+#     backgroundId: DONE_BACKGROUND_ID
+#     name: done
+#     text: done
+bufferCapacity: 100
+retryMillis: 1000
+requestTimeoutMillis: 5000

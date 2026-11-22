@@ -12,15 +12,24 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 )
 
-var errConflictingDataFields = errors.New("choose only one of dataDir or data")
+var (
+	errConflictingDataFields = errors.New("choose only one of dataDir or data")
+	errInvalidComposeConfig  = errors.New("invalid massd configuration")
+)
 
 func readOptions(cmd *cobra.Command, path string) (options, error) {
 	config := viper.New()
 	config.SetConfigFile(path)
 	config.SetConfigType("yaml")
-	if err := config.ReadInConfig(); err != nil {
+	composed, _ := cmd.Flags().GetBool("compose-config-stdin")
+	if composed {
+		if err := readComposeOptions(cmd, config); err != nil {
+			return options{}, err
+		}
+	} else if err := config.ReadInConfig(); err != nil {
 		if !errors.Is(err, os.ErrNotExist) || cmd.Flags().Changed("config") {
 			// Parser errors may include configuration values; do not expose them.
 			return options{}, errors.New("cannot read configuration as YAML")
@@ -65,7 +74,42 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 			}
 		}
 	}
+	if composed {
+		for _, file := range []*string{&configured.TokenFile, &configured.TLSCert, &configured.TLSKey} {
+			if *file != "" && !filepath.IsAbs(*file) {
+				*file = filepath.Join(filepath.Dir(path), *file)
+			}
+		}
+	}
 	return configured, nil
+}
+
+func readComposeOptions(cmd *cobra.Command, config *viper.Viper) error {
+	if !cmd.Flags().Changed("config") {
+		return errors.New("compose configuration requires a configuration file path")
+	}
+	var fields map[string]any
+	if err := yaml.NewDecoder(cmd.InOrStdin()).Decode(&fields); err != nil || fields == nil {
+		return errors.New("cannot read massd configuration mapping")
+	}
+	// Viper drops null and empty mappings when it enumerates configuration
+	// values. Check the raw mapping first to catch unknown keys in both cases.
+	var raw options
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		ErrorUnused: true,
+		DecodeHook: mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			mapstructure.StringToWeakSliceHookFunc(","),
+		),
+		Result: &raw,
+	})
+	if err != nil {
+		return err
+	}
+	if err := decoder.Decode(fields); err != nil {
+		return errors.New("configuration must contain known fields with valid types")
+	}
+	return config.MergeConfigMap(fields)
 }
 
 func validateSessionIdleTimeoutType(config *viper.Viper) error {

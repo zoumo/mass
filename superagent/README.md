@@ -1,9 +1,9 @@
 # superagent
 
-`superagent` is the new business entrypoint above massd. This independent Go
-module owns a single local SQLite database. The delivered slice accepts native
-messages, routes them through one global Router and independent Topics, prepares
-fixed massd Sessions, batches durable inputs and exposes read-only observation.
+`superagent` includes Superagent Core and the GitHub and DWS Triggers. Core
+accepts native messages, routes them through one global Router and independent
+Topics, prepares fixed massd Sessions, batches durable inputs, and exposes
+read-only observation. Core and each Trigger own separate SQLite databases.
 Topics can schedule Issue Sessions, receive Reports, accept, cancel and reopen work.
 Topics can schedule one-time followups via Timer tools. Router and Topic can
 reply to a source Message through a durable Outbox. Topic and current Issue SessionBindings
@@ -45,10 +45,9 @@ The transitive Agent SDK Go version matches the pin in `mass-go/go.mod`.
 See [Run Superagent telemetry locally](telemetry/README.md) for the optional
 OpenTelemetry exporters and the local OpenObserve stack.
 
-Copy `config.example.yaml` into an isolated run directory and provide your own
-private token file (at least 32 non-whitespace bytes; mode 0600). Tokens and
-DWS credentials are never embedded in startup output or browser configuration.
-Configuration paths resolve relative to the YAML file.
+For standalone Core, copy `config.example.yaml` into an isolated run directory.
+Provide a private source token file with at least 32 non-whitespace bytes and
+file mode 0600. Core resolves relative paths from the YAML file's directory.
 
 `listen` defaults to numeric loopback `127.0.0.1:24370`; an explicit numeric
 address can bind another interface. Intake-only Core accepts port `0` for
@@ -106,8 +105,8 @@ See [the input recovery contract](API.md#local-operator-reconciliation).
 
 Multiple collectors for one account share the source and use distinct
 instance-bound tokens. Startup checks configured sources and accounts
-against admitted Messages. Channel credentials/profile resolution belong to external
-adapters. This module never invokes DWS.
+against admitted Messages. Triggers resolve their upstream credentials and
+profiles. The DWS Trigger makes DWS calls.
 
 Optional `storageMaxPages` bounds main database growth in 4096-byte SQLite pages
 (zero is unlimited); WAL and filesystem overhead are additional. An exhausted
@@ -192,46 +191,53 @@ scheduling. MASS settles accepted work, attempts to send final events to
 healthy connections, then closes those connections and releases its data
 directory.
 
-## Running massd and Core together
+## Run the stack with Compose
 
-For an installation under `~/.mass`, put `massd.yaml` and `core.yaml` in
-that directory. Put the following settings in `massd.yaml`.
+Copy the [Compose example](compose.example.yaml) to `~/.mass/stack.yaml`. Keep
+the required `massd` and `core` sections. Include `triggers.github` and
+`triggers.dws` for the collectors you want to run. Compose resolves relative
+paths from the directory that contains `stack.yaml`.
 
-```yaml
-dataDir: ./massd
-listen: 127.0.0.1:0
-```
+Match each Trigger's source, account, and instance to a `core.sources` entry.
+Create a separate private token file for each entry. Inject the same token
+into the environment variable named by that Trigger's `coreTokenEnv`.
+Supply the GitHub credential through `githubTokenEnv` and configure the DWS
+profile through the DWS CLI. Use a separate persistent `databasePath` for
+each Trigger and a separate `feedback.statePath` if DWS feedback is enabled.
+See the [Trigger configuration and cutover guide](triggers/README.md).
 
-Use `config.example.yaml` as the starting point for `core.yaml`. Set
-`dataDir: ./superagent` and configure a source and its private token file.
-Add `sessions` to enable agent execution. Compose supplies the actual RPC
-address for `massd.endpoint`. Keep Core and massd on the same host and run
-both under the same operating-system account. Core stores private role
-credentials under `dataDir/mcp-files` and passes absolute file references in
-role Session specs. Keep the Core listen port fixed when using the default
-loopback MCP URL. Use a stable `externalURL` when using a reverse proxy.
-For separate processes, configure `massd.endpoint`. Set `tokenFile` in
-`massd.yaml` and the matching `massd.tokenFile` in `core.yaml` to enable
-RPC authentication. Use an absolute path in `massd.yaml` when starting
-from outside the configuration directory. With `tokenFile` omitted,
-massd warns at startup and accepts unauthenticated loopback RPC connections.
+To enable agent execution, add `core.sessions` and keep the Core port fixed for
+the default loopback MCP URL. Set a stable `core.externalURL` when you use a
+reverse proxy. For RPC authentication, point `massd.tokenFile` and
+`core.massd.tokenFile` at the same private token file. Compose supplies the
+actual RPC endpoint to Core and the actual Core HTTP origin to each Trigger.
+See the [Core configuration example](config.example.yaml).
 
-Build the binaries from the repository root and start both services.
+Build the binaries from the repository root and start the stack.
 
 ```sh
 make build-go build-superagent
-bin/superagent compose \
-  --massd-bin ./bin/massd \
-  --massd-config "$HOME/.mass/massd.yaml" \
-  --core-config "$HOME/.mass/core.yaml"
+bin/superagent compose --config "$HOME/.mass/stack.yaml" --massd-bin ./bin/massd
 ```
 
-When both services are ready, the command prints one JSON record with
-`massdEndpoint`, `endpoint`, `observerEndpoint`, and `status`. Open the
-`observerEndpoint` URL to view the Observer. Compose looks for `massd` on
-`PATH` when `--massd-bin` is omitted. Press Ctrl-C to stop both services.
-Use a new temporary run directory with the same layout for development,
-Observer previews, and automated tests.
+Compose prints a JSON record with `status: ready`, `massdEndpoint`, `endpoint`,
+and `observerEndpoint` when the local processes respond. When you enable
+Triggers, `triggerEndpoints` contains one status origin per enabled Trigger,
+under `github` or `dws`. Pass the origin to the corresponding `triggers ... status`
+command with `--endpoint`. Check `consumerReady` for DWS subscriptions and the
+repository stream `lastSuccessAt` timestamps for GitHub polling.
+
+Open `observerEndpoint` to inspect Core. Compose runs in the foreground and
+looks for `massd` on `PATH` when you omit `--massd-bin`. Press Ctrl-C to
+stop the Triggers, then Core, then massd. If a Trigger exits after startup,
+Compose logs the exit and keeps the other processes running. An unexpected
+exit from Core or massd stops the stack and returns an error.
+
+For separate processes, use `superagent serve --config core.yaml`.
+Configure `massd.endpoint` in Core when you enable Sessions, and set
+`coreEndpoint` in each Trigger's standalone YAML. The
+[Trigger guide](triggers/README.md) lists the standalone `check`, `serve`,
+and `status` commands.
 
 ## Ingress and queries
 
@@ -286,8 +292,14 @@ React/TypeScript typecheck and Vite build and Chrome browser tests. `make test`,
 
 ```sh
 make check-superagent
+make test-superagent
 make observer-check
 ```
+
+`make test-superagent` runs the Compose process tests and the Trigger suites.
+It builds the normal and `coretest` Superagent executables with `-race` from the
+same checkout. The Trigger suites run those binaries with the local DWS and
+GitHub fixtures.
 
 Process tests use temporary data/config and synthetic private source tokens;
 child Core processes receive empty HOME/PATH and never invoke models or DWS.

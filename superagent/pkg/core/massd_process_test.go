@@ -333,7 +333,7 @@ func TestEmbeddedMASSConfigAndStartupFailure(t *testing.T) {
 		require.Error(t, err, "%q", extra)
 	}
 	write(t, f.config, strings.Replace(string(saved), external, embedded, 1))
-	_, err = core.LoadComposeConfig(f.config)
+	_, err = core.LoadComposeConfig(f.config, strings.NewReader(strings.Replace(string(saved), external, embedded, 1)))
 	require.ErrorContains(t, err, "cannot be combined with compose")
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)

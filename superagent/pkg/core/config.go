@@ -2,7 +2,10 @@ package core
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 )
 
 type Source struct {
@@ -44,28 +48,60 @@ type Config struct {
 }
 
 func LoadConfig(path string) (Config, error) {
-	return loadConfig(path, false)
+	return loadConfig(path, nil)
 }
 
 // LoadComposeConfig prepares Core for a supervised massd whose endpoint is assigned at startup.
-func LoadComposeConfig(path string) (Config, error) {
-	return loadConfig(path, true)
+func LoadComposeConfig(path string, section io.Reader) (Config, error) {
+	return loadConfig(path, section)
 }
 
-func loadConfig(path string, composed bool) (Config, error) {
+func loadConfig(path string, section io.Reader) (Config, error) {
 	var c Config
+	composed := section != nil
 	v := viper.New()
 	v.SetConfigFile(path)
 	v.SetConfigType("yaml")
 	v.SetDefault("dataDir", "./superagent-core-data")
 	v.SetDefault("listen", "127.0.0.1:24370")
-	if err := v.ReadInConfig(); err != nil {
+	var fields map[string]any
+	var err error
+	if composed {
+		err = yaml.NewDecoder(section).Decode(&fields)
+		if err == nil {
+			err = v.MergeConfigMap(fields)
+		}
+	} else {
+		err = v.ReadInConfig()
+	}
+	if err != nil {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
 	}
 	if hasRemovedPermissionPreset(v) {
 		return c, problem("invalid_argument", "remove permissionPreset from Superagent session roles and Issue templates; new Sessions use fullAccess")
 	}
-	if err := v.UnmarshalExact(&c); err != nil {
+	if composed {
+		// Viper omits null and empty mappings from AllSettings. Decode the
+		// original mapping so an unknown field cannot hide behind either value.
+		c.DataDir = v.GetString("dataDir")
+		c.Listen = v.GetString("listen")
+		decoder, decodeErr := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+			ErrorUnused:      true,
+			WeaklyTypedInput: true,
+			DecodeHook: mapstructure.ComposeDecodeHookFunc(
+				mapstructure.StringToTimeDurationHookFunc(),
+				mapstructure.StringToWeakSliceHookFunc(","),
+			),
+			Result: &c,
+		})
+		if decodeErr != nil {
+			return c, decodeErr
+		}
+		err = decoder.Decode(fields)
+	} else {
+		err = v.UnmarshalExact(&c)
+	}
+	if err != nil {
 		return c, problem("invalid_argument", "configuration contains unknown or invalid fields")
 	}
 	base, err := filepath.Abs(filepath.Dir(path))
@@ -285,6 +321,24 @@ func (c Config) prepareMCPFiles() error {
 		return problem("failed_precondition", "MCP credentials directory must be private")
 	}
 	return nil
+}
+
+// CheckTriggerBinding verifies the credentials and role a supervised Trigger will use.
+func (c Config) CheckTriggerBinding(source, account, instance, token string, requiresOutbox bool) error {
+	hash := sha256.Sum256([]byte(token))
+	for _, binding := range c.Sources {
+		if binding.Source != source || binding.AccountID != account || binding.InstanceID != instance {
+			continue
+		}
+		if subtle.ConstantTimeCompare(hash[:], binding.tokenHash[:]) != 1 {
+			return errors.New("configured Core token does not match the source credential")
+		}
+		if requiresOutbox && c.outboxConsumer(source, account) != instance {
+			return errors.New("the reply-enabled Trigger must be the Outbox consumer for its Core source")
+		}
+		return nil
+	}
+	return errors.New("source, accountId and instanceId must match a Core source")
 }
 
 // outboxConsumer returns the explicitly selected sender, or the sole
