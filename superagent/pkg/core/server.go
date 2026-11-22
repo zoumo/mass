@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zoumo/mass/mass-go/pkg/massd"
 )
 
 type Server struct {
@@ -30,6 +32,7 @@ type Server struct {
 	observerLife                 context.Context
 	observerTelemetry            *observerTelemetryGateway
 	observerTraces               *observerTraceReader
+	embeddedMassd                *massd.Instance
 	store                        *Store
 	config                       Config
 	http                         *http.Server
@@ -42,6 +45,26 @@ func Start(c Config) (*Server, error) {
 
 // StartWithTelemetry starts Core with optional process-owned OTel providers.
 func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
+	return StartWithContext(context.Background(), c, options)
+}
+
+// StartWithContext starts Core and uses ctx for startup operations.
+func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (_ *Server, result error) {
+	var embedded *EmbeddedMassdConfig
+	if c.Massd != nil {
+		embedded = c.Massd.Embedded
+	}
+	if embedded != nil {
+		if c.Sessions == nil || c.Massd.Endpoint != "" || c.Massd.TokenFile != "" {
+			return nil, problem("invalid_argument", "embedded MASS requires sessions and exclusive MASS configuration")
+		}
+		if err := embedded.validate(); err != nil {
+			return nil, err
+		}
+		if err := validateMassdDirectories(c.DataDir, embedded.DataDir); err != nil {
+			return nil, err
+		}
+	}
 	gateway, err := newObserverTelemetryGateway(c.ObserverOTLPEndpoint)
 	if err != nil {
 		return nil, err
@@ -54,21 +77,39 @@ func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, store.Close())
+		}
+	}()
+	var instance *massd.Instance
+	if embedded != nil {
+		instance, err = embedded.start(ctx, options)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if result != nil {
+				result = errors.Join(result, instance.Shutdown(context.Background()))
+			}
+		}()
+	}
 	if err := c.prepareMCPFiles(); err != nil {
-		_ = store.Close()
 		return nil, err
 	}
-	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", c.Listen)
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", c.Listen)
 	if err != nil {
-		_ = store.Close()
 		return nil, problem("unavailable", "cannot bind listen address")
 	}
-	s := &Server{store: store, config: c, listener: l, observerTelemetry: gateway, observerTraces: traces}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, l.Close())
+		}
+	}()
+	s := &Server{store: store, config: c, listener: l, embeddedMassd: instance, observerTelemetry: gateway, observerTraces: traces}
 	if c.Sessions != nil {
-		if _, err = store.db.ExecContext(context.Background(), `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
+		if _, err = store.db.ExecContext(ctx, `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
  WHERE state='ready'`); err != nil {
-			_ = l.Close()
-			_ = store.Close()
 			return nil, storageError()
 		}
 		life, cancel := context.WithCancel(context.Background())
@@ -95,7 +136,15 @@ func (s *Server) Serve() error {
 	return err
 }
 
-func (s *Server) Shutdown(ctx context.Context) error {
+func (s *Server) Shutdown(ctx context.Context) (result error) {
+	if s.embeddedMassd != nil {
+		s.embeddedMassd.Handler().CloseAdmission()
+		defer func() {
+			if result != nil {
+				s.embeddedMassd.Handler().Shutdown()
+			}
+		}()
+	}
 	if s.observerTraces != nil {
 		defer s.observerTraces.client.CloseIdleConnections()
 	}
@@ -125,7 +174,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return s.store.Close()
+	if s.embeddedMassd == nil {
+		return s.store.Close()
+	}
+	return errors.Join(s.embeddedMassd.Shutdown(ctx), s.store.Close())
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {

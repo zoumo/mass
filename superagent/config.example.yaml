@@ -32,6 +32,9 @@ storageMaxPages: 0
 # massd:
 #   endpoint: ws://127.0.0.1:24368/jsonrpc
 #   tokenFile: ./massd.token  # set when massd uses an instance token
+# For `serve` with embedded MASS, replace the endpoint and tokenFile with:
+#   embedded:
+#     dataDir: ./massd
 # operatorTokenFile: ./operator.token  # optional, for loopback CLI input recovery
 # sessions:
 #   routerWorkspace: /absolute/workspace

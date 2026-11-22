@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zoumo/mass/mass-go/pkg/massd"
 
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
@@ -148,7 +149,7 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoi
 		return err
 	}
 	defer telemetry.shutdown()
-	server, err := core.StartWithTelemetry(config, telemetry.options)
+	server, err := core.StartWithContext(ctx, config, telemetry.options)
 	if err != nil {
 		return err
 	}
@@ -159,7 +160,11 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config, endpoi
 		serveErr = server.Serve()
 	}()
 	defer func() {
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		budget := 10 * time.Second
+		if config.Massd != nil && config.Massd.Embedded != nil {
+			budget += massd.ShutdownTimeout
+		}
+		shutdown, cancel := context.WithTimeout(context.Background(), budget)
 		defer cancel()
 		if err := server.Shutdown(shutdown); err != nil {
 			logger.Error("Core shutdown incomplete", "reason", "shutdown_failed")

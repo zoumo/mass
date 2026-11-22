@@ -247,15 +247,35 @@ func (s *SessionWorkSuite) TestNonJSONAnswersAndInvalidReferencesRejectedBeforeD
 	s.Equal(int32(0), s.driver.calls.Load())
 }
 
-func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent() {
+func (s *SessionWorkSuite) TestWebSocketWaitCancellationStillPublishesCommittedEvent() {
+	s.testRPCWaitCancellationStillPublishesCommittedEvent(false)
+}
+
+func (s *SessionWorkSuite) TestInProcessWaitCancellationStillPublishesCommittedEvent() {
+	s.testRPCWaitCancellationStillPublishesCommittedEvent(true)
+}
+
+func (s *SessionWorkSuite) testRPCWaitCancellationStillPublishesCommittedEvent(inProcess bool) {
 	h, err := transport.New(s.svc, withServiceTestWriteTimeout(transport.Options{
 		Token: "test-token", TracerProvider: s.telemetry.traces, MeterProvider: s.telemetry.meters,
 	}))
 	s.Require().NoError(err)
 	s.T().Cleanup(h.Shutdown)
-	server := httptest.NewServer(h)
-	s.T().Cleanup(server.Close)
-	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "test-token")
+	var connect func() *client.Client
+	if inProcess {
+		connect = func() *client.Client {
+			c, err := client.NewInProcess(h.Connect, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
+			s.Require().NoError(err)
+			return c
+		}
+	} else {
+		server := httptest.NewServer(h)
+		s.T().Cleanup(server.Close)
+		connect = func() *client.Client {
+			return newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "test-token")
+		}
+	}
+	c := connect()
 	s.T().Cleanup(func() { s.Require().NoError(c.Close()) })
 	observed, cancelObserve := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelObserve()
@@ -287,7 +307,7 @@ func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent()
 		return points
 	}
 	s.EqualValues(1, inflight()["session.prompt"])
-	reader := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "test-token")
+	reader := connect()
 	s.T().Cleanup(func() { s.Require().NoError(reader.Close()) })
 	var current resource.Session
 	s.Require().NoError(reader.GetSession(observed, s.ref, &current))

@@ -17,19 +17,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/zoumo/agent-sdk-go/agent"
 
-	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
+	"github.com/zoumo/mass/mass-go/pkg/massd"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
-	"github.com/zoumo/mass/mass-go/pkg/metastore/backend"
-	"github.com/zoumo/mass/mass-go/pkg/prototype"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/runtime/claude"
-	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
 	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
@@ -79,7 +72,7 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
 	f.StringSliceVar(&o.AllowedOrigins, "allowed-origin", nil, "allowed WebSocket Origin (repeatable)")
 	f.DurationVar(&o.SessionIdleTimeout, "session-idle-timeout", service.DefaultSessionIdleTimeout, "idle Session close timeout (0 disables)")
-	f.DurationVar(&o.WriteTimeout, "write-timeout", 10*time.Second, "WebSocket write deadline")
+	f.DurationVar(&o.WriteTimeout, "write-timeout", massd.DefaultWriteTimeout, "WebSocket write deadline")
 	return cmd
 }
 
@@ -120,71 +113,31 @@ func run(parent context.Context, o options) (result error) {
 		return &runtime.OperationError{Code: "invalid_argument", Reason: "invalid_telemetry_config", Message: err.Error()}
 	}
 	defer telemetry.shutdown()
-	dataDir, err := canonicalDataDir(o.Data)
+	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	instance, err := massd.Start(ctx, massd.Options{
+		DataDir: o.Data, MetaStore: o.MetaStore,
+		SessionIdleTimeout: o.SessionIdleTimeout, PrototypeAutoApprovePermissions: o.Approve,
+		Transport: transport.Options{
+			Token: token, AllowedOrigins: o.AllowedOrigins, WriteTimeout: o.WriteTimeout,
+			TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics,
+		},
+	})
 	if err != nil {
 		return err
 	}
-	meta, err := backend.Open(dataDir, o.MetaStore, false)
-	if err != nil {
-		return dataDirectoryError(err)
-	}
-	history, err := eventfile.Open(dataDir, false)
-	if err != nil {
-		return errors.Join(dataDirectoryError(err), meta.Close())
-	}
-	releaseStores := true
-	defer func() { result = errors.Join(result, closeStores(releaseStores, meta, history)) }()
-	var policy service.InteractionPolicy
-	if o.Approve {
-		policy = prototype.AutoApprovePermissions
-	}
-	recoveryDir := filepath.Join(dataDir, "private")
-	registry := runtime.NewRegistry(map[string]runtime.Factory{
-		"codex":  codex.Factory{RecoveryDir: recoveryDir, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
-		"claude": claude.Factory{RecoveryDir: recoveryDir, TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics},
-	})
-	svc := service.NewWithOptions(meta, history, registry, service.Options{
-		InteractionPolicy:  policy,
-		SessionIdleTimeout: o.SessionIdleTimeout,
-		TracerProvider:     telemetry.traces,
-		MeterProvider:      telemetry.metrics,
-	})
 	settled := false
 	defer func() {
-		if settled {
-			return
+		if !settled {
+			result = errors.Join(result, instance.Shutdown(context.Background()))
 		}
-		ok, err := settleService(svc, 10*time.Second)
-		releaseStores = releaseStores && ok
-		result = errors.Join(result, err)
 	}()
-	if err := svc.Prepare(parent); err != nil {
-		return err
-	}
-	if err := registerDefaultRuntimes(svc); err != nil {
-		return err
-	}
-	listener, err := (&net.ListenConfig{}).Listen(parent, "tcp", o.Listen)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", o.Listen)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	handler, err := transport.New(svc, transport.Options{
-		Token: token, AllowedOrigins: o.AllowedOrigins, WriteTimeout: o.WriteTimeout,
-		TracerProvider: telemetry.traces, MeterProvider: telemetry.metrics,
-	})
-	if err != nil {
-		return err
-	}
-	closed := false
-	defer func() {
-		if !closed {
-			handler.Shutdown()
-		}
-	}()
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Handler: instance.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	done := make(chan error, 1)
 	go func() {
 		if o.TLSCert != "" {
@@ -209,16 +162,8 @@ func run(parent context.Context, o options) (result error) {
 	case serveErr = <-done:
 	case <-ctx.Done():
 	}
-	// Stop admission, settle Service final events while observations remain
-	// writable, drain those observations, then close HTTP and the Stores.
-	handler.CloseAdmission()
-	var settleErr error
-	settled, settleErr = settleService(svc, 10*time.Second)
-	releaseStores = releaseStores && settled
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	drainErr := handler.DrainAndClose(drainCtx)
-	drainCancel()
-	closed = true
+	settleErr := instance.Shutdown(context.Background())
+	settled = true
 	httpCtx, httpCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	httpErr := server.Shutdown(httpCtx)
 	httpCancel()
@@ -232,80 +177,7 @@ func run(parent context.Context, o options) (result error) {
 	if errors.Is(serveErr, http.ErrServerClosed) {
 		serveErr = nil
 	}
-	return errors.Join(serveErr, settleErr, drainErr, httpErr)
-}
-
-func registerDefaultRuntimes(svc *service.Service) error {
-	for _, name := range []string{"claude", "codex"} {
-		_, err := svc.GetRuntime(name)
-		switch {
-		case err == nil:
-			continue
-		case !errors.Is(err, store.ErrNotFound):
-			return err
-		}
-		_, err = svc.CreateRuntime(resource.Runtime{
-			Metadata: resource.Metadata{Name: name},
-			Spec: resource.RuntimeSpec{
-				Type:             name,
-				Config:           runtime.Config{},
-				PermissionPreset: agent.PermissionPresetFullAccess,
-			},
-		})
-		if err != nil && !errors.Is(err, store.ErrConflict) {
-			return err
-		}
-	}
-	return nil
-}
-
-func settleService(svc interface {
-	Shutdown(context.Context) error
-}, timeout time.Duration,
-) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	err := svc.Shutdown(ctx)
-	return err == nil, err
-}
-
-// closeStores releases the single-writer data directory only after Service
-// settlement. On an abandoned settlement the process must keep ownership until
-// exit rather than let another instance take over unfinished work.
-func closeStores(release bool, stores ...interface{ Close() error }) error {
-	if !release {
-		return nil
-	}
-	var result error
-	for _, store := range stores {
-		result = errors.Join(result, store.Close())
-	}
-	return result
-}
-
-func canonicalDataDir(path string) (string, error) {
-	if !filepath.IsAbs(path) {
-		return "", errors.New("absolute data directory required")
-	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(resolved), nil
-}
-
-func dataDirectoryError(err error) error {
-	if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-		return &runtime.OperationError{
-			Code:    "conflict",
-			Reason:  "data_directory_in_use",
-			Message: "Another massd process owns this data directory",
-		}
-	}
-	return err
+	return errors.Join(serveErr, settleErr, httpErr)
 }
 
 func main() {

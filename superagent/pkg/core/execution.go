@@ -19,7 +19,6 @@ import (
 
 	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/agent-sdk-go/mcp"
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"go.opentelemetry.io/otel/trace"
@@ -30,12 +29,6 @@ type SessionsConfig struct {
 	IssueTemplates  []IssueTemplate `mapstructure:"issueTemplates"`
 	RouterWorkspace string          `mapstructure:"routerWorkspace"`
 	Namespace       string          `mapstructure:"namespace"`
-}
-
-type MassdConfig struct {
-	Endpoint  string `mapstructure:"endpoint"`
-	TokenFile string `mapstructure:"tokenFile"`
-	token     string
 }
 
 type ExecutionProfile struct {
@@ -78,26 +71,6 @@ func (c *SessionsConfig) issueProfile(runtimeRef, model string) (ExecutionProfil
 		}
 	}
 	return ExecutionProfile{}, problem("invalid_argument", "runtimeRef and model must match a configured Issue template")
-}
-
-func (c *MassdConfig) validate(resolve func(string) string, composed bool) error {
-	if !composed {
-		if _, err := client.WebSocketEndpoint(c.Endpoint); err != nil {
-			return problem("invalid_argument", "massd.endpoint must be a ws/wss MASS endpoint")
-		}
-	}
-	if c.TokenFile != "" {
-		c.TokenFile = resolve(c.TokenFile)
-		b, err := readPrivate(c.TokenFile)
-		if err != nil {
-			return err
-		}
-		c.token = strings.TrimSpace(string(b))
-		if c.token == "" {
-			return problem("invalid_argument", "empty massd tokenFile")
-		}
-	}
-	return nil
 }
 
 func (c *SessionsConfig) validate(resolve func(string) string) error {
@@ -726,10 +699,6 @@ func errorCode(err error) string {
 		return e.Code
 	}
 	return "unavailable"
-}
-
-func (s *Server) massClient() (*client.Client, error) {
-	return client.New(s.config.Massd.Endpoint, s.config.Massd.token, client.Options{WriteTimeout: 5 * time.Second, SubscriptionQueueCapacity: 32})
 }
 
 func bindingMatches(b SessionBinding, spec resource.SessionSpec, found resource.Session) bool {

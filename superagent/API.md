@@ -337,7 +337,10 @@ sessions:
 
 `massd.endpoint` accepts a WebSocket origin, proxy mount base, or full
 `/jsonrpc` URL. See the [endpoint upgrade steps](../mass-go/README.md#upgrade-the-websocket-endpoint)
-when switching an existing deployment.
+when switching an existing deployment. For an embedded instance, use
+`massd.embedded.dataDir` in place of `massd.endpoint` and `massd.tokenFile`.
+See [embedded deployment](README.md#running-mass-inside-core) for startup and
+ownership handoff.
 
 Both role profiles require a legal Runtime name and a nonblank model.
 An Issue template also requires a nonblank description. Each

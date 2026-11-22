@@ -55,6 +55,22 @@ func New(api API, opts Options) (*Server, error) {
 	return s, nil
 }
 
+// Connect opens a dedicated in-process JSON-RPC connection. The caller is
+// trusted as part of the hosting process and still performs initialize.
+func (s *Server) Connect(ctx context.Context, writeTimeout time.Duration) (*rpcwire.Stream, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	peer, server, err := rpcwire.NewInProcessPair(writeTimeout, s.options.WriteTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rpc.attach(server); err != nil {
+		return nil, err
+	}
+	return peer, nil
+}
+
 // CloseAdmission rejects new RPC connections and marks observations for a
 // shutdown terminal cause while leaving established connections available for
 // final Service events.
@@ -73,12 +89,13 @@ func (s *Server) Drain(ctx context.Context) error { return s.rpc.drain(ctx) }
 func (s *Server) DrainAndClose(ctx context.Context) error {
 	s.CloseAdmission()
 	err := s.rpc.drain(ctx)
+	s.stop()
 	s.rpc.closeAll()
 	return err
 }
 
-// Shutdown immediately closes admission and owned WebSocket connections.
-// Service retains operation ownership.
+// Shutdown closes admission and all owned connections without waiting for RPC
+// settlement. Service retains operation ownership.
 func (s *Server) Shutdown() {
 	s.ready.Store(false)
 	s.stop()

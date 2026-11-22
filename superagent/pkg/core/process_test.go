@@ -164,7 +164,6 @@ func (p *process) stop(t *testing.T, kill bool) {
 	if p.stopped {
 		return
 	}
-	p.stopped = true
 	var err error
 	if kill {
 		err = p.cmd.Process.Kill()
@@ -174,8 +173,14 @@ func (p *process) stop(t *testing.T, kill bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.waitStopped(t, kill)
+}
+
+func (p *process) waitStopped(t *testing.T, kill bool) {
+	t.Helper()
+	p.stopped = true
 	select {
-	case err = <-p.done:
+	case err := <-p.done:
 		if !kill && err != nil {
 			t.Fatalf("shutdown: %v %s", err, p.stderr.String())
 		}

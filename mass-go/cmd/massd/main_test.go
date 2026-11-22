@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,43 +14,6 @@ import (
 type commandSuite struct{ suite.Suite }
 
 func TestCommandSuite(t *testing.T) { suite.Run(t, new(commandSuite)) }
-
-type closeCounter struct {
-	closed int
-	err    error
-}
-
-type delayedShutdown struct{}
-
-func (*delayedShutdown) Shutdown(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func (c *closeCounter) Close() error {
-	c.closed++
-	return c.err
-}
-
-func (s *commandSuite) TestStoreOwnershipRetainedForUnsettledService() {
-	first, second := &closeCounter{}, &closeCounter{}
-	settled, err := settleService(&delayedShutdown{}, 20*time.Millisecond)
-	s.Require().ErrorIs(err, context.DeadlineExceeded)
-	s.False(settled)
-	s.Require().NoError(closeStores(settled, first, second))
-	s.Zero(first.closed, "Store ownership must remain held while settlement is active")
-	s.Zero(second.closed)
-
-	s.Require().NoError(closeStores(true, first, second))
-	s.Equal(1, first.closed)
-	s.Equal(1, second.closed)
-
-	first.err = errors.New("first close failed")
-	second.err = errors.New("second close failed")
-	err = closeStores(true, first, second)
-	s.Require().ErrorContains(err, "first close failed")
-	s.Require().ErrorContains(err, "second close failed")
-}
 
 func (s *commandSuite) TestParsing() {
 	s.T().Setenv("HOME", s.T().TempDir())

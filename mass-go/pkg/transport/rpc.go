@@ -15,6 +15,7 @@ import (
 	rpc2 "github.com/sourcegraph/jsonrpc2"
 
 	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 const rpcHandshakeTimeout = 5 * time.Second
@@ -33,6 +34,7 @@ type rpcEndpoint struct {
 }
 
 type rpcConnectionEntry struct {
+	stream     *rpcwire.Stream
 	cancel     context.CancelFunc
 	connection *rpcConnection
 }
@@ -76,16 +78,15 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	if s.isClosed() {
-		_ = socket.Close()
-		return
-	}
-
 	stream, err := rpcwire.NewStream(socket, rpcwire.RoleServer, s.writeTimeout)
 	if err != nil {
 		_ = socket.Close()
 		return
 	}
+	_ = s.attach(stream)
+}
+
+func (s *rpcEndpoint) attach(stream *rpcwire.Stream) error {
 	ctx, cancel := context.WithCancel(s.life)
 	rpcConnection := &rpcConnection{
 		api:           s.api,
@@ -93,18 +94,26 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 		inflight:      map[string]struct{}{},
 		endpoint:      s,
 	}
-	connection := rpc2.NewConn(ctx, stream, &rpcHandler{connection: rpcConnection}, rpc2.SetLogger(rpcLogger{}))
-	if !s.track(connection, cancel, rpcConnection) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
 		cancel()
-		_ = connection.Close()
-		return
+		_ = stream.Close()
+		return runtime.Unavailable("not_ready")
 	}
+	// NewConn begins reading immediately. Hold admission until this connection
+	// is visible to shutdown, so no request can run outside the drain registry.
+	connection := rpc2.NewConn(ctx, stream, &rpcHandler{connection: rpcConnection}, rpc2.SetLogger(rpcLogger{}))
+	s.conns[connection] = rpcConnectionEntry{stream: stream, cancel: cancel, connection: rpcConnection}
+	s.mu.Unlock()
 	go func() {
 		<-connection.DisconnectNotify()
 		rpcConnection.disconnect()
 		cancel()
+		_ = rpcConnection.waitDrained(s.life)
 		s.untrack(connection)
 	}()
+	return nil
 }
 
 func (s *rpcEndpoint) originAllowed(r *http.Request) bool {
@@ -123,16 +132,6 @@ func (s *rpcEndpoint) isClosed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.closed
-}
-
-func (s *rpcEndpoint) track(conn *rpc2.Conn, cancel context.CancelFunc, connection *rpcConnection) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return false
-	}
-	s.conns[conn] = rpcConnectionEntry{cancel: cancel, connection: connection}
-	return true
 }
 
 func (s *rpcEndpoint) untrack(conn *rpc2.Conn) {
@@ -221,16 +220,19 @@ func (c *rpcConnection) markSubscriptionForShutdown(cause error) {
 func (s *rpcEndpoint) closeAll() {
 	s.mu.Lock()
 	s.closed = true
-	conns := make([]*rpc2.Conn, 0, len(s.conns))
-	for conn, entry := range s.conns {
-		conns = append(conns, conn)
-		entry.cancel()
-	}
+	conns := s.conns
 	s.conns = map[*rpc2.Conn]rpcConnectionEntry{}
 	s.mu.Unlock()
-	for _, conn := range conns {
-		_ = conn.Close()
+	var closing sync.WaitGroup
+	for conn, entry := range conns {
+		closing.Go(func() {
+			entry.cancel()
+			// Interrupt a blocked write before closing the RPC connection.
+			_ = entry.stream.Close()
+			_ = conn.Close()
+		})
 	}
+	closing.Wait()
 }
 
 type rpcHandler struct {
@@ -265,12 +267,13 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 			call()
 		}()
 	}
-	if c.endpoint != nil && c.endpoint.isClosed() {
+	key := req.ID.String()
+	admitted, unique := c.beginRequest(key)
+	if !admitted {
 		replyServiceError(ctx, conn, req.ID, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
 		return
 	}
-	key := req.ID.String()
-	if !c.begin(key) {
+	if !unique {
 		_ = conn.Close()
 		return
 	}
@@ -328,10 +331,23 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 	dispatch(key, func() { c.dispatchCall(ctx, conn, req, call) })
 }
 
+// Admit and register under the endpoint lock so closing admission cannot miss
+// an operation that has already been allowed to access the Service.
+func (c *rpcConnection) beginRequest(id string) (admitted, unique bool) {
+	if c.endpoint != nil {
+		c.endpoint.mu.Lock()
+		defer c.endpoint.mu.Unlock()
+		if c.endpoint.closed {
+			return false, false
+		}
+	}
+	return true, c.begin(id)
+}
+
 func (c *rpcConnection) begin(id string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, duplicate := c.inflight[id]; duplicate {
+	if _, duplicate := c.inflight[id]; duplicate || c.disconnected {
 		return false
 	}
 	c.inflight[id] = struct{}{}
@@ -360,9 +376,6 @@ func (c *rpcConnection) maybeDrained() {
 }
 
 func (c *rpcConnection) drainedLocked() bool {
-	if c.disconnected {
-		return true
-	}
 	if len(c.inflight) != 0 {
 		return false
 	}

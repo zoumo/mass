@@ -121,8 +121,19 @@ func loadConfig(path string, composed bool) (Config, error) {
 	if c.Massd != nil {
 		if v.IsSet("massd") {
 			var massd MassdConfig
-			if err := v.UnmarshalKey("massd", &massd, strict); err != nil {
+			decodeMassd := func(d *mapstructure.DecoderConfig) {
+				strict(d)
+				d.DecodeHook = mapstructure.StringToTimeDurationHookFunc()
+			}
+			if err := v.UnmarshalKey("massd", &massd, decodeMassd); err != nil {
 				return c, problem("invalid_argument", "massd configuration contains unknown or invalid fields")
+			}
+			for _, field := range []string{"sessionIdleTimeout", "writeTimeout"} {
+				if value := v.Get("massd.embedded." + field); value != nil {
+					if _, ok := value.(string); !ok {
+						return c, problem("invalid_argument", "massd.embedded durations must be strings")
+					}
+				}
 			}
 			c.Massd = &massd
 		}

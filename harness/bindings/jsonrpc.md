@@ -14,9 +14,11 @@ sources:
 
 # JSON-RPC 业务协议
 
+独立 massd 使用 [WebSocket](websocket.md)。内嵌部署中，Core 在同一进程内建立连接。普通调用共享一条连接，每次订阅单独建立连接。每条连接执行相同的消息校验、初始化和 RPC 分发。连接写入受期限约束，关闭一条订阅连接只结束该观察。结束客户端等待不取消 Service 已接纳的工作。
+
 ## 职责与范围
 
-业务方法统一采用 JSON-RPC 2.0，当前仅通过 [WebSocket](websocket.md) 承载。客户端连接明确的 massd 实例；不提供 stdio、proxy、内嵌运行或 REST/SSE 兼容入口。此方向与 Go 库选型已确认；本页的详细消息 profile 和绑定字段作为合同草案维护。[^direction]
+业务方法统一采用 JSON-RPC 2.0。客户端连接明确的 MASS 实例。Go 客户端复用同一方法集和消息校验。本页的消息规则和绑定字段作为合同草案维护。[^direction]
 
 Service 仍拥有资源、当前运行、操作接纳与结算、历史及事件发布。JSON-RPC 只映射调用、结果与通知；请求 ID、连接与 subscriptionId 不进入资源 spec、SessionEvent 或存储。Runtime 能力、按需启动、close、默认配置合并和恢复身份保证均沿用业务合同。
 

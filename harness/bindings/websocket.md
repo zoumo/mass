@@ -14,7 +14,7 @@ sources:
 
 # WebSocket 承载
 
-本绑定承载 [JSON-RPC 业务协议](jsonrpc.md)，不定义第二套 Service、资源模型或事件格式。当前只提供 WebSocket 业务入口；HTTP Upgrade 和运维探针不构成 REST 业务 API。[^direction]
+本绑定承载 [JSON-RPC 业务协议](jsonrpc.md)，不定义第二套 Service、资源模型或事件格式。外部客户端通过 WebSocket 访问业务入口。HTTP Upgrade 和运维探针只提供连接建立和健康信息。[^direction]
 
 ## 入口与消息
 
@@ -64,7 +64,7 @@ subscriptionId 不提供独立流控，写入成功也不证明业务消费成�
 
 ## 服务实例与数据所有权
 
-massd 独立运行，每个实例拥有明确的监听地址和 DataDir。一个 DataDir 包含元数据、事件和恢复材料，同一时刻仅允许一个服务实例拥有写入和运行管理权。多个客户端共享服务，不直接打开服务端存储。
+MASS 可以在独立 massd 进程中运行，也可由 Superagent Core 在进程内启动。一个 MASS DataDir 包含元数据、事件和恢复材料，同一时刻仅允许一个实例拥有写入和运行管理权。多个客户端通过该实例操作资源。
 
 复用存储已有的排他写入机制：全部必要 Store 打开成功并取得写入权后，才执行 Service 启动校正、启动 Driver 或公开 ready。启动失败逆序关闭本次资源；第二个实例使用同一实际目录时明确报告 data_directory_in_use，不因端口不同或路径别名绕过，不自动更换空目录。
 
