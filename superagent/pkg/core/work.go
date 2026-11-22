@@ -512,7 +512,7 @@ func completeTopic(r CompleteRequest) workMutation {
 			return nil, err
 		}
 		var unfinished bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM issues WHERE topic_id=? AND json_extract(body,'$.status') NOT IN ('completed','canceled'))", t.ID).Scan(&unfinished); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 "+unfinishedIssuesInTopic+")", t.ID).Scan(&unfinished); err != nil {
 			return nil, storageError()
 		}
 		if unfinished {

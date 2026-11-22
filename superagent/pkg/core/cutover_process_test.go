@@ -32,6 +32,52 @@ func TestCutoverDefaultAndSchema(t *testing.T) {
 	assertCutoverSchema(t, filepath.Join(f.dir, "superagent-core-data", "core.sqlite"))
 }
 
+const dropStartupQueryIndexes = dropIssueQueryIndexes + `
+DROP INDEX session_bindings_pending;
+DROP INDEX session_bindings_ready_owner;
+DROP INDEX topics_created_at;`
+
+func assertStartupQueryIndexes(t *testing.T, db *sql.DB, want int) {
+	t.Helper()
+	var count int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_schema
+ WHERE type='index' AND name IN ('session_bindings_pending','session_bindings_ready_owner',
+ 'topics_created_at','issues_topic_status','issues_unfinished')`).Scan(&count))
+	require.Equal(t, want, count)
+}
+
+func TestCutoverSchema25InstallsStartupQueryIndexes(t *testing.T) {
+	f := fixtureAt(t)
+	p := f.start()
+	message := submit(t, p, f, input("retained-before-index-install"))
+	p.stop(t, false)
+
+	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), dropStartupQueryIndexes+"\nVACUUM")
+	require.NoError(t, err)
+	var pages int
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA page_count").Scan(&pages))
+	assertStartupQueryIndexes(t, db, 0)
+
+	// The first empty index fits on one additional page. The second runs out
+	// of pages and startup must roll back both statements.
+	f.configure(pages+1, "account-1")
+	f.fails("unavailable")
+	assertStartupQueryIndexes(t, db, 0)
+
+	f.configure(0, "account-1")
+	for range 2 {
+		p = f.start()
+		assertStartupQueryIndexes(t, db, 5)
+		retained := submit(t, p, f, input("retained-before-index-install"))
+		require.True(t, retained.Duplicate)
+		require.Equal(t, message.MessageID, retained.MessageID)
+		p.stop(t, false)
+	}
+}
+
 func TestCutoverSchema24Upgrade(t *testing.T) {
 	f := fixtureAt(t)
 	boundary := newRouteBoundary(t)
@@ -56,7 +102,7 @@ func TestCutoverSchema24Upgrade(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	// Restore the v24 schema identity and representative rows in the two
 	// retired tables. Core created the business rows through its public APIs.
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE mcp_mutation_receipts (
+	_, err = db.ExecContext(t.Context(), dropStartupQueryIndexes+`CREATE TABLE mcp_mutation_receipts (
  session_binding_id TEXT NOT NULL REFERENCES session_bindings(id), result BLOB NOT NULL);
 CREATE TABLE mcp_tool_calls (target_issue_id TEXT NOT NULL, trace_id TEXT NOT NULL);
 INSERT INTO mcp_mutation_receipts VALUES(?, '{}');
@@ -80,6 +126,7 @@ PRAGMA user_version=24;`, topic.ID, legacy.ID)
 	var liveVersion, count int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&liveVersion))
 	require.Equal(t, 24, liveVersion)
+	assertStartupQueryIndexes(t, db, 0)
 	for _, table := range []string{"mcp_mutation_receipts", "mcp_tool_calls"} {
 		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&count))
 		require.Equal(t, 1, count)
@@ -91,6 +138,7 @@ PRAGMA user_version=24;`, topic.ID, legacy.ID)
 	p = f.start()
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&liveVersion))
 	require.Equal(t, 25, liveVersion)
+	assertStartupQueryIndexes(t, db, 5)
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&count))
 	require.Equal(t, 9, count)
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM pragma_foreign_key_check").Scan(&count))
@@ -98,6 +146,7 @@ PRAGMA user_version=24;`, topic.ID, legacy.ID)
 	p.stop(t, false)
 	checkRawVersion(24)
 	p = f.start()
+	assertStartupQueryIndexes(t, db, 5)
 	require.Equal(t, legacy, readRecord[core.Issue](t, p, "issues/"+legacy.ID))
 	require.Equal(t, traced, roleWork[core.WorkReceipt](t, p, token, "create_issue", tracedRequest).Issue)
 	require.Contains(t, page(t, p, "internal-events").Items, event)
@@ -154,6 +203,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
 	require.Equal(t, 25, version)
+	assertStartupQueryIndexes(t, db, 5)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
 		require.NoError(t, err)
