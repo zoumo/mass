@@ -10,11 +10,11 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
-	"github.com/zoumo/mass/mass-go/pkg/massd"
-	"github.com/zoumo/mass/mass-go/pkg/metastore"
-	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
+	"github.com/zoumo/mass/massd"
+	"github.com/zoumo/mass/massd/pkg/client"
+	"github.com/zoumo/mass/massd/pkg/metastore"
+	"github.com/zoumo/mass/massd/pkg/service"
+	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
 type MassdConfig struct {

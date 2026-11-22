@@ -7,11 +7,21 @@ For one configuration and one supervisor, use
 standalone commands below use `coreEndpoint` and absolute paths for Trigger
 state. In Compose, relative paths start at the stack YAML's directory.
 
+The [Trigger entry package](component.go) selects a platform for the
+[Superagent command](../../cmd/superagent) and Compose. The [DWS package](dws/)
+owns subscriptions, queue, replies, feedback, and DWS state. The
+[GitHub package](github/) owns notification and Actions polling and GitHub
+state. Both packages use the shared [Core client](internal/coreclient/) and
+[SQLite file handling](internal/triggerdb/).
+
+Run the commands below from the repository root. Build the binary with
+`make build-superagent`.
+
 ## Configure the DWS Trigger
 
-Build with `make build-superagent` from the repository root. Copy
-`config.example.yaml` outside the checkout and fill in the native IDs. Use
-`corpId:accountId` from your DWS profile and set `accountId` to the same account.
+Copy [config.example.yaml](config.example.yaml) outside the checkout and
+fill in the native IDs. Use `corpId:accountId` from your DWS profile and set
+`accountId` to the same account.
 Set `selfOpenDingtalkId` to that account's native openDingTalk ID. Use a stable
 `source` for each account and keep it consistent across collection instances
 for that account.
@@ -200,9 +210,9 @@ before an enqueue commit depend on upstream redelivery.
 
 ## Follow GitHub account notifications
 
-Copy `github.config.example.yaml` outside the checkout, or use the
-`triggers.github` section of `../compose.example.yaml`. Both accept an optional
-`repositories` list. Omit it or use `[]` to accept Issue and PR notifications
+Copy [github.config.example.yaml](github.config.example.yaml) outside the
+checkout, or use `triggers.github` in the [Compose example](../compose.example.yaml).
+Both accept an optional `repositories` list. Omit it or use `[]` to accept Issue and PR notifications
 from all repositories in the account's inbox. Each entry matches the exact
 `owner/repo` name, ignoring case, before the Trigger reads the object.
 An entry can include a multiline `prompt` of up to 4096 UTF-8 bytes, which the
@@ -305,9 +315,10 @@ From the repository root, run the offline race suite.
 make test-superagent
 ```
 
-Tests run real Trigger and Core processes with `internal/testdws` and a local
-GitHub HTTP fixture for REST Notifications and GraphQL. DingTalk tests cover replay/conflict, filtering, native identities,
-quote/self input, Core outage/backoff/full-buffer recovery, readiness, malformed
+Tests run real Trigger and Core processes with the
+[DWS CLI fixture](internal/testdws/) and a local
+[GitHub HTTP fixture](github/fixture_test.go) for REST Notifications and GraphQL.
+DingTalk tests cover replay/conflict, filtering, native identities, quote/self input, Core outage/backoff/full-buffer recovery, readiness, malformed
 input, disconnect, restart persistence and owned-consumer shutdown. They verify local status and shutdown logs, including recovery after Core becomes
 unavailable. Outbound cases use a production
 Core to verify task durability, definitive errors, exact echoes and lost write

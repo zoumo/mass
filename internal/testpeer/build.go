@@ -1,0 +1,37 @@
+// Package testpeer builds MASS's test-only strict offline protocol peer.
+package testpeer
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+const SDKVersion = "v0.1.1-0.20261122053355-04650cf68be8"
+
+// TestifyVersion pins the consumer recording/replay tool, not a runtime dependency.
+const TestifyVersion = "v0.2.2"
+
+// Build binds a provider to MASS's owned strict scenario peer. The scenario is
+// an explicit test-launch environment input, never a default or a real-agent
+// fallback.
+func Build(ctx context.Context, dir, provider string) (string, error) {
+	if provider != "codex" && provider != "claude" {
+		return "", fmt.Errorf("unsupported test provider %q", provider)
+	}
+	tool := filepath.Join(dir, "mass-testpeer-"+provider)
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", tool, "github.com/zoumo/mass/internal/testpeer/cmd/testpeer")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build MASS protocol peer: %w\n%s", err, out)
+	}
+	quote := "'" + strings.ReplaceAll(tool, "'", "'\"'\"'") + "'"
+	path := filepath.Join(dir, "mock-"+provider)
+	script := "#!/bin/sh\nexec " + quote + " --provider " + provider + " --scenario \"${" + strings.ToUpper(provider) + "_MOCK_SCENARIO:?explicit synthetic scenario required}\" -- \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		return "", err
+	}
+	return path, nil
+}

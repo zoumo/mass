@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zoumo/mass/mass-go/pkg/events"
-	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/massd/pkg/events"
+	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
+	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
 const (

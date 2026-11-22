@@ -14,19 +14,22 @@ agent 只有在当前人类请求明确要求修改 harness 中的相关内容�
 
 ## 当前实现与构建
 
-根 Makefile 是当前 Go 实现的命令入口；源码位于 mass-go/。直接运行 Go 命令时进入 mass-go/。运行配置与支持范围见 [mass-go/README.md](mass-go/README.md)。
+从仓库根目录运行 Makefile 和 Go 命令。根目录的 `go.mod` 管理所有 Go 依赖。命令入口在 [`cmd/`](cmd/)，会话服务和进程内装配在 [`massd/`](massd/README.md)，Core 和 Trigger 在 [`superagent/`](superagent/README.md)。根 `internal/` 放命令与组件共用的私有代码。
 
 | 命令 | 用途 |
 |---|---|
 | make fmt / make fmt-go | 格式化 Go 代码 |
 | make lint / make lint-go | Go lint |
-| make test / make test-go | 单元、集成、仿真三层离线 race 测试 |
+| make test | MASS 与 Superagent 的离线 race 测试，以及 Observer 浏览器测试 |
+| make test-go | MASS 单元、集成、仿真三层离线 race 测试 |
 | make test-unit-go | 仅包内单元测试 |
 | make test-integration-go | 构造数据多模块集成测试与 SDK 协议探针 |
 | make test-simulation-go | 录制数据经 agent-sdk-testify 回放 |
 | make test-e2e-go | 显式启动真实 Agent 的 E2E，不包含在 test/check 中 |
-| make build / make build-go | 构建 bin/massctl 与 bin/massd |
-| make check / make check-go | lint、测试、构建与格式检查 |
+| make build | 构建 `bin/massctl`、`bin/massd` 和带 Observer 的 `bin/superagent` |
+| make build-go | 构建 `bin/massctl` 与 `bin/massd` |
+| make check | 验证 MASS、Superagent 和 Observer |
+| make check-go | MASS lint、三层离线测试、构建和格式检查 |
 | make prototype-go | 隔离的合成产品入口端到端验收 |
 
 默认 make test 不调用真实模型；合成测试不能替代真实 Agent 验收。源码位置变化不隐式移动现有运行数据，现有安装须显式配置原来的绝对数据目录。
