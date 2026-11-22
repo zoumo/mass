@@ -144,8 +144,7 @@ func (s *Server) massClient() (*client.Client, error) {
 	return client.New(s.config.Massd.Endpoint, s.config.Massd.token, options)
 }
 
-// Check both directories before either store creates its files. Resolve the
-// existing prefix even when the last components have yet to be created.
+// Prepare the Core directory and check for overlap before opening either store.
 func validateMassdDirectories(coreDir, massdDir string) error {
 	coreDir, err := resolveDataPath(coreDir)
 	if err != nil {
@@ -155,13 +154,57 @@ func validateMassdDirectories(coreDir, massdDir string) error {
 	if err != nil {
 		return problem("invalid_argument", "cannot resolve MASS data directory")
 	}
-	sep := string(filepath.Separator)
-	if coreDir == massdDir ||
-		strings.HasPrefix(coreDir, strings.TrimSuffix(massdDir, sep)+sep) ||
-		strings.HasPrefix(massdDir, strings.TrimSuffix(coreDir, sep)+sep) {
-		return problem("invalid_argument", "Core and MASS require separate data directories")
+	if err := checkDataDirectoryOverlap(coreDir, massdDir); err != nil {
+		return err
+	}
+	if _, err := os.Stat(coreDir); err == nil {
+		return nil
+	}
+	// Give missing components a filesystem identity. This also exposes aliases
+	// that could not be compared before creation, including case variants.
+	if err := os.MkdirAll(coreDir, 0o700); err != nil {
+		return problem("unavailable", "cannot create data directory")
+	}
+	return checkDataDirectoryOverlap(coreDir, massdDir)
+}
+
+func checkDataDirectoryOverlap(coreDir, massdDir string) error {
+	for _, pair := range [][2]string{{coreDir, massdDir}, {massdDir, coreDir}} {
+		overlaps, err := directoryContainsPath(pair[0], pair[1])
+		if err != nil {
+			return problem("invalid_argument", "cannot inspect Core and MASS data directories")
+		}
+		if overlaps {
+			return problem("invalid_argument", "Core and MASS require separate data directories")
+		}
 	}
 	return nil
+}
+
+func directoryContainsPath(dir, path string) (bool, error) {
+	info, err := os.Stat(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	for {
+		if path == dir {
+			return true, nil
+		}
+		if info != nil {
+			ancestor, err := os.Stat(path)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return false, err
+			}
+			if os.SameFile(info, ancestor) {
+				return true, nil
+			}
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return false, nil
+		}
+		path = parent
+	}
 }
 
 func resolveDataPath(name string) (string, error) {

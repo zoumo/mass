@@ -65,10 +65,17 @@ func (s *Server) Connect(ctx context.Context, writeTimeout time.Duration) (*rpcw
 	if err != nil {
 		return nil, err
 	}
-	if err := s.rpc.attach(server); err != nil {
+	if err := s.rpc.attach(server, false); err != nil {
 		return nil, err
 	}
 	return peer, nil
+}
+
+// CloseExternalAdmission rejects new WebSocket connections and requests while
+// allowing the host to finish its in-process calls.
+func (s *Server) CloseExternalAdmission() {
+	s.ready.Store(false)
+	s.rpc.closeExternalAdmission()
 }
 
 // CloseAdmission rejects new RPC connections and marks observations for a
