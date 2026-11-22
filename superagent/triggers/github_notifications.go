@@ -136,7 +136,7 @@ func (t *githubTrigger) pollNotifications(ctx context.Context) error {
 	}
 	started := time.Now().UTC()
 	if ctx.Err() != nil || started.Before(stream.NextAttemptAt) || started.Before(t.api.pauseUntil) {
-		return nil
+		return nil //nolint:nilerr // Cancellation ends polling normally.
 	}
 	// Replay an overlapping window from before the last complete poll.
 	// A failed page leaves this checkpoint unchanged.
