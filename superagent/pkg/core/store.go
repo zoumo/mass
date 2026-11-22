@@ -325,7 +325,28 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r Submi
 }
 
 func messageReceipt(m Message, duplicate bool) Receipt {
-	return Receipt{Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID, ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID}
+	result := Receipt{Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID, ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID}
+	if m.Echo != nil {
+		result.EchoStatus = m.Echo.Status
+		if m.Echo.Match != nil {
+			result.EchoStatus = "outbound_echo"
+		}
+	}
+	return result
+}
+
+func (s *Store) channelMessageReceipt(ctx context.Context, source Source, nativeID string) (Receipt, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Receipt{}, storageError()
+	}
+	defer func() { _ = tx.Rollback() }()
+	var m Message
+	if err := readJSON(ctx, tx, "SELECT body FROM trigger_messages WHERE source=? AND account_id=? AND native_id=?",
+		&m, source.Source, source.AccountID, nativeID); err != nil {
+		return Receipt{}, err
+	}
+	return messageReceipt(m, false), nil
 }
 
 func upsertThread(ctx context.Context, tx *sql.Tx, key string, ref ThreadRef, createdAt, lastMessageAt string) error {

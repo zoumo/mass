@@ -369,6 +369,43 @@ func TestPublicIngressDurability(t *testing.T) {
 	t.Logf("durable receipt message=%s event=%s thread=%s", accepted.MessageID, accepted.EventID, accepted.ThreadKey)
 }
 
+func TestPublicDWSGroupAdmission(t *testing.T) {
+	f := fixtureAt(t)
+	p := f.start()
+	r := input("group-message-1")
+	r.Message.Addressed = "group"
+	r.Message.Channel = nil
+	r.Message.Text = "Original group message\n\n<group_prompt>Group instructions</group_prompt>"
+
+	invalid := r
+	invalid.Message.Addressed = "broadcast"
+	status, body := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, invalid)
+	errorCode(t, status, body, 400, "invalid_argument")
+
+	accepted := submit(t, p, f, r)
+	replay := submit(t, p, f, r)
+	require.Equal(t, accepted.MessageID, replay.MessageID)
+	require.Equal(t, accepted.EventID, replay.EventID)
+	ref, err := core.ParseThreadKey(accepted.ThreadKey)
+	require.NoError(t, err)
+	require.Equal(t, r.Message.ThreadRef, ref)
+
+	status, body = request(t, "GET", p.endpoint, "/v1/observer/messages/"+accepted.MessageID, "", nil)
+	require.Equal(t, http.StatusOK, status)
+	var message core.Message
+	require.NoError(t, json.Unmarshal(body, &message))
+	require.Equal(t, r.Message.SourceMessageID, message.SourceMessageID)
+	require.Equal(t, r.Message.Actor, message.Actor)
+	require.Equal(t, r.Message.Text, message.Text)
+	require.Equal(t, "group", message.Addressed)
+	require.Nil(t, message.Channel)
+	require.Len(t, page(t, p, "messages").Items, 1)
+	events := page(t, p, "routing-events").Items
+	require.Len(t, events, 1)
+	require.Contains(t, string(events[0]), `"kind":"route_request"`)
+	require.Contains(t, string(events[0]), `"status":"pending"`)
+}
+
 func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()

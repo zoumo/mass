@@ -167,14 +167,28 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.URL.Path == "/v1/channel/messages":
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
+		if r.Method != http.MethodPost && !isReadMethod(r.Method) {
+			w.Header().Set("Allow", "GET, HEAD, POST")
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		source, ok := s.authenticate(r)
 		if !ok {
 			s.fail(w, problem("unauthorized", "valid source credential is required"))
+			return
+		}
+		if isReadMethod(r.Method) {
+			ids := r.URL.Query()["sourceMessageId"]
+			if len(ids) != 1 || strings.TrimSpace(ids[0]) == "" {
+				s.fail(w, problem("invalid_argument", "one nonblank sourceMessageId is required"))
+				return
+			}
+			receipt, err := s.store.channelMessageReceipt(r.Context(), source, ids[0])
+			if err != nil {
+				s.fail(w, err)
+				return
+			}
+			s.write(w, http.StatusOK, receipt)
 			return
 		}
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {

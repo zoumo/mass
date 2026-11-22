@@ -71,10 +71,14 @@ No unknown request fields or trailing JSON values are accepted.
 
 `channel` is optional: absence means there is no supplied reply address, and
 Core never guesses one. A provided channel needs a `type`; its `address` object
-can preserve other adapters' native addressing fields. Only `type=dws` checks
-matching conversationId/messageId and optional actorId. Source `dws` is
-single-chat-only (`addressed=direct`), with or without a reply address. DWS
-profiles and reusable credentials are never part of this payload contract.
+can preserve other adapters' native addressing fields. For `type=dws`,
+`conversationId` and `messageId` must match the native Thread and Message IDs.
+When present, `actorId` must match `actor`. DWS direct and self-chat Messages
+use `addressed=direct`. DWS group Messages use `addressed=group` with the native
+group conversation ID in `threadRef.id`. A reply-enabled group supplies
+`channel.type=dws`, `channel.actorId=actor`, and both `groupOpenConversationId`
+and `senderOpenDingtalkId` in `channel.address`. These entries must match
+`threadRef.id` and `actor`, respectively. Inbound-only groups omit `channel`.
 
 Thread identity compares source/id independently. The key is each UTF-8
 component URL-path escaped with colon escaped too, joined by one literal colon.
@@ -114,6 +118,14 @@ Canonical comparison sorts JSON object keys and normalizes absolute source
 time and quoted JSON. Collection timestamps, collector instance and raw
 source event envelope IDs are excluded from comparison. `operationId` is a
 required caller correlation value.
+
+`GET /v1/channel/messages?sourceMessageId={encoded-native-id}` uses the same
+source credential and returns the stored acceptance receipt with `duplicate=false`.
+The lookup scopes the native ID to the authenticated source and account and
+returns `not_found` when the scoped Message is absent. It returns no Message
+body. POST and GET receipts include `echoStatus` when Core has classified the
+Message. A duplicate POST returns the current echo classification with the
+original acceptance facts.
 
 ## Errors and uncertain responses
 
@@ -1031,6 +1043,12 @@ retry window. Held Messages are durably admitted. When all candidate replies
 settle with known nonmatching results, Core clears the hold and routes once.
 An unresolved hold becomes `echo_unknown`. An exact result arriving later can
 still settle it as `outbound_echo`.
+
+Channel consumers can use the receipt's `echoStatus` to defer feedback while
+it is `held` or `echo_unknown`. An omitted value, `cleared` or `released`
+allows feedback on a routable Message. `outbound_echo` suppresses feedback.
+An exact late match takes precedence in the receipt even if Observer retains
+the earlier `cleared` or `released` routing history.
 
 Use `GET /v1/observer/messages/{id}` for `echo.status`, the deadline, candidate
 links, the precise match and any routing event ID. The original acceptance
