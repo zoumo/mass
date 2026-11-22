@@ -33,11 +33,15 @@ type Server struct {
 	observerTelemetry            *observerTelemetryGateway
 	observerTraces               *observerTraceReader
 	embeddedMassd                *massd.Instance
+	massdHTTP                    http.Handler
+	massdHTTPToken               string
 	store                        *Store
 	config                       Config
 	http                         *http.Server
 	listener                     net.Listener
 }
+
+const massdMount = "/massd"
 
 func Start(c Config) (*Server, error) {
 	return StartWithTelemetry(c, TelemetryOptions{})
@@ -65,6 +69,10 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 			return nil, err
 		}
 	}
+	exposureToken, err := c.massdExposureToken()
+	if err != nil {
+		return nil, err
+	}
 	gateway, err := newObserverTelemetryGateway(c.ObserverOTLPEndpoint)
 	if err != nil {
 		return nil, err
@@ -84,7 +92,7 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	}()
 	var instance *massd.Instance
 	if embedded != nil {
-		instance, err = embedded.start(ctx, options)
+		instance, err = embedded.start(ctx, options, exposureToken)
 		if err != nil {
 			return nil, err
 		}
@@ -107,6 +115,10 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 		}
 	}()
 	s := &Server{store: store, config: c, listener: l, embeddedMassd: instance, observerTelemetry: gateway, observerTraces: traces}
+	if exposureToken != "" {
+		s.massdHTTP = http.StripPrefix(massdMount, instance.Handler())
+		s.massdHTTPToken = exposureToken
+	}
 	if c.Sessions != nil {
 		if _, err = store.db.ExecContext(ctx, `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
  WHERE state='ready'`); err != nil {
@@ -194,6 +206,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	allowedObserverHost := (observerAPI || observerUI) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
 	if r.Host != expectedHost && !allowedObserverHost {
 		s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
+		return
+	}
+	if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, massdMount+"/") {
+		// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
+		s.massdHTTP.ServeHTTP(w, r)
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
@@ -447,7 +464,7 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Never return a reusable source credential, even if untrusted text contains it.
+	// Never return a reusable credential, even if untrusted text contains it.
 	body := string(b)
 	var configured []string
 	for _, source := range s.config.Sources {
@@ -456,7 +473,7 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	if s.config.Massd != nil {
 		configured = append(configured, s.config.Massd.token)
 	}
-	configured = append(configured, s.config.operatorToken)
+	configured = append(configured, s.config.operatorToken, s.massdHTTPToken)
 	for _, token := range configured {
 		if token == "" {
 			continue

@@ -35,6 +35,9 @@ storageMaxPages: 0
 # For `serve` with embedded MASS, replace the endpoint and tokenFile with:
 #   embedded:
 #     dataDir: ./massd
+#     expose:  # optional, requires a loopback Core listener
+#       tokenFile: ./embedded-massd.token  # private file and dedicated token
+#       allowedOrigins: [https://ops.example.com]  # optional, if clients send Origin
 # operatorTokenFile: ./operator.token  # optional, for loopback CLI input recovery
 # sessions:
 #   routerWorkspace: /absolute/workspace

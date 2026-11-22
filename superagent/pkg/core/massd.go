@@ -3,10 +3,12 @@ package core
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/massd"
@@ -28,6 +30,12 @@ type EmbeddedMassdConfig struct {
 	SessionIdleTimeout              *time.Duration   `mapstructure:"sessionIdleTimeout"`
 	WriteTimeout                    *time.Duration   `mapstructure:"writeTimeout"`
 	PrototypeAutoApprovePermissions bool             `mapstructure:"prototypeAutoApprovePermissions"`
+	Expose                          *MassdExposure   `mapstructure:"expose"`
+}
+
+type MassdExposure struct {
+	TokenFile      string   `mapstructure:"tokenFile"`
+	AllowedOrigins []string `mapstructure:"allowedOrigins"`
 }
 
 func (c *MassdConfig) validate(resolve func(string) string, composed bool) error {
@@ -36,6 +44,9 @@ func (c *MassdConfig) validate(resolve func(string) string, composed bool) error
 			return problem("invalid_argument", "massd.embedded cannot be combined with compose, massd.endpoint or massd.tokenFile")
 		}
 		c.Embedded.DataDir = resolve(c.Embedded.DataDir)
+		if c.Embedded.Expose != nil {
+			c.Embedded.Expose.TokenFile = resolve(c.Embedded.Expose.TokenFile)
+		}
 		return c.Embedded.validate()
 	}
 	if !composed {
@@ -73,7 +84,39 @@ func (c *EmbeddedMassdConfig) validate() error {
 	return nil
 }
 
-func (c *EmbeddedMassdConfig) start(ctx context.Context, options TelemetryOptions) (*massd.Instance, error) {
+func (c Config) massdExposureToken() (string, error) {
+	if c.Massd == nil || c.Massd.Embedded == nil || c.Massd.Embedded.Expose == nil {
+		return "", nil
+	}
+	host, _, err := net.SplitHostPort(c.Listen)
+	if err != nil || !net.ParseIP(host).IsLoopback() {
+		return "", problem("invalid_argument", "massd.embedded.expose requires a loopback Core listener")
+	}
+	path := c.Massd.Embedded.Expose.TokenFile
+	if path == "" {
+		return "", problem("invalid_argument", "massd.embedded.expose.tokenFile is required")
+	}
+	b, err := readPrivate(path)
+	if err != nil {
+		return "", problem("invalid_argument", "massd.embedded.expose.tokenFile must be a readable private regular file")
+	}
+	token := strings.TrimSpace(string(b))
+	if len(token) < 32 || strings.IndexFunc(token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return "", problem("invalid_argument", "embedded MASS token must have at least 32 bytes without whitespace or control characters")
+	}
+	// Core assigns this prefix to both new and persisted role MCP credentials.
+	if token == c.operatorToken || strings.HasPrefix(token, roleTokenPrefix+"_") {
+		return "", problem("invalid_argument", "embedded MASS token must be distinct from Core credentials")
+	}
+	for _, source := range c.Sources {
+		if token == source.token {
+			return "", problem("invalid_argument", "embedded MASS token must be distinct from Core credentials")
+		}
+	}
+	return token, nil
+}
+
+func (c *EmbeddedMassdConfig) start(ctx context.Context, options TelemetryOptions, token string) (*massd.Instance, error) {
 	idle, write := service.DefaultSessionIdleTimeout, massd.DefaultWriteTimeout
 	if c.SessionIdleTimeout != nil {
 		idle = *c.SessionIdleTimeout
@@ -81,10 +124,15 @@ func (c *EmbeddedMassdConfig) start(ctx context.Context, options TelemetryOption
 	if c.WriteTimeout != nil {
 		write = *c.WriteTimeout
 	}
+	wire := transport.Options{WriteTimeout: write, TracerProvider: options.Traces, MeterProvider: options.Metrics}
+	if c.Expose != nil {
+		wire.Token = token
+		wire.AllowedOrigins = c.Expose.AllowedOrigins
+	}
 	return massd.Start(ctx, massd.Options{
 		DataDir: c.DataDir, MetaStore: c.MetaStore, SessionIdleTimeout: idle,
 		PrototypeAutoApprovePermissions: c.PrototypeAutoApprovePermissions,
-		Transport:                       transport.Options{WriteTimeout: write, TracerProvider: options.Traces, MeterProvider: options.Metrics},
+		Transport:                       wire,
 	})
 }
 

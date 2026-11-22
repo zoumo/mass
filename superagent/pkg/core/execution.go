@@ -273,6 +273,8 @@ func (b SessionBinding) capabilityFileID() string {
 	return b.ID
 }
 
+const roleTokenPrefix = "cap"
+
 func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous SessionBinding) (SessionBinding, error) {
 	fresh, err := makeSpec(c, b)
 	if err != nil {
@@ -289,7 +291,7 @@ func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous Sessio
 	if err != nil {
 		return SessionBinding{}, storageError()
 	}
-	token := newID("cap") + newID("key")
+	token := newID(roleTokenPrefix) + newID("key")
 	if err := putJSON(ctx, tx, "INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body) VALUES(?,?,?,?,?,?,?,?,?)", b, b.ID, b.Role, b.OwnerID, b.Generation, b.CreatedAt, token, spec, b.State); err != nil {
 		return SessionBinding{}, err
 	}

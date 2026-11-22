@@ -339,8 +339,16 @@ sessions:
 `/jsonrpc` URL. See the [endpoint upgrade steps](../mass-go/README.md#upgrade-the-websocket-endpoint)
 when switching an existing deployment. For an embedded instance, use
 `massd.embedded.dataDir` in place of `massd.endpoint` and `massd.tokenFile`.
+With `massd.embedded.expose` enabled, `GET /massd/jsonrpc` accepts WebSocket
+Upgrade with the dedicated MASS bearer. `GET /massd/livez` and
+`GET /massd/readyz` expose MASS probes without a bearer. Core checks `Host`
+against its listener address and then strips `/massd` before dispatching to
+the embedded MASS handler. The handler applies the MASS bearer and Origin
+rules and manages external connections for the same instance that Core uses.
+The mount is disabled by default and available in embedded mode.
 See [embedded deployment](README.md#running-mass-inside-core) for startup and
-ownership handoff.
+ownership handoff or [massctl access](README.md#accessing-embedded-mass-with-massctl)
+for proxy configuration.
 
 Both role profiles require a legal Runtime name and a nonblank model.
 An Issue template also requires a nonblank description. Each

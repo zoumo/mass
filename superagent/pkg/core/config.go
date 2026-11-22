@@ -222,6 +222,9 @@ func loadConfig(path string, composed bool) (Config, error) {
 		}
 		seenToken[s.tokenHash] = true
 	}
+	if _, err := c.massdExposureToken(); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 

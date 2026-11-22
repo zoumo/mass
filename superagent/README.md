@@ -153,6 +153,45 @@ existing bindings point to the same Session IDs and UIDs and that Session
 specs match. If Core reports an unknown native result, follow the
 [recovery contract](API.md#local-operator-reconciliation) before resubmitting input.
 
+### Accessing embedded MASS with massctl
+
+To enable `/massd/` on the Core HTTP listener, add this block under
+`massd.embedded` and keep `listen` on a loopback IP address.
+
+```yaml
+expose:
+  tokenFile: ./embedded-massd.token
+  # allowedOrigins: [https://ops.example.com]
+```
+
+Create a regular token file with mode `0600`, readable by the Core process.
+Generate a dedicated token of at least 32 bytes without whitespace or control
+characters. Keep it distinct from Core Source, Operator, and role MCP
+credentials. The `cap_` prefix is reserved for role MCP credentials. Relative
+token paths are resolved beside the Core config. This bearer grants full MASS
+Runtime and Session access, including to Sessions managed by Core.
+
+```sh
+export MASS_TOKEN="$(cat "$HOME/.mass/embedded-massd.token")"
+bin/massctl --url ws://127.0.0.1:24370/massd session list
+```
+
+`massctl` connects to `/massd/jsonrpc`. `/massd/livez` and `/massd/readyz`
+provide unauthenticated probes through the same Core listener. To allow
+non-local access, terminate TLS at a trusted reverse proxy. Limit the proxy
+route to `/massd/` and forward it to Core's loopback listener. Preserve the
+`/massd/` path and `Authorization` header. Forward the WebSocket Upgrade and
+keep the connection open for bidirectional traffic. Set the upstream `Host`
+to Core's listening address, including its port.
+Clients in this deployment use `wss://<proxy-host>/massd`. Requests carrying
+`Origin` must match a configured `allowedOrigins` value exactly. Native
+clients such as `massctl` can omit it.
+
+On shutdown, Core closes new MASS connection admission and stops its own
+scheduling. MASS settles accepted work, attempts to send final events to
+healthy connections, then closes those connections and releases its data
+directory.
+
 ## Running massd and Core together
 
 For an installation under `~/.mass`, put `massd.yaml` and `core.yaml` in

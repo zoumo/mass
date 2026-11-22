@@ -2,6 +2,7 @@
 
 ## 2026-11-22
 
+- 增加 Core 的可选 [`/massd/` 挂载](bindings/websocket.md)，沿用 MASS handler 的认证、探针、订阅和退出流程。
 - 明确 [MASS 内嵌部署](architecture.md) 的数据目录所有权和 [进程内 JSON-RPC 连接](bindings/jsonrpc.md) 的行为。
 - 独立 massd 的 [WebSocket 业务入口](bindings/websocket.md)改为 `/jsonrpc`。客户端可用源地址、挂载前缀或完整业务地址连接同一个实例。
 - **v0.3.5** 在开放业务接口前登记缺失的 `claude` 和 `codex` Runtime。新登记实例采用普通 Runtime 管理规则，并为新建 Session 提供 `fullAccess` 默认值。Session 保存创建时选定的预设供后续恢复。见 [ADR-0003](adr/0003-register-default-runtimes.md)。
