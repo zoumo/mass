@@ -13,7 +13,6 @@ import (
 )
 
 type composeConfig struct {
-	massd    []byte
 	core     []byte
 	triggers map[string][]byte
 }
@@ -46,35 +45,25 @@ func decodeComposeConfig(input io.Reader) (composeConfig, error) {
 	}
 	for i := 0; i < len(document.Content); i += 2 {
 		key, value := document.Content[i], document.Content[i+1]
-		var section *[]byte
 		switch key.Value {
-		case "massd":
-			section = &config.massd
 		case "core":
-			section = &config.core
+			var err error
+			config.core, err = encodeComposeSection(value, "core configuration")
+			if err != nil {
+				return config, err
+			}
 		case "triggers":
 			var err error
 			config.triggers, err = decodeComposeTriggers(value)
 			if err != nil {
 				return config, err
 			}
-			continue
 		default:
 			return config, fmt.Errorf("unknown Compose configuration section at line %d", key.Line)
 		}
-		data, err := encodeComposeSection(value, key.Value+" configuration")
-		if err != nil {
-			return config, err
-		}
-		*section = data
 	}
-	for _, required := range []struct {
-		name string
-		data []byte
-	}{{"massd", config.massd}, {"core", config.core}} {
-		if required.data == nil {
-			return config, fmt.Errorf("missing %s configuration", required.name)
-		}
+	if config.core == nil {
+		return config, errors.New("missing core configuration")
 	}
 	return config, nil
 }

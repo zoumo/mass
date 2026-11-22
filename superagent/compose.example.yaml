@@ -1,12 +1,15 @@
 # Replace the example account, profile, repository, and executable path.
 # Supply private Core token files and inject the matching environment variables.
-massd:
-  dataDir: ./massd-data
-  listen: 127.0.0.1:0
-
 core:
   dataDir: ./superagent-core-data
   listen: 127.0.0.1:24370
+  # Optional MASS settings. The default data directory is ./massd-data.
+  # massd:
+  #   embedded:
+  #     dataDir: ./massd-data
+  #     expose:
+  #       tokenFile: ./secrets/massd.token
+  # Add sessions from config.example.yaml to enable Core Agent execution.
   sources:
     - source: github
       accountId: github-local

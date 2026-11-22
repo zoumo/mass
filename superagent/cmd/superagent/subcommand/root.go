@@ -17,11 +17,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/massd"
 
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
+
+const coreShutdownTimeout = 10 * time.Second
 
 func Execute() int {
 	cmd := New()
@@ -41,32 +42,26 @@ func Execute() int {
 
 func New() *cobra.Command {
 	root := &cobra.Command{Use: "superagent", Short: "Superagent Core and read-only observation", SilenceUsage: true, SilenceErrors: true}
-	var config, massdEndpoint string
+	var config string
+	var composed bool
 	serve := &cobra.Command{Use: "serve", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		signals, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if cmd.Flags().Changed("compose-massd-endpoint") {
-			if childEndpoint(massdEndpoint, rpcwire.WebSocketPath, "ws", "wss") == nil {
-				return errors.New("invalid Compose massd RPC endpoint")
-			}
-			c, err := core.LoadComposeConfig(config, cmd.InOrStdin())
-			if err != nil {
-				return err
-			}
-			if c.Massd != nil {
-				c.Massd.Endpoint = massdEndpoint
-			}
-			return runCore(signals, cmd, c)
+		var c core.Config
+		var err error
+		if composed {
+			c, err = core.LoadComposeConfig(config, cmd.InOrStdin())
+		} else {
+			c, err = core.LoadConfig(config)
 		}
-		c, err := core.LoadConfig(config)
 		if err != nil {
 			return err
 		}
 		return runCore(signals, cmd, c)
 	}}
 	serve.Flags().StringVar(&config, "config", "", "YAML configuration file")
-	serve.Flags().StringVar(&massdEndpoint, "compose-massd-endpoint", "", "Use the Compose configuration section and massd endpoint")
-	_ = serve.Flags().MarkHidden("compose-massd-endpoint")
+	serve.Flags().BoolVar(&composed, "compose-config-stdin", false, "Read the Core configuration section from Compose")
+	_ = serve.Flags().MarkHidden("compose-config-stdin")
 	_ = serve.MarkFlagRequired("config")
 	root.AddCommand(serve, newCompose(), newTriggers())
 	var endpoint, cursor, thread, topic, issue, message, activityFilter string
@@ -179,7 +174,7 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config) (resul
 		serveErr = server.Serve()
 	}()
 	defer func() {
-		budget := 10 * time.Second
+		budget := coreShutdownTimeout
 		if config.Massd != nil && config.Massd.Embedded != nil {
 			budget += massd.ShutdownTimeout
 		}

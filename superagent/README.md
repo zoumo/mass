@@ -194,50 +194,49 @@ directory.
 ## Run the stack with Compose
 
 Copy the [Compose example](compose.example.yaml) to `~/.mass/stack.yaml`. Keep
-the required `massd` and `core` sections. Include `triggers.github` and
-`triggers.dws` for the collectors you want to run. Compose resolves relative
-paths from the directory that contains `stack.yaml`.
+`core` and include `triggers.github` or `triggers.dws` for each collector you
+want to run. Compose resolves paths relative to `stack.yaml`.
+
+Core starts embedded MASS. The default data directory is `./massd-data`.
+Set `core.massd.embedded.dataDir` to use a different directory. Use separate
+paths for Core, MASS, and the Trigger databases. To have Core run Agents, add
+`core.sessions` from the [Core configuration example](config.example.yaml).
+Keep the Core listener on a fixed port for role MCP, or set a stable
+`core.externalURL` when you use a reverse proxy.
 
 Match each Trigger's source, account, and instance to a `core.sources` entry.
-Create a separate private token file for each entry. Inject the same token
-into the environment variable named by that Trigger's `coreTokenEnv`.
-Supply the GitHub credential through `githubTokenEnv` and configure the DWS
-profile through the DWS CLI. Use a separate persistent `databasePath` for
-each Trigger and a separate `feedback.statePath` if DWS feedback is enabled.
-See the [Trigger configuration and cutover guide](triggers/README.md).
+Create a separate private token file for each entry. Set the environment
+variable named in that Trigger's `coreTokenEnv` to the same token. Supply
+the GitHub credential through `githubTokenEnv` and configure the DWS profile
+through the DWS CLI. Use a separate `feedback.statePath` if you enable DWS
+feedback. See the [Trigger configuration and cutover guide](triggers/README.md).
 
-To enable agent execution, add `core.sessions` and keep the Core port fixed for
-the default loopback MCP URL. Set a stable `core.externalURL` when you use a
-reverse proxy. For RPC authentication, point `massd.tokenFile` and
-`core.massd.tokenFile` at the same private token file. Compose supplies the
-actual RPC endpoint to Core and the actual Core HTTP origin to each Trigger.
-See the [Core configuration example](config.example.yaml).
-
-Build the binaries from the repository root and start the stack.
+Run these commands from the repository root.
 
 ```sh
-make build-go build-superagent
-bin/superagent compose --config "$HOME/.mass/stack.yaml" --massd-bin ./bin/massd
+make build-superagent
+bin/superagent compose --config "$HOME/.mass/stack.yaml"
 ```
 
-Compose prints a JSON record with `status: ready`, `massdEndpoint`, `endpoint`,
-and `observerEndpoint` when the local processes respond. When you enable
-Triggers, `triggerEndpoints` contains one status origin per enabled Trigger,
-under `github` or `dws`. Pass the origin to the corresponding `triggers ... status`
-command with `--endpoint`. Check `consumerReady` for DWS subscriptions and the
-repository stream `lastSuccessAt` timestamps for GitHub polling.
+Compose prints one JSON record when Core and the configured Trigger status
+listeners respond. The record includes `endpoint` and `observerEndpoint`.
+If you set `core.massd.embedded.expose`, `massdEndpoint` gives the authenticated
+WebSocket URL on Core. See [Accessing embedded MASS with massctl](#accessing-embedded-mass-with-massctl).
 
-Open `observerEndpoint` to inspect Core. Compose runs in the foreground and
-looks for `massd` on `PATH` when you omit `--massd-bin`. Press Ctrl-C to
-stop the Triggers, then Core, then massd. If a Trigger exits after startup,
-Compose logs the exit and keeps the other processes running. An unexpected
-exit from Core or massd stops the stack and returns an error.
+Use `observerEndpoint` to inspect Core. Use each origin in `triggerEndpoints`
+with the corresponding `triggers ... status --endpoint` command. Check
+`consumerReady` for DWS subscriptions and `lastSuccessAt` for each GitHub
+repository stream.
 
-For separate processes, use `superagent serve --config core.yaml`.
-Configure `massd.endpoint` in Core when you enable Sessions, and set
-`coreEndpoint` in each Trigger's standalone YAML. The
-[Trigger guide](triggers/README.md) lists the standalone `check`, `serve`,
-and `status` commands.
+Press Ctrl-C to stop the stack. Compose stops the Triggers first. Core then
+stops scheduling and shuts down MASS. If a Trigger exits after startup,
+Compose logs the exit and continues running the rest of the stack. If Core
+exits unexpectedly, Compose stops the Triggers and returns an error.
+
+To run Core independently, use `superagent serve --config core.yaml`.
+For a separate MASS instance, configure `massd.endpoint` in `core.yaml`.
+Set `coreEndpoint` in each standalone Trigger configuration. See the
+[standalone Trigger commands](triggers/README.md).
 
 ## Ingress and queries
 
