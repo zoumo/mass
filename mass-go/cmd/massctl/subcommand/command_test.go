@@ -29,7 +29,8 @@ func (s *CommandSuite) TestRuntimeCreateUsesResourceRPC() {
 		call.respond(json.RawMessage(`{"metadata":{"name":"agent"},"spec":{"type":"codex","config":{}},"status":{"state":"stopped"}}`))
 	})
 	var out, stderr bytes.Buffer
-	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", endpoint, "-o", "json", "runtime", "create", "agent", "--type", "codex"}, strings.NewReader(""), &out, &stderr), stderr.String())
+	origin := strings.TrimSuffix(endpoint, "/jsonrpc")
+	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", origin, "-o", "json", "runtime", "create", "agent", "--type", "codex"}, strings.NewReader(""), &out, &stderr), stderr.String())
 	s.Contains(out.String(), `"stopped"`)
 	s.Empty(stderr.String())
 }

@@ -159,7 +159,7 @@ func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	c, err := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "", client.Options{
+	c, err := client.New("ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "", client.Options{
 		WriteTimeout:              time.Second,
 		SubscriptionQueueCapacity: 1,
 	})

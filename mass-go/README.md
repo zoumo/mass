@@ -163,8 +163,9 @@ signals share a five-second deadline to flush.
 
 ### JSON-RPC
 
-`/rpc` accepts JSON-RPC 2.0 over WebSocket on the same listener and authentication
-boundary; `/livez` and `/readyz` remain plain HTTP probes. The endpoint accepts
+`/jsonrpc` accepts JSON-RPC 2.0 over WebSocket. `/livez` and `/readyz` are HTTP
+probes on the same listener. The massd startup record gives the full WebSocket
+URL, including `/jsonrpc`. The endpoint accepts
 the side-effect-free `initialize` method with MASS protocol version `"1"`, plus
 the `runtime.create`, `runtime.get`, `runtime.list`, `runtime.update`,
 `runtime.start`, `runtime.stop`, `runtime.delete`, `session.create`,
@@ -207,7 +208,10 @@ complete command tree; `massctl version` reports the client build. The old `--op
 interface is removed. CLI implementation lives in `cmd/massctl/subcommand`, organized by resource
 subcommands; `cmd/massctl/main.go` only assembles process I/O and signals.
 
-Address precedence is `--url`, then `MASS_URL`, then `ws://127.0.0.1:24368/rpc`.
+Address precedence is `--url`, then `MASS_URL`, then `ws://127.0.0.1:24368/jsonrpc`.
+The Go client and massctl accept a `ws://` or `wss://` origin, a proxy mount
+base, or a full endpoint. For example, `wss://mass.example.com/team/` resolves to
+`wss://mass.example.com/team/jsonrpc`.
 Authentication uses `MASS_TOKEN`. Output defaults to human summaries/tables;
 `-o json` pretty-prints the complete business result, and watch writes one raw
 SessionEvent JSON value per stdout line. Errors retain `code/reason/message` on stderr; watch
@@ -269,6 +273,17 @@ Claude URL completion is correlated by native Session, MCP server, and
 elicitation ID. The pinned Codex path keeps an accepted URL pending when it
 has no correlated completion event. Verified Session release expires a pending
 URL interaction.
+
+### Upgrade the WebSocket endpoint
+
+Upgrade massd, massctl, Go clients, and Superagent Core together. Replace the
+old `/rpc` suffix in explicit addresses such as `MASS_URL`, `--url`, and
+`massd.endpoint` with `/jsonrpc`. Update any reverse proxy route to forward
+WebSocket Upgrade requests to `/jsonrpc` on massd. With the new versions running,
+check that `GET /readyz` returns `200` and `massctl runtime list` succeeds through
+the configured WebSocket address. Authenticated requests to the old `/rpc`
+return `404`. If both versions need to run at the same time, give each massd a
+separate endpoint and data directory and use matching client versions.
 
 ### Consumer recording and replay
 

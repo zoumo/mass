@@ -12,20 +12,19 @@ type Options struct {
 }
 ```
 
-Use an explicit `ws://` or `wss://` endpoint ending in `/rpc`. Construction
-performs no network I/O; the URL is validated when a connection is first
-needed. `WriteTimeout` bounds each WebSocket write and is a Go
+Use a `ws://` or `wss://` origin, mount base, or full endpoint. The client
+adds `/jsonrpc` if the path lacks that suffix. A trailing slash is optional.
+`client.WebSocketEndpoint` resolves the URL without I/O. `client.New` performs
+no network I/O and resolves the URL when it first needs a connection.
+`WriteTimeout` bounds each WebSocket write and is a Go
 `time.Duration`; `SubscriptionQueueCapacity` is a count of locally queued
 SessionEvents per observation. Neither option has an implementation default:
 zero, negative values, or an omitted field makes `client.New` fail before a
 connection exists. Queue overflow terminates only that observation and
 releases its connection.
 
-`client.Client` and `client.New` remain the only public client names. There is
-no `WebSocketClient`, `NewWebSocket` compatibility alias, protocol
-auto-detection or HTTP fallback. `Initialize` exposes the side-effect-free
-handshake, while typed Runtime and Session methods initialize lazily on first
-use.
+`Initialize` performs the side-effect-free handshake. Typed Runtime and Session
+methods initialize lazily on first use.
 
 Ordinary calls share one JSON-RPC connection. `Subscribe` always opens a separate
 authenticated and initialized WebSocket, sends `session.subscribe`, and returns

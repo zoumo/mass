@@ -21,7 +21,7 @@ sources:
 
 massctl 是面向终端用户和脚本的客户端模块，提供 `massctl <resource> <operation> [target] [flags]` 形式的 interface。模块隐藏请求构造、Session 引用转换、WebSocket 认证与连接、JSON-RPC 响应及订阅通知，使调用者无需理解内部操作字符串或调用 envelope。
 
-massctl 通过 [JSON-RPC over WebSocket](../../bindings/websocket.md) 调用 [RuntimeService](../service/runtime-service.tsp) 与 [SessionService](../service/session-service.tsp)。业务入口为 `/rpc`。Service 拥有业务校验、生命周期、持久化和操作编排；massctl 不直接访问 Store、Registry、Driver、原生 Agent 或服务端数据目录，不维护另一套资源状态。
+massctl 通过 [JSON-RPC over WebSocket](../../bindings/websocket.md) 调用 [RuntimeService](../service/runtime-service.tsp) 与 [SessionService](../service/session-service.tsp)。业务入口为 `/jsonrpc`。Service 拥有业务校验、生命周期、持久化和操作编排；massctl 不直接访问 Store、Registry、Driver、原生 Agent 或服务端数据目录，不维护另一套资源状态。
 
 模块拥有命令发现、参数校验、输入读取、请求等待、终端输出与进程退出行为。session create/resume 由 Service 在业务校验后按需启动所属 Runtime，CLI 不额外发送 runtime start。查询、历史和 watch 不触发启动；prompt 不隐式恢复离线 Session。不隐式发送初始 prompt、不重试副作用请求，不通过停止共享 Runtime 处理单 Session 错误。
 
@@ -144,7 +144,7 @@ prompt 的 --text 值直接作为文本，不解释为文件路径或 JSON。缺
 
 ## 连接、认证与请求等待
 
-全局参数已确认：`--url URL`、`-o/--output human|json`、`--timeout DURATION`。服务地址优先级为显式 --url、环境变量 MASS_URL、默认 ws://127.0.0.1:24368/rpc；--url 指定完整 WebSocket endpoint，不自动补 REST 路径、探测其他实例或回退 HTTP。
+全局参数包括 `--url URL`、`-o/--output human|json` 和 `--timeout DURATION`。服务地址依次取自 `--url`、`MASS_URL` 和默认值 `ws://127.0.0.1:24368/jsonrpc`。`--url` 和 `MASS_URL` 接受源地址、挂载前缀或完整业务地址，按 [WebSocket 入口规则](../../bindings/websocket.md#入口与消息)补全。
 
 认证从 `MASS_TOKEN` 读取，按 WebSocket Upgrade 合同放入 Authorization 头，不提供明文 token 命令行参数，不在输出、错误或诊断中泄露秘密。部署、TLS 与实例级权限遵循 WebSocket 合同；CLI 不赋予 namespace 租户隔离含义。
 
@@ -193,7 +193,7 @@ watch 在独立 WebSocket 完成 initialize 和 session.subscribe 后确认就�
 | 副作用请求断线或超时 | 不重试，不自动清理业务资源，不宣告确定未执行 |
 | watch ready、事件与终止 | 控制帧不混入事件 JSONL；异常明确；关闭订阅后 Agent 工作继续 |
 | 机器输出与错误 | stdout 可独立解析；错误在 stderr，code/reason/message 与非零退出一致 |
-| 认证与连接 | 使用 `/rpc` 和 Upgrade Bearer 头；秘密不进入 URL、日志或输出 |
+| 认证与连接 | 使用 `/jsonrpc` 和 Upgrade Bearer 头；秘密不进入 URL、日志或输出 |
 
 CLI/JSON-RPC 合同可通过隔离的服务或 WebSocket 协议替身验证；涉及原生输入、取消、close、恢复和观察期间继续工作的端到端结论，仍需按[测试验收原则](../../principles/testing.md)执行真实 Agent 验收。帮助、构建和离线测试通过不代表 Agent 能力已验证。
 

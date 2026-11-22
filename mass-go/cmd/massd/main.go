@@ -20,6 +20,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 
 	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/metastore/backend"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
@@ -199,7 +200,7 @@ func run(parent context.Context, o options) (result error) {
 	if o.TLSCert != "" {
 		scheme = "wss://"
 	}
-	if err = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": scheme + listener.Addr().String() + "/rpc"}); err != nil {
+	if err = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": scheme + listener.Addr().String() + rpcwire.WebSocketPath}); err != nil {
 		server.Close()
 		return err
 	}

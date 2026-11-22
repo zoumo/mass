@@ -4,6 +4,9 @@ package jsonrpc
 import "encoding/json"
 
 const (
+	// WebSocketPath is the JSON-RPC endpoint on the MASS HTTP handler.
+	WebSocketPath = "/jsonrpc"
+
 	// TraceContextHeader advertises support for per-request traceparent in meta.
 	TraceContextHeader = "Mass-Trace-Context"
 

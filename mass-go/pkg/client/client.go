@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -302,7 +303,7 @@ func (c *Client) connection(ctx context.Context) (*rpc2.Conn, *rpcStream, error)
 }
 
 func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *rpcStream, context.CancelFunc, error) {
-	endpoint, err := websocketEndpoint(c.serverURL)
+	endpoint, err := WebSocketEndpoint(c.serverURL)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -380,25 +381,23 @@ func (h clientHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Re
 	_ = conn.ReplyWithError(ctx, req.ID, &rpc2.Error{Code: rpc2.CodeMethodNotFound, Message: "Method not found"})
 }
 
-func websocketEndpoint(serverURL string) (string, error) {
+// WebSocketEndpoint resolves a ws or wss origin, mount base, or full MASS endpoint.
+func WebSocketEndpoint(serverURL string) (string, error) {
 	parsed, err := url.Parse(serverURL)
-	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || (parsed.Scheme != "ws" && parsed.Scheme != "wss") ||
+		parsed.Hostname() == "" || parsed.User != nil || parsed.ForceQuery ||
+		parsed.RawQuery != "" || strings.Contains(serverURL, "#") {
 		return "", errors.New("invalid MASS server URL")
 	}
-	switch parsed.Scheme {
-	case "ws", "wss":
-	default:
-		return "", errors.New("invalid MASS server URL")
+	base := strings.TrimSuffix(parsed.Path, "/")
+	if parsed.RawPath != "" || strings.Contains(parsed.Path, "//") ||
+		strings.Contains(base, `\`) || (base != "" && path.Clean(base) != base) {
+		return "", errors.New("invalid MASS server URL path")
 	}
-	path := strings.TrimSuffix(parsed.Path, "/")
-	switch path {
-	case "":
-		parsed.Path = "/rpc"
-	case "/rpc":
-		parsed.Path = path
-	default:
-		return "", errors.New("MASS server URL must be a ws:// or wss:// endpoint ending in /rpc")
+	if !strings.HasSuffix(base, rpcwire.WebSocketPath) {
+		base += rpcwire.WebSocketPath
 	}
+	parsed.Path = base
 	return parsed.String(), nil
 }
 

@@ -255,7 +255,7 @@ func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent()
 	s.T().Cleanup(h.Shutdown)
 	server := httptest.NewServer(h)
 	s.T().Cleanup(server.Close)
-	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "test-token")
 	s.T().Cleanup(func() { s.Require().NoError(c.Close()) })
 	observed, cancelObserve := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelObserve()
@@ -287,7 +287,7 @@ func (s *SessionWorkSuite) TestRPCWaitCancellationStillPublishesCommittedEvent()
 		return points
 	}
 	s.EqualValues(1, inflight()["session.prompt"])
-	reader := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	reader := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "test-token")
 	s.T().Cleanup(func() { s.Require().NoError(reader.Close()) })
 	var current resource.Session
 	s.Require().NoError(reader.GetSession(observed, s.ref, &current))

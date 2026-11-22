@@ -2,6 +2,7 @@ package subcommand
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,7 +44,7 @@ func TestMassdStartupAndReadiness(t *testing.T) {
 	}))
 	defer server.Close()
 
-	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/jsonrpc"
 	daemon := startStubMassd(t, fmt.Sprintf("printf '%%s\\n' '{\"url\":%q}'\nexec /bin/sleep 10\n", endpoint))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -53,6 +54,33 @@ func TestMassdStartupAndReadiness(t *testing.T) {
 	require.GreaterOrEqual(t, requests.Load(), int32(2))
 	require.NoError(t, daemon.stop(time.Second))
 	require.Equal(t, syscall.SIGTERM, daemon.cmd.ProcessState.Sys().(syscall.WaitStatus).Signal())
+}
+
+func TestMassdStartupEndpoint(t *testing.T) {
+	for _, test := range []struct {
+		url  string
+		want string
+	}{
+		{url: "ws://127.0.0.1:24368/jsonrpc", want: "ws://127.0.0.1:24368/jsonrpc"},
+		{url: "wss://[::]:24368/jsonrpc", want: "wss://[::1]:24368/jsonrpc"},
+		{url: "ws://127.0.0.1:24368/rpc"},
+		{url: "ws://127.0.0.1:24368"},
+		{url: "ws://127.0.0.1:24368/massd/jsonrpc"},
+		{url: "ws://127.0.0.1:24368/jsonrpc/"},
+		{url: "ws://127.0.0.1:24368/jsonrpc#"},
+	} {
+		t.Run(test.url, func(t *testing.T) {
+			record, err := json.Marshal(map[string]string{"url": test.url})
+			require.NoError(t, err)
+			endpoint, err := massdStartupEndpoint(record)
+			if test.want == "" {
+				require.ErrorContains(t, err, "invalid massd startup RPC endpoint")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, endpoint.String())
+		})
+	}
 }
 
 func TestMassdStartupFailures(t *testing.T) {
@@ -88,7 +116,7 @@ func TestMassdReadinessTimeout(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/jsonrpc"
 	daemon := startStubMassd(t, fmt.Sprintf("printf '%%s\\n' '{\"url\":%q}'\nexec /bin/sleep 30\n", endpoint))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -101,7 +129,7 @@ func TestMassdForcedShutdownWaitsForExit(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/jsonrpc"
 	daemon := startStubMassd(t, fmt.Sprintf("trap '' TERM\nprintf '%%s\\n' '{\"url\":%q}'\nexec /bin/sleep 10\n", endpoint))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

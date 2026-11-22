@@ -77,7 +77,7 @@ func rpcHeaders(token string, origin ...string) http.Header {
 }
 
 func rpcURL(httpServer *httptest.Server) string {
-	return "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/rpc"
+	return "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/jsonrpc"
 }
 
 func dialRPC(t *testing.T, httpServer *httptest.Server, headers http.Header) *websocket.Conn {
@@ -131,7 +131,7 @@ func TestRPCAuthenticationAndOrigin(t *testing.T) {
 		AllowedOrigins: []string{"https://allowed.example"},
 	})
 
-	response, err := get(t, httpServer.URL+"/rpc")
+	response, err := get(t, httpServer.URL+"/jsonrpc")
 	require.NoError(t, err)
 	_ = response.Body.Close()
 	require.Equal(t, http.StatusUnauthorized, response.StatusCode)
@@ -185,11 +185,12 @@ func TestHealthProbesAndRetiredBusinessRoutes(t *testing.T) {
 		require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
 		require.Equal(t, http.MethodGet, response.Header.Get("Allow"))
 	}
-	response := request(http.MethodPost, "/rpc", true) //nolint:bodyclose // The helper registers body cleanup.
+	response := request(http.MethodPost, "/jsonrpc", true) //nolint:bodyclose // The helper registers body cleanup.
 	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
 	require.Equal(t, http.MethodGet, response.Header.Get("Allow"))
 
 	for _, path := range []string{
+		"/rpc",
 		"/apis/v1/runtimes",
 		"/apis/v1/sessions/YS9i",
 		"/apis/v1/namespaces/demo/sessions/task/events/stream",
@@ -502,7 +503,7 @@ func TestRPCWithoutTokenAllowsOnlyLoopbackPeers(t *testing.T) {
 	sendText(t, conn, initializeMessage(`"loopback"`, rpcwire.Version))
 	require.Nil(t, readRPC(t, conn).Error)
 
-	request := httptest.NewRequest(http.MethodGet, "/rpc", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/jsonrpc", http.NoBody)
 	request.RemoteAddr = "192.0.2.1:12345"
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)

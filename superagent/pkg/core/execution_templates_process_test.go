@@ -21,7 +21,7 @@ import (
 
 func TestExecutionTemplateConfig(t *testing.T) {
 	f := fixtureAt(t)
-	f.execution(&routeBoundary{url: "ws://127.0.0.1:12345/rpc"})
+	f.execution(&routeBoundary{url: "wss://mass.example.test/massd/"})
 	valid, err := os.ReadFile(f.config)
 	require.NoError(t, err)
 	config, err := core.LoadConfig(f.config)

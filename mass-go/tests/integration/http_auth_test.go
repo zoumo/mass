@@ -80,14 +80,14 @@ func (webSocketAuthSuite *WebSocketAuthSuite) TestAuthenticatedDaemon() {
 		require.NoError(t, err, stderr.String())
 	}
 	require.True(t, strings.HasPrefix(ready.URL, "wss://"))
-	require.True(t, strings.HasSuffix(ready.URL, "/rpc"))
+	require.True(t, strings.HasSuffix(ready.URL, "/jsonrpc"))
 	roots := x509.NewCertPool()
 	require.True(t, roots.AppendCertsFromPEM(certPEM))
 	wire := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
 	defer wire.CloseIdleConnections()
 	httpClient := &http.Client{Transport: wire, Timeout: 5 * time.Second}
-	httpsURL := "https://" + strings.TrimPrefix(strings.TrimSuffix(ready.URL, "/rpc"), "wss://")
-	for _, path := range []string{"/rpc"} {
+	httpsURL := "https://" + strings.TrimPrefix(strings.TrimSuffix(ready.URL, "/jsonrpc"), "wss://")
+	for _, path := range []string{"/jsonrpc"} {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, httpsURL+path, http.NoBody)
 		require.NoError(t, err)
 		response, err := httpClient.Do(request)
@@ -103,7 +103,7 @@ func (webSocketAuthSuite *WebSocketAuthSuite) TestAuthenticatedDaemon() {
 	require.Equal(t, 200, response.StatusCode)
 	response.Body.Close()
 	var rows []resource.Runtime
-	c := newHTTPClient(t, ready.URL, "synthetic-http-token")
+	c := newHTTPClient(t, strings.TrimSuffix(ready.URL, "/jsonrpc"), "synthetic-http-token")
 	c.SetTLSClientConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})
 	require.NoError(t, c.ListRuntimes(ctx, resource.RuntimeQuery{}, &rows))
 	require.Len(t, rows, 2)

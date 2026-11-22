@@ -139,7 +139,7 @@ func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundar
 	require.NoError(t, err)
 	upstream := httptest.NewServer(api)
 	f := &routeBoundary{driver: d, svc: svc}
-	f.url = dropRPCResponse(t, "ws"+strings.TrimPrefix(upstream.URL, "http")+"/rpc", func(method string) bool {
+	f.url = dropRPCResponse(t, "ws"+strings.TrimPrefix(upstream.URL, "http")+"/jsonrpc", func(method string) bool {
 		return method == "session.create" && f.dropNextCreate.CompareAndSwap(true, false)
 	}, func() { f.dropped.Add(1) })
 	t.Cleanup(func() {
@@ -233,7 +233,7 @@ func proxyRPC(t *testing.T, upstream string, intercept func(string, func()) bool
 		<-done
 	}))
 	t.Cleanup(proxy.Close)
-	return "ws" + strings.TrimPrefix(proxy.URL, "http") + "/rpc"
+	return "ws" + strings.TrimPrefix(proxy.URL, "http") + "/jsonrpc"
 }
 
 const fixtureExecutionProfiles = `  roles:
@@ -1020,7 +1020,8 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	m := submit(t, p, f, input("intake-before-execution"))
 	require.Empty(t, bindings(t, p))
 	p.stop(t, false)
-	f.execution(boundary)
+	origin := strings.TrimSuffix(boundary.url, "/jsonrpc")
+	f.execution(&routeBoundary{url: origin})
 	credentials := filepath.Join(f.data, "mcp-files")
 	p = f.start()
 	router := waitBinding(t, p, "router", "", "ready")
@@ -1031,12 +1032,12 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	p.stop(t, false)
 	original, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, strings.Replace(string(original), boundary.url, "ws://127.0.0.1:1/rpc", 1))
+	write(t, f.config, strings.Replace(string(original), origin, "ws://127.0.0.1:1/jsonrpc", 1))
 	p = f.start()
 	waitBinding(t, p, "router", "", "pending")
 	require.Len(t, bindings(t, p), 1)
 	p.stop(t, false)
-	write(t, f.config, strings.Replace(string(original), boundary.url, "ws://", 1))
+	write(t, f.config, strings.Replace(string(original), origin, "ws://", 1))
 	_, err = core.LoadConfig(f.config)
 	require.Error(t, err)
 	write(t, f.config, string(original))

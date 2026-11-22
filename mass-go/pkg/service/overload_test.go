@@ -249,7 +249,7 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				defer h.Shutdown()
 				server := httptest.NewServer(h)
 				defer server.Close()
-				c := newServiceTestClient(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "fixture")
+				c := newServiceTestClient(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "fixture")
 				defer c.Close()
 				input := runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}
 				err = c.SendPrompt(ctx, slow, input, nil)

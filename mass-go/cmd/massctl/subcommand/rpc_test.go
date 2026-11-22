@@ -69,7 +69,7 @@ func newRPCService(t *testing.T, token string, handler func(*rpcTestCall)) strin
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rpc" {
+		if r.URL.Path != "/jsonrpc" {
 			http.NotFound(w, r)
 			return
 		}
@@ -109,5 +109,5 @@ func newRPCService(t *testing.T, token string, handler func(*rpcTestCall)) strin
 		}
 	}))
 	t.Cleanup(server.Close)
-	return "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
+	return "ws" + strings.TrimPrefix(server.URL, "http") + "/jsonrpc"
 }

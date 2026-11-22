@@ -1,7 +1,7 @@
 # HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–06)
 
 > **Historical record.** This note records the retired REST/SSE implementation
-> and its ticket evidence. The current daemon serves only `/rpc` WebSocket
+> and its ticket evidence. The current daemon serves only `/jsonrpc` WebSocket
 > JSON-RPC plus `/livez` and `/readyz`; the `/apis/v1` routes and the
 > `massd openapi` exporter described here no longer exist. See the
 > [current implementation notes](../README.md) for the supported API.

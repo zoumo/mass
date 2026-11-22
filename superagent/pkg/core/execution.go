@@ -82,8 +82,7 @@ func (c *SessionsConfig) issueProfile(runtimeRef, model string) (ExecutionProfil
 
 func (c *MassdConfig) validate(resolve func(string) string, composed bool) error {
 	if !composed {
-		u, err := url.Parse(c.Endpoint)
-		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/rpc") || (u.Scheme != "ws" && u.Scheme != "wss") {
+		if _, err := client.WebSocketEndpoint(c.Endpoint); err != nil {
 			return problem("invalid_argument", "massd.endpoint must be a ws/wss MASS endpoint")
 		}
 	}

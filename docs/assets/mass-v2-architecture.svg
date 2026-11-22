@@ -957,15 +957,15 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
         <text x="108" y="221" class="t-muted" font-size="9" text-anchor="middle">Direct runtime access</text>
         </g>
 
-        <g id="node-rpc" data-node-id="rpc" data-node-label="WebSocket JSON-RPC" tabindex="0" role="button" aria-label="Focus WebSocket JSON-RPC, massd endpoint /rpc, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="massd endpoint /rpc" data-node-context="Architecture component">
-          <title>WebSocket JSON-RPC · massd endpoint /rpc · Architecture component</title>
+        <g id="node-rpc" data-node-id="rpc" data-node-label="WebSocket JSON-RPC" tabindex="0" role="button" aria-label="Focus WebSocket JSON-RPC, massd endpoint /jsonrpc, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="massd endpoint /jsonrpc" data-node-context="Architecture component">
+          <title>WebSocket JSON-RPC · massd endpoint /jsonrpc · Architecture component</title>
           <rect x="251" y="174" width="143" height="66" rx="8" class="c-mask"/>
           <rect x="251" y="174" width="143" height="66" rx="8" class="c-backend" data-animate="node" style="--step: 1; --flow-node-name: archify-relay-node-1;" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(257 180) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" x="322.5" y="205" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">WebSocket JSON-RPC</text>
-        <text x="322.5" y="221" class="t-muted" font-size="9" text-anchor="middle">massd endpoint /rpc</text>
+        <text x="322.5" y="221" class="t-muted" font-size="9" text-anchor="middle">massd endpoint /jsonrpc</text>
         </g>
 
         <g id="node-service" data-node-id="service" data-node-label="Service" tabindex="0" role="button" aria-label="Focus Service, Runtime and Session lifecycle, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Runtime and Session lifecycle" data-node-context="Architecture component">

@@ -96,7 +96,7 @@ func pendingRestoreRPCServer(t *testing.T, svc *service.Service) (*httptest.Serv
 		handler.Shutdown()
 		server.Close()
 	})
-	return server, "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
+	return server, "ws" + strings.TrimPrefix(server.URL, "http") + "/jsonrpc"
 }
 
 type pendingRestoreRPCResponse struct {

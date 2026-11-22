@@ -157,7 +157,7 @@ func TestClientRuntimeCRUDAndConcurrentQueries(t *testing.T) {
 }
 
 func TestClientRuntimeRejectsInvalidNamesLocally(t *testing.T) {
-	wsClient := newTestClient(t, "ws://127.0.0.1:1/rpc", "test-token")
+	wsClient := newTestClient(t, "ws://127.0.0.1:1/jsonrpc", "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	for _, call := range []func() error{
 		func() error { return wsClient.GetRuntime(t.Context(), ".", nil) },

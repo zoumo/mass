@@ -14,10 +14,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
@@ -232,8 +234,8 @@ func massdStartupEndpoint(line []byte) (*url.URL, error) {
 	}
 	endpoint, err := url.Parse(record.URL)
 	if err != nil || (endpoint.Scheme != "ws" && endpoint.Scheme != "wss") ||
-		endpoint.User != nil || endpoint.Path != "/rpc" || endpoint.RawPath != "" ||
-		endpoint.ForceQuery || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		endpoint.User != nil || endpoint.Path != rpcwire.WebSocketPath || endpoint.RawPath != "" ||
+		endpoint.ForceQuery || endpoint.RawQuery != "" || strings.Contains(record.URL, "#") {
 		return nil, errors.New("invalid massd startup RPC endpoint")
 	}
 	address := net.ParseIP(endpoint.Hostname())

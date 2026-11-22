@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 )
 
@@ -100,7 +101,7 @@ func (s *Server) authorized(r *http.Request) bool {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/rpc", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(rpcwire.WebSocketPath, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
 			fail(w, http.StatusMethodNotAllowed, Invalid())

@@ -311,7 +311,7 @@ the Router workspace, fixed role profiles and at least one Issue template.
 ```yaml
 # externalURL: https://core.example.com  # Core's address as seen by massd
 massd:
-  endpoint: ws://127.0.0.1:24368/rpc
+  endpoint: ws://127.0.0.1:24368/jsonrpc
   # tokenFile: /private/massd.token
 # operatorTokenFile: /private/operator.token  # enables local input recovery
 sessions:
@@ -334,6 +334,10 @@ sessions:
       model: gpt-6.2-astra
       description: Evaluate architecture and diagnose complex problems.
 ```
+
+`massd.endpoint` accepts a WebSocket origin, proxy mount base, or full
+`/jsonrpc` URL. See the [endpoint upgrade steps](../mass-go/README.md#upgrade-the-websocket-endpoint)
+when switching an existing deployment.
 
 Both role profiles require a legal Runtime name and a nonblank model.
 An Issue template also requires a nonblank description. Each

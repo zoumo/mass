@@ -61,7 +61,7 @@ func TestDataDirectoryHasOneWriterAcrossPathAliases(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(stdout).Decode(&ready), firstErr.String())
 	require.True(t, strings.HasPrefix(ready.URL, "ws://127.0.0.1:"))
-	require.True(t, strings.HasSuffix(ready.URL, "/rpc"))
+	require.True(t, strings.HasSuffix(ready.URL, "/jsonrpc"))
 
 	c := newHTTPClient(t, ready.URL, "")
 	var rows []resource.Runtime

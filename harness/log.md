@@ -2,6 +2,7 @@
 
 ## 2026-11-22
 
+- 独立 massd 的 [WebSocket 业务入口](bindings/websocket.md)改为 `/jsonrpc`。客户端可用源地址、挂载前缀或完整业务地址连接同一个实例。
 - **v0.3.5** 在开放业务接口前登记缺失的 `claude` 和 `codex` Runtime。新登记实例采用普通 Runtime 管理规则，并为新建 Session 提供 `fullAccess` 默认值。Session 保存创建时选定的预设供后续恢复。见 [ADR-0003](adr/0003-register-default-runtimes.md)。
 
 ## 2026-11-20
