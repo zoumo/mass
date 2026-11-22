@@ -1,6 +1,6 @@
 # Record or replay Agent sessions
 
-Run the commands from the repository root. `make test-simulation-go` replays the selected exports through MASS and runs the artifact and receipt checks. Use the [simulation registry](../../internal/recordingtest/registry.go) to find the inputs and [historical evidence](history.md) to trace earlier captures.
+Run the commands from the repository root. `make test-simulation-go` replays the selected exports through MASS and runs the artifact and receipt checks. Use the [simulation registry](../../internal/recordingtest/registry.go) to find the inputs.
 
 ## Check the native executable
 
