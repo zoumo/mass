@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// Both lifecycle reads must seek the partial index built at startup. SQLite
+// can otherwise prefer scanning the Topic's full status index for EXISTS.
+const unfinishedIssuesInTopic = "FROM issues INDEXED BY issues_unfinished WHERE topic_id=? AND " + unfinishedIssue
+
 type LifecycleRequest struct {
 	OperationID      string `json:"operationId"`
 	ExpectedRevision int    `json:"expectedRevision"`
@@ -133,8 +137,7 @@ func cancelTopicWork(ctx context.Context, tx *sql.Tx, b SessionBinding, change L
 		return err
 	}
 	var items []Issue
-	rows, err := tx.QueryContext(ctx, `SELECT body FROM issues WHERE topic_id=?
- AND json_extract(body,'$.status') NOT IN ('completed','canceled') ORDER BY seq`, b.OwnerID)
+	rows, err := tx.QueryContext(ctx, "SELECT body "+unfinishedIssuesInTopic+" ORDER BY seq", b.OwnerID)
 	if err != nil {
 		return storageError()
 	}

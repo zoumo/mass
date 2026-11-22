@@ -728,6 +728,72 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.Equal(t, resource.SessionReasonRecoveryMissing, released.Status.Reason)
 }
 
+func TestTopicCancelRollsBackIssueStopsAndDependencyEvent(t *testing.T) {
+	f := fixtureAt(t)
+	f.execution(newRouteBoundary(t))
+	p := f.start()
+	binding, token := workBoundaryTopic(t, f, p)
+	topic := startRoleMCP(t, f, binding)
+	original := mcpWork[core.Topic](t, topic, "get_topic", struct{}{})
+	create := issueInput(f.dir, "cancel-active")
+	create.Start = true
+	started := mcpWork[core.WorkReceipt](t, topic, "create_issue", create)
+	waitWorkEvent(t, p, started.SessionBinding.StartEventID, "sent")
+	dependent := mcpWork[core.WorkReceipt](t, topic, "create_issue", issueInput(f.dir, "cancel-dependent")).Issue
+	dependent = blockers(t, topic, dependent, "block-on-active", dependency(started.Issue))
+	pending := mcpWork[core.WorkReceipt](t, topic, "create_issue", issueInput(f.dir, "cancel-pending")).Issue
+	mcpWorkError(t, topic, "topic_complete", "failed_precondition", acceptance("unfinished", original.Revision, "notes.txt"))
+
+	p.stop(t, false)
+	const stage = "dependency_before_commit"
+	gate := t.TempDir()
+	p = f.start("SUPERAGENT_TEST_GATE_STAGE="+stage, "SUPERAGENT_TEST_GATE_DIR="+gate)
+	cancel := lifecycle("cancel-topic-at-once", original.Revision)
+	req, err := newMCPToolRequest(t.Context(), p.endpoint, token, "topic_cancel", cancel)
+	require.NoError(t, err)
+	done := make(chan mcpHTTPResult, 1)
+	go func() { done <- doMCPRequest(req) }()
+	waitWorkGate(t, gate, stage)
+	p.stop(t, true)
+	require.Error(t, (<-done).err)
+
+	p = f.start()
+	topic = startRoleMCP(t, f, binding)
+	require.Equal(t, original, mcpWork[core.Topic](t, topic, "get_topic", struct{}{}))
+	for _, before := range []core.Issue{started.Issue, dependent, pending} {
+		require.Equal(t, before, mcpWork[core.Issue](t, topic, "get_issue", map[string]string{"issueId": before.ID}))
+	}
+	for _, id := range []string{binding.ID, started.SessionBinding.ID} {
+		current := readRecord[core.SessionBinding](t, p, "session-bindings/"+id)
+		require.NotEqual(t, "revoked", current.State)
+		require.Nil(t, current.Stop)
+	}
+	require.Empty(t, dependencyEvents(t, f))
+
+	canceled := mcpWork[core.Topic](t, topic, "topic_cancel", cancel)
+	require.Equal(t, "canceled", canceled.Status)
+	require.NotNil(t, canceled.Cancellation)
+	for _, before := range []core.Issue{started.Issue, dependent, pending} {
+		after := readRecord[core.Issue](t, p, "issues/"+before.ID)
+		require.Equal(t, "canceled", after.Status)
+		require.Equal(t, before.Revision+1, after.Revision)
+		require.Equal(t, canceled.Cancellation, after.Cancellation)
+		require.Empty(t, after.CurrentSessionBindingID)
+	}
+	for _, id := range []string{binding.ID, started.SessionBinding.ID} {
+		retired := readRecord[core.SessionBinding](t, p, "session-bindings/"+id)
+		require.Equal(t, "revoked", retired.State)
+		require.NotNil(t, retired.Stop)
+		require.Equal(t, canceled.Cancellation.At, retired.Stop.RequestedAt)
+	}
+	events := dependencyEvents(t, f)
+	require.Len(t, events, 1)
+	require.Equal(t, "pending", events[0].Status)
+	require.JSONEq(t, fmt.Sprintf(`{"type":"issue.dependency_changed","topicId":%q,"dependencyIssueId":%q,
+ "previousStatus":"active","status":"canceled","dependentIssueIds":[%q]}`, binding.OwnerID, started.Issue.ID, dependent.ID), string(events[0].Body))
+	mcpWorkError(t, topic, "topic_cancel", "stale_binding", cancel)
+}
+
 func TestLifecycleDependencyCrashConsistency(t *testing.T) {
 	for _, stage := range []string{"dependency_before_commit", "lifecycle_after_commit"} {
 		t.Run(stage, func(t *testing.T) {

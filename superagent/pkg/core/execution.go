@@ -791,15 +791,40 @@ type eventCandidate struct {
 	stop     bool
 }
 
+// Probe the sole ready Router for one matching event. Unary + drops SQLite's
+// column affinity so the event lookup can seek on both indexed expressions.
+// Walk only Topic and Issue recipient ranges. CROSS JOIN keeps the final
+// lookups driven by candidate IDs before sorting by binding seq.
+const eventCandidatesSQL = `
+WITH recipients AS MATERIALIZED (
+ SELECT DISTINCT ` + eventRecipientKind + ` AS kind, ` + eventRecipientOwner + ` AS owner
+ FROM internal_events WHERE status IN ('pending','dispatching')
+ AND ` + eventRecipientKind + ` IN ('topic','issue')
+), candidate_ids AS MATERIALIZED (
+ SELECT DISTINCT id FROM (
+  SELECT id FROM session_bindings WHERE state='pending' AND next_attempt_at<=?1
+  UNION ALL
+  SELECT b.id FROM session_bindings b WHERE b.role='router' AND b.state='ready'
+  AND EXISTS (SELECT 1 FROM internal_events WHERE status IN ('pending','dispatching')
+   AND ` + eventRecipientKind + `='router' AND ` + eventRecipientOwner + ` = +b.owner_id)
+  UNION ALL
+  SELECT b.id FROM recipients r
+  CROSS JOIN session_bindings b ON b.role=r.kind AND b.owner_id=r.owner AND b.state='ready'
+  WHERE r.kind='topic'
+  UNION ALL
+  SELECT b.id FROM recipients r
+  CROSS JOIN session_bindings b ON b.id=r.owner AND b.role='issue' AND b.state='ready'
+  WHERE r.kind='issue'
+  UNION ALL
+  SELECT id FROM session_bindings WHERE json_extract(body,'$.stop.status')='requested'
+ )
+)
+SELECT b.id,b.role,COALESCE(json_extract(b.body,'$.stop.status')='requested',0)
+FROM candidate_ids c CROSS JOIN session_bindings b ON b.id=c.id
+ORDER BY b.seq`
+
 func (s *Store) eventCandidates(ctx context.Context) []eventCandidate {
-	rows, err := s.db.QueryContext(ctx, `SELECT b.id,b.role,COALESCE(json_extract(b.body,'$.stop.status')='requested',0)
- FROM session_bindings b
- WHERE (b.state='pending' AND b.next_attempt_at<=?1)
- OR (b.state='ready' AND EXISTS (SELECT 1 FROM internal_events
- WHERE `+eventRecipientKind+`=b.role AND `+eventRecipientOwner+`=CASE b.role WHEN 'issue' THEN b.id ELSE b.owner_id END
- AND status IN ('pending','dispatching')))
- OR json_extract(b.body,'$.stop.status')='requested'
- ORDER BY b.seq`, now())
+	rows, err := s.db.QueryContext(ctx, eventCandidatesSQL, now())
 	if err != nil {
 		return nil
 	}

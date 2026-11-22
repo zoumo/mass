@@ -1,6 +1,8 @@
 package core
 
 import (
+	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +12,116 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
+
+func TestEventCandidates(t *testing.T) {
+	ctx := t.Context()
+	store, err := Open(Config{DataDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.Empty(t, store.eventCandidates(ctx))
+
+	for _, binding := range []struct {
+		id, role, owner, state, due, body string
+		generation                        int
+	}{
+		{"old-topic", "topic", "topic-1", "revoked", "", `{}`, 1},
+		{"current-topic", "topic", "topic-1", "ready", "", `{}`, 2},
+		{"stop-only", "issue", "issue-1", "revoked", "", `{"stop":{"status":"requested"}}`, 1},
+		{"future", "issue", "issue-2", "pending", after(time.Hour), `{}`, 1},
+		{"old-issue", "issue", "issue-3", "revoked", "", `{}`, 1},
+		{"current-issue", "issue", "issue-3", "ready", "", `{}`, 2},
+		{"ready-issue", "issue", "issue-4", "ready", "", `{"stop":{"status":"requested"}}`, 1},
+		{"issue-with-input", "issue", "issue-5", "ready", "", `{}`, 1},
+		{"router", "router", "", "ready", "", `{}`, 1},
+		{"sent-topic", "topic", "topic-2", "ready", "", `{}`, 1},
+		{"due", "topic", "topic-3", "pending", after(-time.Hour), `{}`, 1},
+		{"first-attempt", "topic", "topic-4", "pending", "", `{}`, 1},
+		{"finished-stop", "topic", "topic-5", "revoked", "", `{"stop":{"status":"observed"}}`, 1},
+	} {
+		_, err := store.db.ExecContext(ctx, `INSERT INTO session_bindings
+ (id,role,owner_id,state,next_attempt_at,body,generation,created_at,token,spec) VALUES(?,?,?,?,?,?,?,?,?,'{}')`,
+			binding.id, binding.role, binding.owner, binding.state, binding.due, binding.body, binding.generation, now(), binding.id)
+		require.NoError(t, err)
+	}
+	for _, event := range []struct {
+		id, status string
+		recipient  eventIdentity
+	}{
+		{"topic-pending", "pending", eventIdentity{Kind: "topic", TopicID: "topic-1"}},
+		{"topic-dispatching", "dispatching", eventIdentity{Kind: "topic", TopicID: "topic-1"}},
+		{"retired-input", "dispatching", eventIdentity{Kind: "issue", SessionBindingID: "old-issue"}},
+		{"issue-owner-id", "pending", eventIdentity{Kind: "issue", SessionBindingID: "issue-3"}},
+		{"current-input", "pending", eventIdentity{Kind: "issue", SessionBindingID: "ready-issue"}},
+		{"issue-retry", "dispatching", eventIdentity{Kind: "issue", SessionBindingID: "issue-with-input"}},
+		{"router-input", "dispatching", eventIdentity{Kind: "router"}},
+		{"router-queued", "pending", eventIdentity{Kind: "router"}},
+		{"settled-input", "sent", eventIdentity{Kind: "topic", TopicID: "topic-2"}},
+		{"superseded-input", "superseded", eventIdentity{Kind: "topic", TopicID: "topic-2"}},
+		{"wrong-role", "pending", eventIdentity{Kind: "topic", TopicID: "current-issue"}},
+		{"future-input", "pending", eventIdentity{Kind: "issue", SessionBindingID: "future"}},
+	} {
+		recipient, err := json.Marshal(event.recipient)
+		require.NoError(t, err)
+		_, err = store.db.ExecContext(ctx, `INSERT INTO internal_events
+ (event_id,kind,status,sender,recipient,created_at) VALUES(?,'context_supplement',?,'{"kind":"core"}',?,?)`,
+			event.id, event.status, string(recipient), now())
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, []eventCandidate{
+		{id: "current-topic", role: "topic"},
+		{id: "stop-only", role: "issue", stop: true},
+		{id: "ready-issue", role: "issue", stop: true},
+		{id: "issue-with-input", role: "issue"},
+		{id: "router", role: "router"},
+		{id: "due", role: "topic"},
+		{id: "first-attempt", role: "topic"},
+	}, store.eventCandidates(ctx))
+
+	router := eventCandidate{id: "router", role: "router"}
+	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET state='pending',next_attempt_at=? WHERE id='router'", after(time.Hour))
+	require.NoError(t, err)
+	require.NotContains(t, store.eventCandidates(ctx), router)
+	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET state='ready',owner_id='other' WHERE id='router'")
+	require.NoError(t, err)
+	require.NotContains(t, store.eventCandidates(ctx), router)
+	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET owner_id='',next_attempt_at='' WHERE id='router'")
+	require.NoError(t, err)
+
+	_, err = store.db.ExecContext(ctx, "UPDATE internal_events SET status='sent' WHERE status IN ('pending','dispatching')")
+	require.NoError(t, err)
+	require.Equal(t, []eventCandidate{
+		{id: "stop-only", role: "issue", stop: true},
+		{id: "ready-issue", role: "issue", stop: true},
+		{id: "due", role: "topic"},
+		{id: "first-attempt", role: "topic"},
+	}, store.eventCandidates(ctx))
+
+	rows, err := store.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+eventCandidatesSQL, now())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, aux int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &aux, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	details := strings.Join(plan, "\n")
+	require.NotContains(t, details, "\nSCAN b")
+	require.NotContains(t, details, "\nSCAN internal_events")
+	for _, access := range []string{
+		"session_bindings_pending (next_attempt_at<?)",
+		"internal_events_pending (<expr>=? AND <expr>=?)",
+		"internal_events_pending (<expr>=?)",
+		"session_bindings_ready_owner (role=? AND owner_id=?)",
+		"SCAN session_bindings USING INDEX session_bindings_stop",
+		"SCAN c\nSEARCH b USING INDEX",
+	} {
+		require.Contains(t, details, access)
+	}
+}
 
 func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 	previous := SessionBinding{
@@ -136,12 +248,18 @@ func TestClaudeRouterReplacementRespectsInputAndOwnership(t *testing.T) {
 	}{
 		{name: "one successor under concurrent retries", pendingState: "pending"},
 		{name: "unconfirmed input stays with original authority", pendingState: "dispatching", wantError: "router_input_outcome_unknown"},
-		{name: "unconfirmed previous owner", pendingState: "pending", wantError: "stale_binding",
-			changeBinding: func(b *SessionBinding) { b.PreviousOwnerUnknown = true }},
-		{name: "unconfirmed current owner", pendingState: "pending", wantError: "stale_binding",
-			changeSession: func(s *resource.Session) { s.Status.State = "unknown" }},
-		{name: "different native identity", pendingState: "pending", wantError: "stale_binding",
-			changeSession: func(s *resource.Session) { s.Metadata.UID = "different-uid" }},
+		{
+			name: "unconfirmed previous owner", pendingState: "pending", wantError: "stale_binding",
+			changeBinding: func(b *SessionBinding) { b.PreviousOwnerUnknown = true },
+		},
+		{
+			name: "unconfirmed current owner", pendingState: "pending", wantError: "stale_binding",
+			changeSession: func(s *resource.Session) { s.Status.State = "unknown" },
+		},
+		{
+			name: "different native identity", pendingState: "pending", wantError: "stale_binding",
+			changeSession: func(s *resource.Session) { s.Metadata.UID = "different-uid" },
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()

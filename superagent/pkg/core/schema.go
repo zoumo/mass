@@ -76,3 +76,17 @@ CREATE VIEW work_pull_requests AS
  i.topic_id, i.id, json_extract(p.value,'$.createdAt'), json_remove(p.value,'$.sequence')
  FROM issues i,json_each(i.body,'$.pullRequests') p;
 ` + internalEventSchema + routingViews
+
+const (
+	issueStatus     = `json_extract(body,'$.status')`
+	unfinishedIssue = issueStatus + ` NOT IN ('completed','canceled')`
+)
+
+// Install query indexes in the startup transaction for both new and existing stores.
+var queryIndexes = []struct{ name, definition string }{
+	{"session_bindings_pending", `session_bindings(next_attempt_at,id) WHERE state='pending'`},
+	{"session_bindings_ready_owner", `session_bindings(role,owner_id,id) WHERE state='ready'`},
+	{"topics_created_at", `topics(created_at,id)`},
+	{"issues_topic_status", `issues(topic_id,` + issueStatus + `,created_at,id)`},
+	{"issues_unfinished", `issues(topic_id) WHERE ` + unfinishedIssue},
+}

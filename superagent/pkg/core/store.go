@@ -28,6 +28,8 @@ const (
 	schemaVersion         = 25
 	previousSchemaVersion = 24
 	applicationID         = 1398096210
+	storeStartupTimeout   = 10 * time.Second
+	queryIndexTimeout     = 2 * time.Minute
 )
 
 type Store struct {
@@ -45,7 +47,7 @@ func Open(c Config) (*Store, error) {
 }
 
 func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), storeStartupTimeout)
 	defer cancel()
 	// Refuse foreign/old data before creating even a lock file in that directory.
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
@@ -112,7 +114,24 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, storageError()
 	}
 	s.db.SetMaxOpenConns(1)
-	tx, err := s.db.BeginTx(ctx, nil)
+
+	txCtx := ctx
+	buildExistingIndexes := false
+	if hasHeader {
+		buildExistingIndexes, err = missingQueryIndexes(ctx, s.db)
+		if err != nil {
+			return nil, storageError()
+		}
+		if buildExistingIndexes {
+			// database/sql rolls back when the BeginTx context expires. Keep
+			// the transaction alive for the optional index build while the
+			// normal checks and recovery below still use the startup deadline.
+			var cancelTx context.CancelFunc
+			txCtx, cancelTx = context.WithTimeout(context.Background(), storeStartupTimeout+queryIndexTimeout)
+			defer cancelTx()
+		}
+	}
+	tx, err := s.db.BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, storageError()
 	}
@@ -174,6 +193,25 @@ DROP TABLE mcp_tool_calls;`+fmt.Sprintf("PRAGMA user_version=%d;", schemaVersion
 			return nil, problem("failed_precondition", "configured source/account differs from admitted messages; use a new dataDir")
 		}
 	}
+
+	if ctx.Err() != nil {
+		return nil, storageError()
+	}
+	if buildExistingIndexes {
+		var cancelBuild context.CancelFunc
+		ctx, cancelBuild = context.WithTimeout(txCtx, queryIndexTimeout)
+		defer cancelBuild()
+	}
+	if !hasHeader || buildExistingIndexes {
+		for _, index := range queryIndexes {
+			if _, err := tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS "+index.name+" ON "+index.definition); err != nil {
+				return nil, storageError()
+			}
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, storageError()
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, storageError()
 	}
@@ -182,6 +220,17 @@ DROP TABLE mcp_tool_calls;`+fmt.Sprintf("PRAGMA user_version=%d;", schemaVersion
 	}
 	s.queueRegistration = s.telemetry.registerQueueDepth(options.Metrics, s)
 	return s, nil
+}
+
+func missingQueryIndexes(ctx context.Context, db *sql.DB) (bool, error) {
+	names := make([]any, 0, len(queryIndexes))
+	for _, index := range queryIndexes {
+		names = append(names, index.name)
+	}
+	var installed int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type='index'
+ AND name IN (`+strings.Repeat("?,", len(names)-1)+`?)`, names...).Scan(&installed)
+	return installed != len(names), err
 }
 
 // Read the main SQLite file directly. Even a read-only SQLite connection can
@@ -517,8 +566,13 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		operator, order = "<", " DESC"
 	}
 	if token != "" {
-		query += " AND (" + timeCol + operator + "? OR (" + timeCol + "=? AND " + idCol + operator + "?))"
-		args = append(args, c.At, c.At, c.ID)
+		if kind == "topics" || (kind == "issues" && q.status != "") {
+			query += " AND (" + timeCol + "," + idCol + ")" + operator + "(?,?)"
+			args = append(args, c.At, c.ID)
+		} else {
+			query += " AND (" + timeCol + operator + "? OR (" + timeCol + "=? AND " + idCol + operator + "?))"
+			args = append(args, c.At, c.At, c.ID)
+		}
 	}
 	if thread != "" {
 		if kind == "outbox" {
@@ -540,7 +594,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		args = append(args, q.search, q.search)
 	}
 	if q.status != "" {
-		query += ` AND json_extract(body,'$.status')=?`
+		query += " AND " + issueStatus + "=?"
 		args = append(args, q.status)
 	}
 	query += scope
