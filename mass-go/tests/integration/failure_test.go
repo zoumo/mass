@@ -697,7 +697,7 @@ type subscriptionOverflowFrame struct {
 
 func dialSubscriptionOverflow(t *testing.T, server *httptest.Server, ref resource.SessionRef) (*websocket.Conn, string) {
 	t.Helper()
-	conn, response, err := websocket.DefaultDialer.DialContext(ctx(t), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", nil)
+	conn, response, err := websocket.DefaultDialer.DialContext(ctx(t), "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", nil)
 	if response != nil {
 		_ = response.Body.Close()
 	}

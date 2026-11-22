@@ -346,7 +346,7 @@ func (s *RuntimeStopSuite) TestRPCStopRestartAndSafeDelete() {
 	defer h.Shutdown()
 	server := httptest.NewServer(h)
 	defer server.Close()
-	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "test-token")
+	c := newServiceTestClient(s.T(), "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "test-token")
 	defer c.Close()
 	ctx := s.T().Context()
 	var public *runtime.OperationError

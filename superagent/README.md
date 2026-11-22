@@ -77,7 +77,7 @@ instance-bound credentials, select the consumer with `outboxConsumer: true`.
 The [Outbox contract](API.md#trigger-outbox) covers task recovery and result
 writeback.
 
-`massd` configures the RPC connection. `sessions` configures the Router
+`massd` selects an embedded or external MASS instance. `sessions` configures the Router
 workspace, namespace, fixed Router and Topic profiles, and ordered Issue
 templates. Each profile has a `runtimeRef`, `model` and optional `effort`.
 Set those values to the literal names supported by your massd and its drivers.
@@ -113,6 +113,84 @@ Optional `storageMaxPages` bounds main database growth in 4096-byte SQLite pages
 (zero is unlimited); WAL and filesystem overhead are additional. An exhausted
 budget returns unavailable without an accepted receipt. Schema initialization
 also has to fit. It is an operational storage budget, not a message limit.
+
+## Running MASS inside Core
+
+Use `config.example.yaml` to configure the source and role Sessions. Replace
+`massd.endpoint` and its optional `massd.tokenFile` with an `embedded` block.
+Use separate sibling directories for Core and MASS.
+
+```yaml
+dataDir: ./superagent
+massd:
+  embedded:
+    dataDir: ./massd
+    # metaStore: { backend: sqlite }
+    # sessionIdleTimeout: 10m
+    # writeTimeout: 10s
+```
+
+Set the role profiles and Issue templates to available Runtime names. MASS
+registers missing `codex` and `claude` Runtimes at startup and preserves
+existing entries. `sessionIdleTimeout: 0s` disables idle closure.
+
+```sh
+make build-superagent
+bin/superagent serve --config "$HOME/.mass/core.yaml"
+```
+
+Core owns the only HTTP listener. It prepares MASS before printing the
+ready record. Keep the Core MCP address and both data directories stable
+when restarting.
+
+To switch between embedded and standalone MASS, stop Core and its MASS
+instance and wait for a successful exit. Keep both data directories, MASS
+recovery files, and Core's MCP credential paths and address. Start the new
+owner of the same MASS directory. Set `massd.embedded.dataDir` for embedded
+mode or set `massd.endpoint` and start standalone massd for external mode.
+Use the same metadata backend as before. After Core restarts, check that
+existing bindings point to the same Session IDs and UIDs and that Session
+specs match. If Core reports an unknown native result, follow the
+[recovery contract](API.md#local-operator-reconciliation) before resubmitting input.
+
+### Accessing embedded MASS with massctl
+
+To enable `/massd/` on the Core HTTP listener, add this block under
+`massd.embedded` and keep `listen` on a loopback IP address.
+
+```yaml
+expose:
+  tokenFile: ./embedded-massd.token
+  # allowedOrigins: [https://ops.example.com]
+```
+
+Create a regular token file with mode `0600`, readable by the Core process.
+Generate a dedicated token of at least 32 bytes without whitespace or control
+characters. Keep it distinct from Core Source, Operator, and role MCP
+credentials. The `cap_` prefix is reserved for role MCP credentials. Relative
+token paths are resolved beside the Core config. This bearer grants full MASS
+Runtime and Session access, including to Sessions managed by Core.
+
+```sh
+export MASS_TOKEN="$(cat "$HOME/.mass/embedded-massd.token")"
+bin/massctl --url ws://127.0.0.1:24370/massd session list
+```
+
+`massctl` connects to `/massd/jsonrpc`. `/massd/livez` and `/massd/readyz`
+provide unauthenticated probes through the same Core listener. To allow
+non-local access, terminate TLS at a trusted reverse proxy. Limit the proxy
+route to `/massd/` and forward it to Core's loopback listener. Preserve the
+`/massd/` path and `Authorization` header. Forward the WebSocket Upgrade and
+keep the connection open for bidirectional traffic. Set the upstream `Host`
+to Core's listening address, including its port.
+Clients in this deployment use `wss://<proxy-host>/massd`. Requests carrying
+`Origin` must match a configured `allowedOrigins` value exactly. Native
+clients such as `massctl` can omit it.
+
+On shutdown, Core closes new MASS connection admission and stops its own
+scheduling. MASS settles accepted work, attempts to send final events to
+healthy connections, then closes those connections and releases its data
+directory.
 
 ## Running massd and Core together
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -89,7 +90,7 @@ func (o *options) command() *cobra.Command {
 	root := &cobra.Command{Use: "massctl", Short: "Manage MASS resources over WebSocket JSON-RPC", SilenceUsage: true, SilenceErrors: true, Args: cobra.NoArgs, CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true}}
 	root.Example = "  massctl runtime list\n  massctl session get review -n demo\n  massctl -o json session history SESSION_ID"
 	root.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
-	root.PersistentFlags().StringVar(&o.url, "url", envURL(), "MASS WebSocket endpoint (MASS_URL)")
+	root.PersistentFlags().StringVar(&o.url, "url", envURL(), "MASS WebSocket base URL or endpoint (MASS_URL)")
 	root.PersistentFlags().StringVarP(&o.output, "output", "o", "human", "Output: human or json")
 	root.PersistentFlags().DurationVar(&o.timeout, "timeout", 30*time.Second, "Request timeout; 0 disables (watch: through ready only)")
 	root.PersistentFlags().DurationVar(&o.writeTimeout, "write-timeout", 10*time.Second, "WebSocket write deadline")
@@ -160,7 +161,7 @@ func envURL() string {
 	if v := os.Getenv("MASS_URL"); v != "" {
 		return v
 	}
-	return "ws://127.0.0.1:24368/rpc"
+	return "ws://127.0.0.1:24368" + rpcwire.WebSocketPath
 }
 
 type singleValue struct {

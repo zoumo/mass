@@ -79,8 +79,8 @@ func rpcEndpoint(serverURL string) string {
 		return serverURL
 	}
 	endpoint := "ws" + strings.TrimPrefix(serverURL, "http")
-	if !strings.HasSuffix(endpoint, "/rpc") {
-		endpoint += "/rpc"
+	if !strings.HasSuffix(endpoint, "/jsonrpc") {
+		endpoint += "/jsonrpc"
 	}
 	return endpoint
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +24,9 @@ import (
 
 const rpcHandshakeTimeout = 5 * time.Second
 
-// Package client is the public JSON-RPC over WebSocket service client.
+// Package client is the public MASS JSON-RPC service client.
 
-// ClientInfo identifies this client during WebSocket initialize.
+// ClientInfo identifies this client during initialize.
 type ClientInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -37,11 +38,15 @@ type Options struct {
 	SubscriptionQueueCapacity int
 }
 
+// StreamConnector opens a new in-process stream for each independent RPC connection.
+type StreamConnector func(context.Context, time.Duration) (*rpcwire.Stream, error)
+
 // Client owns one ordinary RPC connection and any observations opened through it.
 // It is lazy: New performs no network I/O.
 type Client struct {
 	serverURL                 string
 	token                     string
+	connect                   StreamConnector
 	tlsConfig                 *tls.Config
 	writeTimeout              time.Duration
 	subscriptionQueueCapacity int
@@ -82,6 +87,28 @@ func (c *Client) SetTLSClientConfig(config *tls.Config) {
 
 // New creates a lazy JSON-RPC client without opening a connection.
 func New(serverURL, token string, opts Options) (*Client, error) {
+	c, err := newClient(opts)
+	if err != nil {
+		return nil, err
+	}
+	c.serverURL, c.token = serverURL, token
+	return c, nil
+}
+
+// NewInProcess creates a lazy client for a service hosted in the same process.
+func NewInProcess(connect StreamConnector, opts Options) (*Client, error) {
+	if connect == nil {
+		return nil, errors.New("in-process stream connector is required")
+	}
+	c, err := newClient(opts)
+	if err != nil {
+		return nil, err
+	}
+	c.connect = connect
+	return c, nil
+}
+
+func newClient(opts Options) (*Client, error) {
 	if opts.WriteTimeout <= 0 {
 		return nil, errors.New("client write timeout must be positive")
 	}
@@ -89,8 +116,6 @@ func New(serverURL, token string, opts Options) (*Client, error) {
 		return nil, errors.New("client subscription queue capacity must be positive")
 	}
 	return &Client{
-		serverURL:                 serverURL,
-		token:                     token,
 		writeTimeout:              opts.WriteTimeout,
 		subscriptionQueueCapacity: opts.SubscriptionQueueCapacity,
 		observations:              map[*Subscription]struct{}{},
@@ -302,9 +327,26 @@ func (c *Client) connection(ctx context.Context) (*rpc2.Conn, *rpcStream, error)
 }
 
 func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *rpcStream, context.CancelFunc, error) {
-	endpoint, err := websocketEndpoint(c.serverURL)
+	stream, err := c.openStream(ctx)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	life, cancel := context.WithCancel(context.Background())
+	conn := rpc2.NewConn(life, stream, handler, rpc2.SetLogger(rpcLogger{}))
+	return conn, stream, cancel, nil
+}
+
+func (c *Client) openStream(ctx context.Context) (*rpcStream, error) {
+	if c.connect != nil {
+		stream, err := c.connect(ctx, c.writeTimeout)
+		if err != nil {
+			return nil, err
+		}
+		return &rpcStream{Stream: stream, traceContext: true}, nil
+	}
+	endpoint, err := WebSocketEndpoint(c.serverURL)
+	if err != nil {
+		return nil, err
 	}
 	headers := http.Header{}
 	if c.token != "" {
@@ -321,22 +363,20 @@ func (c *Client) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *r
 	}
 	if err != nil {
 		if response != nil {
-			return nil, nil, nil, fmt.Errorf("WebSocket handshake failed: %s", response.Status)
+			return nil, fmt.Errorf("WebSocket handshake failed: %s", response.Status)
 		}
-		return nil, nil, nil, err
+		return nil, err
 	}
 
 	stream, err := rpcwire.NewStream(socket, rpcwire.RoleClient, c.writeTimeout)
 	if err != nil {
 		_ = socket.Close()
-		return nil, nil, nil, err
+		return nil, err
 	}
-	life, cancel := context.WithCancel(context.Background())
-	conn := rpc2.NewConn(life, stream, handler, rpc2.SetLogger(rpcLogger{}))
-	return conn, &rpcStream{
+	return &rpcStream{
 		Stream:       stream,
 		traceContext: response != nil && response.Header.Get(rpcwire.TraceContextHeader) == rpcwire.TraceContextFormat,
-	}, cancel, nil
+	}, nil
 }
 
 func (c *Client) callError(ctx context.Context, stream *rpcStream, err error) error {
@@ -380,25 +420,23 @@ func (h clientHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Re
 	_ = conn.ReplyWithError(ctx, req.ID, &rpc2.Error{Code: rpc2.CodeMethodNotFound, Message: "Method not found"})
 }
 
-func websocketEndpoint(serverURL string) (string, error) {
+// WebSocketEndpoint resolves a ws or wss origin, mount base, or full MASS endpoint.
+func WebSocketEndpoint(serverURL string) (string, error) {
 	parsed, err := url.Parse(serverURL)
-	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || (parsed.Scheme != "ws" && parsed.Scheme != "wss") ||
+		parsed.Hostname() == "" || parsed.User != nil || parsed.ForceQuery ||
+		parsed.RawQuery != "" || strings.Contains(serverURL, "#") {
 		return "", errors.New("invalid MASS server URL")
 	}
-	switch parsed.Scheme {
-	case "ws", "wss":
-	default:
-		return "", errors.New("invalid MASS server URL")
+	base := strings.TrimSuffix(parsed.Path, "/")
+	if parsed.RawPath != "" || strings.Contains(parsed.Path, "//") ||
+		strings.Contains(base, `\`) || (base != "" && path.Clean(base) != base) {
+		return "", errors.New("invalid MASS server URL path")
 	}
-	path := strings.TrimSuffix(parsed.Path, "/")
-	switch path {
-	case "":
-		parsed.Path = "/rpc"
-	case "/rpc":
-		parsed.Path = path
-	default:
-		return "", errors.New("MASS server URL must be a ws:// or wss:// endpoint ending in /rpc")
+	if !strings.HasSuffix(base, rpcwire.WebSocketPath) {
+		base += rpcwire.WebSocketPath
 	}
+	parsed.Path = base
 	return parsed.String(), nil
 }
 

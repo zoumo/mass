@@ -31,7 +31,7 @@ func newRPCTransport(t *testing.T) *httptest.Server {
 }
 
 func websocketURL(server *httptest.Server) string {
-	return "ws" + strings.TrimPrefix(server.URL, "http") + "/rpc"
+	return "ws" + strings.TrimPrefix(server.URL, "http") + "/jsonrpc"
 }
 
 func newTestClient(t *testing.T, url, token string) *client.Client {
@@ -96,15 +96,15 @@ func TestClientTraceContextWithLegacyPeer(t *testing.T) {
 }
 
 func TestClientRequiresAssemblyOptions(t *testing.T) {
-	_, err := client.New("ws://127.0.0.1:1/rpc", "test-token", client.Options{SubscriptionQueueCapacity: 1})
+	_, err := client.New("ws://127.0.0.1:1/jsonrpc", "test-token", client.Options{SubscriptionQueueCapacity: 1})
 	require.ErrorContains(t, err, "write timeout")
-	_, err = client.New("ws://127.0.0.1:1/rpc", "test-token", client.Options{WriteTimeout: time.Second})
+	_, err = client.New("ws://127.0.0.1:1/jsonrpc", "test-token", client.Options{WriteTimeout: time.Second})
 	require.ErrorContains(t, err, "queue capacity")
 }
 
 func TestClientLazyAndAuthentication(t *testing.T) {
 	httpServer := newRPCTransport(t)
-	lazy := newTestClient(t, "ws://127.0.0.1:1/rpc", "test-token")
+	lazy := newTestClient(t, "ws://127.0.0.1:1/jsonrpc", "test-token")
 	t.Cleanup(func() { _ = lazy.Close() })
 
 	unauthorized := newTestClient(t, websocketURL(httpServer), "wrong-token")
@@ -115,7 +115,7 @@ func TestClientLazyAndAuthentication(t *testing.T) {
 }
 
 func TestClientRejectsInvalidClientInfo(t *testing.T) {
-	wsClient := newTestClient(t, "ws://127.0.0.1:1/rpc", "test-token")
+	wsClient := newTestClient(t, "ws://127.0.0.1:1/jsonrpc", "test-token")
 	t.Cleanup(func() { _ = wsClient.Close() })
 	err := wsClient.Initialize(t.Context(), &client.ClientInfo{Name: "test"}, nil)
 	require.Error(t, err)
@@ -194,7 +194,7 @@ func newFakeWebSocketServer(t *testing.T, handle func(*websocket.Conn)) *httptes
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/rpc") {
+		if !strings.HasSuffix(r.URL.Path, "/jsonrpc") {
 			http.NotFound(w, r)
 			return
 		}

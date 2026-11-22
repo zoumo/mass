@@ -14,7 +14,7 @@ sources:
 
 # MASS 总体架构
 
-本文描述 MASS 的整体逻辑架构：CLI 与客户端如何通过 JSON-RPC/WebSocket 进入 Service，Service 如何依赖 Store 与 Runtime，以及资源、原生运行、事件和历史如何协作。模块内部职责与不变量分别由各模块的 design.md 维护；具体 API、数据结构和错误由 TypeSpec 合同维护。
+本文描述 MASS 的整体逻辑架构：CLI 与客户端如何通过 JSON-RPC 进入 Service，Service 如何依赖 Store 与 Runtime，以及资源、原生运行、事件和历史如何协作。模块内部职责与不变量分别由各模块的 design.md 维护；具体 API、数据结构和错误由 TypeSpec 合同维护。
 
 ## 模块职责与依赖
 
@@ -43,7 +43,7 @@ Service 分别依赖 MetaStore、EventStore、Events 和 Runtime。Events 核心
 
 ## 外部入口与服务实例
 
-公共业务入口统一为 [JSON-RPC 2.0](bindings/jsonrpc.md)，目前只通过 [WebSocket](bindings/websocket.md) 承载。massd 独立管理明确的数据目录，客户端连接明确 endpoint；不提供 stdio、proxy 或产品级内嵌 SDK，不保留 REST/SSE 兼容入口。
+公共业务入口统一为 [JSON-RPC 2.0](bindings/jsonrpc.md)。独立部署的 massd 使用 [WebSocket](bindings/websocket.md)。Superagent Core 可连接独立实例，也可在进程内启动 MASS，再用独立的逻辑连接调用同一 JSON-RPC 分发器。每个实例独占一个 MASS 数据目录。
 
 客户端默认以一条连接发送普通 RPC，每个订阅使用独立连接；它们使用相同认证、initialize 和方法集，不增加连接角色协议。连接被驱逐只影响该连接的观察和响应，已接纳业务仍由 Service 结算。数据目录保持单 writer，先取得存储所有权再执行启动校正和业务接纳。
 

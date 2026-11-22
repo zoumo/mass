@@ -71,7 +71,7 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	ref := resource.SessionRef{SessionID: "original"}
-	c := newServiceTestClient(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/rpc", "fixture")
+	c := newServiceTestClient(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/jsonrpc", "fixture")
 	defer c.Close()
 	sub, err := c.Subscribe(ctx, ref)
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	defer readHandler.Shutdown()
 	readServer := httptest.NewServer(readHandler)
 	defer readServer.Close()
-	readClient := newServiceTestClient(t, "ws"+strings.TrimPrefix(readServer.URL, "http")+"/rpc", "fixture")
+	readClient := newServiceTestClient(t, "ws"+strings.TrimPrefix(readServer.URL, "http")+"/jsonrpc", "fixture")
 	defer readClient.Close()
 	var restored store.HistoryPage
 	require.NoError(t, readClient.History(ctx, ref, store.HistoryQuery{Types: []string{"agent.message"}, Limit: 1}, &restored))

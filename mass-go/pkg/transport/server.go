@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	rpcwire "github.com/zoumo/mass/mass-go/pkg/jsonrpc"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 )
 
@@ -54,6 +55,29 @@ func New(api API, opts Options) (*Server, error) {
 	return s, nil
 }
 
+// Connect opens a dedicated in-process JSON-RPC connection. The caller is
+// trusted as part of the hosting process and still performs initialize.
+func (s *Server) Connect(ctx context.Context, writeTimeout time.Duration) (*rpcwire.Stream, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	peer, server, err := rpcwire.NewInProcessPair(writeTimeout, s.options.WriteTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rpc.attach(server, false); err != nil {
+		return nil, err
+	}
+	return peer, nil
+}
+
+// CloseExternalAdmission rejects new WebSocket connections and requests while
+// allowing the host to finish its in-process calls.
+func (s *Server) CloseExternalAdmission() {
+	s.ready.Store(false)
+	s.rpc.closeExternalAdmission()
+}
+
 // CloseAdmission rejects new RPC connections and marks observations for a
 // shutdown terminal cause while leaving established connections available for
 // final Service events.
@@ -72,12 +96,13 @@ func (s *Server) Drain(ctx context.Context) error { return s.rpc.drain(ctx) }
 func (s *Server) DrainAndClose(ctx context.Context) error {
 	s.CloseAdmission()
 	err := s.rpc.drain(ctx)
+	s.stop()
 	s.rpc.closeAll()
 	return err
 }
 
-// Shutdown immediately closes admission and owned WebSocket connections.
-// Service retains operation ownership.
+// Shutdown closes admission and all owned connections without waiting for RPC
+// settlement. Service retains operation ownership.
 func (s *Server) Shutdown() {
 	s.ready.Store(false)
 	s.stop()
@@ -100,7 +125,7 @@ func (s *Server) authorized(r *http.Request) bool {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/rpc", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(rpcwire.WebSocketPath, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
 			fail(w, http.StatusMethodNotAllowed, Invalid())

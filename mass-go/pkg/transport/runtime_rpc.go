@@ -173,12 +173,18 @@ func (c *rpcConnection) dispatchCall(ctx context.Context, conn *rpc2.Conn, req *
 }
 
 func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err error, receipt ...runtime.InjectReceipt) {
+	response := serviceErrorResponse(ctx, id, err, receipt...)
+	if err := sendRPCResponse(ctx, conn, response); err != nil && response.Error.Code != rpc2.CodeInternalError {
+		replyInternalError(ctx, conn, id)
+	}
+}
+
+func serviceErrorResponse(ctx context.Context, id rpc2.ID, err error, receipt ...runtime.InjectReceipt) *rpc2.Response {
 	// Only explicit Service outcomes are business errors. Unclassified Go
 	// failures are implementation errors and must stay redacted.
 	public, ok := publicError(err)
 	if !ok || public == nil {
-		replyInternalError(ctx, conn, id)
-		return
+		return internalErrorResponse(id)
 	}
 	observeRPCOutcome(ctx, operationErrorType(public.Code))
 	var value any = public
@@ -189,27 +195,24 @@ func replyServiceError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID, err err
 		}{public, receipt[0]}
 	}
 	if err := rpcwire.ValidateLossless(value); err != nil {
-		replyInternalError(ctx, conn, id)
-		return
+		return internalErrorResponse(id)
 	}
 	data, encodeErr := json.Marshal(value)
 	if encodeErr != nil {
-		replyInternalError(ctx, conn, id)
-		return
+		return internalErrorResponse(id)
 	}
 	raw := json.RawMessage(data)
-	if err := sendRPCResponse(ctx, conn, &rpc2.Response{ID: id, Error: &rpc2.Error{
+	return &rpc2.Response{ID: id, Error: &rpc2.Error{
 		Code:    rpcwire.CodeServiceError,
 		Message: public.Message,
 		Data:    &raw,
-	}}); err != nil {
-		replyInternalError(ctx, conn, id)
-	}
+	}}
 }
 
 func replyInternalError(ctx context.Context, conn *rpc2.Conn, id rpc2.ID) {
-	_ = sendRPCResponse(ctx, conn, &rpc2.Response{ID: id, Error: &rpc2.Error{
-		Code:    rpc2.CodeInternalError,
-		Message: "Internal error",
-	}})
+	_ = sendRPCResponse(ctx, conn, internalErrorResponse(id))
+}
+
+func internalErrorResponse(id rpc2.ID) *rpc2.Response {
+	return &rpc2.Response{ID: id, Error: &rpc2.Error{Code: rpc2.CodeInternalError, Message: "Internal error"}}
 }

@@ -2,7 +2,7 @@
 
 > **Historical record.** This page describes the retired HTTP/SSE transport and
 > is retained as evidence of that experiment. The current daemon serves only
-> `/rpc` WebSocket JSON-RPC plus `/livez` and `/readyz`; the `/v1` routes and
+> `/jsonrpc` WebSocket JSON-RPC plus `/livez` and `/readyz`; the `/v1` routes and
 > commands below are not available and will not work. See the
 > [current implementation notes](../README.md) for the supported API.
 

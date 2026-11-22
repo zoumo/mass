@@ -30,8 +30,14 @@ storageMaxPages: 0
 # Choose the Router workspace, fixed role profiles and available Issue profiles.
 # New Sessions use fullAccess and disable native agent questions.
 # massd:
-#   endpoint: ws://127.0.0.1:24368/rpc
+#   endpoint: ws://127.0.0.1:24368/jsonrpc
 #   tokenFile: ./massd.token  # set when massd uses an instance token
+# For `serve` with embedded MASS, replace the endpoint and tokenFile with:
+#   embedded:
+#     dataDir: ./massd
+#     expose:  # optional, requires a loopback Core listener
+#       tokenFile: ./embedded-massd.token  # private file and dedicated token
+#       allowedOrigins: [https://ops.example.com]  # optional, if clients send Origin
 # operatorTokenFile: ./operator.token  # optional, for loopback CLI input recovery
 # sessions:
 #   routerWorkspace: /absolute/workspace

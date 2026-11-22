@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zoumo/mass/mass-go/pkg/massd"
 )
 
 type Server struct {
@@ -30,11 +32,16 @@ type Server struct {
 	observerLife                 context.Context
 	observerTelemetry            *observerTelemetryGateway
 	observerTraces               *observerTraceReader
+	embeddedMassd                *massd.Instance
+	massdHTTP                    http.Handler
+	massdHTTPToken               string
 	store                        *Store
 	config                       Config
 	http                         *http.Server
 	listener                     net.Listener
 }
+
+const massdMount = "/massd"
 
 func Start(c Config) (*Server, error) {
 	return StartWithTelemetry(c, TelemetryOptions{})
@@ -42,6 +49,27 @@ func Start(c Config) (*Server, error) {
 
 // StartWithTelemetry starts Core with optional process-owned OTel providers.
 func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
+	return StartWithContext(context.Background(), c, options)
+}
+
+// StartWithContext starts Core and uses ctx for startup operations.
+func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (_ *Server, result error) {
+	var embedded *EmbeddedMassdConfig
+	if c.Massd != nil {
+		embedded = c.Massd.Embedded
+	}
+	if embedded != nil {
+		if c.Sessions == nil || c.Massd.Endpoint != "" || c.Massd.TokenFile != "" {
+			return nil, problem("invalid_argument", "embedded MASS requires sessions and exclusive MASS configuration")
+		}
+		if err := embedded.validate(); err != nil {
+			return nil, err
+		}
+	}
+	exposureToken, err := c.massdExposureToken()
+	if err != nil {
+		return nil, err
+	}
 	gateway, err := newObserverTelemetryGateway(c.ObserverOTLPEndpoint)
 	if err != nil {
 		return nil, err
@@ -50,25 +78,52 @@ func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if embedded != nil {
+		if err := validateMassdDirectories(c.DataDir, embedded.DataDir); err != nil {
+			return nil, err
+		}
+	}
 	store, err := openStore(c, options)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, store.Close())
+		}
+	}()
+	var instance *massd.Instance
+	if embedded != nil {
+		instance, err = embedded.start(ctx, options, exposureToken)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if result != nil {
+				result = errors.Join(result, instance.Shutdown(context.Background()))
+			}
+		}()
+	}
 	if err := c.prepareMCPFiles(); err != nil {
-		_ = store.Close()
 		return nil, err
 	}
-	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", c.Listen)
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", c.Listen)
 	if err != nil {
-		_ = store.Close()
 		return nil, problem("unavailable", "cannot bind listen address")
 	}
-	s := &Server{store: store, config: c, listener: l, observerTelemetry: gateway, observerTraces: traces}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, l.Close())
+		}
+	}()
+	s := &Server{store: store, config: c, listener: l, embeddedMassd: instance, observerTelemetry: gateway, observerTraces: traces}
+	if exposureToken != "" {
+		s.massdHTTP = http.StripPrefix(massdMount, instance.Handler())
+		s.massdHTTPToken = exposureToken
+	}
 	if c.Sessions != nil {
-		if _, err = store.db.ExecContext(context.Background(), `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
+		if _, err = store.db.ExecContext(ctx, `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
  WHERE state='ready'`); err != nil {
-			_ = l.Close()
-			_ = store.Close()
 			return nil, storageError()
 		}
 		life, cancel := context.WithCancel(context.Background())
@@ -95,7 +150,16 @@ func (s *Server) Serve() error {
 	return err
 }
 
-func (s *Server) Shutdown(ctx context.Context) error {
+func (s *Server) Shutdown(ctx context.Context) (result error) {
+	if s.embeddedMassd != nil {
+		// Stop admitting WebSocket work while Core drains its own calls.
+		s.embeddedMassd.Handler().CloseExternalAdmission()
+		defer func() {
+			if result != nil {
+				s.embeddedMassd.Handler().Shutdown()
+			}
+		}()
+	}
 	if s.observerTraces != nil {
 		defer s.observerTraces.client.CloseIdleConnections()
 	}
@@ -125,7 +189,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return s.store.Close()
+	if s.embeddedMassd == nil {
+		return s.store.Close()
+	}
+	return errors.Join(s.embeddedMassd.Shutdown(ctx), s.store.Close())
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +209,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	allowedObserverHost := (observerAPI || observerUI) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
 	if r.Host != expectedHost && !allowedObserverHost {
 		s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
+		return
+	}
+	if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, massdMount+"/") {
+		// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
+		s.massdHTTP.ServeHTTP(w, r)
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
@@ -395,7 +467,7 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Never return a reusable source credential, even if untrusted text contains it.
+	// Never return a reusable credential, even if untrusted text contains it.
 	body := string(b)
 	var configured []string
 	for _, source := range s.config.Sources {
@@ -404,7 +476,7 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	if s.config.Massd != nil {
 		configured = append(configured, s.config.Massd.token)
 	}
-	configured = append(configured, s.config.operatorToken)
+	configured = append(configured, s.config.operatorToken, s.massdHTTPToken)
 	for _, token := range configured {
 		if token == "" {
 			continue

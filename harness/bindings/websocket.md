@@ -14,11 +14,13 @@ sources:
 
 # WebSocket 承载
 
-本绑定承载 [JSON-RPC 业务协议](jsonrpc.md)，不定义第二套 Service、资源模型或事件格式。当前只提供 WebSocket 业务入口；HTTP Upgrade 和运维探针不构成 REST 业务 API。[^direction]
+本绑定承载 [JSON-RPC 业务协议](jsonrpc.md)，不定义第二套 Service、资源模型或事件格式。外部客户端通过 WebSocket 访问业务入口。HTTP Upgrade 和运维探针只提供连接建立和健康信息。[^direction]
 
 ## 入口与消息
 
-- 所有业务连接使用 `/rpc`，服务地址使用 `ws://` 或 `wss://`，版本通过每条连接的 initialize 协商。
+- 独立 massd 的 WebSocket 业务路径为 `/jsonrpc`。服务地址使用 `ws://` 或 `wss://`，每条连接通过 initialize 协商版本。
+- Superagent Core 在内嵌模式下可显式挂载 `/massd/`。Core 校验 Host 后剥离 `/massd`，由同一个 MASS handler 处理 `/jsonrpc` 和运维探针。
+- 客户端可使用服务源地址、代理挂载前缀或完整业务地址。给定源地址或挂载前缀时，客户端补全 `/jsonrpc`。地址末尾可带一个 `/`。
 - 每条 WebSocket 文本 message 承载一个 JSON-RPC 对象；按重组后的完整消息解析，不把 frame 等同于业务消息。[^websocket]
 - 二进制消息拒绝并以 1003 关闭；非法 UTF-8 以 1007 关闭。JSON 解析或信封错误按业务协议返回 JSON-RPC 错误；消息边界仍有效时允许继续读取。
 - 不使用按行分帧、Content-Length codec 或传输类型探测。新连接必须自行认证和 initialize，不能借用另一连接的初始化状态。
@@ -57,13 +59,15 @@ subscriptionId 不提供独立流控，写入成功也不证明业务消费成�
 
 非本机连接使用 WSS，可由受信反向代理终止 TLS；代理至服务的链路必须处于明确受信部署边界。代理须支持持续双向消息与 Upgrade，空闲期限应容纳心跳。需用实际部署链路验证首响应、后续事件、慢客户端及断线，不能仅依据源站响应头。
 
+Core 的 `/massd/jsonrpc` 要求专用 MASS token。该 token 与 Core Source、Operator 和角色 MCP 凭据分开。经代理访问时保留 `/massd/` 并将上游 Host 设置为 Core 监听地址。
+
 未配置认证仅允许显式本机单用户模式，绑定回环地址；回环不代替多用户身份隔离。存在 Origin 的 Upgrade 必须命中显式允许列表，缺少允许列表时拒绝；无 Origin 的原生客户端仍须通过所选 token 或本机信任模式。不能把 Origin 当作认证。
 
 首版的直接连接范围是原生客户端。浏览器应用通过自己的已认证后端连接 MASS；浏览器直连的 cookie/短期凭证流程不属于本版合同，不能隐式改为 query token。
 
 ## 服务实例与数据所有权
 
-massd 独立运行，每个实例拥有明确的监听地址和 DataDir。一个 DataDir 包含元数据、事件和恢复材料，同一时刻仅允许一个服务实例拥有写入和运行管理权。多个客户端共享服务，不直接打开服务端存储。
+MASS 可以在独立 massd 进程中运行，也可由 Superagent Core 在进程内启动。一个 MASS DataDir 包含元数据、事件和恢复材料，同一时刻仅允许一个实例拥有写入和运行管理权。多个客户端通过该实例操作资源。
 
 复用存储已有的排他写入机制：全部必要 Store 打开成功并取得写入权后，才执行 Service 启动校正、启动 Driver 或公开 ready。启动失败逆序关闭本次资源；第二个实例使用同一实际目录时明确报告 data_directory_in_use，不因端口不同或路径别名绕过，不自动更换空目录。
 
@@ -80,7 +84,9 @@ massd 独立运行，每个实例拥有明确的监听地址和 DataDir。一个
 | GET /livez | 200，仅表示进程能响应 |
 | GET /readyz | 必要初始化完成且接纳业务时 200，否则 503 |
 
-探针不返回配置、资源或 Agent 信息，不依赖某个 Runtime 已启动。可在受控网络免认证；其他方法返回 405。旧 `/apis/v1` 业务路由不保留别名或重定向。
+Core 启用挂载时，探针路径为 `/massd/livez` 和 `/massd/readyz`。它们经过 Core Host 检查，无需 MASS token。
+
+探针不返回配置、资源或 Agent 信息，不依赖某个 Runtime 已启动。可在受控网络免认证；其他方法返回 405。通过鉴权的请求访问旧 `/rpc` 和 `/apis/v1` 业务路由时返回 404。
 
 客户端断线只释放连接和观察资源；已接纳工作继续由 Service 结算。massd shutdown 才关闭全局接纳并调用 Service 的停止协调，持续接收最终事件，尽力完成健康连接的最终通知，再关闭连接和存储。慢连接不能无限阻塞退出；未完成的释放如实报告。
 

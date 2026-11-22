@@ -12,7 +12,7 @@ import (
 )
 
 func TestInitialSessionConfigurationClientRejectsInvalidBeforeRequest(t *testing.T) {
-	c, err := client.New("ws://127.0.0.1:1/rpc", "", client.Options{
+	c, err := client.New("ws://127.0.0.1:1/jsonrpc", "", client.Options{
 		WriteTimeout:              time.Second,
 		SubscriptionQueueCapacity: 1,
 	})

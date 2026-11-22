@@ -80,6 +80,7 @@ func (a *clientSubscriptionAPI) cancelCount() int {
 
 type clientSubscriptionFixture struct {
 	api       *clientSubscriptionAPI
+	transport *transport.Server
 	http      *httptest.Server
 	broadcast *events.EventBroadcast
 }
@@ -97,7 +98,7 @@ func newClientSubscriptionFixture(t *testing.T) *clientSubscriptionFixture {
 		server.Shutdown()
 		httpServer.Close()
 	})
-	return &clientSubscriptionFixture{api: api, http: httpServer, broadcast: broadcast}
+	return &clientSubscriptionFixture{api: api, transport: server, http: httpServer, broadcast: broadcast}
 }
 
 func clientSubscriptionEvent(t *testing.T, text string) events.SessionEvent {
@@ -299,4 +300,30 @@ func TestClientSubscriptionRejectsMalformedNotification(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, io.EOF)
 	require.True(t, strings.Contains(err.Error(), "invalid session.event notification") || errors.Is(err, io.ErrUnexpectedEOF))
+}
+
+func TestInProcessSlowSubscriptionDoesNotCloseOtherConnections(t *testing.T) {
+	fixture := newClientSubscriptionFixture(t)
+	c, err := client.NewInProcess(fixture.transport.Connect, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 1})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+	ref := resource.SessionRef{SessionID: "observed"}
+	slow, err := c.Subscribe(t.Context(), ref)
+	require.NoError(t, err)
+	fast, err := c.Subscribe(t.Context(), ref)
+	require.NoError(t, err)
+	for _, text := range []string{"one", "two", "three"} {
+		event := clientSubscriptionEvent(t, text)
+		require.NoError(t, fixture.broadcast.Publish(event))
+		require.Equal(t, event.EventID, nextClientSubscription(t, fast).EventID)
+	}
+	require.Eventually(t, func() bool { return slow.Err() != nil }, time.Second, 10*time.Millisecond)
+	var operation *runtime.OperationError
+	require.ErrorAs(t, slow.Err(), &operation)
+	require.Equal(t, "slow_subscriber", operation.Reason)
+	var found resource.Session
+	require.NoError(t, c.GetSession(t.Context(), ref, &found))
+	require.Equal(t, ref.SessionID, found.Status.SessionID)
+	require.NoError(t, fast.Close())
+	require.NoError(t, c.GetSession(t.Context(), ref, &found))
 }

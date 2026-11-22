@@ -167,7 +167,7 @@ bin/massctl session --help
 
 | Local default | Value |
 |---|---|
-| 🌐 Service address | `ws://127.0.0.1:24368/rpc` |
+| 🌐 Service address | `ws://127.0.0.1:24368/jsonrpc` |
 | 📂 Data directory | `~/.mass` |
 | ⚙️ Configuration | `~/.mass/config.yaml` when present. Flags override file values. |
 
@@ -216,8 +216,9 @@ Superagent is experimental.
 | 📡 [Historical HTTP implementation](mass-go/docs/http-service-v1.md) | Superseded REST/SSE binding; retained for migration history only |
 | 🧪 [Historical HTTP acceptance](mass-go/docs/http-v1-acceptance.md) | Superseded HTTP v1 validation and its scope |
 
-`massd` exposes `/rpc`, `/livez`, and `/readyz`. The retired `/apis/v1` routes
-return `404`.
+`massd` exposes `/jsonrpc`, `/livez`, and `/readyz`. The retired `/rpc` and
+`/apis/v1` routes return `404` for authenticated requests. See the
+[WebSocket endpoint upgrade steps](mass-go/README.md#upgrade-the-websocket-endpoint).
 
 ## License
 

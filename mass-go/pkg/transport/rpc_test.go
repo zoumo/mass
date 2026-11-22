@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -77,7 +78,7 @@ func rpcHeaders(token string, origin ...string) http.Header {
 }
 
 func rpcURL(httpServer *httptest.Server) string {
-	return "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/rpc"
+	return "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/jsonrpc"
 }
 
 func dialRPC(t *testing.T, httpServer *httptest.Server, headers http.Header) *websocket.Conn {
@@ -131,7 +132,7 @@ func TestRPCAuthenticationAndOrigin(t *testing.T) {
 		AllowedOrigins: []string{"https://allowed.example"},
 	})
 
-	response, err := get(t, httpServer.URL+"/rpc")
+	response, err := get(t, httpServer.URL+"/jsonrpc")
 	require.NoError(t, err)
 	_ = response.Body.Close()
 	require.Equal(t, http.StatusUnauthorized, response.StatusCode)
@@ -185,11 +186,12 @@ func TestHealthProbesAndRetiredBusinessRoutes(t *testing.T) {
 		require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
 		require.Equal(t, http.MethodGet, response.Header.Get("Allow"))
 	}
-	response := request(http.MethodPost, "/rpc", true) //nolint:bodyclose // The helper registers body cleanup.
+	response := request(http.MethodPost, "/jsonrpc", true) //nolint:bodyclose // The helper registers body cleanup.
 	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
 	require.Equal(t, http.MethodGet, response.Header.Get("Allow"))
 
 	for _, path := range []string{
+		"/rpc",
 		"/apis/v1/runtimes",
 		"/apis/v1/sessions/YS9i",
 		"/apis/v1/namespaces/demo/sessions/task/events/stream",
@@ -263,6 +265,125 @@ func TestRPCDrainDoesNotWaitForUntouchedConnection(t *testing.T) {
 	started := time.Now()
 	require.NoError(t, server.DrainAndClose(ctx))
 	require.Less(t, time.Since(started), time.Second)
+}
+
+func TestInProcessRPCReadsWhilePeerPausesResponses(t *testing.T) {
+	const unknown = `{"jsonrpc":"2.0","id":"next","method":"unknown"}`
+	for _, test := range []struct {
+		name, first string
+		firstCode   int64
+		nextCode    int64
+		nextReason  string
+		needsInit   bool
+	}{
+		{name: "initialize", first: initializeMessage(`"first"`, rpcwire.Version), nextCode: -32601},
+		{name: "before initialize", first: `{"jsonrpc":"2.0","id":"first","method":"unknown"}`, firstCode: rpcwire.CodeProtocolState, nextCode: rpcwire.CodeProtocolState, nextReason: "not_initialized"},
+		{name: "method error", first: `{"jsonrpc":"2.0","id":"first","method":"unknown"}`, firstCode: -32601, nextCode: -32601, needsInit: true},
+		{name: "envelope error", first: `{"jsonrpc":"1.0","id":"first","method":"unknown"}`, firstCode: -32600, nextCode: -32601, needsInit: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := transport.New(nil, transport.Options{WriteTimeout: 2 * time.Second})
+			require.NoError(t, err)
+			t.Cleanup(server.Shutdown)
+			peer, err := server.Connect(t.Context(), 250*time.Millisecond)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, peer.Close()) })
+			if test.needsInit {
+				require.NoError(t, peer.WriteObject(json.RawMessage(initializeMessage(`"init"`, rpcwire.Version))))
+				var initialized rpcResponse
+				require.NoError(t, peer.ReadObject(&initialized))
+				require.Nil(t, initialized.Error)
+			}
+			require.NoError(t, peer.WriteObject(json.RawMessage(test.first)))
+			require.NoError(t, peer.WriteObject(json.RawMessage(unknown)), "the reader must receive a second request before the peer reads the first response")
+			var first, second rpcResponse
+			require.NoError(t, peer.ReadObject(&first))
+			require.NoError(t, peer.ReadObject(&second))
+			if test.firstCode == 0 {
+				require.Equal(t, `"first"`, string(first.ID))
+				require.Nil(t, first.Error)
+			} else {
+				requireRPCError(t, first, test.firstCode, `"first"`, "")
+			}
+			requireRPCError(t, second, test.nextCode, `"next"`, test.nextReason)
+		})
+	}
+}
+
+func TestInProcessRPCDuplicatePendingReplyClosesConnection(t *testing.T) {
+	server, err := transport.New(nil, transport.Options{WriteTimeout: 2 * time.Second})
+	require.NoError(t, err)
+	t.Cleanup(server.Shutdown)
+	peer, err := server.Connect(t.Context(), 250*time.Millisecond)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, peer.Close()) })
+	message := json.RawMessage(initializeMessage(`"same"`, rpcwire.Version))
+	require.NoError(t, peer.WriteObject(message))
+	require.NoError(t, peer.WriteObject(message))
+	// The server handles the duplicate in read order. A third write cannot
+	// complete as there is no longer a reader for it.
+	require.ErrorIs(t, peer.WriteObject(message), io.ErrClosedPipe)
+	var response rpcResponse
+	require.ErrorIs(t, peer.ReadObject(&response), io.EOF)
+}
+
+func TestInProcessRPCStalledRepliesDrainAfterWriteTimeout(t *testing.T) {
+	server, err := transport.New(nil, transport.Options{WriteTimeout: time.Second})
+	require.NoError(t, err)
+	t.Cleanup(server.Shutdown)
+	peer, err := server.Connect(t.Context(), time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, peer.Close()) })
+	require.NoError(t, peer.WriteObject(json.RawMessage(initializeMessage(`"init"`, rpcwire.Version))))
+	require.NoError(t, peer.WriteObject(json.RawMessage(`{"jsonrpc":"2.0","id":"next","method":"unknown"}`)))
+	// Receiving this notification proves the previous request was admitted.
+	require.NoError(t, peer.WriteObject(json.RawMessage(`{"jsonrpc":"2.0","method":"ignored"}`)))
+
+	draining, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	require.NoError(t, server.Drain(draining))
+	var response rpcResponse
+	require.ErrorIs(t, peer.ReadObject(&response), io.EOF)
+
+	healthy, err := server.Connect(t.Context(), time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, healthy.Close()) })
+	require.NoError(t, healthy.WriteObject(json.RawMessage(initializeMessage(`"healthy"`, rpcwire.Version))))
+	require.NoError(t, healthy.ReadObject(&response))
+	require.Equal(t, `"healthy"`, string(response.ID))
+	require.Nil(t, response.Error)
+}
+
+func TestRPCCloseExternalAdmission(t *testing.T) {
+	server, httpServer := newRPCServer(t, transport.Options{Token: "test-token"})
+	ws := dialRPC(t, httpServer, rpcHeaders("test-token"))
+	sendText(t, ws, initializeMessage(`"init"`, rpcwire.Version))
+	require.Nil(t, readRPC(t, ws).Error)
+
+	server.CloseExternalAdmission()
+	closed, handshake, err := websocket.DefaultDialer.DialContext(t.Context(), rpcURL(httpServer), rpcHeaders("test-token"))
+	if closed != nil {
+		t.Cleanup(func() { _ = closed.Close() })
+	}
+	require.ErrorIs(t, err, websocket.ErrBadHandshake)
+	require.NotNil(t, handshake)
+	defer handshake.Body.Close()
+	require.Equal(t, http.StatusServiceUnavailable, handshake.StatusCode)
+	probe, err := get(t, httpServer.URL+"/readyz")
+	require.NoError(t, err)
+	defer probe.Body.Close()
+	require.Equal(t, http.StatusServiceUnavailable, probe.StatusCode)
+	sendText(t, ws, `{"jsonrpc":"2.0","id":"external","method":"runtime.list"}`)
+	requireRPCError(t, readRPC(t, ws), rpcwire.CodeServiceError, `"external"`, "not_ready")
+
+	internal, err := server.Connect(t.Context(), time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, internal.Close()) })
+	require.NoError(t, internal.WriteObject(json.RawMessage(initializeMessage(`"internal"`, rpcwire.Version))))
+	var response rpcResponse
+	require.NoError(t, internal.ReadObject(&response))
+	require.Nil(t, response.Error)
+	require.Equal(t, `"internal"`, string(response.ID))
 }
 
 func TestRPCUnsupportedVersionClosesConnection(t *testing.T) {
@@ -502,7 +623,7 @@ func TestRPCWithoutTokenAllowsOnlyLoopbackPeers(t *testing.T) {
 	sendText(t, conn, initializeMessage(`"loopback"`, rpcwire.Version))
 	require.Nil(t, readRPC(t, conn).Error)
 
-	request := httptest.NewRequest(http.MethodGet, "/rpc", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/jsonrpc", http.NoBody)
 	request.RemoteAddr = "192.0.2.1:12345"
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)

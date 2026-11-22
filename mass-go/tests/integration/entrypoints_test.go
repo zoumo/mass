@@ -83,7 +83,7 @@ func (s *entrypointSuite) SetupTest() {
 		}
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), time.Second)
 		defer checkCancel()
-		conn, e := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimPrefix(strings.TrimSuffix(s.url, "/rpc"), "ws://"))
+		conn, e := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimPrefix(strings.TrimSuffix(s.url, "/jsonrpc"), "ws://"))
 		if conn != nil {
 			conn.Close()
 		}

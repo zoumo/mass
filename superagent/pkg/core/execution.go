@@ -19,7 +19,6 @@ import (
 
 	"github.com/zoumo/agent-sdk-go/agent"
 	"github.com/zoumo/agent-sdk-go/mcp"
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"go.opentelemetry.io/otel/trace"
@@ -30,12 +29,6 @@ type SessionsConfig struct {
 	IssueTemplates  []IssueTemplate `mapstructure:"issueTemplates"`
 	RouterWorkspace string          `mapstructure:"routerWorkspace"`
 	Namespace       string          `mapstructure:"namespace"`
-}
-
-type MassdConfig struct {
-	Endpoint  string `mapstructure:"endpoint"`
-	TokenFile string `mapstructure:"tokenFile"`
-	token     string
 }
 
 type ExecutionProfile struct {
@@ -78,27 +71,6 @@ func (c *SessionsConfig) issueProfile(runtimeRef, model string) (ExecutionProfil
 		}
 	}
 	return ExecutionProfile{}, problem("invalid_argument", "runtimeRef and model must match a configured Issue template")
-}
-
-func (c *MassdConfig) validate(resolve func(string) string, composed bool) error {
-	if !composed {
-		u, err := url.Parse(c.Endpoint)
-		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/rpc") || (u.Scheme != "ws" && u.Scheme != "wss") {
-			return problem("invalid_argument", "massd.endpoint must be a ws/wss MASS endpoint")
-		}
-	}
-	if c.TokenFile != "" {
-		c.TokenFile = resolve(c.TokenFile)
-		b, err := readPrivate(c.TokenFile)
-		if err != nil {
-			return err
-		}
-		c.token = strings.TrimSpace(string(b))
-		if c.token == "" {
-			return problem("invalid_argument", "empty massd tokenFile")
-		}
-	}
-	return nil
 }
 
 func (c *SessionsConfig) validate(resolve func(string) string) error {
@@ -301,6 +273,8 @@ func (b SessionBinding) capabilityFileID() string {
 	return b.ID
 }
 
+const roleTokenPrefix = "cap"
+
 func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous SessionBinding) (SessionBinding, error) {
 	fresh, err := makeSpec(c, b)
 	if err != nil {
@@ -317,7 +291,7 @@ func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous Sessio
 	if err != nil {
 		return SessionBinding{}, storageError()
 	}
-	token := newID("cap") + newID("key")
+	token := newID(roleTokenPrefix) + newID("key")
 	if err := putJSON(ctx, tx, "INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body) VALUES(?,?,?,?,?,?,?,?,?)", b, b.ID, b.Role, b.OwnerID, b.Generation, b.CreatedAt, token, spec, b.State); err != nil {
 		return SessionBinding{}, err
 	}
@@ -727,10 +701,6 @@ func errorCode(err error) string {
 		return e.Code
 	}
 	return "unavailable"
-}
-
-func (s *Server) massClient() (*client.Client, error) {
-	return client.New(s.config.Massd.Endpoint, s.config.Massd.token, client.Options{WriteTimeout: 5 * time.Second, SubscriptionQueueCapacity: 32})
 }
 
 func bindingMatches(b SessionBinding, spec resource.SessionSpec, found resource.Session) bool {
