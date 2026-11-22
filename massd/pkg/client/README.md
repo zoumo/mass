@@ -1,76 +1,19 @@
-# WebSocket JSON-RPC client
+# Use the Go client
 
-`client.Client` is the public MASS service client used by `massctl` and product
-tests. The public constructor is:
+Use [`client.New`](client.go) with a `ws://` or `wss://` origin, mount base, or complete endpoint. The client fills in `/jsonrpc` for an origin or mount base. Set a positive `WriteTimeout` and `SubscriptionQueueCapacity`. `New` performs no network I/O. Call `Initialize` for an explicit handshake or let the first typed call initialize the connection.
 
-```go
-func New(serverURL, token string, opts Options) (*Client, error)
+## Observe new events before sending input
 
-type Options struct {
-	WriteTimeout              time.Duration
-	SubscriptionQueueCapacity int
-}
-```
+1. Call `Subscribe` and wait for it to return successfully. Each subscription owns a separate WebSocket from the one used for ordinary requests.
+2. Send work on the client. Read future events with `Next`. Use `History` for committed events. Keep the original interaction ID from live events when you call `Answer`. Passing `nil` as the answer sends a JSON `null`.
+3. Call `Subscription.Close` when you finish observing. Call `Client.Close` when you finish using the client. It closes all connections owned by that client.
 
-Use a `ws://` or `wss://` origin, mount base, or full endpoint. The client
-adds `/jsonrpc` if the path lacks that suffix. A trailing slash is optional.
-`client.WebSocketEndpoint` resolves the URL without I/O. `client.New` performs
-no network I/O and resolves the URL when it first needs a connection.
-`WriteTimeout` bounds each WebSocket write and is a Go
-`time.Duration`; `SubscriptionQueueCapacity` is a count of locally queued
-SessionEvents per observation. Neither option has an implementation default:
-zero, negative values, or an omitted field makes `client.New` fail before a
-connection exists. Queue overflow terminates only that observation and
-releases its connection.
+An explicit clean `subscription.closed` notification yields `io.EOF`. An unexpected disconnect or queue overflow yields an error. Reconnect explicitly and query history if you need events from the gap. A connection failure or expired request context ends your wait. Reconcile an unknown side effect before repeating the call. The [WebSocket contract](../../../harness/bindings/websocket.md#连接与订阅隔离) defines isolation and closure behavior.
 
-`Initialize` performs the side-effect-free handshake. Typed Runtime and Session
-methods initialize lazily on first use.
+## Load retained history
 
-Ordinary calls share one JSON-RPC connection. `Subscribe` always opens a separate
-authenticated and initialized WebSocket, sends `session.subscribe`, and returns
-only after the successful response. Each connection has one active subscription.
-Events are delivered in order through `session.event`; the terminal
-`subscription.closed` notification becomes `io.EOF` for a clean close or a typed
-`runtime.OperationError` for an error. `Subscription.Close` releases only that
-observation. There is no automatic reconnect, replay or subscription resume.
+`LoadSession` returns a `loadId` and an accepted Session. Poll `GetSession` for `historyLoad`. Wait for `historyLoad.completed=true` and `historyLoad.deliveryCompleted=true` before sending input on the retained connection. Use `History` separately and pass its opaque cursor to continue. Pass the original `loadId` to `CancelHistoryLoad` for an unfinished load. A successful load can retain its connection with `cleanupCompleted=false`. Replayed interactions carry no live answer authority. See the [load contract](../../../harness/modules/service/load.md) for all completion and cleanup fields.
 
-Service `OperationError` values retain `code/reason/message` through JSON-RPC
-error code `-32000`. Unknown outcomes remain `outcome_unknown`; callers must not
-retry side effects merely because a connection timed out or closed. Request
-contexts bound only that wait and never cancel admitted Agent work.
+## Change live Session configuration
 
-Open JSON and unions use `json.RawMessage`, including optional explicit null.
-Strict JSON decoding preserves integer lexemes for open values such as
-9007199254740993. Events decode into the existing `events.SessionEvent`, not a
-second event representation. `Answer(ctx, ref, interaction, nil, out)` sends
-literal JSON null. There is no CLI answer command in this release.
-
-Call `Client.Close()` after all calls and observations end; the CLI closes its
-client on every exit path. Client, CLI and fixed SDK mock evidence verify the
-protocol and deterministic workflows. It does not establish real Agent/model,
-TLS proxy or deployed-network acceptance.
-
-## Asynchronous history loading
-
-`LoadSession` returns a loadId and accepted Session, not completed history. Query
-`GetSession` for historyLoad nativeVerified/nativeResumed/nativeCompleted and
-completed/deliveryCompleted; query `History` separately with its opaque cursor.
-`CancelHistoryLoad` requires the original loadId. A timeout ends only this request;
-it neither cancels background work nor triggers an automatic retry. A stale cancel
-cannot close the retained connection or later input after completed load.
-Cleanup evidence is separate: unknown release remains unsettled, while successful
-load intentionally retains its connection. Replay never grants old interaction
-authority. Use `Answer` only for a current interaction observed from live events.
-See [current layered acceptance](../../docs/acceptance.md) for actual test scope.
-
-## Live main Session configuration
-
-`SetSessionConfig(ctx, ref, runtime.ConfigChange{ID: agent.ConfigModel, Value: "native-model"}, out)`
-sends one transient model or effort change through `POST {session}/config`. Runtime aliases the SDK's
-Go change/receipt types; generated DTOs carry camelCase wire fields. A `runtime.ConfigReceipt`
-can receive successful responses. HTTP failures retain the three-field OperationError and do not
-populate a failure receipt. No retry occurs, including after outcome_unknown.
-
-Values are nonempty UTF-8 literals without NUL. The Session must already have a valid online binding;
-the call does not start, resume, wait for idle, or persist configuration. Serialize calls when order
-matters. An acceptance receipt does not prove the value is effective for the current turn.
+Use `SetSessionConfig` to send one `session.setConfig` request to the current online main Session. Wait for each call before sending the next change or input when order matters. The receipt describes acceptance evidence for that request. Initial values saved in the Session spec are applied on resume. See the [configuration contract](../../../harness/modules/runtime/session-config.md) and the [Go method](websocket_session.go) for request, receipt, and error handling.
