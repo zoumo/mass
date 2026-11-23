@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zoumo/mass/massd/pkg/events"
 	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -88,7 +87,7 @@ func permanentHandshakeRejection(err error) bool {
 }
 
 func (s *Server) dispatchSessionInput(ctx context.Context, b SessionBinding, spec resource.SessionSpec, a Attempt,
-	method string, wire []byte, admit func(*issueWatch) (bool, error),
+	method string, input runtime.Input, admit func(*issueWatch) (bool, error),
 ) (Attempt, *issueWatch) {
 	c, err := s.massClient()
 	if err != nil {
@@ -149,7 +148,6 @@ func (s *Server) dispatchSessionInput(ctx context.Context, b SessionBinding, spe
 		}
 	}
 	commitGate("after_session_input_admission")
-	input := runtime.Input{Content: []events.ContentBlock{events.Text(string(wire))}}
 	if method == "inject" {
 		var receipt runtime.InjectReceipt
 		err := c.Inject(ctx, ref, input, &receipt)

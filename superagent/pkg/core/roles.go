@@ -200,7 +200,7 @@ func projection(kind string, b *SessionBinding) string {
 	case "messages":
 		if b != nil {
 			if b.Role == "topic" {
-				return "json_patch(" + agentSourceMessageProjection + ",json_object('quotedReply',json(" + quotedReplyForTopic + ")))"
+				return "json_patch(" + agentSourceMessageProjection + ",json_object('quotedReply',json(" + quotedReplyForTopic + "),'followup',json(" + messageFollowupProjection + ")))"
 			}
 			return `json_set(` + agentSourceMessageProjection + `,
  '$.routing',json(CASE WHEN ` + routingState + ` IS NOT NULL
@@ -253,7 +253,7 @@ func projection(kind string, b *SessionBinding) string {
 // Preserve the native JSON of selected source fields, including arrays and booleans.
 const agentSourceMessageProjection = `(SELECT json_group_object(field,json(value)) FROM (
  SELECT key AS field,trigger_messages.body->fullkey AS value FROM json_each(trigger_messages.body)
- WHERE key IN ('id','source','text','threadKey','actor','at','url')
+ WHERE key IN ('id','source','text','content','threadKey','actor','at','url')
  UNION ALL
  SELECT 'meta',json_group_object(key,json(trigger_messages.body->fullkey)) FROM json_each(trigger_messages.body,'$.meta')
  WHERE (trigger_messages.source='` + timerSource + `' AND key IN ('type','taskId','topicId','taskRevision','dueAt','materials'))
@@ -267,7 +267,7 @@ const agentSourceMessageProjection = `(SELECT json_group_object(field,json(value
 // Projection placeholders precede filter placeholders in both list and detail queries.
 func projectionArgs(kind string, b *SessionBinding) []any {
 	if kind == "messages" && b != nil && b.Role == "topic" {
-		return []any{b.OwnerID}
+		return []any{b.OwnerID, b.OwnerID}
 	}
 	return nil
 }

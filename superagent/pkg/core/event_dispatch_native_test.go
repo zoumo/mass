@@ -53,6 +53,7 @@ func dispatchBinaries(t *testing.T) (string, string) {
 type nativeSubmitCall struct {
 	method, session, text string
 	answer                chan nativeSubmitAnswer
+	blocks                []nativeSubmitBlock
 	notify                func(string, any)
 }
 
@@ -130,6 +131,11 @@ func newNativeSubmitPeer(t *testing.T) *nativeSubmitPeer {
 	return p
 }
 
+type nativeSubmitBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 type nativeSubmitRequest struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
@@ -145,13 +151,9 @@ type nativeSubmitRequest struct {
 			Effort    string `json:"model_reasoning_effort"`
 			Questions *bool  `json:"tools.experimental_request_user_input.enabled"`
 		} `json:"config"`
-		Input []struct {
-			Text string `json:"text"`
-		} `json:"input"`
+		Input []nativeSubmitBlock `json:"input"`
 		Items []struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
+			Content []nativeSubmitBlock `json:"content"`
 		} `json:"items"`
 	} `json:"params"`
 }
@@ -266,10 +268,13 @@ func (p *nativeSubmitPeer) serve(conn net.Conn) {
 func (p *nativeSubmitPeer) input(req nativeSubmitRequest, respond, send func(any), notify func(string, any)) {
 	call := nativeSubmitCall{method: req.Method, session: req.Params.ThreadID, answer: make(chan nativeSubmitAnswer, 1), notify: notify}
 	switch {
-	case req.Method == "thread/inject_items" && len(req.Params.Items) == 1 && len(req.Params.Items[0].Content) == 1:
-		call.text = req.Params.Items[0].Content[0].Text
-	case len(req.Params.Input) == 1:
-		call.text = req.Params.Input[0].Text
+	case req.Method == "thread/inject_items" && len(req.Params.Items) == 1:
+		call.blocks = req.Params.Items[0].Content
+	default:
+		call.blocks = req.Params.Input
+	}
+	if len(call.blocks) != 0 {
+		call.text = call.blocks[0].Text
 	}
 	select {
 	case p.calls <- call:
