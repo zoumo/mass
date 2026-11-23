@@ -25,11 +25,12 @@ import (
 )
 
 const (
-	schemaVersion         = 25
-	previousSchemaVersion = 24
-	applicationID         = 1398096210
-	storeStartupTimeout   = 10 * time.Second
-	queryIndexTimeout     = 2 * time.Minute
+	schemaVersion       = 26
+	legacyMessageSchema = 25
+	legacyMCPSchema     = 24
+	applicationID       = 1398096210
+	storeStartupTimeout = 10 * time.Second
+	queryIndexTimeout   = 2 * time.Minute
 )
 
 type Store struct {
@@ -59,10 +60,10 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	}
 	allowed := map[string]bool{".core.lock": true, "core.sqlite": true, "core.sqlite-wal": true, "core.sqlite-shm": true}
 	for _, e := range entries {
-		if c.Sessions != nil && e.Name() == mcpCredentialsDir {
+		if e.Name() == migrationDirectory || c.Sessions != nil && e.Name() == mcpCredentialsDir {
 			info, err := e.Info()
 			if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-				return nil, problem("failed_precondition", "MCP credentials directory must be private")
+				return nil, problem("failed_precondition", "Core subdirectory "+e.Name()+" must be private")
 			}
 			continue
 		}
@@ -144,6 +145,7 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	if err = tx.QueryRowContext(ctx, "PRAGMA application_id").Scan(&app); err != nil {
 		return nil, storageError()
 	}
+	var evidence []legacyDWSSend
 	switch {
 	case !hasHeader && version == 0 && app == 0:
 		// Put the schema identity in the main file before enabling WAL. Startup
@@ -155,9 +157,18 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		if err := checkDatabaseIdentity(version, app); err != nil {
 			return nil, err
 		}
-		if version == previousSchemaVersion {
+		if version == legacyMCPSchema {
 			if _, err = tx.ExecContext(ctx, `DROP TABLE mcp_mutation_receipts;
-DROP TABLE mcp_tool_calls;`+fmt.Sprintf("PRAGMA user_version=%d;", schemaVersion)); err != nil {
+DROP TABLE mcp_tool_calls;`); err != nil {
+				return nil, storageError()
+			}
+		}
+		if version < schemaVersion {
+			evidence, err = migrateTriggerMessages(txCtx, tx)
+			if err != nil {
+				return nil, err
+			}
+			if _, err = tx.ExecContext(txCtx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 				return nil, storageError()
 			}
 		}
@@ -212,6 +223,11 @@ DROP TABLE mcp_tool_calls;`+fmt.Sprintf("PRAGMA user_version=%d;", schemaVersion
 	if ctx.Err() != nil {
 		return nil, storageError()
 	}
+	if len(evidence) != 0 {
+		if err := exportLegacyDWSSends(c.DataDir, evidence); err != nil {
+			return nil, problem("unavailable", "cannot durably export migrated DWS send evidence: "+err.Error())
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, storageError()
 	}
@@ -261,7 +277,7 @@ func checkDatabaseIdentity(version, app uint32) error {
 	if app != applicationID {
 		return problem("failed_precondition", "database belongs to another format; set dataDir to a new empty directory")
 	}
-	if version != schemaVersion && version != previousSchemaVersion {
+	if version != schemaVersion && version != legacyMessageSchema && version != legacyMCPSchema {
 		return problem("unsupported", fmt.Sprintf("schema version %d is unsupported; set dataDir to a new empty directory for schema %d", version, schemaVersion))
 	}
 	return nil
