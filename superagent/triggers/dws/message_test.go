@@ -1,6 +1,7 @@
 package dws
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
 	"strings"
@@ -22,7 +23,8 @@ func TestNormalizeNativeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Message.SourceMessageID != id || s.Message.ThreadRef.ID != c.SelfChat.ConversationID || s.Message.Actor != "self" || s.Message.Text != "normal text without prefix" || s.Message.At != "2026-11-15T16:45:43.211Z" || s.Message.Addressed != "direct" {
+	if s.Message.SourceMessageID != id || s.Message.ThreadKey != dwsThreadKey(c.Source, c.SelfChat.ConversationID) ||
+		len(s.Message.Content) != 1 || s.Message.Content[0].Text == nil || s.Message.Content[0].Text.Text != "normal text without prefix\n\nAuthor: self\n\nSource time: 2026-11-15T16:45:43.211Z" || !s.SelfSent || s.Quote != nil {
 		t.Fatalf("wrong normalized message: %+v", s)
 	}
 	b := testMarshalMessage(t, s)
@@ -68,4 +70,36 @@ func testMarshalMessage(t *testing.T, message any) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestLegacyQueueReplayMatchesNewNormalization(t *testing.T) {
+	c := dwsConfig{
+		Source: "dws", AccountID: "account", InstanceID: "instance", SelfID: "self",
+		SelfChat: selfChatConfig{Enabled: true, ConversationID: fixtureSelfConversation, Match: allTextRules()},
+	}
+	if err := validateRules("selfChat", c.SelfChat.Match, true); err != nil {
+		t.Fatal(err)
+	}
+	current, err := normalize(testMarshalMessage(t, event("message", "body")), c, c.subscriptions()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"operationId":"dws-message:message","selfSent":true,"message":{
+		"source":"dws","accountId":"account","sourceMessageId":"message",
+		"threadRef":{"source":"dws","id":"CID:a/b%"},"actor":"self","text":"body",
+		"at":"2026-11-16T00:45:43.211+08:00","addressed":"direct","collectorInstance":"another-instance",
+		"sourceEventId":"another-envelope","channel":{"type":"dws","conversationId":"CID:a/b%",
+		"messageId":"message","actorId":"self","address":{"peerOpenDingtalkId":"self","senderOpenDingtalkId":"self"}}
+	}}`)
+	oldPayload, err := dwsBusinessPayload(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPayload, err := dwsBusinessPayload(testMarshalMessage(t, current))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(oldPayload, newPayload) {
+		t.Fatalf("legacy and redelivered messages differ: %s\n%s", oldPayload, newPayload)
+	}
 }

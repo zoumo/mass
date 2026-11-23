@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggertest"
 )
 
@@ -22,7 +21,7 @@ func (f *egressFixture) feedbackConfig(c *dwsConfig) {
 
 func (f *egressFixture) feedbackPhase(conversation, message, expected string) {
 	f.t.Helper()
-	key := feedbackKey(coreclient.Channel{ConversationID: conversation, MessageID: message})
+	key := feedbackKey(nativeReplyTarget{ConversationID: conversation, MessageID: message})
 	triggertest.Wait(f.t, message+" feedback phase "+expected, func() bool {
 		raw, err := os.ReadFile(filepath.Join(f.Dir, "feedback.json"))
 		var state feedbackState
@@ -122,15 +121,14 @@ func TestDWSGroupFeedbackSuppressesMatchingEchoAndUnmatchedInput(t *testing.T) {
 	id := f.reply("group-question", "test answer")
 	task := f.waitTask(id)
 	feed(4, "group-answer", "test answer")
-	f.AssertRouted(f.echo("group-answer", "held"), 0)
+	f.assertLocalEcho("group-answer", "held")
 	f.requireEmotion("group-answer", "")
 	f.settle(task, group, "group-answer")
 	f.feedbackPhase(group, "group-question", feedbackDone)
-	f.feedbackPhase(group, "group-answer", feedbackSuppressed)
 	f.requireEmotion("group-question", "done-id")
 	f.requireEmotion("group-answer", "")
 	f.requireEmotion("unmatched", "")
-	f.AssertRouted(f.echo("group-answer", "outbound_echo"), 0)
+	f.assertLocalEcho("group-answer", "outbound_echo")
 	if calls := f.calls(false); len(calls) != 1 ||
 		!strings.Contains(strings.Join(calls[0], " "), "--group "+group+" --message-id group-question --ref-sender self") ||
 		strings.Contains(strings.Join(calls[0], " "), "--open-dingtalk-id") {

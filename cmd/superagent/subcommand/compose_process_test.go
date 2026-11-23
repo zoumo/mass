@@ -362,8 +362,8 @@ func composeFixtureConfig(t *testing.T, dir, coreListen string, github, dws bool
   listen: %q
   dataDir: ./core-state
   sources:
-    - {source: github, accountId: fixture-github, instanceId: github-adapter, tokenFile: github-token}
-    - {source: dws, accountId: fixture-dws, instanceId: dws-adapter, tokenFile: dws-token, outboxConsumer: true}
+    - {source: github, accountId: fixture-github, instanceId: github-adapter, tokenFile: github-token, threadKeyPrefixes: ["https://github.com/"]}
+    - {source: dws, accountId: fixture-dws, instanceId: dws-adapter, tokenFile: dws-token, outboxConsumer: true, threadKeyPrefixes: ["dws:"]}
 `, coreListen)
 	if !github && !dws {
 		return config
@@ -600,7 +600,7 @@ func TestComposeProcessPreflight(t *testing.T) {
 		{"missing Core credential", "", "", "triggers.github preflight: coreTokenEnv", []string{composeGitHubCoreEnv + "="}},
 		{"wrong Core credential", "", "", "triggers.dws preflight: configured Core token does not match", []string{composeDWSCoreEnv + "=" + composeGitHubCore}},
 		{"unbound source credential", "    instanceId: dws-adapter", "    instanceId: unregistered", "triggers.dws preflight: source, accountId and instanceId", nil},
-		{"DWS Outbox role", "outboxConsumer: true}", "outboxConsumer: false}\n    - {source: dws, accountId: fixture-dws, instanceId: another-adapter, tokenFile: another-token, outboxConsumer: true}", "triggers.dws preflight: the reply-enabled Trigger", nil},
+		{"DWS Outbox role", "outboxConsumer: true, threadKeyPrefixes: [\"dws:\"]}", "outboxConsumer: false}\n    - {source: dws, accountId: fixture-dws, instanceId: another-adapter, tokenFile: another-token, outboxConsumer: true}", "triggers.dws preflight: the reply-enabled Trigger", nil},
 		{"credential shared across scopes", "", "", "triggers.dws preflight: credential references must hold distinct tokens", []string{composeGitHubEnv + "=" + composeDWSToken}},
 		{"remote plaintext", "127.0.0.1:0", "192.0.2.1:0", "remote coreEndpoint requires HTTPS", nil},
 		{"state under MASS", "./dws.sqlite", "./massd-data/dws.sqlite", "triggers.dws databasePath conflicts with core.massd.embedded dataDir", nil},

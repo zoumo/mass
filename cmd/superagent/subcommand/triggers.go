@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/superagent/triggers"
+	"github.com/zoumo/mass/superagent/triggers/dws"
 )
 
 func newTriggers() *cobra.Command {
@@ -28,6 +29,9 @@ func newTriggers() *cobra.Command {
 		status.Flags().StringVar(&endpoint, "endpoint", "", "Local trigger status origin")
 		_ = status.MarkFlagRequired("endpoint")
 		trigger.AddCommand(status)
+		if kind == triggers.DWS {
+			trigger.AddCommand(dwsEvidenceCommands()...)
+		}
 		command.AddCommand(trigger)
 	}
 	return command
@@ -65,4 +69,44 @@ func newTriggerConfigCommand(kind, action string) *cobra.Command {
 	command.Flags().StringVar(&coreEndpoint, "compose-core-endpoint", "", "Use the Compose configuration section and Core endpoint")
 	_ = command.Flags().MarkHidden("compose-core-endpoint")
 	return command
+}
+
+func dwsEvidenceCommands() []*cobra.Command {
+	build := func(use, short string, args cobra.PositionalArgs, op func(dws.Component, *cobra.Command, []string) error) *cobra.Command {
+		var path string
+		c := &cobra.Command{Use: use, Short: short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
+			adapter, err := dws.Load(path, nil, "")
+			if err != nil {
+				return err
+			}
+			return op(adapter, cmd, args)
+		}}
+		c.Flags().StringVar(&path, "config", "", "DWS Trigger YAML configuration file")
+		_ = c.MarkFlagRequired("config")
+		return c
+	}
+	var reason string
+	release := build("release-input <source-message-id>", "Release a held DWS input with the adapter stopped", cobra.ExactArgs(1),
+		func(c dws.Component, _ *cobra.Command, args []string) error { return c.ReleaseInput(args[0], reason) })
+	release.Flags().StringVar(&reason, "reason", "", "Reason for releasing the verified input")
+	_ = release.MarkFlagRequired("reason")
+	var dismissReason string
+	dismiss := build("dismiss-send <attempt-id>", "Dismiss an unknown DWS send after verifying no delivery", cobra.ExactArgs(1),
+		func(c dws.Component, _ *cobra.Command, args []string) error {
+			return c.DismissSend(args[0], dismissReason)
+		})
+	dismiss.Flags().StringVar(&dismissReason, "reason", "", "Reason the attempt is known to have no delivery")
+	_ = dismiss.MarkFlagRequired("reason")
+	return []*cobra.Command{
+		build("inspect-evidence", "Inspect DWS input and send evidence with the adapter stopped", cobra.NoArgs,
+			func(c dws.Component, cmd *cobra.Command, _ []string) error {
+				return c.InspectEvidence(cmd.OutOrStdout())
+			}),
+		release,
+		dismiss,
+		build("import-sent-evidence", "Import legacy DWS send evidence from NDJSON on stdin with the adapter stopped", cobra.NoArgs,
+			func(c dws.Component, cmd *cobra.Command, _ []string) error {
+				return c.ImportSentEvidence(cmd.InOrStdin())
+			}),
+	}
 }
