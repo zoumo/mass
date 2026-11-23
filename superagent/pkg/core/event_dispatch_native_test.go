@@ -119,8 +119,12 @@ func newNativeSubmitPeer(t *testing.T) *nativeSubmitPeer {
 			return true
 		})
 		serving.Wait()
-		_, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", l.Addr().String())
-		require.Error(t, err)
+		// The port may already belong to another test. Check this listener.
+		conn, err := l.Accept()
+		if conn != nil {
+			_ = conn.Close()
+		}
+		require.ErrorIs(t, err, net.ErrClosed)
 		close(p.trace)
 		var trace []string
 		for method := range p.trace {
