@@ -14,6 +14,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
@@ -30,7 +31,7 @@ func lifecycleDriver(t *testing.T, kind, control string) (runtime.Driver, events
 	if kind == "claude" {
 		factory = claude.Factory{RecoveryDir: t.TempDir()}
 	}
-	d, err := factory.New("test", runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_PID": pidFile, "PEER_KIND": kind, "PEER_CONTROL": control}})
+	d, err := factory.New("test", runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"PEER_PID": pidFile, "PEER_KIND": kind, "PEER_CONTROL": control})})
 	require.NoError(t, err)
 	stream, err := d.Events()
 	require.NoError(t, err)

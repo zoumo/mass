@@ -36,7 +36,7 @@ Use `bin/massctl runtime --help` and `bin/massctl session --help` to discover op
 
 Install and sign in to the native Agent CLI in the daemon environment. Use an absolute `--cwd` on the Agent host. To observe a newly created Session, start `massctl session watch` and wait for `subscription.ready` on stderr before sending input. Use `session history` to read committed events and `--after` to continue with the returned cursor. Closing a watch or ending an RPC wait leaves admitted work running.
 
-`session close` releases the Session connection and preserves its identity and history. Use `session resume` to reopen that Session. Claude resume requires an absolute `env.CLAUDE_CONFIG_DIR` in its Runtime configuration. If resume reports `session_recovery_missing`, restore the original recovery material before retrying. Query `session get` for the saved reason if the response is lost. Use `runtime stop` to stop the Runtime and its remaining Sessions.
+`session close` releases the Session connection and preserves its identity and history. Use `session resume` to reopen that Session. Claude resume requires an absolute `CLAUDE_CONFIG_DIR` environment variable in its Runtime configuration. If resume reports `session_recovery_missing`, restore the original recovery material before retrying. Query `session get` for the saved reason if the response is lost. Use `runtime stop` to stop the Runtime and its remaining Sessions.
 
 Use the [Go client](pkg/client/README.md) to answer a current interaction. The [JSON-RPC contract](../harness/bindings/jsonrpc.md) defines transport, methods, and errors.
 
@@ -44,13 +44,31 @@ Use the [Go client](pkg/client/README.md) to answer a current interaction. The [
 
 Use `massctl runtime create --help` and `massctl runtime update --help` for supported input flags. A `--config-file` contains `RuntimeConfig` itself. See [process configuration](pkg/runtime/process_config.go) for accepted keys. When using `envPolicy: replace`, supply the environment entries that the native CLI needs. A complete configuration supplied to `runtime update` replaces the old configuration. Coordinate concurrent edits to the same Runtime. Updates leave the current native process running.
 
+Set `env` to an array of entries. Each entry has a `name` and exactly one of `value` or `valueFrom`. Use `value` for ordinary settings, including empty strings. Use `valueFrom.fileKeyRef` for a credential or `envFrom` to import an entire file.
+
+```json
+{
+  "env": [
+    {"name": "OPENAI_BASE_URL", "value": "https://models.example.com/v1"},
+    {"name": "OPENAI_API_KEY", "valueFrom": {"fileKeyRef": {"path": "/run/secrets/agent.env", "key": "API_KEY"}}}
+  ],
+  "envFrom": [
+    {"fileRef": {"path": "/etc/mass/agent.env"}}
+  ]
+}
+```
+
+File references use absolute paths on the daemon host. Use the MCP file format with `NAME='literal value'` assignments. With `envPolicy: inherit`, the daemon starts with the inherited environment. Later `envFrom` entries override earlier imports and inherited variables. Explicit `env` entries override imports. The daemon reads files when it starts a new Runtime instance. Runtime configuration stores references and explicit `value` entries. Keep credentials in the referenced files.
+
+Convert an existing `env` object to the array format with `runtime update` before starting the Runtime on the new version.
+
 See [Session defaults](../harness/modules/runtime/session-defaults.md) for how the daemon applies `features`, `mcpServers`, and permission presets. See the [main Session configuration contract](../harness/modules/runtime/session-config.md) for initial `--model` and `--effort` and for transient `session set-config` calls. Wait for each configuration call before sending the next change or input when order matters.
 
 MCP file references use paths on the daemon host. The native SDK reads them when it opens or restores a Session. Give only trusted callers permission to submit Runtime and Session configuration. Literal HTTP header values are stored in the spec and readable by authorized clients. Review the [MCP header decision](../harness/adr/0002-mcp-http-header-values.md) when choosing how to supply credentials.
 
 ### Retained history load
 
-Start the Runtime and choose a new MASS Session name. Supply the original native Session ID and its absolute working directory. For Claude, set an absolute `env.CLAUDE_CONFIG_DIR` on the Runtime. For Codex, use the native configuration that owns the source Session.
+Start the Runtime and choose a new MASS Session name. Supply the original native Session ID and its absolute working directory. For Claude, set an absolute `CLAUDE_CONFIG_DIR` environment variable on the Runtime. For Codex, use the native configuration that owns the source Session.
 
 ```sh
 bin/massctl -o json session load imported -n demo --runtime agent \

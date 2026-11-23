@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
@@ -178,7 +179,7 @@ func ticket08HTTP(t *testing.T, kind string, gate *ticket08Gate, configure ...fu
 		require.NoError(t, json.NewEncoder(f).Encode(map[string]any{"type": "assistant", "uuid": id, "parentUuid": parent, "sessionId": "11111111-1111-4111-8111-111111111111", "cwd": project, "message": map[string]any{"id": id, "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "retained " + id}}}}))
 	}
 	require.NoError(t, f.Close())
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": ticket08Binary, "envPolicy": "replace", "env": map[string]any{"KIND": kind, "PROJECT": project, "EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config}}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": ticket08Binary, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"KIND": kind, "PROJECT": project, "EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config})}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)

@@ -214,7 +214,7 @@ func (r *Registry) Create(kind, name string, c Config) (Driver, error) {
 		return nil, errors.New("unsupported runtime type")
 	}
 	if err := f.Validate(c); err != nil {
-		return nil, err
+		return nil, errors.Join(ErrResourcesReleased, ErrInvalidArgument, err)
 	}
 	d, err := f.New(name, c)
 	if err == nil {

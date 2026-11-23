@@ -57,6 +57,9 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := o.ResolveEnvironment(); err != nil {
+		return nil, err
+	}
 	args := o.Args
 	if args == nil {
 		args = []string{"app-server"}
