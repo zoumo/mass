@@ -18,7 +18,7 @@ func TestMCPHTTPRouteContract(t *testing.T) {
 	require.True(t, api.router.Match(chi.NewRouteContext(), http.MethodPost, mcpPath))
 
 	response := httptest.NewRecorder()
-	api.router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, mcpPath, nil))
+	api.router.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, mcpPath, http.NoBody))
 	require.Equal(t, http.StatusMethodNotAllowed, response.Code)
 	require.Equal(t, http.MethodPost, response.Header().Get("Allow"))
 }
