@@ -93,11 +93,11 @@ func New() *cobra.Command {
 	observe.PersistentFlags().StringVar(&cursor, "cursor", "", "Opaque continuation cursor")
 	observe.PersistentFlags().StringVar(&thread, "thread-id", "", "Filter Trigger Messages or Outbox Messages by exact Thread ID")
 	observe.PersistentFlags().StringVar(&message, "message-id", "", "Filter Issue materials, Outbox Messages, Router Messages or Internal Events by Message ID")
-	observe.PersistentFlags().StringVar(&topic, "topic-id", "", "Filter Issues, Timers or Outbox Messages by Topic ID")
+	observe.PersistentFlags().StringVar(&topic, "topic-id", "", "Filter Issues or Outbox Messages by Topic ID")
 	observe.PersistentFlags().StringVar(&issue, "issue-id", "", "Filter Session Bindings, Reports or Internal Events by Issue ID")
 	observe.PersistentFlags().IntVar(&limit, "limit", 50, "Page size (1–200)")
 	observe.PersistentFlags().BoolVar(&newest, "newest", false, "List newest records first")
-	for _, kind := range []string{"trigger-messages", "threads", "internal-events", "topics", "issues", "reports", "timers", "router-messages", "topic-activity", "session-bindings", "status", "outbox-messages"} {
+	for _, kind := range []string{"trigger-messages", "threads", "internal-events", "topics", "issues", "reports", "router-messages", "topic-activity", "session-bindings", "status", "outbox-messages"} {
 		cmd := &cobra.Command{Use: kind + " [id]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			u, err := url.Parse(endpoint)
 			if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Scheme != "http" {
@@ -183,8 +183,7 @@ func New() *cobra.Command {
 		observe.AddCommand(cmd)
 	}
 	root.AddCommand(observe)
-	root.AddCommand(newRecoverInput(), newInspectBinding())
-	root.AddCommand(newWatchdog())
+	root.AddCommand(newRecoverInput(), newInspectBinding(), newScheduledTasks(), newWatchdog())
 	return root
 }
 

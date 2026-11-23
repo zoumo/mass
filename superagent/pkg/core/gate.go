@@ -13,4 +13,4 @@ func (*Server) testDispatch(http.ResponseWriter, *http.Request) bool { return fa
 
 func outboxNow() time.Time { return time.Now().UTC() }
 
-func timerNow() time.Time { return time.Now().UTC() }
+func scheduledTaskNow() time.Time { return time.Now().UTC() }

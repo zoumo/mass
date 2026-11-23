@@ -108,7 +108,7 @@ func changeTopicLifecycle(tool string, r LifecycleRequest) workMutation {
 				return nil, problem("failed_precondition", "Topic is already terminal")
 			}
 			t.Status, t.Cancellation = "canceled", &change
-			if err := cancelTopicWork(ctx, tx, b, change); err != nil {
+			if err := cancelTopicWork(ctx, tx, b, t.LifecycleGeneration, change); err != nil {
 				return nil, err
 			}
 		} else {
@@ -124,8 +124,8 @@ func changeTopicLifecycle(tool string, r LifecycleRequest) workMutation {
 	}
 }
 
-func cancelTopicWork(ctx context.Context, tx *sql.Tx, b SessionBinding, change LifecycleChange) error {
-	if err := invalidateTimers(ctx, tx, b.OwnerID, change.At); err != nil {
+func cancelTopicWork(ctx context.Context, tx *sql.Tx, b SessionBinding, topicGeneration int, change LifecycleChange) error {
+	if err := closeTopicScheduledTasks(ctx, tx, b.OwnerID, topicGeneration, change.At); err != nil {
 		return err
 	}
 	// Fence lifecycle commands immediately. Undelivered source and report facts

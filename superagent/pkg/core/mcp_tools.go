@@ -1,5 +1,19 @@
 package core
 
+import (
+	"reflect"
+
+	"github.com/danielgtaylor/huma/v2"
+)
+
+// MCP input schemas are standalone. Inline content block references so the tool
+// can reuse the Trigger Message schema without carrying OpenAPI components.
+type mcpSchemaRegistry struct{ huma.Registry }
+
+func (r mcpSchemaRegistry) Schema(t reflect.Type, _ bool, hint string) *huma.Schema {
+	return r.Registry.Schema(t, false, hint)
+}
+
 func roleTools(role string) []mcpTool {
 	text := stringSchema()
 	revision := map[string]any{"type": "integer", "minimum": 1}
@@ -62,9 +76,11 @@ func roleTools(role string) []mcpTool {
 	issueUpdate["issueId"], issueUpdate["goal"], issueUpdate["blockers"] = text, text, blockers
 	issueUpdate["sessionInput"] = objectSchema(map[string]any{"mode": enum(contextSupplement, "continue"), "content": structuredContentInputSchema()}, "mode")
 	issueUpdate["transition"] = transition
-	dueAt := map[string]any{"type": "string", "format": "date-time"}
+	registry := mcpSchemaRegistry{huma.NewMapRegistry("", huma.DefaultSchemaNamer)}
+	scheduledContent := map[string]any{"type": "array", "items": (triggerContentSchema{}).Schema(registry), "minItems": 1}
+	schedule := scheduledTaskScheduleSchema()
 	return append(tools,
-		tool("get_topic", "Read your bound Topic. Expand templates, followups, or PR associations when needed.", map[string]any{"include": include("executionTemplates", "followups", "pullRequests")}),
+		tool("get_topic", "Read your bound Topic. Expand templates, scheduled tasks, or PR associations when needed.", map[string]any{"include": include("executionTemplates", "scheduledTasks", "pullRequests")}),
 		tool("update_topic", "Edit your Topic, register final PR URLs, or explicitly complete, cancel, or reopen it. Use its current revision. Completion requires evidence and terminal Issues.", map[string]any{"operationId": text, "expectedRevision": revision, "title": text, "description": map[string]any{"type": "string"}, "goal": text, "pullRequests": prs, "transition": transition}, "operationId", "expectedRevision"),
 		tool("create_issue", "Create an Issue with a goal and acceptance criteria. Choose runtimeRef and model together. The Issue inherits the Topic workspace unless you supply one. Use start=true to prepare its Issue Session atomically.", map[string]any{"operationId": text, "title": text, "goal": text, "runtimeRef": text, "model": text, "workspace": text, "materials": materials, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "goal", "runtimeRef", "model"),
 		tool("get_issue", "Read an Issue in your Topic, with optional Reports and PR associations.", map[string]any{"issueId": text, "include": include("reports", "pullRequests")}, "issueId"),
@@ -73,8 +89,9 @@ func roleTools(role string) []mcpTool {
 		tool("update_issue", "Update an Issue in your Topic at its current revision. You may combine changes, materials, blockers, and PR associations. Use sessionInput to supplement or continue work in the current Issue Session, or transition for an explicit lifecycle decision.", issueUpdate, "operationId", "issueId", "expectedRevision"),
 		tool("get_report", "Read the full Report and its evidence for an Issue in your Topic.", map[string]any{"reportId": text}, "reportId"),
 		tool("decline_message", "Decline a routed Message that belongs elsewhere. Copy event_id and give a reason so Router can reconsider it.", map[string]any{"event_id": text, "reason": text}, "event_id", "reason"),
-		tool("schedule_followup", "Schedule a one-time followup at an RFC3339 timestamp with a time zone.", map[string]any{"operationId": text, "dueAt": dueAt, "content": text, "materials": materials}, "operationId", "dueAt", "content"),
-		tool("update_followup", "Edit a scheduled followup at its current revision. Supply at least one change. An empty materials array clears materials.", map[string]any{"operationId": text, "followupId": text, "expectedRevision": revision, "dueAt": dueAt, "content": text, "materials": materials}, "operationId", "followupId", "expectedRevision"),
-		tool("cancel_followup", "Cancel a scheduled followup at its current revision.", map[string]any{"operationId": text, "followupId": text, "expectedRevision": revision}, "operationId", "followupId", "expectedRevision"),
+		tool("create_scheduled_task", "Schedule a Trigger Message for your Topic. Use a one-time, fixed interval, daily, weekly, monthly, or cron schedule. Reuse operationId on retry.", map[string]any{"operationId": text, "schedule": schedule, "content": scheduledContent}, "operationId", "schedule", "content"),
+		tool("get_scheduled_task", "Read the definition and current state of a scheduled task in your Topic.", map[string]any{"scheduledTaskId": text}, "scheduledTaskId"),
+		tool("update_scheduled_task", "Change the schedule, content, or state of a scheduled task at its current revision. Set status to paused or active. Supply at least one change.", map[string]any{"operationId": text, "scheduledTaskId": text, "expectedRevision": revision, "schedule": schedule, "content": scheduledContent, "status": enum("active", "paused")}, "operationId", "scheduledTaskId", "expectedRevision"),
+		tool("delete_scheduled_task", "Delete a scheduled task in your Topic at its current revision.", map[string]any{"operationId": text, "scheduledTaskId": text, "expectedRevision": revision}, "operationId", "scheduledTaskId", "expectedRevision"),
 	)
 }

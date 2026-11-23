@@ -13,7 +13,7 @@ import (
 // lifecycle crash and recovery fixtures on the real MCP endpoint.
 func mutationFixture(tool string, args any) (string, any) {
 	switch tool {
-	case "issue_update_requirements", "issue_update_blockers", "issue_session_input", "issue_complete", "issue_cancel", "issue_reopen", "topic_complete", "topic_cancel", "topic_reopen", "timer_update", "timer_cancel":
+	case "issue_update_requirements", "issue_update_blockers", "issue_session_input", "issue_complete", "issue_cancel", "issue_reopen", "topic_complete", "topic_cancel", "topic_reopen":
 	default:
 		return tool, args
 	}
@@ -40,15 +40,6 @@ func mutationFixture(tool string, args any) (string, any) {
 		return moved
 	}
 	switch tool {
-	case "timer_update", "timer_cancel":
-		if value, ok := fields["timerId"]; ok {
-			fields["followupId"] = value
-			delete(fields, "timerId")
-		}
-		if tool == "timer_update" {
-			return "update_followup", fields
-		}
-		return "cancel_followup", fields
 	case "issue_update_requirements", "issue_update_blockers":
 		if string(decoded["notifyIssueSession"]) == "true" {
 			fields["sessionInput"] = map[string]string{"mode": "continue"}

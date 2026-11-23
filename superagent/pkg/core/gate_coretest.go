@@ -77,7 +77,7 @@ func commitGate(stage string) {
 
 func outboxNow() time.Time { return readTestClock("SUPERAGENT_TEST_OUTBOX_CLOCK") }
 
-func timerNow() time.Time { return readTestClock("SUPERAGENT_TEST_TIMER_CLOCK") }
+func scheduledTaskNow() time.Time { return readTestClock("SUPERAGENT_TEST_SCHEDULED_TASK_CLOCK") }
 
 // The file holds a fixed absolute timestamp that tests can advance across Core restarts.
 func readTestClock(env string) time.Time {

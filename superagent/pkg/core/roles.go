@@ -44,16 +44,14 @@ func (s *Server) callRoleTool(ctx context.Context, b SessionBinding, tool string
 	var result any
 	var err error
 	switch tool {
-	case "get_message", "list_messages", "list_topics", "get_topic", "get_issue", "list_issues", "get_report":
+	case "get_message", "list_messages", "list_topics", "get_topic", "get_issue", "list_issues", "get_report", "get_scheduled_task":
 		result, err = s.mcpQuery(ctx, b, tool, raw)
 	case "update_topic":
 		result, err = s.store.updateMCPTopic(ctx, b, raw)
 	case "update_issue":
 		result, err = s.store.updateMCPIssue(ctx, b, raw)
-	case "create_issue", "start_issue":
+	case "create_issue", "start_issue", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task":
 		result, err = s.store.workCommand(ctx, b, tool, raw)
-	case "schedule_followup", "update_followup", "cancel_followup":
-		result, err = s.store.followupCommand(ctx, b, tool, raw)
 	case "submit_report":
 		result, err = s.store.submitIssueReport(ctx, b, raw)
 	case "route_messages":
@@ -109,24 +107,28 @@ func (s *Server) callRoleTool(ctx context.Context, b SessionBinding, tool string
 }
 
 type QueryRequest struct {
-	Collection    string `json:"collection"`
-	ID            string `json:"id,omitempty"`
-	ThreadID      string `json:"threadId,omitempty"`
-	TopicID       string `json:"topicId,omitempty"`
-	IssueID       string `json:"issueId,omitempty"`
-	MessageID     string `json:"messageId,omitempty"`
-	Cursor        string `json:"cursor,omitempty"`
-	Limit         int    `json:"limit,omitempty"`
-	preview       bool
-	observerTrace bool
-	newest        bool
-	search        string
-	status        string
+	Collection      string `json:"collection"`
+	ID              string `json:"id,omitempty"`
+	ThreadID        string `json:"threadId,omitempty"`
+	TopicID         string `json:"topicId,omitempty"`
+	IssueID         string `json:"issueId,omitempty"`
+	MessageID       string `json:"messageId,omitempty"`
+	OwnerType       string `json:"ownerType,omitempty"`
+	OwnerID         string `json:"ownerId,omitempty"`
+	Source          string `json:"source,omitempty"`
+	ScheduledTaskID string `json:"scheduledTaskId,omitempty"`
+	Cursor          string `json:"cursor,omitempty"`
+	Limit           int    `json:"limit,omitempty"`
+	preview         bool
+	observerTrace   bool
+	newest          bool
+	search          string
+	status          string
 }
 
 func (s *Store) RoleQuery(ctx context.Context, b SessionBinding, q QueryRequest) (any, error) {
 	if q.ID != "" {
-		if q.Cursor != "" || q.ThreadID != "" || q.TopicID != "" || q.IssueID != "" || q.MessageID != "" || q.Limit != 0 {
+		if q.Cursor != "" || q.ThreadID != "" || q.TopicID != "" || q.IssueID != "" || q.MessageID != "" || q.OwnerType != "" || q.OwnerID != "" || q.Source != "" || q.ScheduledTaskID != "" || q.Limit != 0 {
 			return nil, problem("invalid_argument", "detail query cannot have list parameters")
 		}
 		return s.getScoped(ctx, q.Collection, q.ID, &b, nil)
@@ -164,8 +166,10 @@ func scopeSQL(kind string, b *SessionBinding) (string, []any, error) {
 		return " AND id IN (SELECT thread_id FROM thread_subscriptions WHERE topic_id=?)", []any{b.OwnerID}, nil
 	case "topics":
 		return " AND id=?", []any{b.OwnerID}, nil
-	case "issues", "timers", "pull-requests":
+	case "issues", "pull-requests":
 		return " AND topic_id=?", []any{b.OwnerID}, nil
+	case "scheduled-tasks":
+		return " AND owner_type='topic' AND owner_id=? AND deleted_at IS NULL", []any{b.OwnerID}, nil
 	case "reports":
 		return " AND issue_id IN (SELECT id FROM issues WHERE topic_id=?)", []any{b.OwnerID}, nil
 	default:
@@ -202,7 +206,7 @@ func projection(kind string, b *SessionBinding) string {
 	case "messages":
 		if b != nil {
 			if b.Role == "topic" {
-				return "json_patch(" + agentSourceMessageProjection + ",json_object('quotedReply',json(" + quotedReplyForTopic + "),'followup',json(" + messageFollowupProjection + ")))"
+				return "json_patch(" + agentSourceMessageProjection + ",json_object('quotedReply',json(" + quotedReplyForTopic + ")))"
 			}
 			return `json_set(` + agentSourceMessageProjection + `,
  '$.routing',json(CASE WHEN ` + routingState + ` IS NOT NULL
@@ -241,13 +245,6 @@ func projection(kind string, b *SessionBinding) string {
 		return current
 	case "issues":
 		return `json_patch(issues.body,json_object('latestRequirementsNotification',json_remove(` + workNotificationProjection("issues", "latestRequirementsEventId") + `,'$.payload','$.content')))`
-	case "timers":
-		return `json_patch(scheduled_tasks.body,coalesce((
- SELECT json_object('triggerMessageId',m.id,'threadId',m.thread_id,'followup',
- json_object('event_id',d.event_id,'kind',d.kind,'status',d.status,'sentAt',d.sent_at,'messageId',d.message_id,'topicId',d.topic_id))
- FROM trigger_messages m JOIN routing_events d ON d.event_id=json_extract(m.body,'$.eventId')
- WHERE m.id=scheduled_tasks.trigger_message_id
- ),'{}'))`
 	}
 	return "body"
 }
@@ -258,7 +255,7 @@ const agentSourceMessageProjection = `json_object('id',id,'source',source,'threa
 // Projection placeholders precede filter placeholders in both list and detail queries.
 func projectionArgs(kind string, b *SessionBinding) []any {
 	if kind == "messages" && b != nil && b.Role == "topic" {
-		return []any{b.OwnerID, b.OwnerID}
+		return []any{b.OwnerID}
 	}
 	return nil
 }

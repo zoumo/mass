@@ -76,7 +76,6 @@ type internalEvent struct {
 	topic          *Topic
 	issue          *Issue
 	report         *Report
-	followup       json.RawMessage
 	messageContent []eventMessageContent
 }
 
@@ -143,9 +142,6 @@ func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 			list = append(list, content.reference())
 		}
 		event["messageContent"] = list
-	}
-	if len(d.followup) != 0 {
-		event["followup"] = d.followup
 	}
 	if len(d.quotedReply) != 0 {
 		event["quotedReply"] = d.quotedReply

@@ -127,10 +127,17 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
  WHERE state='ready'`); err != nil {
 			return nil, storageError()
 		}
-		life, cancel := context.WithCancel(context.Background())
-		s.executionCancel = cancel
-		s.executionDone = make(chan struct{})
+	}
+	life, cancel := context.WithCancel(context.Background())
+	s.executionCancel = cancel
+	s.executionDone = make(chan struct{})
+	if c.Sessions != nil {
 		go s.coordinate(life)
+	} else {
+		go func() {
+			defer close(s.executionDone)
+			store.scanScheduledTasks(life)
+		}()
 	}
 	s.observerLife, s.observerCancel = context.WithCancel(context.Background())
 	routes := s.newHTTPAPI()
@@ -199,7 +206,8 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 			expectedHost = local.String()
 		}
 		allowedReadHost := isTrustedResourceRead(r.URL.Path) && isReadMethod(r.Method) && slices.Contains(s.config.ReadAllowedHosts, r.Host)
-		if r.Host != expectedHost && !allowedReadHost {
+		operatorMessageList := r.URL.Path == triggerMessagesPath && hasOperatorMessageFilter(r.URL.Query())
+		if r.Host != expectedHost && (!allowedReadHost || operatorMessageList) {
 			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 			return
 		}

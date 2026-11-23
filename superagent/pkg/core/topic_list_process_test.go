@@ -97,7 +97,7 @@ func TestRouterTopicListPaginationAcrossIndexInstall(t *testing.T) {
 	p.stop(t, false)
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 27, version)
+	require.Equal(t, 28, version)
 
 	p = f.start()
 	var indexSQL string

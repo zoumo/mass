@@ -40,21 +40,6 @@ type reportReadProjection struct {
 	Current bool `json:"current"`
 }
 
-type timerReadProjection struct {
-	Timer
-	traceReadProjection
-	Followup *timerFollowupProjection `json:"followup,omitempty"`
-}
-
-type timerFollowupProjection struct {
-	ID        string  `json:"event_id"`
-	Kind      string  `json:"kind"`
-	Status    string  `json:"status"`
-	SentAt    *string `json:"sentAt" nullable:"true"`
-	MessageID string  `json:"messageId"`
-	TopicID   *string `json:"topicId" nullable:"true"`
-}
-
 type bindingReadProjection struct {
 	SessionBinding
 	traceReadProjection
