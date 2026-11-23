@@ -95,8 +95,8 @@ github.com/tklauser/numcpus v0.12.0 h1:NR85qdvHA9pFse3x3weVZ0r0ST8R6l5RHbZrlRaqo
 github.com/tklauser/numcpus v0.12.0/go.mod h1:ABHeXzJnr/qqwguhClkZKT1/8VABcYrsyUiUGobwWJg=
 github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo0=
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
-github.com/zoumo/agent-sdk-go v0.1.1-0.20261123084544-deccc9ab18dd h1:4qI1cVmmqYLH86jHKG4jKg3GR4jLbtmnRh+R/u19gak=
-github.com/zoumo/agent-sdk-go v0.1.1-0.20261123084544-deccc9ab18dd/go.mod h1:JUvWfbXJQGQ8afjWPY0ecyX9AH67WQtQFw0dpenvyT4=
+github.com/zoumo/agent-sdk-go v0.1.1-0.20261123090016-1038fd2b2f93 h1:cbcWGPPEI4TpISsiVIkFPkmwU/yGcAO3Ew5YlExrhTo=
+github.com/zoumo/agent-sdk-go v0.1.1-0.20261123090016-1038fd2b2f93/go.mod h1:JUvWfbXJQGQ8afjWPY0ecyX9AH67WQtQFw0dpenvyT4=
 github.com/zoumo/agent-sdk-testify v0.2.2 h1:1IUptuMzO5Yvs243Aj13A6PwlaXonz0GBlhtYTGmE8o=
 github.com/zoumo/agent-sdk-testify v0.2.2/go.mod h1:XqC5i1y/g7tl3V0iA21J/8IUN8e7eXMYw0dykwkG/tY=
 github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a h1:Hyb0V2EaZhrmAh/kEl4Cxi1p3uAmSXAI2ZCL9xLbUWY=
