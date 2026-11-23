@@ -63,7 +63,16 @@ func New() *cobra.Command {
 	serve.Flags().BoolVar(&composed, "compose-config-stdin", false, "Read the Core configuration section from Compose")
 	_ = serve.Flags().MarkHidden("compose-config-stdin")
 	_ = serve.MarkFlagRequired("config")
-	root.AddCommand(serve, newCompose(), newTriggers())
+	root.AddCommand(serve, newCompose(), newTriggers(), &cobra.Command{
+		Use:   "openapi",
+		Short: "Export the Superagent HTTP API as OpenAPI JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(core.OpenAPI())
+		},
+	})
 	var endpoint, cursor, thread, topic, issue, message, activityFilter string
 	var limit int
 	var newest bool
