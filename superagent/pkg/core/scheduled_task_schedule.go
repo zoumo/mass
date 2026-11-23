@@ -383,12 +383,17 @@ func firstWallInstant(wall time.Time, location *time.Location) time.Time {
 	last := wall.Add(offsetWindow)
 	for period := wall.Add(-offsetWindow).In(location); !period.After(last); {
 		_, offset := period.Zone()
-		start, end := period.ZoneBounds()
+		_, end := period.ZoneBounds()
+		if !end.IsZero() && !end.After(period) {
+			// Go's extrapolated zone bounds can end after 365 days even in a
+			// leap year. Continue through the last UTC day of that year.
+			end = time.Date(period.UTC().Year()+1, time.January, 1, 0, 0, 0, 0, time.UTC).In(location)
+		}
 		instant := wall.Add(-time.Duration(offset) * time.Second)
-		if (start.IsZero() || !instant.Before(start)) && (end.IsZero() || instant.Before(end)) {
+		if !instant.Before(period) && (end.IsZero() || instant.Before(end)) {
 			return instant
 		}
-		if end.IsZero() || !end.After(period) {
+		if end.IsZero() {
 			break
 		}
 		period = end

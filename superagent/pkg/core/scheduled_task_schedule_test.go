@@ -137,6 +137,28 @@ func TestScheduledTaskRulesRejectInvalidInput(t *testing.T) {
 	}
 }
 
+func TestScheduledTaskNewYorkLeapYearEnd(t *testing.T) {
+	after := parseScheduleTestTime(t, "2040-12-30T15:00:00Z")
+	expected := parseScheduleTestTime(t, "2040-12-31T14:00:00Z")
+	for _, rule := range []string{
+		`{"type":"daily","times":["09:00"],"timezone":"America/New_York"}`,
+		`{"type":"weekly","weekdays":["mon"],"times":["09:00"],"timezone":"America/New_York"}`,
+		`{"type":"monthly","days":[-1],"times":["09:00"],"timezone":"America/New_York"}`,
+		`{"type":"cron","expression":"0 9 31 12 *","timezone":"America/New_York"}`,
+	} {
+		t.Run(rule, func(t *testing.T) {
+			var schedule ScheduledTaskSchedule
+			if err := json.Unmarshal([]byte(rule), &schedule); err != nil {
+				t.Fatal(err)
+			}
+			next, err := schedule.next(after, after)
+			if err != nil || !next.Equal(expected) {
+				t.Fatalf("next = %v, %v, want %v", next, err, expected)
+			}
+		})
+	}
+}
+
 func parseScheduleTestTime(t *testing.T, value string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339Nano, value)

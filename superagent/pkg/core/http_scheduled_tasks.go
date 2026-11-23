@@ -143,6 +143,18 @@ type scheduledTaskPatch struct {
 	ScheduledTaskChanges
 }
 
+func (r *scheduledTaskPatch) UnmarshalJSON(data []byte) error {
+	type wire scheduledTaskPatch
+	return decodeScheduledTaskUpdate(data, (*wire)(r))
+}
+
+func (*scheduledTaskPatch) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	for _, field := range scheduledTaskChangeFields {
+		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
+	}
+	return schema
+}
+
 func (s *Server) patchScheduledTask(w http.ResponseWriter, r *http.Request) {
 	var in scheduledTaskPatch
 	if err := decodeScheduledTaskBody(w, r, &in); err != nil {

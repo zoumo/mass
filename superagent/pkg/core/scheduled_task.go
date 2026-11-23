@@ -1,10 +1,13 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/zoumo/mass/massd/pkg/events"
@@ -37,7 +40,7 @@ type ScheduledTask struct {
 type CreateScheduledTaskRequest struct {
 	OperationID string                `json:"operationId"`
 	Schedule    ScheduledTaskSchedule `json:"schedule"`
-	Content     []events.ContentBlock `json:"content" minItems:"1"`
+	Content     []events.ContentBlock `json:"content" minItems:"1" nullable:"false"`
 }
 
 type ScheduledTaskRevision struct {
@@ -55,6 +58,32 @@ type ScheduledTaskChanges struct {
 type UpdateScheduledTaskRequest struct {
 	ScheduledTaskRevision
 	ScheduledTaskChanges
+}
+
+func (r *UpdateScheduledTaskRequest) UnmarshalJSON(data []byte) error {
+	type wire UpdateScheduledTaskRequest
+	return decodeScheduledTaskUpdate(data, (*wire)(r))
+}
+
+var scheduledTaskChangeFields = []string{"schedule", "content", "status"}
+
+func decodeScheduledTaskUpdate(data []byte, request any) error {
+	if err := decodeStrict(data, request); err != nil {
+		return err
+	}
+	// A null JSON member and an omitted member both decode to a nil pointer.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name, raw := range fields {
+		if bytes.Equal(raw, []byte("null")) && slices.ContainsFunc(scheduledTaskChangeFields, func(field string) bool {
+			return strings.EqualFold(name, field)
+		}) {
+			return problem("invalid_argument", name+" must not be null")
+		}
+	}
+	return nil
 }
 
 type scheduledTaskRecord struct {

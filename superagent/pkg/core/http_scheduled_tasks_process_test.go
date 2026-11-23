@@ -123,3 +123,66 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 	require.JSONEq(t, string(all), string(call(http.MethodGet, nested, nil, http.StatusOK)))
 	require.Empty(t, checkStandaloneStackStatus(t, p, "ready", "disabled").ScheduledTaskStates)
 }
+
+func TestScheduledTaskRequestValidationMatchesOpenAPI(t *testing.T) {
+	f := fixtureAt(t)
+	operatorFile := filepath.Join(f.dir, "operator.token")
+	token := strings.Repeat("O", 48)
+	write(t, operatorFile, token)
+	config, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	write(t, f.config, string(config)+"operatorTokenFile: "+operatorFile+"\n")
+	p := f.start()
+
+	doc := core.OpenAPI()
+	const tasks = "/v1/core/scheduled-tasks"
+	post := doc.Paths[tasks].Post.RequestBody.Content["application/json"].Schema
+	createSchema := doc.Components.Schemas.SchemaFromRef(post.Ref)
+	require.Contains(t, createSchema.Required, "content")
+	require.Equal(t, "array", createSchema.Properties["content"].Type)
+	require.False(t, createSchema.Properties["content"].Nullable)
+
+	patch := doc.Paths[tasks+"/{scheduledTaskId}"].Patch.RequestBody.Content["application/json"].Schema
+	patchSchema := doc.Components.Schemas.SchemaFromRef(patch.Ref)
+	require.Equal(t, []string{"expectedRevision"}, patchSchema.Required)
+	required := make([][]string, 0, len(patchSchema.AnyOf))
+	for _, variant := range patchSchema.AnyOf {
+		required = append(required, variant.Required)
+	}
+	require.ElementsMatch(t, [][]string{{"schedule"}, {"content"}, {"status"}}, required)
+	for _, field := range []string{"schedule", "content", "status"} {
+		require.NotEmpty(t, patchSchema.Properties[field].Type)
+		require.False(t, patchSchema.Properties[field].Nullable, "%s", field)
+	}
+
+	call := func(t *testing.T, method, path, body string, want int) []byte {
+		t.Helper()
+		status, data := request(t, method, p.endpoint, path, token, json.RawMessage(body))
+		require.Equal(t, want, status, string(data))
+		return data
+	}
+
+	t.Run("null create content", func(t *testing.T) {
+		call(t, http.MethodPost, tasks, `{"operationId":"create","schedule":{"type":"interval","every":"24h"},"content":null}`, http.StatusBadRequest)
+	})
+	var task core.ScheduledTask
+	data := call(t, http.MethodPost, tasks, `{"operationId":"create","schedule":{"type":"interval","every":"24h"},"content":[{"type":"text","text":"Check the release."}]}`, http.StatusOK)
+	require.NoError(t, json.Unmarshal(data, &task))
+	path := tasks + "/" + task.ID
+	for name, body := range map[string]string{
+		"empty patch":   `{"expectedRevision":1}`,
+		"null schedule": `{"expectedRevision":1,"schedule":null,"status":"paused"}`,
+		"null content":  `{"expectedRevision":1,"content":null,"status":"paused"}`,
+		"null status":   `{"expectedRevision":1,"status":null,"schedule":{"type":"interval","every":"2h"}}`,
+		"unknown field": `{"expectedRevision":1,"status":"paused","extra":true}`,
+	} {
+		t.Run(name, func(t *testing.T) { call(t, http.MethodPatch, path, body, http.StatusBadRequest) })
+	}
+	var updated core.ScheduledTask
+	data = call(t, http.MethodPatch, path, `{"expectedRevision":1,"status":"paused","content":[{"type":"text","text":"Check again."}]}`, http.StatusOK)
+	require.NoError(t, json.Unmarshal(data, &updated))
+	require.Equal(t, 2, updated.Revision)
+	require.Equal(t, "paused", updated.Status)
+	require.Len(t, updated.Content, 1)
+	require.Equal(t, "Check again.", updated.Content[0].Text.Text)
+}

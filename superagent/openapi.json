@@ -679,10 +679,7 @@
               ]
             },
             "minItems": 1,
-            "type": [
-              "array",
-              "null"
-            ]
+            "type": "array"
           },
           "operationId": {
             "type": "string"
@@ -2712,6 +2709,23 @@
       },
       "ScheduledTaskPatch": {
         "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "schedule"
+            ]
+          },
+          {
+            "required": [
+              "content"
+            ]
+          },
+          {
+            "required": [
+              "status"
+            ]
+          }
+        ],
         "properties": {
           "content": {
             "items": {

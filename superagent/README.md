@@ -65,6 +65,8 @@ pending until a Router can handle them.
 See the [scheduled task API](API.md#scheduled-tasks) for schedule modes,
 Operator commands and history queries.
 
+Core parses five-field cron expressions with [robfig/cron v3](https://github.com/robfig/cron).
+
 ## Running MASS inside Core
 
 Replace `massd.endpoint` and `massd.tokenFile` with an `embedded` block. Keep

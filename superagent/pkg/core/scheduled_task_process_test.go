@@ -129,6 +129,10 @@ func TestScheduledTaskTopicMCPAndNativeDelivery(t *testing.T) {
 	mcpWorkError(t, foreign, "update_scheduled_task", "not_found", map[string]any{
 		"operationId": "foreign-update", "scheduledTaskId": task.ID, "expectedRevision": task.Revision, "status": "paused",
 	})
+	mcpWorkError(t, topic, "update_scheduled_task", "invalid_argument", map[string]any{
+		"operationId": "null-update", "scheduledTaskId": task.ID, "expectedRevision": task.Revision,
+		"schedule": nil, "status": "paused",
+	})
 	require.Empty(t, listTopicScheduledTasks(t, foreign))
 	foreignTask := mcpWork[core.ScheduledTask](t, foreign, "create_scheduled_task", r)
 	require.NotEqual(t, task.ID, foreignTask.ID)
