@@ -20,15 +20,59 @@
 .sc-empty strong { font-size: 16px; color: var(--text) }
 .sc-empty svg { color: var(--teal); margin-bottom: 3px }
 .sc-events { display: grid; gap: 12px; padding-bottom: 10px }
-.sc-events > li { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; max-width: min(100%, 680px) }
-.sc-events > li[data-kind=user] { justify-self: end; min-width: min(100%, 130px); background: #0b2a32; border-color: #1c5257 }
-.sc-events > li[data-kind=agent] { justify-self: start; background: #0d1e32; min-width: min(100%, 130px) }
-.sc-events > li[data-kind=system] { padding: 6px 10px; font-size: 12px; color: var(--muted); border-style: dashed }
-.sc-events > li[data-kind=thinking], .sc-events > li[data-kind=tool] { color: #bdcde1 }
-.sc-events > li[data-kind=interaction] { border-color: #5a4930; background: #161a20 }
-.sc-events > li[data-kind=error] { border-color: #6e3c4b; color: #fda4af }
-.sc-row-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; margin-bottom: 3px; font-size: 12px }
-.sc-row-heading time, .sc-row-heading small, .sc-raw time { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums }
+.sc-event-card {
+  --event-accent: #b2c5dc;
+  --event-border: color-mix(in srgb, var(--event-accent) 30%, var(--panel));
+  min-width: 0;
+  padding: 10px 13px;
+  border: 1px solid var(--event-border);
+  border-inline-start: 3px solid var(--event-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--event-accent) 7%, var(--panel));
+}
+.sc-event-card[data-tone=user] { --event-accent: #70e5d3; border-radius: 13px 13px 3px 13px }
+.sc-event-card[data-tone=reply] { --event-accent: #88b6ff; border-radius: 13px 13px 13px 3px }
+.sc-event-card[data-tone=reply-stream] { --event-accent: #7ee2fb; border-style: dashed }
+.sc-event-card[data-tone=thinking] { --event-accent: #c8a7ff; border-inline-start-style: double }
+.sc-event-card[data-tone=thinking-stream] { --event-accent: #e1a9fa; border-style: dashed }
+.sc-event-card[data-tone=tool-call] { --event-accent: #f6cb80 }
+.sc-event-card[data-tone=tool-stream] { --event-accent: #f5b190; border-style: dashed }
+.sc-event-card[data-tone=tool-result] { --event-accent: #83deac }
+.sc-event-card[data-tone=state] { --event-accent: #a7c5ec }
+.sc-event-card:is([data-tone=state][data-status=running], [data-tone=state][data-status=requires_action]) { --event-accent: #f2cf76 }
+.sc-event-card[data-tone=error] { --event-accent: #fda4af; border-inline-start-color: var(--event-accent) }
+.sc-event-card[data-tone=info] { --event-accent: #a9c6eb }
+.sc-event-card[data-tone=config] { --event-accent: #aab6ff }
+.sc-event-card[data-tone=commands] { --event-accent: #8cdfeb }
+.sc-event-card[data-tone=usage] { --event-accent: #a6df91 }
+.sc-event-card[data-tone=replay] { --event-accent: #c6b6e5; border-inline-start-style: dotted }
+.sc-event-card[data-tone=interaction] { --event-accent: #ffcd78; border-inline-start-color: var(--event-accent) }
+.sc-event-card[data-tone=settled] { --event-accent: #91d9b4; border-inline-start-style: double }
+.sc-event-card:is([data-status=failed], [data-status=declined], [data-status=cancelled], [data-status=expired], [data-status=canceled]) { --event-accent: #f6a4ae }
+.sc-events[data-mode=chat] > .sc-event-card:is([data-tone=user], [data-tone=reply], [data-tone=reply-stream]) { max-width: min(100%, 640px); min-width: min(100%, 174px) }
+.sc-events[data-mode=chat] > .sc-event-card[data-tone=user] { justify-self: end; border-inline-start-width: 1px }
+.sc-events[data-mode=chat] > .sc-event-card:is([data-tone=reply], [data-tone=reply-stream]) { justify-self: start }
+.sc-row-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--event-accent); font-size: 12px }
+.sc-row-heading time { margin-inline-start: auto }
+.sc-row-heading time, .sc-event-body time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums }
+.sc-event-icon { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 6px; background: color-mix(in srgb, var(--event-accent) 14%, transparent) }
+.sc-event-body { margin-block-start: 7px; min-width: 0 }
+.sc-event-body small { color: var(--muted) }
+.sc-event-body code { font-size: 12px; color: var(--event-accent) }
+.sc-event-inline { display: flex; flex-wrap: wrap; gap: 7px; align-items: center }
+.sc-event-title { font-weight: 620; margin-block: 5px }
+.sc-event-chip { display: inline-flex; gap: 4px; align-items: center; padding: 1px 7px; border-radius: 5px; color: var(--event-accent); background: color-mix(in srgb, var(--event-accent) 12%, transparent); font-size: 11px }
+.sc-state-before { color: var(--muted); font-size: 12px }
+.sc-event-json { margin-block-start: 8px; border-top: 1px solid var(--event-border); padding-block-start: 6px; font-size: 11px }
+.sc-event-json code { margin-inline-start: 4px; color: var(--muted) }
+.sc-tool-section { margin-block: 7px }
+.sc-tool-log { padding: 6px 9px; border-radius: 5px; background: #050c16; color: var(--event-accent); font: 12px/1.55 ui-monospace, monospace }
+.sc-config-list, .sc-command-list { display: grid; gap: 4px }
+.sc-config-list > div, .sc-command-list > li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; padding: 5px 8px; border-radius: 5px; background: color-mix(in srgb, var(--event-accent) 6%, transparent); font-size: 12px }
+.sc-config-list > div { justify-content: space-between }
+.sc-usage progress { display: block; width: 100%; height: 6px; margin-block: 8px 3px; border: 0; border-radius: 9px; overflow: hidden; background: #050c16; color: var(--event-accent); accent-color: var(--event-accent) }
+.sc-usage progress::-webkit-progress-bar { background: #050c16 }
+.sc-usage progress::-webkit-progress-value { background: var(--event-accent) }
 .sc-text { white-space: pre-wrap }
 .sc-viewport img { max-width: min(100%, 440px); max-height: 350px; object-fit: contain; border-radius: 6px }
 .sc-viewport audio { max-width: 100%; display: block; margin-top: 5px }
@@ -36,13 +80,13 @@
 .sc-main pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #aec5dc; background: #050c16; padding: 7px 9px; border-radius: 6px; margin-top: 4px; font-size: 12px; max-height: 240px; overflow: auto }
 .sc-main pre:empty { display: none }
 .sc-main summary { color: #a9c0da }
-.sc-raw > li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px }
-.sc-raw time { margin-right: 5px }
 .sc-interaction textarea, .sc-composer textarea { display: block; width: 100%; padding: 10px; background: #06101c; border: 1px solid var(--line); border-radius: 8px; resize: vertical; max-height: 18vh }
 .sc-interaction textarea, .sc-interaction .sc-actions { margin-top: 8px }
 .sc-composer { border-top: 1px solid var(--line); padding: 12px 16px }
 .sc-composer-footer, .sc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
 .sc-composer-footer { justify-content: space-between; margin-top: 8px }
+.sc-composer .sc-cancel { background: #ba3049; color: #fff5f6 }
+.sc-composer .sc-cancel:hover:not(:disabled) { background: #a5263d }
 .sc-sidebar { display: grid; gap: 12px }
 .sc-aside, .sc-unavailable { padding: 14px 16px }
 .sc-aside h2 { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 650; margin-bottom: 10px }

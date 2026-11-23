@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowUp, Cable, Hash, List, Radio, Square, Terminal } from '
 import { Button } from '../../components/ui/button'
 import { sessionChatDemoHref, useRecord, viewHref, type ViewProps } from '../observer'
 import { demoBindings, demoSession } from './demo'
-import { EventRows, RawEvents, json } from './EventRows'
+import { EventRows, json } from './EventRows'
 import { eventLabels, liveSession, mergeEvents, record, text, workLabels, type Binding, type SessionEvent } from './protocol'
 import './session-chat.css'
 
@@ -75,6 +75,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
   const [receipt, setReceipt] = useState<Receipt>()
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [answered, setAnswered] = useState<Record<string, boolean>>({})
+  const [cancelAcknowledgedAt, setCancelAcknowledgedAt] = useState<string>()
   const client = useRef<Client | Demo | null>(null)
   const viewport = useRef<HTMLDivElement>(null)
   const follow = useRef(true)
@@ -82,6 +83,9 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
   const events = mergeEvents(history, live)
   const stateUpdate = [...live].reverse().find(event => event.type === 'session.state_update' && !event.replay)
   const work = stateUpdate ? text(stateUpdate.payload.state) : initialWork
+  const ready = connection === 'ready'
+  const workStateKey = stateUpdate?.eventId || `connection-${attempt}`
+  const canCancel = ready && work === 'running' && !pending.cancel && cancelAcknowledgedAt !== workStateKey
   const answers = Object.fromEntries(live.filter(event => event.type === 'session.interaction_closed').map(event =>
     [text(event.payload.interaction), { closed: true, answered: false }]))
   for (const interaction of Object.keys({ ...answered, ...pending })) {
@@ -143,7 +147,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
   async function act(action: Action, value?: unknown, interaction?: string) {
     const current = client.current
     const key = interaction || action
-    if (!current || connection !== 'ready' || locks.current.has(key)) return
+    if (!current || !ready || locks.current.has(key) || (action === 'cancel' && !canCancel)) return
     locks.current.add(key)
     setPending(previous => ({ ...previous, [key]: true }))
     try {
@@ -152,6 +156,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
         : await current.answer(interaction!, value)
       if (client.current !== current) return
       setReceipt({ action, value: result, draft: action === 'prompt' ? text(value) : undefined })
+      if (action === 'cancel' && record(result).result === 'controlAcknowledged') setCancelAcknowledgedAt(workStateKey)
       if (action === 'prompt' && record(result).result !== 'not_applied') setDraft(previous => previous === value ? '' : previous)
       if (interaction) setAnswered(previous => ({ ...previous, [interaction]: true }))
     } catch (error) {
@@ -169,8 +174,13 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
     if (draft.trim()) void act('prompt', draft)
   }
 
+  function showStream(enabled: boolean) {
+    follow.current = !enabled
+    if (enabled) viewport.current?.scrollTo({ top: 0 })
+    setRaw(enabled)
+  }
+
   const demoClient = demo ? client.current as Demo | null : null
-  const ready = connection === 'ready'
   const result = text(record(receipt?.value).result)
   return <div className="sc-workspace">
     <section className="panel sc-chat" aria-label="Session 对话">
@@ -181,9 +191,9 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
       </header>
       <div className="sc-toolbar">
         <span>{raw ? '事件流' : '对话'} <small>{events.length} 条事件</small></span>
-        <Button size="sm" variant="ghost" aria-pressed={raw} onClick={() => setRaw(previous => !previous)}><List size={15}/>{raw ? '显示对话' : '查看原始事件'}</Button>
+        <Button size="sm" variant="ghost" aria-pressed={raw} onClick={() => showStream(!raw)}><List size={15}/>{raw ? '显示对话' : '查看事件流'}</Button>
       </div>
-      <div className="sc-viewport" ref={viewport} aria-label={raw ? '原始事件' : '对话记录'} tabIndex={0} onScroll={event => {
+      <div className="sc-viewport" ref={viewport} aria-label={raw ? '事件流' : '对话记录'} tabIndex={0} onScroll={event => {
         const node = event.currentTarget
         follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40
       }}>
@@ -194,8 +204,8 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
           <Terminal size={28}/><strong>{loading ? '正在读取历史' : '暂无对话事件'}</strong>
           <p>{demo ? '发送一条消息，或从右侧运行一个事件场景。' : '连接就绪后发送消息，实时回复会显示在这里。'}</p>
         </div>}
-        {raw ? <RawEvents events={events}/> : <EventRows events={events} answers={answers} allowAnswer={ready}
-          answer={(interaction, value) => void act('answer', value, interaction)}/>}
+        <EventRows events={events} raw={raw} answers={answers} allowAnswer={ready}
+          answer={(interaction, value) => void act('answer', value, interaction)}/>
       </div>
       <form className="sc-composer" onSubmit={submit}>
         <textarea rows={2} aria-label="消息" placeholder={`发给 ${targetLabel(binding.role)}…`} value={draft} onChange={event => setDraft(event.target.value)}
@@ -205,7 +215,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
         <div className="sc-composer-footer">
           <small>⌘ / Ctrl + Enter 发送</small>
           <div className="sc-actions">
-            <Button type="button" variant="outline" size="sm" disabled={!ready || pending.cancel} onClick={() => void act('cancel')}><Square size={13}/> 取消工作</Button>
+            <Button type="button" className="sc-cancel" variant="destructive" size="sm" disabled={!canCancel} onClick={() => void act('cancel')}><Square size={13}/> 取消工作</Button>
             <Button type="submit" size="sm" disabled={!ready || pending.prompt || !draft.trim()}><ArrowUp size={16}/> 发送</Button>
           </div>
         </div>
@@ -235,11 +245,11 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
       {demo && <section className="panel sc-aside" aria-label="演示场景">
         <h2>演示场景</h2>
         <div className="sc-scenarios">
-          <Button size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => { demoClient?.publish(); setRaw(true) }}>
+          <Button size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => { showStream(true); demoClient?.publish() }}>
             查看全部事件 <small>{Object.keys(eventLabels).length} 类</small>
           </Button>
           {Object.entries({ permission: '工具权限', form: 'Agent 提问', url: '外部流程' }).map(([kind, label]) =>
-            <Button key={kind} size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => { setRaw(false); demoClient?.request(kind) }}>{label}</Button>)}
+            <Button key={kind} size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => { showStream(false); demoClient?.request(kind) }}>{label}</Button>)}
           <Button size="sm" variant="ghost" disabled={!ready} onClick={() => demoClient?.disconnect()}>模拟断开连接</Button>
         </div>
       </section>}
