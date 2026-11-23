@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	file "github.com/zoumo/mass/massd/pkg/eventstore/file"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -198,7 +199,7 @@ func (s *entrypointSuite) openPrepared(kind, bin, path, work string) (resource.S
 	config := runtime.Config{"executable": bin, "scenario": path}
 	if kind == "claude" {
 		s.claudeConfig = s.T().TempDir()
-		config["env"] = map[string]any{"CLAUDE_CONFIG_DIR": s.claudeConfig}
+		config["env"] = testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": s.claudeConfig})
 	}
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: config}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
@@ -389,7 +390,7 @@ func (s *entrypointSuite) basic(kind string) {
 	}
 	spec := resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": resumePath}}
 	if kind == "claude" {
-		spec.Config["env"] = map[string]any{"CLAUDE_CONFIG_DIR": s.claudeConfig}
+		spec.Config["env"] = testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": s.claudeConfig})
 	}
 	s.call("runtime.update", workflowParams{Name: "agent", Spec: &spec}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)

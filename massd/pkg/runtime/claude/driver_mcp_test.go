@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/mcp"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 )
@@ -96,14 +97,14 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
 		"executable": script,
 		"envPolicy":  "replace",
-		"env": map[string]any{
+		"env": testpeer.RuntimeEnv(map[string]string{
 			"MASS_CLAUDE_DRIVER_PEER":    "1",
 			"MASS_CLAUDE_DRIVER_CAPTURE": capture,
 			"MASS_CLAUDE_DRIVER_CWD":     cwd,
 			"HOME":                       t.TempDir(),
 			"TMPDIR":                     t.TempDir(),
 			"TOKEN":                      "fixture-secret",
-		},
+		}),
 	})
 	require.NoError(t, err)
 	_, err = driver.Start(t.Context())

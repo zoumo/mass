@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -370,7 +371,7 @@ func startEventTestMassdWithData(t *testing.T, peer *nativeSubmitPeer) (string, 
 	massd, relay := dispatchBinaries(t)
 	return startNativeMassd(t, massd, resource.RuntimeSpec{
 		Type:     "codex",
-		Config:   runtime.Config{"executable": relay, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": peer.listener.Addr().String()}},
+		Config:   runtime.Config{"executable": relay, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"CONFIG_PEER_ADDR": peer.listener.Addr().String()})},
 		Features: &runtime.SessionFeatures{AgentQuestions: new(true)},
 	})
 }

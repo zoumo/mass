@@ -259,7 +259,7 @@ func TestInitialSessionConfigurationLoadNative(t *testing.T) {
 					id = claudeLoadID
 				} else {
 					evidence = filepath.Join(t.TempDir(), "native.jsonl")
-					svc, work := ticket06Service(t, "", map[string]any{"LOAD_EVIDENCE": evidence})
+					svc, work := ticket06Service(t, "", map[string]string{"LOAD_EVIDENCE": evidence})
 					cwd = work
 					id = "native-thread"
 					h, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))

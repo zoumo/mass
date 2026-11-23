@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
@@ -29,7 +30,7 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 	config, evidence := t.TempDir(), filepath.Join(t.TempDir(), "peer.jsonl")
 	d, err := (claude.Factory{RecoveryDir: t.TempDir()}).New("provider", runtime.Config{
 		"executable": bin, "envPolicy": "replace",
-		"env": map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_EVIDENCE": evidence},
+		"env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": config, "LOAD_EVIDENCE": evidence}),
 	})
 	require.NoError(t, err)
 	stream, err := d.Events()

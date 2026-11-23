@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -475,10 +476,10 @@ func startClaudeBindingPeer(t *testing.T) (endpoint string, c *client.Client, na
 	endpoint, c, _ = startNativeMassd(t, massd, resource.RuntimeSpec{
 		Type:     "claude",
 		Features: &runtime.SessionFeatures{AgentQuestions: new(true)},
-		Config: runtime.Config{"executable": launcher, "envPolicy": "replace", "env": map[string]any{
+		Config: runtime.Config{"executable": launcher, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{
 			"PEER_KIND": "claude", "PEER_DIR": native, "WORK_DIR": workspace, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project,
 			"CLAUDE_WIRE_PEER": peer, "PEER_CLAUDE_FULL_ACCESS": "1",
-		}},
+		})},
 	})
 	return endpoint, c, native, config, workspace, project
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -20,7 +21,7 @@ func (s *entrypointSuite) openClaudeContinuity() (resource.SessionRef, string) {
 	s.Require().NoError(err, string(out))
 	evidence := filepath.Join(s.T().TempDir(), "inputs.jsonl")
 	config := s.T().TempDir()
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "continuous"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config}}}}
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "continuous"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"PEER_EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config})}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "continuous"}, nil)
 	work, err := filepath.EvalSymlinks(s.T().TempDir())
