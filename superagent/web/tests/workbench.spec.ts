@@ -71,7 +71,9 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   const timerMessage = await (
     await request.get(`${routingURL}/v1/observer/messages/${next.items[0].messageId}`)
   ).json()
-  expect(timerMessage.meta.type).toBe('timer.followup')
+  expect(timerMessage.source).toBe('core:timer')
+  expect(timerMessage.content).toEqual([{ type: 'text', text: 'Review the archived build.' }])
+  expect(timerMessage.eventId).toBe(next.items[0].event_id)
   expect(next.nextCursor).toBeTruthy()
   const third = await (
     await request.get(`${topicEvents}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)

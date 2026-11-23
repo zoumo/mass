@@ -202,8 +202,9 @@ Topic's routing history. Outbox and routing relations accept `messageId`. Observ
 `messageId` to select Issues with an explicit matching material across all Topics. Message-filtered
 Issue and routing-event previews include the owning or participating Topic's title when available.
 Observer lists accept `preview=true` for compact rows. Message, reply and Timer
-previews contain up to 240 characters. Open a record by ID for its full body
-and evidence. Continuation
+previews contain up to 240 characters. A Message preview uses the first
+nonblank text block or lists its content types. Open a record by ID for its
+full `content` and diagnostic `_meta` when present. Continuation
 cursors bind collection, filter and the first page's sequence high-water mark.
 Rows accepted later never enter that traversal. Ordering uses fixed nanosecond
 UTC Core timestamps plus stable ID (Thread key for Threads). Thread ordering
@@ -482,8 +483,9 @@ including observation time or an unknown-state reason.
 ### Issue Session tools
 
 Call `tools/list` for the Issue Session tool schemas. `get_issue` resolves the
-bound Issue. `get_message` requires a Message in its materials. Use
-`submit_report` with the `goalRevision` used during work.
+bound Issue. `get_message` returns the complete `content` array for a Message
+in the Issue's materials. Use `submit_report` with the `goalRevision` used
+during work.
 
 Report kinds are `progress`, `ready`, `blocked` and `failed`. The Issue Session
 supplies the goal revision it used. Core records the authenticated
@@ -589,9 +591,12 @@ Message, its source facts, and any available quote association. When handling
 `report_submitted`, check whether the Report is current and verify its evidence
 against the current Issue goal. Use `get_report` and `get_issue` for readback.
 
-Issue Session events can inline the Issue goal, `goalRevision`, blockers, and
-short material Messages. Use `get_issue` for current Issue state and
-`get_message` for referenced material. If `truncated` is true, use
+Issue Session startup and update events can include the current Issue
+snapshot, with goal, `goalRevision`, blockers, and material references.
+`messageContent` identifies any attached blocks. A `context_supplement`
+attaches only material Messages linked to that event. These events share the
+same content budget. Use `get_issue` for current Issue state and `get_message`
+for referenced material. If `truncated` is true, use
 `get_internal_event` with `event_id` to read the complete Agent view. See the
 [role instructions](pkg/core/execution.go) for the actions associated with
 individual event kinds. Pass `event_id` as `triggerEventId` on supported

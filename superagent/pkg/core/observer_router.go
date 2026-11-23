@@ -16,8 +16,9 @@ WITH ranked AS (
  WHERE d.seq<=?1 AND (json_extract(d.recipient,'$.kind')='router' OR json_extract(d.sender,'$.kind')='router')
  %s
 ), page AS (
- SELECT r.message_id,r.event_id,r.created_at,m.source,m.routing_state,substr(json_extract(m.body,'$.text'),1,240) AS preview
- FROM ranked r JOIN trigger_messages m ON m.id=r.message_id
+ SELECT r.message_id,r.event_id,r.created_at,trigger_messages.source,trigger_messages.routing_state,
+ substr(` + observerMessagePreview + `,1,240) AS preview
+ FROM ranked r JOIN trigger_messages ON trigger_messages.id=r.message_id
  WHERE position=1 AND (?2='' OR (r.created_at,r.message_id)<(?2,?3))
  ORDER BY r.created_at DESC,r.message_id DESC LIMIT ?4
 )

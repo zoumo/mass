@@ -87,11 +87,20 @@ export function eventStatusLabel(state?: string) {
 }
 
 export function messageTitle(row: WorkbenchRow) {
- const firstLine = row.text?.trim().split('\n')[0]
+ const firstLine = messageBody(row).trim().split('\n')[0]
  if (!firstLine) return '无正文消息'
  const subject = firstLine.split(/[。！？]|[.!?](?=\s|$)/, 1)[0]?.trim() || firstLine
  const characters = Array.from(subject)
  return characters.length > 88 ? characters.slice(0, 87).join('').trimEnd() + '…' : subject
+}
+
+export function messageBody(row: WorkbenchRow) {
+ if (!Array.isArray(row.content)) return row.text || ''
+ const blocks = row.content as { type: string; text?: string }[]
+ const text = blocks.filter(block => block.type === 'text').map(block => block.text || '').join('\n')
+ if (text.trim()) return text
+ const types = [...new Set(blocks.map(block => block.type))]
+ return types.length ? '[' + types.join(',') + ']' : ''
 }
 
 export function sourceLabel(source?: string) {

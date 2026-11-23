@@ -43,6 +43,7 @@ type routeDriver struct {
 	failOpens     int
 	allowResume   bool
 	inputs        map[string][]runtime.Input
+	injects       map[string]int
 	sources       map[string]events.Source
 	injectErr     error
 	injectReceipt runtime.InjectReceipt
@@ -96,6 +97,7 @@ func (d *routeDriver) Inject(_ context.Context, id string, input runtime.Input) 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.inputs[id] = append(d.inputs[id], input)
+	d.injects[id]++
 	return d.injectReceipt, d.injectErr
 }
 
@@ -131,7 +133,7 @@ func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundar
 	t.Helper()
 	st, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
-	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, sources: map[string]events.Source{}}
+	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}))
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
 	require.NoError(t, err)

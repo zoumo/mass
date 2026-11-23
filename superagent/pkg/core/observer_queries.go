@@ -72,7 +72,9 @@ func observerCounts(ctx context.Context, tx *sql.Tx, query string) (map[string]i
 func observerListProjection(kind, full string) string {
 	switch kind {
 	case "messages":
-		return `json_set(json_remove(body,'$.meta','$.quotedMessage','$.channel'), '$.text', substr(json_extract(body,'$.text'),1,240))`
+		return `json_set(json_remove(body,'$.content','$._meta','$.meta','$.quotedMessage','$.channel',
+ '$.replyTarget','$.inReplyToOutboxId'),
+ '$.text', substr(` + observerMessagePreview + `,1,240))`
 	case "outbox":
 		return `json_set(json_remove(` + full + `,'$.content'), '$.preview',
  substr(COALESCE(json_extract(outbox.content,'$.data.text'),json_extract(outbox.content,'$.data.prompt')),1,240))`
@@ -90,6 +92,14 @@ func observerListProjection(kind, full string) string {
 		return full
 	}
 }
+
+const observerMessagePreview = `coalesce(
+ (SELECT value->>'$.text' FROM json_each(trigger_messages.body,'$.content')
+  WHERE value->>'$.type'='text' AND trim(value->>'$.text',char(9,10,13,32))<>''
+  ORDER BY key LIMIT 1),
+ trigger_messages.body->>'$.text',
+ (SELECT '['||group_concat(DISTINCT value->>'$.type')||']'
+  FROM json_each(trigger_messages.body,'$.content')))`
 
 const internalEventProjection = `json_patch(json_object(
  'event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,

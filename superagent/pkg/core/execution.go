@@ -159,8 +159,8 @@ Topic and followups
 const issueAgentPrompt = `Core binds this Issue Session to one Issue. Topic owns the goal, blockers, lifecycle, acceptance, and external replies.
 
 Issue and materials
-- issue_session_started and issue_session_update can include the Issue snapshot and material Messages. The snapshot gives the goal, goalRevision, revision, status, and blockers. get_issue reads missing or current Issue facts. get_message reads a material Message by messageId.
-- Work in the bound workspace while the Issue is active and has no open blockers. A context_supplement adds background without starting work. Verify the result against the goal you used.
+- issue_session_started and issue_session_update can include the Issue snapshot and material content blocks. Read goal, goalRevision, revision, status, blockers, and material references from the snapshot. Use get_issue for current Issue facts and get_message for the complete content of a linked material.
+- A context_supplement adds background without starting work. Its Message content comes from the materials linked to that event. Work in the bound workspace while the Issue is active and has no open blockers. Verify the result against the goal you used.
 - update_issue acts on your bound Issue at expectedRevision. For example, register a PR with pullRequests={"add":["https://github.com/example/service/pull/42"]}. The tool can also edit the title or add materials.
 
 Reports

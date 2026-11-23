@@ -1,5 +1,31 @@
 import { test, expect } from '@playwright/test'
 
+test('shows structured Message body and attachment types while retaining Thread navigation', async ({ page, request }) => {
+ const result = await (await request.get('/v1/observer/messages?limit=1')).json()
+ const { id } = result.items[0]
+ let content = [
+  { type: 'text', text: 'Inspect the attached log.' },
+  { type: 'resource_link', uri: 'file:///checks.log', name: 'checks.log' },
+  { type: 'text', text: 'Confirm the exit code.' },
+ ]
+ await page.route(`**/v1/observer/messages/${id}*`, async route => {
+  const response = await route.fetch()
+  const record = await response.json()
+  delete record.text
+  await route.fulfill({ response, json: { ...record, content } })
+ })
+ const url = `/observer/?perspective=message&id=${id}`
+ await page.goto(url)
+ await page.getByText('查看全文', { exact: true }).click()
+ await expect(page.getByTestId('message-body')).toHaveText('Inspect the attached log.\nConfirm the exit code.')
+ await expect(page.getByRole('link', { name: '查看线程' })).toBeVisible()
+
+ content = [content[1]]
+ await page.reload()
+ await page.getByText('查看全文', { exact: true }).click()
+ await expect(page.getByTestId('message-body')).toHaveText('[resource_link]')
+})
+
 test('committed lists, full original text, Thread navigation and safe rendering', async ({ page }) => {
  const bad: string[] = []
  page.on('pageerror', e => bad.push(e.message))
