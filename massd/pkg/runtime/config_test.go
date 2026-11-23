@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
@@ -13,7 +14,7 @@ import (
 func TestRealRuntimeConfigurationDoesNotRequireSyntheticScenario(t *testing.T) {
 	for name, factory := range map[string]runtime.Factory{"codex": codex.Factory{}, "claude": claude.Factory{}} {
 		t.Run(name, func(t *testing.T) {
-			require.NoError(t, factory.Validate(runtime.Config{"executable": "/opt/agents/" + name, "envPolicy": "inherit", "env": map[string]any{"MASS_TEST": "explicit"}}))
+			require.NoError(t, factory.Validate(runtime.Config{"executable": "/opt/agents/" + name, "envPolicy": "inherit", "env": testpeer.RuntimeEnv(map[string]string{"MASS_TEST": "explicit"})}))
 		})
 	}
 }
@@ -24,8 +25,15 @@ func TestRuntimeConfigurationRejectsInvalidLaunchInputs(t *testing.T) {
 			{"executable": "relative"},
 			{"executable": "/agent", "scenario": "/scenario\x00.json"},
 			{"executable": "/agent", "envPolicy": "implicit"},
-			{"executable": "/agent", "env": map[string]any{"TOKEN": 123}},
-			{"executable": "/agent", "env": map[string]string{"BAD=KEY": "value"}},
+			{"executable": "/agent", "env": map[string]any{"TOKEN": "legacy"}},
+			{"executable": "/agent", "env": testpeer.RuntimeEnv(map[string]string{"BAD=KEY": "value"})},
+			{"executable": "/agent", "env": []any{map[string]any{"name": "MISSING"}}},
+			{"executable": "/agent", "env": []any{map[string]any{"name": "BOTH", "value": "", "valueFrom": map[string]any{}}}},
+			{"executable": "/agent", "env": []any{map[string]any{"name": "TYPO", "value": "", "unknown": ""}}},
+			{"executable": "/agent", "env": []any{map[string]any{"name": "DUP", "value": "first"}, map[string]any{"name": "DUP", "value": "second"}}},
+			{"executable": "/agent", "env": []any{map[string]any{"name": "TOKEN", "valueFrom": map[string]any{"fileKeyRef": map[string]any{"path": "relative.env", "key": "TOKEN"}}}}},
+			{"executable": "/agent", "envFrom": []any{map[string]any{"fileRef": map[string]any{"path": "relative.env"}}}},
+			{"executable": "/agent", "envFrom": []any{nil}},
 			{"executable": "/agent", "args": []any{123}},
 			{"executable": "/agent", "args": []string{"bad\x00arg"}},
 			{"executable": "/agent", "unknown": true},
@@ -40,7 +48,7 @@ func TestRuntimeEnvironmentPolicyIsExplicit(t *testing.T) {
 	t.Setenv("MASS_CONFIG_INHERITED", "parent")
 	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "synthetic-daemon-header")
 	for _, policy := range []string{"inherit", "replace"} {
-		config, err := runtime.ParseProcessConfig(runtime.Config{"executable": "/agent", "envPolicy": policy, "env": map[string]string{"MASS_CONFIG_OVERRIDE": "configured"}})
+		config, err := runtime.ParseProcessConfig(runtime.Config{"executable": "/agent", "envPolicy": policy, "env": testpeer.RuntimeEnv(map[string]string{"MASS_CONFIG_OVERRIDE": "configured"})})
 		require.NoError(t, err)
 		env := config.Environment("codex")
 		require.Contains(t, env, "MASS_CONFIG_OVERRIDE=configured")
@@ -66,7 +74,7 @@ func TestRuntimeEnvironmentPolicyIsExplicit(t *testing.T) {
 	require.NotNil(t, config.Environment("claude"), "nil would silently inherit the environment in the SDK")
 	config, err = runtime.ParseProcessConfig(runtime.Config{
 		"executable": "/agent",
-		"env":        map[string]string{"OTEL_EXPORTER_OTLP_HEADERS": "explicit-native-header"},
+		"env":        testpeer.RuntimeEnv(map[string]string{"OTEL_EXPORTER_OTLP_HEADERS": "explicit-native-header"}),
 	})
 	require.NoError(t, err)
 	require.Contains(t, config.Environment("claude"), "OTEL_EXPORTER_OTLP_HEADERS=explicit-native-header")

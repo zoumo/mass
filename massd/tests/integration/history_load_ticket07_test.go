@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	eventfile "github.com/zoumo/mass/massd/pkg/eventstore/file"
@@ -42,7 +43,7 @@ var (
 
 type ticket07Setup struct {
 	path, config       string
-	env                map[string]any
+	env                map[string]string
 	history            func(eventstore.EventStore) eventstore.EventStore
 	factory            func(runtime.Factory) runtime.Factory
 	allowShutdownError bool
@@ -76,7 +77,7 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 	}
 	require.NoError(t, f.Close())
 	evidence := filepath.Join(t.TempDir(), "peer.jsonl")
-	setup := &ticket07Setup{path: path, config: config, env: map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_ID": claudeLoadID, "LOAD_MODE": mode, "LOAD_EVIDENCE": evidence}}
+	setup := &ticket07Setup{path: path, config: config, env: map[string]string{"CLAUDE_CONFIG_DIR": config, "LOAD_ID": claudeLoadID, "LOAD_MODE": mode, "LOAD_EVIDENCE": evidence}}
 	for _, o := range options {
 		o(setup)
 	}
@@ -105,7 +106,7 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 		factory = setup.factory(factory)
 	}
 	svc := service.New(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}))
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": setup.env}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(setup.env)}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)

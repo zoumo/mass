@@ -20,6 +20,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	peerstartup "github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -157,12 +158,12 @@ func assignedSessionDriver(t *testing.T, dir, wait, exit string) (*Driver, <-cha
 	driver, err := (Factory{RecoveryDir: filepath.Join(dir, "recovery")}).New("agent", runtime.Config{
 		"executable": launcher,
 		"envPolicy":  "replace",
-		"env": map[string]any{
+		"env": testpeer.RuntimeEnv(map[string]string{
 			"MASS_FAILED_CREATE_CLEANUP_PEER":    dir,
 			"MASS_FAILED_CREATE_CLEANUP_WAIT":    wait,
 			"MASS_FAILED_CREATE_CLEANUP_EXIT":    exit,
 			"MASS_FAILED_CREATE_CLEANUP_RELEASE": filepath.Join(dir, "release"),
-		},
+		}),
 	})
 	require.NoError(t, err)
 	stream, err := driver.Events()

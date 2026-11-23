@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -299,7 +300,7 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		assert.NoError(t, svc.Shutdown(cleanup))
 	})
 	configDir := filepath.Join(dir, "claude-config")
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": map[string]any{"MASS_PENDING_RESTORE_PEER": dir, "CLAUDE_CONFIG_DIR": configDir}}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"MASS_PENDING_RESTORE_PEER": dir, "CLAUDE_CONFIG_DIR": configDir})}}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

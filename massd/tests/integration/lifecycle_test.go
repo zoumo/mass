@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/prototype"
@@ -344,7 +345,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	bin := filepath.Join(t.TempDir(), "claude-linked-replay")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 	require.NoError(t, err, string(out))
-	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path, "env": map[string]any{"CLAUDE_CONFIG_DIR": configDir}}}
+	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path, "env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": configDir})}}
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
@@ -357,7 +358,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.NotEmpty(t, history.Events)
-	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath, "env": map[string]any{"CLAUDE_CONFIG_DIR": configDir}}
+	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath, "env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": configDir})}
 	_, err = svc.UpdateRuntime("agent", spec)
 	require.NoError(t, err)
 	_, err = svc.StopRuntime(ctx(t), "agent")

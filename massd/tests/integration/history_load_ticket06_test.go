@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/mcp"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -43,12 +44,12 @@ func ticket06Peer(t *testing.T) string {
 	return ticket06Binary
 }
 
-func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*service.Service, string) {
+func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]string) (*service.Service, string) {
 	t.Helper()
 	return ticket06ServiceWithPeer(t, ticket06Peer(t), mode, extraEnv...)
 }
 
-func ticket06ServiceWithPeer(t *testing.T, bin, mode string, extraEnv ...map[string]any) (*service.Service, string) {
+func ticket06ServiceWithPeer(t *testing.T, bin, mode string, extraEnv ...map[string]string) (*service.Service, string) {
 	t.Helper()
 	cwd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -61,11 +62,11 @@ func ticket06ServiceWithPeer(t *testing.T, bin, mode string, extraEnv ...map[str
 		defer cancel()
 		assert.NoError(t, svc.Shutdown(c))
 	})
-	env := map[string]any{"LOAD_CWD": cwd, "LOAD_MODE": mode}
+	env := map[string]string{"LOAD_CWD": cwd, "LOAD_MODE": mode}
 	for _, extra := range extraEnv {
 		maps.Copy(env, extra)
 	}
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(env)}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
@@ -98,7 +99,7 @@ func TestTicket06CodexPagedLoadAndSameConnectionInput(t *testing.T) {
 
 func TestTicket06CodexLoadPassesEffectiveMCPToSDK(t *testing.T) {
 	evidence := filepath.Join(t.TempDir(), "mcp-peer.jsonl")
-	svc, cwd := ticket06Service(t, "", map[string]any{"LOAD_EVIDENCE": evidence})
+	svc, cwd := ticket06Service(t, "", map[string]string{"LOAD_EVIDENCE": evidence})
 	defaults := []runtime.MCPServer{
 		{Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server"},
 		{Name: "remote", Type: runtime.MCPTransportHTTP, URL: "https://example.invalid/runtime"},

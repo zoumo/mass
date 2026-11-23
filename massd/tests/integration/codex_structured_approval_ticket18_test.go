@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -145,7 +146,7 @@ func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name string, ki
 			t.Logf("owned peer pid=%s reaped=%t", pid, reaped)
 		}
 	})
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"EVIDENCE": dir, "CHOICES": choices}}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"EVIDENCE": dir, "CHOICES": choices})}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)

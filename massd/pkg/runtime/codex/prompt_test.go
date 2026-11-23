@@ -16,6 +16,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/agentrelay"
@@ -159,7 +160,7 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	trace := filepath.Join(t.TempDir(), "peer.jsonl")
 	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
 		"executable": executable, "args": []string{"-test.run=^TestCodexDriverTestPeer$"}, "envPolicy": "replace",
-		"env": map[string]any{"MASS_CODEX_DRIVER_PEER": "1", "MASS_CODEX_DRIVER_TRACE": trace, "MASS_CODEX_DRIVER_CWD": cwd, "CODEX_HOME": t.TempDir(), "HOME": t.TempDir()},
+		"env": testpeer.RuntimeEnv(map[string]string{"MASS_CODEX_DRIVER_PEER": "1", "MASS_CODEX_DRIVER_TRACE": trace, "MASS_CODEX_DRIVER_CWD": cwd, "CODEX_HOME": t.TempDir(), "HOME": t.TempDir()}),
 	})
 	require.NoError(t, err)
 	stream, err := driver.Events()

@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/replay"
 	"github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/events"
@@ -66,7 +67,7 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			// The executable is still strictly synthetic. Only launch configuration
 			// uses the real-runtime shape: scenario is not a required config field.
 			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{
-				"executable": bin, "envPolicy": "replace", "env": map[string]any{strings.ToUpper(kind) + "_MOCK_SCENARIO": path},
+				"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{strings.ToUpper(kind) + "_MOCK_SCENARIO": path}),
 			}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")

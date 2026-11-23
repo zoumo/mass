@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -183,7 +184,7 @@ func TestDefaultRuntimeSessionPermissions(t *testing.T) {
 				require.NoError(t, c.GetRuntime(ctx(t), kind, &r))
 				r.Spec.PermissionPreset = agent.PermissionPresetAutoReview
 				if kind == "claude" {
-					r.Spec.Config["env"] = map[string]any{"CLAUDE_CONFIG_DIR": config}
+					r.Spec.Config["env"] = testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": config})
 				}
 				require.NoError(t, c.UpdateRuntime(ctx(t), kind, r.Spec, &r))
 				stop()

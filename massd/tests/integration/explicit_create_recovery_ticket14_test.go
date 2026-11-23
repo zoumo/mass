@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	eventfile "github.com/zoumo/mass/massd/pkg/eventstore/file"
 	metafile "github.com/zoumo/mass/massd/pkg/metastore/file"
@@ -47,8 +48,8 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			require.NoError(t, os.MkdirAll(project, 0o700))
 			var id string
 			var ref resource.SessionRef
-			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
-			runtimeResource := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}}
+			env := map[string]string{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
+			runtimeResource := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(env)}}}
 			// Close and reopen BOTH file authorities and the Service, not just a
 			// driver in the same registry. Native saved history survives separately.
 			open := func(dir string, create bool) (*service.Service, func()) {

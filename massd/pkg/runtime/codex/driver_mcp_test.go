@@ -19,6 +19,7 @@ import (
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
 	"github.com/zoumo/agent-sdk-go/mcp"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
@@ -251,7 +252,7 @@ func newCodexMCPDriverTestPeer(t *testing.T, experimental ...bool) (*Driver, str
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[mcp_servers.ambient]\ncommand = \"/ambient\"\n"), 0o600))
 	created, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
 		"executable": executable, "args": []string{"-test.run=^TestCodexDriverTestPeer$"}, "envPolicy": "replace",
-		"env": map[string]any{"MASS_CODEX_DRIVER_PEER": "1", "MASS_CODEX_DRIVER_TRACE": trace, "MASS_CODEX_DRIVER_CWD": cwd, "CODEX_HOME": home, "HOME": t.TempDir(), "TMPDIR": t.TempDir(), "TOKEN": "fixture-secret"},
+		"env": testpeer.RuntimeEnv(map[string]string{"MASS_CODEX_DRIVER_PEER": "1", "MASS_CODEX_DRIVER_TRACE": trace, "MASS_CODEX_DRIVER_CWD": cwd, "CODEX_HOME": home, "HOME": t.TempDir(), "TMPDIR": t.TempDir(), "TOKEN": "fixture-secret"}),
 	})
 	require.NoError(t, err)
 	driver := created.(*Driver)
