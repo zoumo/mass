@@ -69,12 +69,12 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   const cursor = encodeURIComponent(first.nextCursor)
   const next = await (await request.get(`${topicEvents}&limit=1&order=newest&cursor=${cursor}`)).json()
   expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
-  const timerMessage = await (
+  const scheduledMessage = await (
     await request.get(`${routingURL}/v1/core/trigger-messages/${next.items[0].messageId}`)
   ).json()
-  expect(timerMessage.source).toBe('core:timer')
-  expect(timerMessage.content).toEqual([{ type: 'text', text: 'Review the archived build.' }])
-  expect(timerMessage.eventId).toBe(next.items[0].eventId)
+  expect(scheduledMessage.source).toBe('core:scheduled-task')
+  expect(scheduledMessage.content).toEqual([{ type: 'text', text: 'Review the archived build.' }])
+  expect(scheduledMessage.eventId).toBe(next.items[0].eventId)
   expect(next.nextCursor).toBeTruthy()
   const third = await (
     await request.get(`${topicEvents}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)

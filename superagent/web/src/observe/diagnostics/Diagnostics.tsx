@@ -6,7 +6,6 @@ import { navigate, usePages, useRecord, useRefresh, viewHref } from '../observer
 import RecordDetail from './RecordDetail'
 import { TraceLinks } from '../TraceLinks'
 import {
-  followupLabel,
   identity,
   kinds,
   replyLabel,
@@ -26,12 +25,12 @@ type Health = {
   issueStates: Counts
   eventStates: Counts
   outboxStates: Counts
-  timerStates: Counts | null
+  scheduledTaskStates: Counts | null
   unknownStops: number
 }
-const statusCounts = (counts: Counts | null) =>
+const statusCounts = (counts: Counts | null, labels: Record<string, string> = {}) =>
   Object.entries(counts || {})
-    .map(([k, v]) => v + ' ' + stateLabel(k))
+    .map(([k, v]) => v + ' ' + (labels[k] || stateLabel(k)))
     .join(' · ') || '无'
 const workViews = { messages: 'message', issues: 'issue', topics: 'topic' } as const
 function href(view: Kind, filterId = '', scope: Filter = 'topicId', id = '') {
@@ -48,7 +47,6 @@ function nameOf(kind: Kind, row: DiagnosticRow) {
     row.canonicalUrl ||
     row.title ||
     row.summary ||
-    (kind === 'timers' && typeof row.content === 'string' && row.content) ||
     (row.role || row.action || row.kind ? stateLabel(row.role || row.action || row.kind) : identity(row))
   )
 }
@@ -69,13 +67,6 @@ function columns(kind: Kind): Column[] {
         ['启动输入', (r) => r.startup && eventStatusLabel(r.startup.status)],
         ['原因', (r) => r.lastError],
         ['所属记录', (r) => r.ownerId],
-      ]
-    case 'timers':
-      return [
-        ['定时器状态', (r) => stateLabel(r.status)],
-        ['计划触发时间 (UTC)', (r) => r.dueAt],
-        ['版本', (r) => r.revision],
-        ['跟进通知事件', (r) => followupLabel(r.followup)],
       ]
     case 'reports':
       return [
@@ -124,8 +115,8 @@ function Overview({ stack }: { stack: StackStatus }) {
         <dd>{stateLabel(stack.triggers.github.status)}</dd>
         <dt>DWS Trigger</dt>
         <dd>{stateLabel(stack.triggers.dws.status)}</dd>
-        <dt>定时器</dt>
-        <dd>{statusCounts(health.timerStates)}</dd>
+        <dt>定时任务</dt>
+        <dd>{statusCounts(health.scheduledTaskStates, { active: '生效中', paused: '已暂停' })}</dd>
         <dt>原生停止未知</dt>
         <dd>{health.unknownStops}</dd>
       </dl>

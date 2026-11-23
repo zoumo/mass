@@ -26,14 +26,14 @@ const traceAssociationLimit = 20
 type tracePhase struct{ collection, phase string }
 
 var (
-	messageAdmission = tracePhase{"messages", "admission"}
-	internalEnqueue  = tracePhase{"internal-events", "enqueue"}
-	internalDispatch = tracePhase{"internal-events", "dispatch"}
-	bindingCreation  = tracePhase{"session-bindings", "creation"}
-	timerRevision    = tracePhase{"timers", "revision"}
-	issueCreation    = tracePhase{"issues", "creation"}
-	issueLifecycle   = tracePhase{"issue-lifecycle", "transition"}
-	outboxEnqueue    = tracePhase{"outbox", "enqueue"}
+	messageAdmission      = tracePhase{"messages", "admission"}
+	internalEnqueue       = tracePhase{"internal-events", "enqueue"}
+	internalDispatch      = tracePhase{"internal-events", "dispatch"}
+	bindingCreation       = tracePhase{"session-bindings", "creation"}
+	scheduledTaskRevision = tracePhase{"scheduled-tasks", "revision"}
+	issueCreation         = tracePhase{"issues", "creation"}
+	issueLifecycle        = tracePhase{"issue-lifecycle", "transition"}
+	outboxEnqueue         = tracePhase{"outbox", "enqueue"}
 )
 
 // Only spans created with Core's opted-in provider can populate the table.
@@ -108,7 +108,7 @@ func observerTraceProjection(collection, id, body string) string {
 		collection = "internal-events"
 	case "reports":
 		collection, id = "internal-events", "json_extract("+body+",'$.eventId')"
-	case "issues", "messages", "internal-events", "timers", "session-bindings", "outbox":
+	case "issues", "messages", "internal-events", "scheduled-tasks", "session-bindings", "outbox":
 	default:
 		return body
 	}

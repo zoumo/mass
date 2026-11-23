@@ -91,7 +91,7 @@ func checkStandaloneStackStatus(t *testing.T, p *process, overall, massState str
 	require.NoError(t, json.Unmarshal(body, &got))
 	require.Equal(t, overall, got.Status)
 	require.Equal(t, "ready", got.Core.Status)
-	require.NotNil(t, got.Core.TimerStates)
+	require.NotNil(t, got.Core.ScheduledTaskStates)
 	require.Equal(t, massState, got.Massd.Status)
 	require.Equal(t, massState == "ready", got.Massd.ObservedAt != nil)
 	require.Equal(t, "not_managed", got.Triggers.GitHub.Status)

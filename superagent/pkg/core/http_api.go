@@ -55,6 +55,7 @@ func (s *Server) newHTTPAPI() *httpAPI {
 	api := &httpAPI{router: router, huma: humachi.New(router.With(s.observeResourceHTTP), config)}
 	s.registerMCP(api)
 	s.registerMessageResources(api)
+	s.registerScheduledTaskResources(api)
 	s.registerCoreReadResources(api)
 	s.registerTelemetryResources(api)
 	s.registerStatus(api)
