@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/shurcooL/githubv4"
-
-	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
 
 const (
@@ -150,8 +148,8 @@ func githubCIObservations(repo string, pull githubPullRecord, stream *githubStre
 				if item.URL == "" {
 					item.URL = prURL + "/checks"
 				}
-				item.Thread = coreclient.ThreadRef{Source: githubPRThreadSource, ID: prURL}
-				item.Title = fmt.Sprintf("GitHub Actions for %s#%d\n%s", repo, pull.Number, item.URL)
+				item.ThreadKey = prURL
+				item.Title = fmt.Sprintf("GitHub Actions for %s#%d", repo, pull.Number)
 				item.Body = fmt.Sprintf("%s completed with %s (attempt %d)\nCommit %s", run.Name, run.Conclusion, run.Attempt, revision.SHA)
 				item.SourceEventID = "github:actions:" + key
 				item.Meta = map[string]any{

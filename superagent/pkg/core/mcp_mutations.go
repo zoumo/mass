@@ -95,22 +95,22 @@ func validateTransition(t *changeTransition) error {
 	return nil
 }
 
-func canonicalMCPPRs(input *addPullRequests) ([]string, error) {
+func validateMCPPRs(input *addPullRequests) ([]string, error) {
 	if input == nil {
 		return nil, nil
 	}
 	if len(input.Add) == 0 {
 		return nil, problem("invalid_argument", "pullRequests.add requires at least one URL")
 	}
-	urls := make([]string, 0, len(input.Add))
 	for _, raw := range input.Add {
-		canonical, err := canonicalPullRequestURL(raw)
-		if err != nil {
+		if !validTriggerThreadKey(raw) {
+			return nil, problem("invalid_argument", "PR URL must be a valid Thread key")
+		}
+		if _, err := parsePullRequestURL(raw); err != nil {
 			return nil, err
 		}
-		urls = append(urls, canonical)
 	}
-	return urls, nil
+	return input.Add, nil
 }
 
 func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte) (any, error) {
@@ -122,15 +122,12 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 	if err := validateTransition(r.Transition); err != nil {
 		return nil, err
 	}
-	urls, err := canonicalMCPPRs(r.PullRequests)
+	urls, err := validateMCPPRs(r.PullRequests)
 	if err != nil {
 		return nil, err
 	}
 	if r.Title == nil && r.Description == nil && r.Goal == nil && len(urls) == 0 && r.Transition == nil {
 		return nil, problem("invalid_argument", "provide at least one Topic update")
-	}
-	if r.PullRequests != nil {
-		r.PullRequests.Add = urls
 	}
 	result, err := s.commitWork(ctx, b, "update_topic", r.OperationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		var topic Topic
@@ -159,8 +156,8 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 			}
 			topic.Goal = *r.Goal
 		}
-		for _, canonical := range urls {
-			if err := registerWorkPullRequest(ctx, tx, topic, Issue{}, canonical, ""); err != nil {
+		for _, key := range urls {
+			if err := registerWorkPullRequest(ctx, tx, topic, Issue{}, key, ""); err != nil {
 				return nil, err
 			}
 			var persisted Topic
@@ -208,7 +205,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 	if r.Transition != nil && r.SessionInput != nil {
 		return nil, problem("invalid_argument", "a Session input cannot accompany a lifecycle transition")
 	}
-	urls, err := canonicalMCPPRs(r.PullRequests)
+	urls, err := validateMCPPRs(r.PullRequests)
 	if err != nil {
 		return nil, err
 	}
@@ -217,9 +214,6 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 	}
 	if r.Title == nil && r.Goal == nil && r.Materials == nil && len(urls) == 0 && r.Blockers == nil && r.SessionInput == nil && r.Transition == nil {
 		return nil, problem("invalid_argument", "provide at least one Issue update")
-	}
-	if r.PullRequests != nil {
-		r.PullRequests.Add = urls
 	}
 	result, err := s.commitWork(ctx, b, "update_issue", r.OperationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		var issue Issue
@@ -272,8 +266,8 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 			}
 			appendMaterials(&issue, materials)
 		}
-		for _, canonical := range urls {
-			if err := registerWorkPullRequest(ctx, tx, topic, issue, canonical, sessionBindingID); err != nil {
+		for _, key := range urls {
+			if err := registerWorkPullRequest(ctx, tx, topic, issue, key, sessionBindingID); err != nil {
 				return nil, err
 			}
 			if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, topic.ID); err != nil {

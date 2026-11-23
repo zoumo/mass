@@ -181,7 +181,11 @@ func (t *githubTrigger) deliver(ctx context.Context, name string, current github
 		if err != nil {
 			return errors.New("cannot read GitHub pending head")
 		}
-		result := t.core.SubmitPayload(ctx, item.payload)
+		payload, err := githubDeliveryPayload(item.payload)
+		if err != nil {
+			return errors.New("cannot convert GitHub pending head")
+		}
+		result := t.core.SubmitPayload(ctx, payload)
 		if ctx.Err() != nil {
 			return nil //nolint:nilerr // Cancellation ends polling normally.
 		}

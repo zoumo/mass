@@ -361,7 +361,10 @@ func applyGitHubObservations(tx *sql.Tx, c githubConfig, repo githubRepository, 
 		version := stream.Items[item.Key].Version
 		if item.Kind != "" {
 			version++
-			submission := item.submission(c, repo, scope, version)
+			submission, err := item.submission(c, repo, scope, version)
+			if err != nil {
+				return 0, err
+			}
 			payload, err := json.Marshal(submission)
 			if err != nil {
 				return 0, err

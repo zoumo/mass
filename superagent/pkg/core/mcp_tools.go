@@ -19,7 +19,7 @@ func roleTools(role string) []mcpTool {
 	material := objectSchema(map[string]any{"label": text, "messageId": text, "uri": text})
 	material["oneOf"] = []map[string]any{{"required": []string{"messageId"}}, {"required": []string{"uri"}}}
 	materials := array(material)
-	prs := objectSchema(map[string]any{"add": map[string]any{"type": "array", "items": text, "minItems": 1}}, "add")
+	prs := objectSchema(map[string]any{"add": map[string]any{"type": "array", "items": text, "minItems": 1, "description": "Final PR URLs used verbatim as Thread keys. Normalize each URL before calling this tool."}}, "add")
 	transition := objectSchema(map[string]any{"action": enum("complete", "cancel", "reopen"), "reason": text, "evidence": map[string]any{"type": "array", "items": text, "minItems": 1}}, "action", "reason")
 	transition["if"] = map[string]any{"properties": map[string]any{"action": enum("complete")}}
 	transition["then"] = map[string]any{"required": []string{"evidence"}}
@@ -30,7 +30,7 @@ func roleTools(role string) []mcpTool {
 		return append(tools,
 			tool("get_issue", "Read your bound Issue, goal revision, materials, and blockers.", nil),
 			tool("get_message", "Read the full content blocks of a Message in your Issue materials.", map[string]any{"messageId": text}, "messageId"),
-			tool("update_issue", "Update the title, append materials, or register PR URLs for your bound Issue. Use its current revision. Supply at least one change.", issueUpdate, "operationId", "expectedRevision"),
+			tool("update_issue", "Update the title, append materials, or register final PR URLs for your bound Issue. Use its current revision. Supply at least one change.", issueUpdate, "operationId", "expectedRevision"),
 			tool("submit_report", "Report the result of your Issue work against the goalRevision you used. A retired SessionBinding can submit a historical Report.", map[string]any{"operationId": text, "kind": enum("progress", "ready", "blocked", "failed"), "summary": text, "goalRevision": revision, "details": text, "evidence": array(text), "questions": array(text)}, "operationId", "kind", "summary", "goalRevision"),
 		)
 	}
@@ -65,7 +65,7 @@ func roleTools(role string) []mcpTool {
 	dueAt := map[string]any{"type": "string", "format": "date-time"}
 	return append(tools,
 		tool("get_topic", "Read your bound Topic. Expand templates, followups, or PR associations when needed.", map[string]any{"include": include("executionTemplates", "followups", "pullRequests")}),
-		tool("update_topic", "Edit your Topic, register PR URLs, or explicitly complete, cancel, or reopen it. Use its current revision. Completion requires evidence and terminal Issues.", map[string]any{"operationId": text, "expectedRevision": revision, "title": text, "description": map[string]any{"type": "string"}, "goal": text, "pullRequests": prs, "transition": transition}, "operationId", "expectedRevision"),
+		tool("update_topic", "Edit your Topic, register final PR URLs, or explicitly complete, cancel, or reopen it. Use its current revision. Completion requires evidence and terminal Issues.", map[string]any{"operationId": text, "expectedRevision": revision, "title": text, "description": map[string]any{"type": "string"}, "goal": text, "pullRequests": prs, "transition": transition}, "operationId", "expectedRevision"),
 		tool("create_issue", "Create an Issue with a goal and acceptance criteria. Choose runtimeRef and model together. The Issue inherits the Topic workspace unless you supply one. Use start=true to prepare its Issue Session atomically.", map[string]any{"operationId": text, "title": text, "goal": text, "runtimeRef": text, "model": text, "workspace": text, "materials": materials, "start": map[string]any{"type": "boolean"}}, "operationId", "title", "goal", "runtimeRef", "model"),
 		tool("get_issue", "Read an Issue in your Topic, with optional Reports and PR associations.", map[string]any{"issueId": text, "include": include("reports", "pullRequests")}, "issueId"),
 		tool("list_issues", "List Issues in your Topic, optionally filtered by status.", map[string]any{"status": enum("pending", "active", "blocked", "completed", "canceled"), "cursor": text, "limit": limit}),

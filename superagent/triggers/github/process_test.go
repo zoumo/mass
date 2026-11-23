@@ -2,6 +2,7 @@ package github
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -13,12 +14,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggertest"
 )
 
 func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 	t.Parallel()
-	f := triggertest.NewCoreFixture(t, false, githubSource)
+	f := newGitHubCoreFixture(t)
 	const sdk, mass = "demo/sdk", "elsewhere/mass"
 	old := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
 	fresh := old.Add(65 * time.Second)
@@ -160,15 +163,16 @@ func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 	require.NotEmpty(t, first)
 	require.NotEmpty(t, bot)
 	require.NotEmpty(t, second)
-	require.Equal(t, true, first["human"])
-	require.Equal(t, false, bot["human"])
-	require.Equal(t, false, second["human"])
+	require.Equal(t, true, githubMessageMeta(first)["human"])
+	require.Equal(t, false, githubMessageMeta(bot)["human"])
+	require.Equal(t, false, githubMessageMeta(second)["human"])
+	require.Equal(t, "github:https%3A%2F%2Fgithub.com%2Felsewhere%2Fmass%2Fissues%2F42", second["threadKey"])
 	require.NotEqual(t, first["threadKey"], second["threadKey"])
 	require.Equal(t, second["id"], delivery.Repositories[mass].LastReceipt.MessageID)
 	require.Equal(t, bot["id"], delivery.Repositories[sdk].LastReceipt.MessageID)
-	require.Contains(t, first["text"], "historical discussion")
-	require.Contains(t, second["text"], "subscribed")
-	require.Contains(t, second["text"], githubObjectURL(mass, "issues", 42))
+	require.Contains(t, githubFixtureMessageText(t, first), "historical discussion")
+	require.Contains(t, githubFixtureMessageText(t, second), "subscribed")
+	require.Contains(t, githubFixtureMessageText(t, second), githubObjectURL(mass, "issues", 42))
 	require.Nil(t, githubMessage(t, f, sdk, "comment_created", "501"))
 	captureMu.Lock()
 	captured := append([][]byte(nil), captures...)
@@ -186,7 +190,7 @@ func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 
 func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 	t.Parallel()
-	f := triggertest.NewCoreFixture(t, false, githubSource)
+	f := newGitHubCoreFixture(t)
 	const repo = "demo/sdk"
 	old := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	fresh := time.Now().UTC().Truncate(time.Second).Add(3 * time.Second)
@@ -252,11 +256,11 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 		return githubMessage(t, f, repo, "notification_received", "742") != nil
 	})
 	fallback := githubMessage(t, f, repo, "notification_received", "742")
-	require.Equal(t, false, fallback["human"])
-	require.Contains(t, fallback["text"], "review_requested")
-	require.Contains(t, fallback["text"], "old PR discussion")
-	require.Contains(t, fallback["text"], "Review SDK compatibility")
-	require.Contains(t, fallback["text"], prURL)
+	require.Equal(t, false, githubMessageMeta(fallback)["human"])
+	require.Contains(t, githubFixtureMessageText(t, fallback), "review_requested")
+	require.Contains(t, githubFixtureMessageText(t, fallback), "old PR discussion")
+	require.Contains(t, githubFixtureMessageText(t, fallback), "Review SDK compatibility")
+	require.Contains(t, githubFixtureMessageText(t, fallback), prURL)
 	f.AssertRouted(fallback, 1)
 	topic := githubCreateTopic(t, f, fallback)
 	githubRegisterFixturePR(t, f, topic, prURL)
@@ -268,7 +272,11 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 		msg := githubMessage(t, f, repo, kind, id)
 		require.NotNil(t, msg, "missing %s %s", kind, id)
 		require.Equal(t, prURL, msg["threadKey"])
-		require.Equal(t, true, msg["human"])
+		require.Equal(t, true, githubMessageMeta(msg)["human"])
+		require.Contains(t, githubFixtureMessageText(t, msg), prURL)
+		if id == "603" {
+			require.Contains(t, githubFixtureMessageText(t, msg), prURL+"#discussion_r603")
+		}
 		githubAssertTopicDelivery(t, f, msg, topic)
 	}
 	require.Zero(t, outsideReads.Load())
@@ -282,7 +290,78 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 		return readGitHubStatus(t, statusURL).Notifications.LastSuccessAt.After(last)
 	})
 	for _, msg := range triggertest.ReadMessages(t, f.Endpoint) {
-		require.NotContains(t, msg["text"], "demo/outside")
+		require.NotContains(t, githubFixtureMessageText(t, msg), "demo/outside")
 	}
 	require.Len(t, triggertest.ReadMessages(t, f.Endpoint), 4)
+}
+
+func TestGitHubLegacyQueueRecoversOriginalReceipt(t *testing.T) {
+	t.Parallel()
+	f := newGitHubCoreFixture(t)
+	const repo = "demo/sdk"
+	prURL := githubObjectURL(repo, "pull", 42)
+	commentURL := prURL + "#discussion_r123"
+	c := githubTestConfig(f)
+	c.Repositories = []githubRepository{{Repository: repo}}
+	store, closeStore, err := openGitHubStore(c)
+	require.NoError(t, err)
+	t.Cleanup(closeStore)
+	legacy := coreclient.Submission{OperationID: "old-operation", Message: coreclient.Message{
+		Source: githubSource, AccountID: c.AccountID, CollectorInstance: c.InstanceID,
+		SourceMessageID: "old-observation", ThreadRef: coreclient.ThreadRef{Source: "pr:url", ID: prURL},
+		Text: "Original comment body", Actor: "reviewer", At: "2026-11-23T02:03:04.123456789+02:00", URL: commentURL,
+		Meta: map[string]any{"repository": repo, "objectId": "123", "diagnostic": uint64(9007199254740993)},
+	}}
+	payload, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	_, err = store.db.ExecContext(t.Context(), githubInsertPending, repo, legacy.Message.SourceMessageID, payload)
+	require.NoError(t, err)
+	closeStore()
+
+	// Ticket 08 projects the accepted Core row at cutover. Seed that form
+	// here to verify that the upgraded adapter recovers its original receipt.
+	projected := coreclient.TriggerSubmission{OperationID: legacy.OperationID, Message: coreclient.TriggerMessage{
+		SourceMessageID: legacy.Message.SourceMessageID, ThreadKey: prURL,
+		Content: []events.ContentBlock{events.Text("Original comment body\n\nAuthor: reviewer\n\nSource time: 2026-11-23T00:03:04.123456789Z\n\nURL: " + commentURL)},
+	}}
+	var original coreclient.Receipt
+	require.Equal(t, http.StatusOK, triggertest.Request(t, http.MethodPost, f.Endpoint, "/v1/channel/messages", triggertest.Token, projected, &original))
+	require.NotEmpty(t, original.MessageID)
+	require.NotEmpty(t, original.EventID)
+
+	var retries atomic.Int32
+	c.CoreEndpoint = f.Proxy(func(_ http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/channel/messages" {
+			var retry coreclient.TriggerSubmission
+			body, readErr := io.ReadAll(r.Body)
+			if readErr != nil || json.Unmarshal(body, &retry) != nil || retry.OperationID != projected.OperationID ||
+				retry.Message.SourceMessageID != projected.Message.SourceMessageID {
+				t.Error("legacy queue retry changed its operation or message identity")
+			}
+			var meta map[string]json.RawMessage
+			if json.Unmarshal(retry.Message.Meta, &meta) != nil || string(meta["diagnostic"]) != "9007199254740993" {
+				t.Error("legacy queue retry changed its diagnostic metadata")
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			retries.Add(1)
+		}
+		return false
+	}, nil).URL
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		githubFixtureJSON(w, []githubNotification{})
+	}))
+	t.Cleanup(fixture.Close)
+	proc, statusURL := startGitHubFixture(t, fixture.URL, c)
+	triggertest.Wait(t, "legacy queued observation acknowledged as duplicate", func() bool {
+		delivery := readGitHubStatus(t, statusURL).Repositories[repo]
+		return delivery.Backlog == 0 && delivery.Duplicates == 1
+	})
+	got := readGitHubStatus(t, statusURL).Repositories[repo].LastReceipt
+	require.Equal(t, original.MessageID, got.MessageID)
+	require.Equal(t, original.EventID, got.EventID)
+	require.Equal(t, original.AcceptedAt, got.AcceptedAt)
+	require.Equal(t, prURL, got.ThreadKey)
+	require.EqualValues(t, 1, retries.Load())
+	require.Len(t, triggertest.ReadMessages(t, f.Endpoint), 1)
+	triggertest.Terminate(t, proc)
 }

@@ -749,21 +749,18 @@ Issues. Filter by `topicId` for the Topic's followed URLs or by `issueId` for
 the Issue's URLs. The PR details link to the shared Thread and the Topic
 subscription.
 
-Use an explicit absolute HTTP(S) resource URL without embedded credentials.
+Each entry in `pullRequests.add` is the final, absolute HTTP(S) PR URL without
+embedded credentials. Core validates the URL and uses the supplied string
+verbatim as both `canonicalUrl` and `threadKey`. The caller must normalize the
+URL to the same key used by the Trigger for that PR.
 
-- For public GitHub, Core accepts `github.com/{owner}/{repo}/pull/{number}`.
-  It emits HTTPS with lowercase host, owner and repository, positive decimal
-  number and no trailing slash or default port. It removes numbered
-  `#issuecomment-N`, `#discussion_rN` and `#pullrequestreview-N` fragments and
-  the query parameters `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`,
-  `utm_content`, `utm_id`, `gclid` and `fbclid`. Supply the resource URL
-  directly for other anchors, query fields or GitHub subpages.
-- For other hosts, the caller declares the supplied URL canonical. Core
-  validates it and preserves it verbatim, including its path, query and
-  fragment. Core performs no redirects, short-link resolution or
-  network requests.
+For public GitHub, use `https://github.com/{owner}/{repo}/pull/{number}` with
+lowercase owner and repository and a positive decimal number without leading
+zeros. Submit the PR page URL without a trailing slash, port, query, fragment,
+or comment permalink. For other platforms, follow the corresponding Trigger's
+normalization rules.
 
-Message intake and registration share these URL rules. Admission after one
+Admission after one
 subscription routes directly to its Topic. Admission with zero or multiple
 subscriptions targets Router. When a Message arrived earlier, registration
 reuses its Thread and any existing Topic subscription. The earlier routing

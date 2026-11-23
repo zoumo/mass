@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -21,26 +22,26 @@ const (
 	internalPR   = "https://review.example.invalid/code/Repo%2FSDK?change=42&next=a%2fb&utm_source=identity#review%2Fversion"
 )
 
-func addPRSource(t *testing.T, f *fixture) string {
+func addPRSource(t *testing.T, f *fixture, source string) string {
 	t.Helper()
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	token := strings.Repeat("p", 48)
-	path := filepath.Join(f.dir, "pr-fixture.token")
+	token := strings.Repeat("p", 48) + source
+	path := filepath.Join(f.dir, source+".token")
 	write(t, path, token)
 	write(t, f.config, strings.Replace(string(config), "sources:\n",
-		"sources:\n  - source: review-fixture\n    accountId: review-account\n    tokenFile: "+path+"\n", 1))
+		"sources:\n  - source: "+source+"\n    accountId: "+source+"-account\n    tokenFile: "+path+
+			"\n    threadKeyPrefixes: [https://github.com/, https://GitHub.COM/, https://review.example.invalid/]\n", 1))
 	return token
 }
 
-func prMessage(id, resourceURL, body string) core.SubmitRequest {
-	return core.SubmitRequest{OperationID: "op-" + id, Message: core.MessageInput{
-		Source: "review-fixture", AccountID: "review-account", SourceMessageID: id,
-		ThreadRef: core.ThreadRef{Source: "pr:url", ID: resourceURL}, Actor: "fixture-collector", Text: body,
+func prMessage(id, resourceURL, body string) core.SubmitTriggerMessageRequest {
+	return core.SubmitTriggerMessageRequest{OperationID: "op-" + id, Message: core.TriggerMessage{
+		SourceMessageID: id, ThreadKey: resourceURL, Content: []events.ContentBlock{events.Text(body)},
 	}}
 }
 
-func acceptPRMessage(t *testing.T, p *process, token string, input core.SubmitRequest) core.Receipt {
+func acceptPRMessage(t *testing.T, p *process, token string, input core.SubmitTriggerMessageRequest) core.Receipt {
 	t.Helper()
 	status, data := request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", token, input)
 	require.Equal(t, http.StatusOK, status, string(data))
@@ -65,26 +66,24 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	t.Parallel()
 	boundary := newRouteBoundary(t)
 	f := fixtureAt(t)
-	token := addPRSource(t, f)
+	token := addPRSource(t, f, "github")
+	otherSource := addPRSource(t, f, "antcode")
 	f.execution(boundary)
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
-	review := acceptPRMessage(t, p, token, prMessage("review-first", firstPRAlias, "Review requested"))
+	review := acceptPRMessage(t, p, token, prMessage("review-first", firstPR, "Review requested"))
 	require.Equal(t, firstPR, review.ThreadKey)
 	require.Equal(t, "router", readRecord[observedRoutingEvent](t, p, "routing-events/"+review.EventID).Recipient.Kind)
 	original := readPRThread(t, p, review.ThreadKey)
-	ref, err := core.ParseThreadKey(review.ThreadKey)
-	require.NoError(t, err)
-	require.Equal(t, original.Ref, ref)
-	require.Equal(t, firstPR, ref.ID)
+	require.Equal(t, firstPR, original.Key)
 	r := newRoute("create-first-topic", []string{review.MessageID}, f.dir)
 	decision := mcpWork[core.RouteRequest](t, router, "route_messages", r)
 	first := waitBinding(t, p, "topic", decision.Targets[0].TopicID, "ready")
 	primary := startRoleMCP(t, f, first)
 	require.Contains(t, string(primary.call("tools/list", struct{}{})["result"]), "update_topic")
 	require.NotContains(t, string(router.call("tools/list", struct{}{})["result"]), "update_topic")
-	register := prUpdate("first-register", 1, firstPRAlias)
+	register := prUpdate("first-register", 1, firstPR)
 	status, data := requestMCPTool(t, p.endpoint, "update_topic", roleToken(t, f, routerBinding), register)
 	errorCode(t, status, data, http.StatusForbidden, "forbidden")
 	before := page(t, p, "subscriptions?threadKey="+url.QueryEscape(firstPR))
@@ -101,7 +100,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	var sub core.Subscription
 	require.NoError(t, json.Unmarshal(before.Items[0], &sub))
 	require.Equal(t, sub.ID, association.SubscriptionID)
-	mcpWorkError(t, primary, "update_topic", "conflict", prUpdate("first-register", 1, firstPR))
+	mcpWorkError(t, primary, "update_topic", "conflict", prUpdate("first-register", 1, firstPRAlias))
 	require.Equal(t, registered, mcpWork[core.Topic](t, primary, "update_topic", prUpdate("same-association", registered.Revision, firstPR)))
 	require.Len(t, page(t, p, "threads").Items, 1)
 
@@ -140,8 +139,8 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	empty := readPRThread(t, p, secondPR)
 	require.Empty(t, empty.LastMessageAt)
 	require.Empty(t, page(t, p, "messages?threadKey="+url.QueryEscape(secondPR)).Items)
-	merged := prMessage("merged", secondPR+"#pullrequestreview-987", "Pull request merged")
-	merged.Message.Meta = map[string]any{"state": "merged", "changes": []string{"merged"}, "draft": false, "observationVersion": 5}
+	merged := prMessage("merged", secondPR, "Pull request merged\n"+secondPR+"#pullrequestreview-987")
+	merged.Message.Meta = json.RawMessage(`{"state":"merged","changes":["merged"],"draft":false,"observationVersion":5}`)
 	accepted := acceptPRMessage(t, p, token, merged)
 	require.Equal(t, issuePR.ThreadKey, accepted.ThreadKey)
 	direct := waitRouteStatus(t, p, accepted.EventID, "sent")
@@ -149,12 +148,15 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.Equal(t, "routed_message", direct.Kind)
 	require.Equal(t, first.OwnerID, direct.Recipient.TopicID)
 	delivered := mcpWork[core.Message](t, primary, "get_message", map[string]string{"messageId": accepted.MessageID})
-	require.Equal(t, merged.Message.Text, delivered.Text)
-	require.Equal(t, map[string]any{"state": "merged", "changes": []any{"merged"}, "draft": false}, delivered.Meta)
+	require.Equal(t, merged.Message.Content, delivered.Content)
+	require.Empty(t, delivered.TriggerMeta)
+	sharedMessage := acceptPRMessage(t, p, otherSource, merged)
+	require.NotEqual(t, accepted.MessageID, sharedMessage.MessageID)
+	require.Equal(t, issuePR.ThreadKey, sharedMessage.ThreadKey)
+	require.Equal(t, first.OwnerID, waitRouteStatus(t, p, sharedMessage.EventID, "sent").Recipient.TopicID)
 	after := readPRThread(t, p, secondPR)
 	require.Equal(t, empty.CreatedAt, after.CreatedAt)
-	require.Equal(t, accepted.AcceptedAt, after.LastMessageAt)
-	merged.Message.ThreadRef.ID = secondPR
+	require.Equal(t, sharedMessage.AcceptedAt, after.LastMessageAt)
 	replay := accepted
 	replay.Duplicate = true
 	require.Equal(t, replay, acceptPRMessage(t, p, token, merged))
@@ -162,7 +164,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	duplicate := acceptPRMessage(t, p, token, merged)
 	require.True(t, duplicate.Duplicate)
 	require.Equal(t, accepted.MessageID, duplicate.MessageID)
-	merged.Message.ThreadRef.ID = firstPR
+	merged.Message.ThreadKey = firstPR
 	status, data = request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", token, merged)
 	errorCode(t, status, data, http.StatusConflict, "conflict")
 	require.Equal(t, current.Issue.Status, readRecord[core.Issue](t, p, "issues/"+current.Issue.ID).Status)
@@ -187,8 +189,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.Len(t, page(t, p, "pull-requests").Items, 3)
 	for _, raw := range []string{
 		"/change/42", "https://me:secret@internal.invalid/42", "http://:80/42",
-		"https://github.com/Example/Alpha/pull/42/files", firstPR + "#other-anchor",
-		firstPR + "?unknown=1", "https://short.example.invalid/x?change=%",
+		"https://short.example.invalid/x?change=%", firstPR + " ",
 	} {
 		mcpWorkError(t, primary, "update_topic", "invalid_argument", prUpdate("invalid", topicWork.Revision, raw))
 	}
@@ -196,18 +197,26 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	firstLink := page(t, p, topicPRQuery)
 	require.Len(t, firstLink.Items, 1)
 	require.NotEmpty(t, firstLink.NextCursor)
-	internal := mcpWork[core.Topic](t, primary, "update_topic",
-		prUpdate("internal-register", topicWork.Revision, internalPR)).PullRequests[2].PullRequest
+	withInternal := mcpWork[core.Topic](t, primary, "update_topic", prUpdate("internal-register", topicWork.Revision, internalPR))
+	internal := withInternal.PullRequests[2].PullRequest
 	require.Equal(t, internalPR, internal.CanonicalURL)
 	internalMessage := acceptPRMessage(t, p, token, prMessage("internal", internalPR, "Internal review"))
 	require.Equal(t, internal.ThreadKey, internalMessage.ThreadKey)
-	require.Equal(t, internalPR, readPRThread(t, p, internal.ThreadKey).Ref.ID)
+	require.Equal(t, internalPR, readPRThread(t, p, internal.ThreadKey).Key)
 	snapshot := page(t, p, topicPRQuery+"&cursor="+url.QueryEscape(firstLink.NextCursor))
 	require.Len(t, snapshot.Items, 1)
 	require.Empty(t, snapshot.NextCursor)
 	var savedParent core.PullRequest
 	require.NoError(t, json.Unmarshal(snapshot.Items[0], &savedParent))
 	require.Equal(t, parentPR, savedParent)
+
+	alias := mcpWork[core.Topic](t, primary, "update_topic", prUpdate("exact-pr-key", withInternal.Revision, firstPRAlias)).PullRequests[3].PullRequest
+	require.Equal(t, firstPRAlias, alias.CanonicalURL)
+	require.Equal(t, firstPRAlias, alias.ThreadKey)
+	literal := acceptPRMessage(t, p, token, prMessage("exact-key", firstPRAlias, "Fixture literal key"))
+	require.Equal(t, firstPRAlias, literal.ThreadKey)
+	require.Equal(t, firstPRAlias, readPRThread(t, p, firstPRAlias).Key)
+	require.Equal(t, first.OwnerID, waitRouteStatus(t, p, literal.EventID, "sent").Recipient.TopicID)
 
 	seed := submit(t, p, f, input("independent-topic"))
 	d := mcpWork[core.RouteRequest](t, router, "route_messages", newRoute("create-second-topic", []string{seed.MessageID}, f.dir))

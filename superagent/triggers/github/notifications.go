@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
 
 const (
@@ -122,13 +120,6 @@ func (n githubNotification) notice(repo string) (githubNotice, bool) {
 		return githubNotice{}, false
 	}
 	return githubNotice{ID: n.ID, Reason: n.Reason, UpdatedAt: n.UpdatedAt, Number: native, Pull: pull}, true
-}
-
-func (n githubNotice) thread(repo string) coreclient.ThreadRef {
-	if n.Pull {
-		return coreclient.ThreadRef{Source: githubPRThreadSource, ID: githubObjectURL(repo, "pull", n.Number)}
-	}
-	return coreclient.ThreadRef{Source: githubSource, ID: githubObjectURL(repo, "issues", n.Number)}
 }
 
 func (t *githubTrigger) pollNotifications(ctx context.Context) error {

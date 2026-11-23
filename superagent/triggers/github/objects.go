@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,8 +14,6 @@ import (
 
 	"github.com/shurcooL/githubv4"
 )
-
-const githubPRThreadSource = "pr:url"
 
 type githubIssue struct {
 	ID        githubDatabaseID `graphql:"fullDatabaseId" json:"fullDatabaseId"`
@@ -182,6 +181,10 @@ func githubObjectURL(repo, collection string, number int) string {
 	return fmt.Sprintf("https://github.com/%s/%s/%d", repo, collection, number)
 }
 
+func githubIssueThreadKey(issueURL string) string {
+	return githubSource + ":" + strings.ReplaceAll(url.PathEscape(issueURL), ":", "%3A")
+}
+
 func githubSortObservations(items []githubObservation) {
 	slices.SortFunc(items, func(a, b githubObservation) int {
 		if c := a.UpdatedAt.Compare(b.UpdatedAt); c != 0 {
@@ -234,14 +237,15 @@ func (o githubObservation) withNoticeContext(notice githubNotice) githubObservat
 
 func readGitHubNotifiedObject(ctx context.Context, api *githubAPI, repo string, notice githubNotice, stream *githubStreamState) (githubObservation, *githubPullRecord, error) {
 	previous := stream.Items[githubObjectKey]
-	thread := notice.thread(repo)
-	object := githubObservation{Key: githubObjectKey, URL: thread.ID, Thread: thread}
+	object := githubObservation{Key: githubObjectKey}
 	var record any
 	var pull *githubPullRecord
 	var base githubObjectRecord
 	var changes []string
 	var label, objectType, title string
 	if notice.Pull {
+		object.URL = githubObjectURL(repo, "pull", notice.Number)
+		object.ThreadKey = object.URL
 		var old githubPullRecord
 		if len(previous.Data) != 0 && json.Unmarshal(previous.Data, &old) != nil {
 			return object, nil, errors.New("invalid saved GitHub pull record")
@@ -255,6 +259,8 @@ func readGitHubNotifiedObject(ctx context.Context, api *githubAPI, repo string, 
 		changes = githubPullChanges(stream.EnabledAt, p.CreatedAt, old, current)
 		object.Body, object.UpdatedAt, title, label, objectType = p.Body, p.UpdatedAt, p.Title, "PR", "pull_request"
 	} else {
+		object.URL = githubObjectURL(repo, "issues", notice.Number)
+		object.ThreadKey = githubIssueThreadKey(object.URL)
 		var old githubObjectRecord
 		if len(previous.Data) != 0 && json.Unmarshal(previous.Data, &old) != nil {
 			return object, nil, errors.New("invalid saved GitHub issue record")
@@ -282,7 +288,7 @@ func readGitHubNotifiedObject(ctx context.Context, api *githubAPI, repo string, 
 		object.Meta["changes"] = changes
 		changeText = " " + strings.Join(changes, ", ")
 	}
-	object.Title = fmt.Sprintf("GitHub %s %s#%d%s\n%s\n%s", label, repo, notice.Number, changeText, title, object.URL)
+	object.Title = fmt.Sprintf("GitHub %s %s#%d%s\n%s", label, repo, notice.Number, changeText, title)
 	var err error
 	object.Data, err = json.Marshal(record)
 	return object, pull, err
