@@ -36,10 +36,14 @@ func parse(c runtime.Config) (options, error) {
 	if len(o.Args) > 0 {
 		return o, errors.New("claude SDK does not support additional process args; use an explicit launcher")
 	}
-	if configDir := o.Env["CLAUDE_CONFIG_DIR"]; configDir != "" && !filepath.IsAbs(configDir) {
-		return o, errors.New("explicit absolute Claude config directory required")
+	return o, validateConfigDir(o.Env["CLAUDE_CONFIG_DIR"])
+}
+
+func validateConfigDir(dir string) error {
+	if dir != "" && !filepath.IsAbs(dir) {
+		return runtime.InvalidArgument("explicit absolute Claude config directory required")
 	}
-	return o, nil
+	return nil
 }
 
 type Factory struct {
@@ -58,6 +62,12 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	o.Executable, err = o.ResolveExecutable("claude")
 	if err != nil {
 		return nil, err
+	}
+	if err := o.ResolveEnvironment(); err != nil {
+		return nil, err
+	}
+	if err := validateConfigDir(o.Env["CLAUDE_CONFIG_DIR"]); err != nil {
+		return nil, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	life, cancel := context.WithCancel(context.Background())
 	provider := agentclaude.New(agentclaude.Config{

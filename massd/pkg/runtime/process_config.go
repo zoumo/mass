@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/zoumo/agent-sdk-go/mcp"
 )
 
 // ProcessConfig fixes launch inputs without reading provider credentials or data.
@@ -18,6 +20,9 @@ type ProcessConfig struct {
 	Args       []string
 	EnvPolicy  string
 	Env        map[string]string
+
+	envEntries []mcp.NamedValue
+	envFrom    []mcp.ImportSource
 }
 
 func ParseProcessConfig(config Config) (ProcessConfig, error) {
@@ -54,20 +59,17 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 				return o, errors.New("args must be an array of strings")
 			}
 		case "env":
-			switch env := value.(type) {
-			case map[string]string:
-				maps.Copy(o.Env, env)
-			case map[string]any:
-				for k, v := range env {
-					s, ok := v.(string)
-					if !ok {
-						return o, errors.New("env values must be strings")
-					}
-					o.Env[k] = s
-				}
-			default:
-				return o, errors.New("env must be a string map")
+			entries, err := decodeProcessEnvList[mcp.NamedValue](key, value)
+			if err != nil {
+				return o, err
 			}
+			o.envEntries = entries
+		case "envFrom":
+			sources, err := decodeProcessEnvList[mcp.ImportSource](key, value)
+			if err != nil {
+				return o, err
+			}
+			o.envFrom = sources
 		default:
 			return o, fmt.Errorf("unknown process config %q", key)
 		}
@@ -81,14 +83,17 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 	if o.EnvPolicy != "inherit" && o.EnvPolicy != "replace" {
 		return o, errors.New("envPolicy must be inherit or replace")
 	}
-	for key, value := range o.Env {
-		if key == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, 0) {
-			return o, errors.New("invalid environment entry")
-		}
-	}
 	for _, arg := range o.Args {
 		if strings.ContainsRune(arg, 0) {
 			return o, errors.New("invalid process argument")
+		}
+	}
+	if err := o.validateEnvironment(); err != nil {
+		return o, err
+	}
+	for _, entry := range o.envEntries {
+		if entry.Value != nil {
+			o.Env[entry.Name] = *entry.Value
 		}
 	}
 	return o, nil

@@ -20,6 +20,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -280,7 +281,7 @@ func liveConfigHTTP(t *testing.T, kind string, allowShutdownError ...bool) (*ser
 			require.NoError(t, err)
 		}
 	})
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": liveConfigBinary, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": peer.listener.Addr().String(), "CLAUDE_CONFIG_DIR": configDir}}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": liveConfigBinary, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"CONFIG_PEER_ADDR": peer.listener.Addr().String(), "CLAUDE_CONFIG_DIR": configDir})}}})
 	require.NoError(t, err)
 	h, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))
 	require.NoError(t, err)

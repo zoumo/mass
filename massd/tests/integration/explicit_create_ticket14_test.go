@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -270,7 +271,7 @@ func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	configDir := t.TempDir()
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence, "EXPLICIT_CREATE": "1", "CLAUDE_CONFIG_DIR": configDir}}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"PEER_EVIDENCE": evidence, "EXPLICIT_CREATE": "1", "CLAUDE_CONFIG_DIR": configDir})}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
@@ -375,7 +376,7 @@ func TestTicket14UnrelatedResultsKeepCurrentWorkOpen(t *testing.T) {
 			evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
 			work, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
-			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence, "EXPLICIT_CREATE": "1"}}}})
+			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"PEER_EVIDENCE": evidence, "EXPLICIT_CREATE": "1"})}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)
@@ -532,7 +533,7 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 			svc, _, _ := setup(t, nil)
 			// Always release the authored peer before Service cleanup, including failure.
 			t.Cleanup(release)
-			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"EVIDENCE": dir}}}})
+			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"EVIDENCE": dir})}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)

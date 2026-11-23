@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -56,7 +57,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			c := newHTTPClient(t, server.URL, "")
 			evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
 			config := t.TempDir()
-			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config}}}})
+			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"PEER_EVIDENCE": evidence, "CLAUDE_CONFIG_DIR": config})}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)

@@ -64,7 +64,7 @@ func TestTicket16CodexDirectInputMetadataBoundaries(t *testing.T) {
 	for _, mode := range cases {
 		t.Run(mode, func(t *testing.T) {
 			evidence := filepath.Join(t.TempDir(), "peer.jsonl")
-			svc, cwd := ticket06ServiceWithPeer(t, bin, mode, map[string]any{"LOAD_EVIDENCE": evidence})
+			svc, cwd := ticket06ServiceWithPeer(t, bin, mode, map[string]string{"LOAD_EVIDENCE": evidence})
 			ref := resource.SessionRef{SessionID: "native-thread"}
 			_, err := svc.LoadSession(ctx(t), resource.SessionLoad{Metadata: resource.Metadata{Namespace: "one", Name: "rejected"}, RuntimeRef: "agent", Cwd: cwd, SessionID: ref.SessionID})
 			require.NoError(t, err)

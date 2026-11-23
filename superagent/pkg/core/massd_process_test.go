@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -270,7 +271,7 @@ func seedEmbeddedRuntime(t *testing.T, data, relay, addr string) {
 	require.NoError(t, c.CreateRuntime(t.Context(), resource.Runtime{
 		Metadata: resource.Metadata{Name: "agent"},
 		Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{
-			"executable": relay, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": addr},
+			"executable": relay, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"CONFIG_PEER_ADDR": addr}),
 		}},
 	}, nil))
 	require.NoError(t, c.Close())

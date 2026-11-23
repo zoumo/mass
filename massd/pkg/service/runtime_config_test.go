@@ -1,14 +1,17 @@
 package service_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store/file"
 )
@@ -134,3 +137,31 @@ func (s *RuntimeConfigSuite) TestSessionDefaultsAreValidatedOnRuntimeCreateAndUp
 }
 
 func TestRuntimeConfigSuite(t *testing.T) { suite.Run(t, new(RuntimeConfigSuite)) }
+
+func TestRuntimeCanStartAfterReplacingPersistedLegacyEnvironment(t *testing.T) {
+	st, err := file.Open(t.TempDir(), false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	_, err = st.CreateRuntime(resource.Runtime{
+		Metadata: resource.Metadata{Name: "agent"},
+		Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
+			"executable": "/agent", "env": map[string]any{"SETTING": "legacy"},
+		}},
+		Status: resource.RuntimeStatus{State: "stopped"},
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{}}))
+	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx)) })
+	_, err = svc.StartRuntime(ctx, "agent")
+	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
+	require.ErrorIs(t, err, runtime.ErrResourcesReleased)
+	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
+		"executable": "/agent", "env": []any{map[string]any{"name": "SETTING", "value": "updated"}},
+	}})
+	require.NoError(t, err)
+	started, err := svc.StartRuntime(ctx, "agent")
+	require.NoError(t, err)
+	require.Equal(t, "running", started.Status.State)
+}

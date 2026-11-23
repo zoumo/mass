@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -133,8 +134,8 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 				defer cancel()
 				assert.NoError(t, svc.Shutdown(cleanup))
 			})
-			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": scenario.mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
-			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}})
+			env := map[string]string{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": scenario.mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
+			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(env)}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)
@@ -304,8 +305,8 @@ func ticket20Setup(t *testing.T, kind, mode string) *ticket20Fixture {
 	key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(f.work, "-")
 	project := filepath.Join(config, "projects", key)
 	require.NoError(t, os.MkdirAll(project, 0o700))
-	env := map[string]any{"PEER_KIND": kind, "PEER_DIR": f.native, "WORK_DIR": f.work, "RESUME_INPUT_MODE": mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
-	f.runtimeResource = resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": ticket20Peer(t), "envPolicy": "replace", "env": env}}}
+	env := map[string]string{"PEER_KIND": kind, "PEER_DIR": f.native, "WORK_DIR": f.work, "RESUME_INPUT_MODE": mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
+	f.runtimeResource = resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": ticket20Peer(t), "envPolicy": "replace", "env": testpeer.RuntimeEnv(env)}}}
 	ticket20Open(t, f, true)
 	first := runtime.Input{Content: []events.ContentBlock{events.Text("original input")}}
 	created, err := f.svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: f.work}}, InitialInput: &first})

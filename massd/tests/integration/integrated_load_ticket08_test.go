@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -100,7 +101,7 @@ func ticket08Loaded(t *testing.T, kind, mode string) (*entrypointSuite, resource
 	s.Require().NoError(err)
 	evidence := filepath.Join(s.T().TempDir(), "peer.jsonl")
 	id := "native-thread"
-	env := map[string]any{"LOAD_CWD": cwd, "LOAD_EVIDENCE": evidence, "LOAD_PROVIDER": kind, "LOAD_MODE": mode}
+	env := map[string]string{"LOAD_CWD": cwd, "LOAD_EVIDENCE": evidence, "LOAD_PROVIDER": kind, "LOAD_MODE": mode}
 	if kind == "claude" {
 		id = claudeLoadID
 		config := t.TempDir()
@@ -117,7 +118,7 @@ func ticket08Loaded(t *testing.T, kind, mode string) (*entrypointSuite, resource
 		}
 		s.Require().NoError(f.Close())
 	}
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}}
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(env)}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	cmd := exec.CommandContext(ctx(s.T()), ctl, "--url", s.url, "-o", "json", "session", "load", "imported", "-n", "demo", "--runtime", "agent", "--cwd", cwd, "--session-id", id)

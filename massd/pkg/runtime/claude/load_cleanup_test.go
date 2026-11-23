@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 )
@@ -86,7 +87,7 @@ func TestClaudeLoadPreRelayFailureCleanup(t *testing.T) {
 			}
 			created, err := (Factory{RecoveryDir: recoveryDir}).New("agent", runtime.Config{
 				"executable": filepath.Join(cwd, "unused-synthetic-peer"), "envPolicy": "replace",
-				"env": map[string]any{"CLAUDE_CONFIG_DIR": config},
+				"env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": config}),
 			})
 			require.NoError(t, err)
 			driver := created.(*Driver)

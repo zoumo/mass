@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -516,7 +517,7 @@ func (s *failureSuite) TestResumeEarlyCapacityFailsExplicitlyAndReleases() {
 	s.Require().NoError(err, "%s", out)
 	s.svc = service.New(s.meta, s.st, s.reg)
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
-		"executable": bin, "scenario": path, "env": map[string]any{"CLAUDE_CONFIG_DIR": config},
+		"executable": bin, "scenario": path, "env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": config}),
 	}}})
 	s.Require().NoError(err)
 	_, err = s.svc.StartRuntime(ctx(s.T()), "agent")

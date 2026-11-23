@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -46,7 +47,7 @@ func injectDaemonWithShutdown(t *testing.T, kind, shutdownReason string, version
 	}
 	c := newHTTPClient(t, daemon.url, "")
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": liveConfigBinary, "envPolicy": "replace", "env": map[string]any{"CONFIG_PEER_ADDR": peer.listener.Addr().String(), "CLAUDE_CONFIG_DIR": t.TempDir()}}}}
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": liveConfigBinary, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"CONFIG_PEER_ADDR": peer.listener.Addr().String(), "CLAUDE_CONFIG_DIR": t.TempDir()})}}}
 	require.NoError(t, c.CreateRuntime(ctx(t), r, nil))
 	var created resource.Session
 	require.NoError(t, c.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "context"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}}, &created))

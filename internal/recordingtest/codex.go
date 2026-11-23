@@ -23,6 +23,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	agenttestify "github.com/zoumo/agent-sdk-testify"
 
+	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -431,14 +432,14 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 			_ = h.diagnostic.save()
 		}
 	}()
-	env := map[string]any{}
+	env := map[string]string{}
 	for key, value := range route.Env {
 		env[key] = value
 	}
 	for key, value := range c.runtimeEnvironment {
 		env[key] = value
 	}
-	require.NoError(t, api.CreateRuntime(h.ctx, resource.Runtime{Metadata: resource.Metadata{Name: "recording"}, Spec: resource.RuntimeSpec{Type: provider, Config: runtime.Config{"executable": executable, "envPolicy": "replace", "env": env}}}, &rt))
+	require.NoError(t, api.CreateRuntime(h.ctx, resource.Runtime{Metadata: resource.Metadata{Name: "recording"}, Spec: resource.RuntimeSpec{Type: provider, Config: runtime.Config{"executable": executable, "envPolicy": "replace", "env": testpeer.RuntimeEnv(env)}}}, &rt))
 	require.NoError(t, api.StartRuntime(h.ctx, "recording", &rt))
 	require.Equal(t, "running", rt.Status.State)
 	if h.diagnostic != nil {
