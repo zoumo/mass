@@ -218,13 +218,23 @@ func githubFixtureMessageText(t *testing.T, msg map[string]any) string {
 	t.Helper()
 	blocks, ok := msg["content"].([]any)
 	require.True(t, ok)
-	require.Len(t, blocks, 1)
+	require.NotEmpty(t, blocks)
 	block, ok := blocks[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "text", block["type"])
 	text, ok := block["text"].(string)
 	require.True(t, ok)
 	return text
+}
+
+func githubAssertMessageLinks(t *testing.T, msg map[string]any, uris ...string) {
+	t.Helper()
+	blocks, ok := msg["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, blocks, 1+len(uris))
+	for i, uri := range uris {
+		require.Equal(t, map[string]any{"type": "resource_link", "uri": uri, "name": "URL"}, blocks[i+1])
+	}
 }
 
 func githubMessage(t *testing.T, f *triggertest.CoreFixture, repo, observation, objectID string) map[string]any {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/superagent/internal/triggercontent"
 	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
@@ -65,11 +66,15 @@ func (o githubObservation) submission(c githubConfig, repo githubRepository, str
 	meta["repository"] = repo.Repository
 	meta["observation"] = o.Kind
 	meta["observationVersion"] = version
-	title := o.Title
-	if strings.HasPrefix(o.ThreadKey, "https://") && o.ThreadKey != o.URL {
-		title += "\nPR: " + o.ThreadKey
+	content := []events.ContentBlock{triggercontent.SourceText(githubMessageText(o.Title, o.Body, repo.Prompt), o.Actor, o.At)}
+	prURL := ""
+	if strings.HasPrefix(o.ThreadKey, "https://") {
+		prURL = o.ThreadKey
+		content = append(content, triggercontent.WebLink(prURL))
 	}
-	content := triggercontent.SourceText(githubMessageText(title, o.Body, repo.Prompt), o.Actor, o.URL, o.At)
+	if o.URL != "" && o.URL != prURL {
+		content = append(content, triggercontent.WebLink(o.URL))
+	}
 	diagnostics, err := githubDiagnostics(meta, &o.Human, o.SourceEventID, c.InstanceID)
 	if err != nil {
 		return coreclient.TriggerSubmission{}, err
