@@ -38,8 +38,11 @@ func businessEventCurrent(ctx context.Context, tx *sql.Tx, d internalEvent) (boo
 	if d.Recipient.Kind == "issue" {
 		return workEventCurrent(ctx, tx, d)
 	}
-	if d.Recipient.Kind != "topic" || d.Kind == routedMessageKind || d.Kind == contextSupplement {
+	if d.Recipient.Kind != "topic" || d.Kind == contextSupplement {
 		return true, nil
+	}
+	if d.Kind == routedMessageKind {
+		return scheduledTaskDeliveryCurrent(ctx, tx, d)
 	}
 	var topic Topic
 	if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, d.Recipient.TopicID); err != nil {
@@ -156,7 +159,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 		}
 		var contents []eventMessageContent
 		var contentSize int
-		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.followup) != 0 || len(view.routing) != 0 || len(view.quotedReply) != 0 || len(view.messageContent) != 0) {
+		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.routing) != 0 || len(view.quotedReply) != 0 || len(view.messageContent) != 0) {
 			var enriched json.RawMessage
 			enriched, err = view.MarshalAgentPromptJSON()
 			for _, content := range view.messageContent {
@@ -226,16 +229,16 @@ func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sq
 	}
 	columns := `CASE WHEN length(CAST(body->'$.content' AS BLOB))<=? THEN body->'$.content' END, thread_id`
 	params := []any{inlineMessageBytes}
-	var content, routing, followup, quote []byte
+	var content, routing, quote []byte
 	targets := []any{&content, &d.threadID}
 	if b.Role == "router" {
 		columns += ",json_object('round'," + routingRound + ",'state'," + routingState + ")"
 		scope += " AND " + routingState + "='pending'"
 		targets = append(targets, &routing)
 	} else {
-		columns += "," + messageFollowupProjection + "," + quotedReplyForTopic
-		params = append(params, b.OwnerID, b.OwnerID)
-		targets = append(targets, &followup, &quote)
+		columns += "," + quotedReplyForTopic
+		params = append(params, b.OwnerID)
+		targets = append(targets, &quote)
 	}
 	id := d.Refs[0].ID
 	params = append(params, id)
@@ -248,7 +251,7 @@ func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sq
 	if err != nil {
 		return err
 	}
-	d.routing, d.followup = routing, followup
+	d.routing = routing
 	if len(quote) != 0 {
 		if _, err := d.attachQuotedReply(ctx, tx, b, quote); err != nil {
 			return err
@@ -486,8 +489,14 @@ func (s *Store) finishInternalBatch(ctx context.Context, batch internalEventBatc
 	}
 	if status != "dispatching" {
 		for _, item := range batch.items {
-			if _, err := tx.ExecContext(ctx, `UPDATE internal_events SET status=?,sent_at=?
- WHERE event_id=? AND status='dispatching'`, status, at, item.ID); err != nil {
+			// The Topic may end while MASS is accepting an owned task's input.
+			// Keep the acceptance receipt even if termination superseded the event.
+			if _, err := tx.ExecContext(ctx, `UPDATE internal_events SET status=?1,sent_at=?2
+ WHERE event_id=?3 AND (status='dispatching' OR (
+ status='superseded' AND ?1='sent' AND kind='routed_message' AND EXISTS (
+ SELECT 1 FROM trigger_messages m JOIN scheduled_tasks t ON t.id=m.scheduled_task_id
+ WHERE m.id=`+routingMessageID+` AND t.owner_type='topic' AND m.body->>'$.eventId'=internal_events.event_id
+ )))`, status, at, item.ID); err != nil {
 				return err
 			}
 		}

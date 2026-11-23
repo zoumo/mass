@@ -82,12 +82,12 @@ func readScheduledTask(ctx context.Context, tx *sql.Tx, filter string, args ...a
 	return task, nil
 }
 
-func (t scheduledTaskRecord) save(ctx context.Context, tx *sql.Tx) error {
+func (t *scheduledTaskRecord) save(ctx context.Context, tx *sql.Tx) error {
 	return putJSON(ctx, tx, "UPDATE scheduled_tasks SET schedule_anchor=?2,body=?3 WHERE id=?1",
 		t.ScheduledTask, t.ID, t.anchor.Format(utcTimestamp))
 }
 
-func (t scheduledTaskRecord) saveRevision(ctx context.Context, tx *sql.Tx) error {
+func (t *scheduledTaskRecord) saveRevision(ctx context.Context, tx *sql.Tx) error {
 	if err := t.save(ctx, tx); err != nil {
 		return err
 	}
@@ -256,7 +256,7 @@ func (t *scheduledTaskRecord) end(at time.Time) {
 	t.Status, t.NextRunAt, t.UpdatedAt = scheduledTaskCompleted, "", at.UTC().Format(utcTimestamp)
 }
 
-func (t scheduledTaskRecord) checkOwner(ctx context.Context, tx *sql.Tx) error {
+func (t *scheduledTaskRecord) checkOwner(ctx context.Context, tx *sql.Tx) error {
 	if t.Owner == nil {
 		return nil
 	}

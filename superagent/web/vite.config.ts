@@ -3,14 +3,16 @@ import tailwindcss from '@tailwindcss/vite'
 
 const backendPaths = '^/(?:v1/(?:core/|telemetry/|mcp(?:\\?|$))|(?:status|livez|readyz)(?:\\?|$))'
 const backendPath = new RegExp(backendPaths)
-const operatorPath = /^\/v1\/core\/session-bindings\/.*\/(?:runtime-evidence|recoveries)$/
+const operatorPath = /^\/v1\/core\/(?:session-bindings\/.*\/(?:runtime-evidence|recoveries)$|scheduled-tasks(?:\/|$))/
 
 function sameOriginProxy(): Plugin {
   return {
     name: 'superagent-proxy-boundary',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        const rawPath = (req.url || '/').split('?', 1)[0]
+        const rawTarget = req.url || '/'
+        const queryStart = rawTarget.indexOf('?')
+        const rawPath = queryStart === -1 ? rawTarget : rawTarget.slice(0, queryStart)
         let path: string
         try {
           path = decodeURIComponent(rawPath)
@@ -25,7 +27,9 @@ function sameOriginProxy(): Plugin {
           res.writeHead(403).end()
           return
         }
-        if (operatorPath.test(path)) {
+        const q = new URLSearchParams(queryStart === -1 ? '' : rawTarget.slice(queryStart + 1))
+        const operatorFilter = path === '/v1/core/trigger-messages' && (q.has('source') || q.has('scheduledTaskId'))
+        if (operatorPath.test(path) || operatorFilter) {
           res.writeHead(404).end()
           return
         }

@@ -36,8 +36,18 @@
 			import {args[2]} {args[1]}
 		}
 
-		@operator path /v1/core/session-bindings/*/runtime-evidence /v1/core/session-bindings/*/recoveries
+		@operator path /v1/core/session-bindings/*/runtime-evidence /v1/core/session-bindings/*/recoveries /v1/core/scheduled-tasks /v1/core/scheduled-tasks/*
+		@operator_source_filter {
+			path /v1/core/trigger-messages
+			query source=*
+		}
+		@operator_task_filter {
+			path /v1/core/trigger-messages
+			query scheduledTaskId=*
+		}
 		respond @operator 404
+		respond @operator_source_filter 404
+		respond @operator_task_filter 404
 		@core path /v1/core/* /v1/telemetry/* /v1/mcp /livez /readyz /status
 		@origin header Origin *
 		handle @core {

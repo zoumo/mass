@@ -23,7 +23,8 @@ type dueScheduledTask struct {
 
 func dueScheduledTasks(ctx context.Context, db interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, cutoff time.Time) ([]dueScheduledTask, error) {
+}, cutoff time.Time,
+) ([]dueScheduledTask, error) {
 	rows, err := db.QueryContext(ctx, `SELECT id,body->>'$.revision',next_run_at FROM scheduled_tasks
  WHERE status='active' AND deleted_at IS NULL AND next_run_at<=? ORDER BY next_run_at,seq`, cutoff.UTC().Format(utcTimestamp))
 	if err != nil {
@@ -141,10 +142,14 @@ func (t *scheduledTaskRecord) advance(ctx context.Context, tx *sql.Tx, after, at
 		t.end(at)
 	} else {
 		next, err := t.Schedule.next(t.anchor, after)
-		if err != nil {
+		switch {
+		case errors.Is(err, errScheduleExhausted):
+			t.end(at)
+		case err != nil:
 			return err
+		default:
+			t.NextRunAt, t.UpdatedAt = next.UTC().Format(utcTimestamp), at.UTC().Format(utcTimestamp)
 		}
-		t.NextRunAt, t.UpdatedAt = next.UTC().Format(utcTimestamp), at.UTC().Format(utcTimestamp)
 	}
 	return t.save(ctx, tx)
 }

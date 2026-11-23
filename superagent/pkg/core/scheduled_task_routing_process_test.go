@@ -37,10 +37,10 @@ func TestScheduledTaskSystemRoutingFollowsActiveSubscriptions(t *testing.T) {
 	require.Nil(t, task.Owner)
 	trigger := func(operationID string) core.Receipt {
 		t.Helper()
-		status, raw := request(t, http.MethodPost, p.endpoint, tasks+"/"+task.ID+"/trigger", operator, map[string]string{"operationId": operationID})
-		require.Equal(t, http.StatusOK, status, string(raw))
+		triggerStatus, triggerBody := request(t, http.MethodPost, p.endpoint, tasks+"/"+task.ID+"/trigger", operator, map[string]string{"operationId": operationID})
+		require.Equal(t, http.StatusOK, triggerStatus, string(triggerBody))
 		var receipt core.Receipt
-		require.NoError(t, json.Unmarshal(raw, &receipt))
+		require.NoError(t, json.Unmarshal(triggerBody, &receipt))
 		return receipt
 	}
 

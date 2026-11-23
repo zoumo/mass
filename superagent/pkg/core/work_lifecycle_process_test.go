@@ -394,7 +394,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	decodeInternalBatch(t, activityInput, activity.EventID)
 	activityInput.accept()
 	waitRouteStatus(t, p, activity.EventID, "sent")
-	sleepingTimer := mcpWork[core.Timer](t, topic, "schedule_followup", timerInput("before-topic-cancel", timerFuture))
+	sleepingTask := mcpWork[core.ScheduledTask](t, topic, "create_scheduled_task", scheduledTaskInput("before-topic-cancel", scheduledTaskLater))
 	topicCancel := lifecycle("cancel-topic", 1)
 	oldTopic := mcpWork[core.Topic](t, topic, "topic_cancel", topicCancel)
 	mcpWorkError(t, topic, "topic_cancel", "stale_binding", topicCancel)
@@ -446,12 +446,12 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	reopenedTopic := mcpWork[core.Topic](t, newOwner, "topic_reopen", lifecycle("reopen-topic", oldTopic.Revision))
 	require.Equal(t, "active", reopenedTopic.Status)
 	require.Equal(t, oldTopic.LifecycleGeneration+1, reopenedTopic.LifecycleGeneration)
-	timers := mcpWork[struct{ Followups []timerRecord }](t, newOwner, "get_topic", map[string][]string{"include": {"followups"}}).Followups
-	require.Len(t, timers, 1)
-	timerAfterReopen := timers[0]
-	require.Equal(t, sleepingTimer.ID, timerAfterReopen.ID)
-	require.Equal(t, "invalidated", timerAfterReopen.Status)
-	require.Empty(t, timerAfterReopen.TriggerMessageID)
+	tasks := listTopicScheduledTasks(t, newOwner)
+	require.Len(t, tasks, 1)
+	taskAfterReopen := tasks[0]
+	require.Equal(t, sleepingTask.ID, taskAfterReopen.ID)
+	require.Equal(t, "completed", taskAfterReopen.Status)
+	require.Empty(t, taskAfterReopen.NextRunAt)
 	require.Equal(t, "canceled", readRecord[core.Issue](t, p, "issues/"+issue.ID).Status)
 	require.Len(t, issueBindings(t, p), 2)
 	mcpWorkError(t, topic, "create_issue", "stale_binding", issueInput(f.dir, "old-delayed-command"))
