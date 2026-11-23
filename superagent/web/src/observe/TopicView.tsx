@@ -57,7 +57,7 @@ function MessageFacts({ row }: { row: Event }) {
       <Fact label="登记时间">{row.at}</Fact>
       {internalEvent.data?.sentAt && <Fact label={row.kind === 'route_request' ? 'Router Session 受理' : 'Topic Session 受理'}>{internalEvent.data.sentAt}</Fact>}
       {typeof reason === 'string' && <Fact label={row.kind === 'route_request' ? '退回原因' : '路由依据'}>{reason}</Fact>}
-      {message.data && <><Fact label="来源">{sourceLabel(message.data.source)}{message.data.actor && ' · ' + message.data.actor}</Fact>
+      {message.data && <><Fact label="来源">{sourceLabel(message.data.source)}</Fact>
         <Fact label="消息原文"><pre>{messageBody(message.data) || '未记录正文'}</pre></Fact></>}
     </dl>
     {(internalEvent.loading && !internalEvent.data || row.messageId && message.loading && !message.data) && <p>正在读取详情…</p>}

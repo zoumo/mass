@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-// This Thread namespace cannot be used as a configured collector source.
 func parsePullRequestURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Opaque != "" || u.Hostname() == "" || u.User != nil ||

@@ -11,7 +11,6 @@ test('shows structured Message body and attachment types while retaining Thread 
  await page.route(`**/v1/observer/messages/${id}*`, async route => {
   const response = await route.fetch()
   const record = await response.json()
-  delete record.text
   await route.fulfill({ response, json: { ...record, content } })
  })
  const url = `/observer/?perspective=message&id=${id}`
@@ -114,13 +113,12 @@ test('offline snapshot stays visible and reconnect gets fresh filtered pages and
  await context.setOffline(true)
  await expect(page.getByRole('alert')).toContainText('快照已过时')
  await expect(page.getByTestId('message-body')).toHaveText('Browser row 54')
- const source = { source: first.source, accountId: first.accountId, actor: first.actor, addressed: first.addressed }
- const submit = async (id: string, threadRef: typeof first.threadRef) => request.post('/v1/channel/messages', {
+ const submit = async (id: string, threadKey: string) => request.post('/v1/channel/messages', {
   headers: { Authorization: `Bearer ${'a'.repeat(48)}` },
-  data: { operationId: id, message: { ...source, threadRef, sourceMessageId: id, text: id } },
+  data: { operationId: id, message: { threadKey, sourceMessageId: id, content: [{ type: 'text', text: id }] } },
  })
- expect((await submit('Committed while offline', first.threadRef)).ok()).toBeTruthy()
- expect((await submit('Unrelated Thread', { ...first.threadRef, id: 'unrelated-thread' })).ok()).toBeTruthy()
+ expect((await submit('Committed while offline', first.threadKey)).ok()).toBeTruthy()
+ expect((await submit('Unrelated Thread', 'dws:unrelated-thread')).ok()).toBeTruthy()
  await context.setOffline(false)
  await expect(page.getByRole('alert')).toHaveCount(0)
  await expect(page.getByTestId('message-body')).toHaveText('Browser row 54')

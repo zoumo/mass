@@ -211,7 +211,7 @@ func projection(kind string, b *SessionBinding) string {
  json_object('reason',CASE WHEN body->>'$.action'='returned' THEN body->>'$.reason' END)) AS relation
  FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))`
 		}
-		base := "json_set(json_remove(body,'$.replyTarget','$.inReplyToOutboxId','$.legacyEchoStatus'),'$.routing',json(CASE WHEN " + routingState + " IS NOT NULL THEN json_object('round'," + routingRound + ",'state'," + routingState + ") END))"
+		base := "json_set(json_remove(body,'$.replyTarget','$.inReplyToOutboxId'),'$.routing',json(CASE WHEN " + routingState + " IS NOT NULL THEN json_object('round'," + routingRound + ",'state'," + routingState + ") END))"
 		base = "json_set(" + base + ",'$.relations',json((SELECT json_group_array(json(body)) FROM (SELECT body FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))"
 		return "json_patch(" + base + ",json_object('quotedReply',json(" + recordedReplyProjection + ")))"
 	case "topics":

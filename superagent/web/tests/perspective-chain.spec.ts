@@ -113,7 +113,7 @@ for (const [size, width, height] of [
     await expect(material).toHaveAttribute('href', new RegExp(msg.id))
     await material.click()
     await page.getByText('查看全文', { exact: true }).click()
-    await expect(page.getByTestId('message-body')).toHaveText(msg.text)
+    await expect(page.getByTestId('message-body')).toHaveText(msg.content[0].text)
     expect(new URL(page.url()).searchParams.get('id')).toBe(msg.id)
     expect([...methods]).toEqual(['GET'])
     expect(errors).toEqual([])

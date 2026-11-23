@@ -17,13 +17,10 @@ import (
 )
 
 type inputBatch struct {
-	Events                     []json.RawMessage `json:"events"`
-	TriggerMessageInstructions string            `json:"triggerMessageInstructions,omitempty"`
+	Events []json.RawMessage `json:"events"`
 }
 
 const inlineMessageBytes = 2 * 1024
-
-const triggerMessageInstructions = "For trigger Messages, read each event's messageContent entries in order. Each entry gives the messageId and blockCount for the content blocks after this header. Use get_message to read the full content array for any referenced Message. Use the final PR Thread key when registering pull requests."
 
 type internalEventBatch struct {
 	boundIssueRevision int
@@ -92,25 +89,9 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 	var boundTopic *Topic
 	var boundIssue *Issue
 	batch.method = "inject"
-	envelope := inputBatch{Events: make([]json.RawMessage, 0, len(queue))}
-	if len(queue) != 0 {
-		// A resumed Session must retain the native spec it was created with.
-		// Supply the new input instructions along with events for older Sessions.
-		var legacyPrompt bool
-		if err := tx.QueryRowContext(ctx, `SELECT instr(coalesce(spec->>'$.systemPrompt',''),'messageContent')=0
- FROM session_bindings WHERE id=?`, b.ID).Scan(&legacyPrompt); err != nil {
-			return batch, err
-		}
-		if legacyPrompt {
-			envelope.TriggerMessageInstructions = triggerMessageInstructions
-		}
-	}
+	var envelope inputBatch
 	var blocks []events.ContentBlock
-	emptyHeader, err := json.Marshal(envelope)
-	if err != nil {
-		return batch, err
-	}
-	batchSize := len(emptyHeader)
+	batchSize := len(`{"events":[]}`)
 	at, full := time.Now(), false
 	for _, q := range queue {
 		current, err := businessEventCurrent(ctx, tx, q.item)

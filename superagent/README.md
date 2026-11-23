@@ -38,55 +38,18 @@ reaches Core. See the [Observer Host and Origin rules](API.md#read-only-observat
 
 ### Reuse an existing Core data directory
 
-Upgrade Core, DWS, GitHub, and standalone AntCode Triggers together. Core
-upgrades schema 24 or 25 to schema 26 in one transaction. The schema 24
-upgrade also drops retired MCP tool-call history and mutation receipts.
-Use an empty `dataDir` for schema 23 or earlier or legacy JSON state.
-Use the original version to read those retained formats. If two Core
-installations share `massd`, give them distinct `sessions.namespace` values.
+Core uses schema 26 and rejects older schemas before opening the database.
+Use a new, empty `dataDir` when switching from an earlier Core release. Keep
+its old data directory and binary to access the prior state. Reuse an existing
+schema 26 directory on restart. If two Core installations share `massd`, give
+them distinct `sessions.namespace` values.
 
-1. Pause input and drain the old DWS sender. Use the old binary and Observer
-   to resolve held or unknown echoes and inspect incomplete send evidence.
-   A pending task can carry forward with its task ID. Settle it first if an
-   accepted legacy quote in the same Thread still needs that task's result.
-   Check pending Outbox rows without a task for a send interrupted before
-   its Core receipt was written.
-2. Stop Core and all Trigger processes. Back up their stopped state, including
-   any DWS send evidence and feedback state, and retain the old binaries.
-   Rehearse the upgrade against copies before switching persistent state.
-3. Keep the `source` and `accountId` of each Trigger and configure its allowed
-   `threadKeys` or `threadKeyPrefixes`. Preserve the Sessions configuration,
-   MASS state, Core MCP endpoint, and role credential paths.
-4. Start the new Core with channel writers stopped. Compare Message IDs,
-   Thread keys, subscriptions, SessionBindings, events, Issue materials, and
-   Outbox state with the pre-upgrade records. Core retains each existing
-   Session's native spec and includes the new input instructions in event
-   headers when its saved instructions predate `messageContent`.
-5. If Core writes `migration/v25-dws-sent-evidence.ndjson` in its `dataDir`,
-   import the rows for each DWS source and account while that adapter is
-   stopped. Filter the export by `source` and `accountId` for separate
-   adapters. Use the Trigger's active database path for the import.
+Configure each Trigger to use the new Core and set its allowed `threadKeys`
+or `threadKeyPrefixes` in Core's source configuration.
 
-   ```sh
-   bin/superagent triggers dws import-sent-evidence --config /absolute/run/dws.yaml \
-     < /absolute/core-data/migration/v25-dws-sent-evidence.ndjson
-   bin/superagent triggers dws inspect-evidence --config /absolute/run/dws.yaml
-   ```
-
-6. Resume the new Triggers and verify a committed receipt. Check that an
-   unsettled DWS task is queried by its recorded ID and that a fresh DWS
-   quote links to the expected historical Outbox item.
-
-A preflight error rolls back the migration transaction. Fix the
-reported Message or Outbox under the prior release and repeat the rehearsal.
-An interrupted upgrade may leave a provisional export. Import only after Core
-starts successfully on schema 26. Before resuming writers, restore the full
-backup set if the rehearsal fails. After a new Message or external send,
-retain the new state and repair forward to preserve those facts.
-
-`storageMaxPages` limits the main SQLite database, including the upgrade.
-Leave room for WAL and other filesystem overhead. When the budget runs out,
-ingestion returns `unavailable` without an acceptance receipt.
+`storageMaxPages` limits the main SQLite database. Leave room for WAL and
+other filesystem overhead. When the budget runs out, ingestion returns
+`unavailable` without an acceptance receipt.
 
 ## Running MASS inside Core
 

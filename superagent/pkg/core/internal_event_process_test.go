@@ -95,18 +95,10 @@ func decodeInternalBatch(t *testing.T, call nativeSubmitCall, ids ...string) []i
 	}
 	require.LessOrEqual(t, len(call.text), 64*1024)
 	require.NoError(t, json.Unmarshal([]byte(call.text), &batch))
-	var wire map[string]json.RawMessage
+	var wire map[string][]map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal([]byte(call.text), &wire))
-	if raw := wire["triggerMessageInstructions"]; len(raw) != 0 {
-		var instructions string
-		require.NoError(t, json.Unmarshal(raw, &instructions))
-		require.Contains(t, instructions, "messageContent")
-		delete(wire, "triggerMessageInstructions")
-	}
 	require.Len(t, wire, 1)
-	var events []map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(wire["events"], &events))
-	for _, event := range events {
+	for _, event := range wire["events"] {
 		require.NotContains(t, event, "sender")
 		require.NotContains(t, event, "recipient")
 	}

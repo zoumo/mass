@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
-import { ArrowDownRight, ArrowRight, CheckCheck, CircuitBoard, CornerDownRight, FileCheck2, GitBranch, Inbox, Layers, Mail, Route, X } from 'lucide-react'
+import { ArrowDownRight, ArrowRight, CheckCheck, CircuitBoard, CornerDownRight, FileCheck2, GitBranch, Layers, Mail, Route, X } from 'lucide-react'
 import { eventStatusLabel, messageBody, sourceLabel, stateLabel, type WorkbenchRow } from '../workbench'
 import { usePages, useRecord, viewHref, type MessageRecord } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
@@ -13,7 +13,7 @@ type InternalEvent = {
   body?: string, refs?: { kind: string, id: string }[]
 }
 type Issue = WorkbenchRow & { id: string, topicId: string, topicTitle?: string }
-type Reply = { traceAssociations?: TraceAssociation[]; createdAt?: string; id: string, status: string, preview: string, receipt?: { messageId?: string, conversationId?: string, taskId?: string, errorCode?: string } }
+type Reply = { traceAssociations?: TraceAssociation[]; createdAt?: string; id: string, status: string, preview: string, receipt?: { taskId?: string, errorCode?: string } }
 type Selection = { kind: 'channel' | 'core' | 'router' | 'topic' | 'issue' | 'event', id: string }
 type Toggle = (event: MouseEvent<HTMLButtonElement>, kind: Selection['kind'], id?: string) => void
 
@@ -119,7 +119,6 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
       {result && <span className={'path-result state-' + result}>{result === 'pending' ? '待决策' : result === 'ignored' ? '已忽略 · 原因未记录' : stateLabel(result)}</span>}</div>
     <div className="path-canvas">
       {batches[0]?.sender !== inletSender && inlet}
-      {message.echo && <div className="path-echo"><Inbox size={15}/>回声 · {stateLabel(message.echo.status)}{message.echo.match && <a href={'/observer/?view=outbox&id=' + encodeURIComponent(message.echo.match.outboxId)}>查看匹配回执</a>}</div>}
       {batches.map((batch, index) => <div className="path-batch" key={batch.targets[0].event_id}>
         <div className="path-sender">{index === 0 && batch.sender === inletSender ? inlet :
           batch.sender === 'router' ? node('router', 'Router') : node('core', 'Core')}</div>
@@ -137,7 +136,7 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
       {rows.filter(row => row.returnedEventId && !targets.some(target => target.event_id === row.returnedEventId)).map(row =>
         <div className="path-leg" key={row.event_id}>{row.sender.topic_id && node('topic', row.topicTitle || row.sender.topic_id, row.sender.topic_id)}{returned(row)}</div>)}
       <PageStatus page={internalEvents} name="路由事件"/>
-      {internalEvents.data?.length === 0 && !internalEvents.next && !internalEvents.error && !message.echo && <p className="path-muted">暂无路由事件记录</p>}
+      {internalEvents.data?.length === 0 && !internalEvents.next && !internalEvents.error && <p className="path-muted">暂无路由事件记录</p>}
       {internalEvents.data && !internalEvents.next && !internalEvents.error && materialOnly.length > 0 && <section className="path-materials"><h3>材料引用 · 缺少对应 Topic 事件记录</h3>
         {materialOnly.map(([id, items]) => <div key={id}>{node('topic', items[0].topicTitle || id, id)}{references(items)}</div>)}</section>}
       <PageStatus page={issues} name="Issue 引用"/>
@@ -150,7 +149,7 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
         <button onClick={close} aria-label="收起路径详情"><X size={17}/></button></div>
       {selected.kind === 'event' && <InternalEventDetail id={selected.id}/>}
       {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadKey], ['Trace', <TraceLinks associations={message.traceAssociations} at={message.receivedAt}/>]]}/>}
-      {selected.kind === 'channel' && <Fields fields={[['渠道', source], ['发送者', message.actor], ['渠道消息 ID', message.sourceMessageId], ['原文', messageBody(message)]]}/>}
+      {selected.kind === 'channel' && <Fields fields={[['渠道', source], ['渠道消息 ID', message.sourceMessageId], ['原文', messageBody(message)]]}/>}
       {selected.kind === 'router' && <><Fields fields={[['本消息路由状态', result === 'pending' ? '待决策' : result === 'ignored' ? '已忽略 · 原因未记录' : stateLabel(result)], ['当前轮次', message.routing?.round]]}/>
         <a className="path-link" href={viewHref('router', message.id)}>查看 Router<ArrowRight size={14}/></a></>}
       {(selected.kind === 'topic' || selected.kind === 'issue') && <ObjectDetail kind={selected.kind} id={selected.id} messageID={message.id} references={issuesByTopic.get(selected.id)} incomplete={Boolean(issues.next || !issues.data || issues.error)}/>}

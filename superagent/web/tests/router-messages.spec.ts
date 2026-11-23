@@ -29,8 +29,8 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
   const insert = await request.post('/v1/channel/messages', {
     headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
     data: { operationId: 'router-browser-insert', message: {
-      source: 'dws', accountId: 'account-1', sourceMessageId: 'router-browser-insert', actor: '值班人员', text: '翻页期间收到的新消息',
-      addressed: 'direct', threadRef: { source: 'dws', id: 'observer-router-new-message' },
+      sourceMessageId: 'router-browser-insert', threadKey: 'dws:observer-router-new-message',
+      content: [{ type: 'text', text: '翻页期间收到的新消息' }],
     } },
   })
   expect(insert.ok()).toBeTruthy()

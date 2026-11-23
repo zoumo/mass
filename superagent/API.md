@@ -10,7 +10,7 @@ configuration. MASS Runtime and Session operations follow the
 One Core process owns `dataDir` at a time. A successful start returns
 `status: ready`, `endpoint`, and `observerEndpoint`. Accepted records survive
 process exit. For a lost intake response, use the Message's original identity.
-See [data directory upgrades](README.md#reuse-an-existing-core-data-directory).
+See [data directory requirements](README.md#reuse-an-existing-core-data-directory).
 
 ## Submit Message
 
@@ -66,8 +66,7 @@ Success HTTP 200:
 
 Message, Thread update and the initial internal event commit together.
 The receipt identifies the accepted Message and Thread. Its `eventId` is the initial event ID. Read it through
-`/v1/observer/routing-events/{event_id}`. Historical Messages keep their
-original receipt fields and may have no initial `eventId`.
+`/v1/observer/routing-events/{event_id}`.
 
 Zero or multiple Thread subscriptions enqueue a `route_request` to Router.
 Exactly one queues a `routed_message` to that Topic. Both reference the
@@ -87,7 +86,7 @@ request and does not participate in Message deduplication.
 source credential and returns the stored acceptance receipt with `duplicate=false`.
 The lookup scopes the native ID to the authenticated source and account and
 returns `not_found` when the scoped Message is absent. It returns no Message
-body. Migrated DWS Messages retain their historical `echoStatus` when present.
+body.
 
 ## Errors and uncertain responses
 
@@ -579,7 +578,7 @@ An event's `messageContent` lists the `messageId` and `blockCount` for each
 attached Message. The blocks after the header follow event order and then
 `messageContent` order. Each block retains its Prompt content type. A Message
 that exceeds the budget keeps its reference. `get_message` returns its full
-`content` array. Legacy records can still use inline `content.data.text`.
+`content` array.
 
 For a Router `route_request`, use the Message ID from `refs`. Pass the current
 round in `route_messages.rounds`. After a stale round error or when the event
@@ -858,7 +857,4 @@ the original Message, any blocker reference and available channel receipt.
 The DWS adapter records native send evidence and matches native echoes and
 quotes before admission. Inspect and reconcile that evidence with the
 [DWS Trigger commands](triggers/README.md#recover-dws-intake-and-replies). Core records
-the adapter's `inReplyToOutboxId` for an admitted quoted answer. Historical
-Messages may retain a read-only `echo` diagnostic with the linked Outbox item
-and routing event. The [upgrade procedure](README.md#reuse-an-existing-core-data-directory)
-explains how to transfer historical send evidence to the adapter.
+the adapter's `inReplyToOutboxId` for an admitted quoted answer.

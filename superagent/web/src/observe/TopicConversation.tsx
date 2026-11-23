@@ -302,7 +302,7 @@ function IngressDetails({ event }: { event: IngressEvent }) {
         <Fact label="登记时间"><time dateTime={event.at}>{formatTime(event.at)}</time></Fact>
         <Fact label="发送状态">{eventStatusLabel(internalEvent.data?.status || event.status)}</Fact>
         {internalEvent.data?.body && <Fact label="路由依据">{internalEvent.data.body}</Fact>}
-        {message.data && <Fact label="来源">{sourceLabel(message.data.source)}{message.data.actor && ` · ${message.data.actor}`}</Fact>}
+        {message.data && <Fact label="来源">{sourceLabel(message.data.source)}</Fact>}
         {event.threadKey && <Fact label="来源 Thread"><ThreadLink threadKey={event.threadKey}/></Fact>}
       </dl>
       <div className="conversation-links">

@@ -71,7 +71,7 @@ func observerListProjection(kind, full string) string {
 	switch kind {
 	case "messages":
 		return `json_set(json_remove(body,'$.content','$._meta',
- '$.replyTarget','$.inReplyToOutboxId','$.legacyEchoStatus'),
+ '$.replyTarget','$.inReplyToOutboxId'),
  '$.text', substr(` + observerMessagePreview + `,1,240))`
 	case "outbox":
 		return `json_set(json_remove(` + full + `,'$.content'), '$.preview',

@@ -47,58 +47,6 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
           </ul>
         </section>
       )}
-      {kind === 'messages' && detail.echo && (
-        <>
-          <h2>{stateLabel(detail.echo.status)}</h2>
-          <dl>
-            {detail.echo.deadline && (
-              <>
-                <dt>等待截止时间</dt>
-                <dd>{detail.echo.deadline}</dd>
-              </>
-            )}
-            {detail.echo.resolvedAt && (
-              <>
-                <dt>确认时间</dt>
-                <dd>{detail.echo.resolvedAt}</dd>
-              </>
-            )}
-            {detail.echo.releaseReason && (
-              <>
-                <dt>人工放行原因</dt>
-                <dd>{detail.echo.releaseReason}</dd>
-              </>
-            )}
-            {detail.echo.match && (
-              <>
-                <dt>匹配的发送记录</dt>
-                <dd>
-                  <button onClick={() => showRecord('outbox', detail.echo!.match!.outboxId)} type="button">
-                    {detail.echo.match.outboxId}
-                  </button>
-                </dd>
-              </>
-            )}
-            {!!detail.echo.candidates?.length && (
-              <>
-                <dt>接收时的关联发送记录</dt>
-                {detail.echo.candidates.map((candidate) => (
-                  <dd key={candidate.outboxId}>
-                    <button onClick={() => showRecord('outbox', candidate.outboxId)} type="button">
-                      {candidate.outboxId}
-                    </button>
-                  </dd>
-                ))}
-              </>
-            )}
-          </dl>
-          {detail.echo.routingEventId && (
-            <button onClick={() => showRecord('routing-events', detail.echo!.routingEventId!)} type="button">
-              回声放行后的路由事件
-            </button>
-          )}
-        </>
-      )}
       {kind === 'threads' && (
         <>
           <dl>

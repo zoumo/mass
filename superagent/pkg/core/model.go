@@ -52,9 +52,6 @@ type Message struct {
 	ReceivedAt        string                `json:"receivedAt"`
 	Acceptance        string                `json:"acceptance"`
 	EventID           string                `json:"eventId,omitempty"`
-	// Historical diagnostics retained by the schema 25 migration.
-	LegacyEcho       json.RawMessage `json:"echo,omitempty"`
-	LegacyEchoStatus string          `json:"legacyEchoStatus,omitempty"`
 }
 
 var _ AgentPromptView = Message{}
@@ -76,7 +73,6 @@ type Receipt struct {
 	ThreadKey  string `json:"threadKey"`
 	AcceptedAt string `json:"acceptedAt"`
 	EventID    string `json:"eventId,omitempty"`
-	EchoStatus string `json:"echoStatus,omitempty"`
 }
 type Page struct {
 	Items      []json.RawMessage `json:"items"`

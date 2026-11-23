@@ -94,7 +94,7 @@ test('Message branches use the sender, acceptance and explicit return ID committ
   await testInfo.attach('route-evidence', { path: evidence, contentType: 'application/json' })
 })
 
-test('direct, pending, ignored, echo and channel acknowledgements stop at their recorded endpoints', async ({ page, request }) => {
+test('direct, pending, ignored and channel acknowledgements stop at their recorded endpoints', async ({ page, request }) => {
   const extra = await sampleOrigin(request)
   const direct = await findMessage(request, extra, 'observer-path-direct')
   const graph = page.getByRole('region', { name: '消息路径' })
@@ -123,9 +123,7 @@ test('direct, pending, ignored, echo and channel acknowledgements stop at their 
   const ignored = await findMessage(request, standard, 'observer-routing')
   await page.goto(standard + '/observer/?perspective=message&id=' + ignored.id)
   await expect(graph.getByText('已忽略 · 原因未记录', { exact: true })).toBeVisible()
-
 })
-
 
 test('a failed reference page preserves known branches and does not announce an empty result', async ({ page, request }) => {
   const origin = await sampleOrigin(request)
