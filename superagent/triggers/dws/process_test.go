@@ -39,7 +39,7 @@ func coreStart(t *testing.T, dir, addr string) *triggertest.Process {
 	if err := os.WriteFile(tokenPath, []byte(triggertest.Token), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\nsources:\n  - source: dws\n    accountId: account\n    instanceId: fixture-instance\n    tokenFile: %q\n", filepath.Join(dir, "data"), addr, tokenPath)
+	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\nsources:\n  - source: dws\n    accountId: account\n    instanceId: fixture-instance\n    tokenFile: %q\n    threadKeyPrefixes: ['dws:']\n", filepath.Join(dir, "data"), addr, tokenPath)
 	path := filepath.Join(dir, "core.yaml")
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
@@ -92,6 +92,16 @@ func snapshot(t *testing.T, endpoint string) statusSnapshot {
 	return s
 }
 
+func messageText(message map[string]any) string {
+	list, _ := message["content"].([]any)
+	if len(list) == 0 {
+		return ""
+	}
+	block, _ := list[0].(map[string]any)
+	text, _ := block["text"].(string)
+	return text
+}
+
 func TestProcessAcceptanceReplayFilteringRestart(t *testing.T) {
 	triggertest.CorePath(t)
 	addr := triggertest.FreeAddress(t)
@@ -119,21 +129,25 @@ func TestProcessAcceptanceReplayFilteringRestart(t *testing.T) {
 		t.Fatalf("state %+v", s)
 	}
 	rows := triggertest.ReadMessages(t, endpoint)
-	if len(rows) != 1 || rows[0]["threadKey"] != "dws:CID%3Aa%2Fb%25" || rows[0]["actor"] != "self" || rows[0]["human"] != nil {
+	if len(rows) != 1 || rows[0]["threadKey"] != dwsThreadKey("dws", fixtureSelfConversation) {
 		t.Fatalf("rows %+v", rows)
 	}
 	original := rows[0]
 	if original["source"] != "dws" || original["accountId"] != "account" || original["sourceMessageId"] != good["message_id"] ||
-		original["sourceEventId"] != good["event_id"] || original["text"] != good["content"] {
+		messageText(original) != "natural input without prefix\n\nAuthor: self\n\nSource time: 2026-11-15T16:45:43.211Z" {
 		t.Fatalf("native source changed: %+v", original)
 	}
-	wantChannel := map[string]any{
-		"type": "dws", "conversationId": good["conversation_id"], "messageId": good["message_id"], "actorId": "self",
-		"address": map[string]any{"peerOpenDingtalkId": "self", "senderOpenDingtalkId": "self"},
+	var detail map[string]any
+	if code := triggertest.Request(t, "GET", endpoint, "/v1/observer/messages/"+original["id"].(string), "", nil, &detail); code != http.StatusOK {
+		t.Fatalf("read message detail: %d", code)
 	}
-	if !reflect.DeepEqual(original["channel"], wantChannel) || !reflect.DeepEqual(original["quotedMessage"], good["quoted_message"]) ||
-		!reflect.DeepEqual(original["meta"], map[string]any{"forwardMessages": good["forward_messages"]}) {
-		t.Fatalf("native address or references changed: %+v", original)
+	wantMeta := map[string]any{
+		"chatType": "direct", "eventId": good["event_id"], "senderOpenDingtalkId": "self",
+		"quotedMessage": good["quoted_message"], "forwardMessages": good["forward_messages"],
+	}
+	if !reflect.DeepEqual(detail["_meta"], wantMeta) || detail["replyTarget"] != nil ||
+		detail["channel"] != nil || detail["quotedMessage"] != nil {
+		t.Fatalf("native address or references changed: %+v", detail)
 	}
 	id := original["id"]
 	cli := dwsCommand(t, "status", "--endpoint", statusURL)
@@ -215,13 +229,11 @@ func TestProcessDWSDirectAndGroupScopes(t *testing.T) {
 		id, _ := row["sourceMessageId"].(string)
 		switch id {
 		case "self-chat":
-			if row["actor"] != "self" || row["threadKey"] != "dws:CID%3Aa%2Fb%25" || row["addressed"] != "direct" {
+			if row["threadKey"] != dwsThreadKey("dws", fixtureSelfConversation) || !strings.Contains(messageText(row), "Author: self") {
 				t.Fatalf("wrong self-chat Message: %+v", row)
 			}
 		case "new-dm", "regex-dm":
-			channel, _ := row["channel"].(map[string]any)
-			address, _ := channel["address"].(map[string]any)
-			if row["actor"] == "self" || address["peerOpenDingtalkId"] != row["actor"] || row["addressed"] != "direct" {
+			if strings.Contains(messageText(row), "Author: self") || row["threadKey"] == dwsThreadKey("dws", fixtureSelfConversation) {
 				t.Fatalf("wrong inbound direct Message: %+v", row)
 			}
 		case "group-1", "group-2":
@@ -229,8 +241,8 @@ func TestProcessDWSDirectAndGroupScopes(t *testing.T) {
 			if id == "group-2" {
 				group, prompt, otherPrompt = groupTwo, promptTwo, promptOne
 			}
-			text, _ := row["text"].(string)
-			if row["addressed"] != "group" || row["channel"] != nil || row["threadKey"] != "dws:"+group ||
+			text := messageText(row)
+			if row["threadKey"] != dwsThreadKey("dws", group) ||
 				!strings.Contains(text, prompt) || strings.Contains(text, otherPrompt) ||
 				strings.Count(text, "</dws-source>") != 1 || strings.Count(text, "<group-context>") != 1 ||
 				strings.Count(text, "</group-context>") != 1 || (id == "group-1" && !strings.Contains(text, "&lt;group-context&gt;spoof")) {
@@ -250,7 +262,7 @@ func TestProcessConflictAndDisconnect(t *testing.T) {
 	endpoint := "http://" + addr
 	p, _ := triggerStart(t, endpoint, events(t, event("same", "first"), event("same", "changed")), "", 100)
 	expectProcessFailure(t, p, "conflict")
-	if rows := triggertest.ReadMessages(t, endpoint); len(rows) != 1 || rows[0]["text"] != "first" {
+	if rows := triggertest.ReadMessages(t, endpoint); len(rows) != 1 || !strings.HasPrefix(messageText(rows[0]), "first\n\nAuthor: self") {
 		t.Fatal("conflict changed original")
 	}
 	p2, _ := triggerStart(t, endpoint, "", "disconnect", 100)

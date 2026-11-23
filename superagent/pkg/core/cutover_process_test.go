@@ -259,6 +259,9 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	f.executable = coreExe
 	f.configure(0, "account")
 	configureOutboxSource(t, f)
+	cfg, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	write(t, f.config, strings.Replace(string(cfg), "    outboxConsumer: true", "    outboxConsumer: true\n    threadKeyPrefixes: ['dws:']", 1))
 	f.execution(&routeBoundary{url: massd})
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
@@ -361,9 +364,22 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 		`{"success":true,"openTaskId":%q,"result":{"sendStatus":"SUCCESS","openConversationId":%q,"openMessageId":%q}}`, task, conversation, questionNative))
 	require.Eventually(t, func() bool { return readOutbox(t, p, reply.ID).Status == "sent" }, 8*time.Second, 50*time.Millisecond)
 	sent := readOutbox(t, p, reply.ID)
-	require.Equal(t, questionNative, sent.Receipt.MessageID)
-	require.Equal(t, conversation, sent.Receipt.ConversationID)
+	require.Empty(t, sent.Receipt.MessageID)
+	require.Empty(t, sent.Receipt.ConversationID)
 	require.Equal(t, task, sent.Receipt.TaskID)
+	evidence, err := filepath.Glob(filepath.Join(f.dir, "dws.sqlite.dws-sends", "*.json"))
+	require.NoError(t, err)
+	require.Len(t, evidence, 1)
+	rawEvidence, err := os.ReadFile(evidence[0])
+	require.NoError(t, err)
+	var attempt struct {
+		OutboxID string
+		Result   struct{ ConversationID, MessageID string }
+	}
+	require.NoError(t, json.Unmarshal(rawEvidence, &attempt))
+	require.Equal(t, reply.ID, attempt.OutboxID)
+	require.Equal(t, questionNative, attempt.Result.MessageID)
+	require.Equal(t, conversation, attempt.Result.ConversationID)
 
 	feed(2, "cutover-answer", "Use the east region.", questionNative)
 	answer := awaitMessage("cutover-answer")

@@ -26,6 +26,8 @@ type statusSnapshot struct {
 	Consumers         int    `json:"consumers"`
 	Admission         string `json:"admission"`
 	Backlog           int    `json:"backlog"`
+	Held              int    `json:"held"`
+	OutboundEchoes    int    `json:"outboundEchoes"`
 	PermanentFailures int    `json:"permanentFailures"`
 	Capacity          int    `json:"capacity"`
 	LastReceivedAt    string `json:"lastReceivedAt,omitempty"`
@@ -59,11 +61,20 @@ func (s *state) update(fn func(*statusSnapshot)) {
 }
 
 func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Writer) (runErr error) {
+	closeOwner, err := lockDWSOwner(c)
+	if err != nil {
+		return err
+	}
+	defer closeOwner()
 	queue, closeQueue, err := openDWSQueue(c)
 	if err != nil {
 		return err
 	}
 	defer closeQueue()
+	evidence, err := openSendEvidence(c.DatabasePath)
+	if err != nil {
+		return err
+	}
 	backlog, failed, err := queue.counts()
 	if err != nil {
 		return errors.New("database_read_failed")
@@ -105,7 +116,7 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 		defer logMu.Unlock()
 		trigger.WriteDiagnostic(enc, map[string]any{"event": kind, "reason": reason, "state": st.get()})
 	}
-	feedback, closeFeedback, err := openFeedback(c, core, emit)
+	feedback, closeFeedback, err := openFeedback(c, core, evidence, emit)
 	if err != nil {
 		return err
 	}
@@ -129,7 +140,13 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 	defer stopEgress()
 	drain, cancelDrain := context.WithCancel(context.Background())
 	egressDone := make(chan struct{})
-	var egressStarted bool
+	egressStarted := c.repliesEnabled()
+	if egressStarted {
+		go func() {
+			defer close(egressDone)
+			egress{config: c, core: core, evidence: evidence, log: emit, feedback: feedback}.run(egressCtx, drain)
+		}()
+	}
 	defer func() {
 		stopEgress()
 		defer cancelDrain()
@@ -162,13 +179,6 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 		for i, target := range targets {
 			consumers.Add(1)
 			go consume(consumerCtx, c, i, target, incoming, &consumers)
-		}
-		if c.repliesEnabled() {
-			egressStarted = true
-			go func() {
-				defer close(egressDone)
-				egress{config: c, core: core, log: emit, feedback: feedback}.run(egressCtx, drain)
-			}()
 		}
 	}
 	requestCtx, cancelRequests := context.WithCancel(context.Background())
@@ -209,8 +219,8 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 		stop(reason)
 		return errors.New(reason)
 	}
-	trackFeedback := func(message coreclient.Message, observedAt time.Time) error {
-		if err := feedback.remember(message, observedAt); err != nil {
+	trackFeedback := func(message queuedSubmission, observedAt time.Time) error {
+		if err := feedback.remember(message.nativeReply(), observedAt); err != nil {
 			emit("feedback_state_failed", "track_admission")
 			stop("feedback_state_failed")
 			return errors.New("cannot track DWS feedback before admission")
@@ -229,24 +239,63 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 		}
 	}()
 	for {
+		allDeferred := false
 		if backlog > 0 && !active && retry == nil {
-			head, err = queue.head()
-			if err != nil {
-				return queueFailed("database_read_failed")
+			held := 0
+			for cursor := int64(0); !active; {
+				items, err := queue.pending(cursor)
+				if err != nil {
+					return queueFailed("database_read_failed")
+				}
+				for _, item := range items {
+					cursor = item.sequence
+					decision, outboxID := item.classify(evidence)
+					switch decision {
+					case "held":
+						held++
+						continue
+					case "outbound_echo":
+						if err := queue.finish(item.sequence, "outbound_echo"); err != nil {
+							return queueFailed("database_write_failed")
+						}
+						backlog--
+						st.update(func(s *statusSnapshot) { s.Backlog = backlog; s.OutboundEchoes++ })
+						emit("outbound_echo", "confirmed_native_identity")
+						continue
+					}
+					item.submission, err = queue.prepare(item, outboxID)
+					if err != nil {
+						return queueFailed("database_write_failed")
+					}
+					payload, err := json.Marshal(item.submission.TriggerSubmission)
+					if err != nil {
+						return queueFailed("database_read_failed")
+					}
+					if err := trackFeedback(item.submission, item.observedAt); err != nil {
+						return err
+					}
+					head = item
+					active = true
+					go func(payload []byte) { results <- core.SubmitPayload(requestCtx, payload) }(payload)
+					break
+				}
+				if len(items) < dwsQueueReadLimit {
+					break
+				}
 			}
-			if err := trackFeedback(head.message, head.observedAt); err != nil {
-				return err
+			allDeferred = !active && held > 0
+			st.update(func(s *statusSnapshot) { s.Held = held })
+			if allDeferred {
+				retry = time.After(250 * time.Millisecond)
 			}
-			active = true
-			go func(payload []byte) { results <- core.SubmitPayload(requestCtx, payload) }(head.payload)
 		}
-		if stopping && backlog == 0 {
+		if stopping && (backlog == 0 || allDeferred) {
 			if fatalReason == "shutdown" {
 				return nil
 			}
 			return errors.New(fatalReason)
 		}
-		if backlog == 0 && startupTimer == nil && !stopping && ctx.Err() == nil {
+		if (backlog == 0 || allDeferred) && startupTimer == nil && !stopping && ctx.Err() == nil {
 			startConsumers()
 		}
 		select {
@@ -325,8 +374,11 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 				}
 				backlog++
 				st.update(func(s *statusSnapshot) { s.Backlog = backlog; s.Admission = "pending" })
-				if err := trackFeedback(item.Message, observedAt); err != nil {
-					return err
+				decision, _ := (dwsQueueItem{observedAt: observedAt, submission: item}).classify(evidence)
+				if decision != "outbound_echo" && decision != "held" {
+					if err := trackFeedback(item, observedAt); err != nil {
+						return err
+					}
 				}
 				if backlog == c.Capacity {
 					stop("buffer_full")
@@ -335,12 +387,16 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 		case result := <-results:
 			active = false
 			if result.Code == "" {
-				if err := feedback.recordAdmission(head.message, result.Receipt); err != nil {
+				if err := feedback.recordAdmission(head.submission.nativeReply(), result.Receipt); err != nil {
 					emit("feedback_state_failed", "record_admission")
 					stop("feedback_state_failed")
 					return errors.New("cannot record DWS feedback admission")
 				}
-				if err := queue.finish(head.sequence, ""); err != nil {
+				var disposition string
+				if head.submission.ReleaseReason != "" {
+					disposition = "released"
+				}
+				if err := queue.finish(head.sequence, disposition); err != nil {
 					return queueFailed("database_write_failed")
 				}
 				backlog--

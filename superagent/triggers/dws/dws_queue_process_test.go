@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -93,12 +92,12 @@ func TestDWSQueueRestartsAfterOutageInOrder(t *testing.T) {
 	}
 	core := coreStart(t, coreDir, addr)
 	var mu sync.Mutex
-	var submissions []coreclient.Submission
+	var submissions []coreclient.TriggerSubmission
 	var bodies [][]byte
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/channel/messages" {
 			data, err := io.ReadAll(r.Body)
-			var item coreclient.Submission
+			var item coreclient.TriggerSubmission
 			if err != nil || json.Unmarshal(data, &item) != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -122,17 +121,31 @@ func TestDWSQueueRestartsAfterOutageInOrder(t *testing.T) {
 	got := submissions
 	gotBodies := bodies
 	mu.Unlock()
-	if want := []string{"one", "two", "three"}; len(got) != len(want) {
-		t.Fatalf("unexpected submissions %v", got)
-	} else {
-		for i, nativeID := range want {
-			if got[i].OperationID != "dws-message:"+nativeID || got[i].Message.SourceMessageID != nativeID ||
-				got[i].Message.Text != []string{"first", "second", "third"}[i] {
-				t.Fatalf("submission %d changed: %+v", i, got[i])
+	want := []string{"one", "two", "three"}
+	index := -1
+	for i, submission := range got {
+		if i > 0 && submission.OperationID == got[i-1].OperationID {
+			if !bytes.Equal(gotBodies[i], gotBodies[i-1]) {
+				t.Fatalf("retry changed submission %q", submission.OperationID)
 			}
+			continue
+		}
+		index++
+		if index >= len(want) || submission.OperationID != "dws-message:"+want[index] || submission.Message.SourceMessageID != want[index] ||
+			len(submission.Message.Content) != 1 || submission.Message.Content[0].Text == nil ||
+			!strings.HasPrefix(submission.Message.Content[0].Text.Text, []string{"first", "second", "third"}[index]+"\n\nAuthor: self") {
+			t.Fatalf("submission %d changed or arrived out of order: %+v", index, submission)
 		}
 	}
-	if got[0].Message.SourceEventID != "original-envelope" || !bytes.Equal(gotBodies[0], originalPayload) {
+	if index != len(want)-1 {
+		t.Fatalf("received %d distinct submissions, want %d", index+1, len(want))
+	}
+	original, err := decodeQueuedSubmission(originalPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got[0].Message.Meta, []byte(`"eventId":"original-envelope"`)) ||
+		!bytes.Equal(gotBodies[0], testMarshalMessage(t, original.TriggerSubmission)) {
 		t.Fatalf("redelivery changed the stored submission: %+v", got[0].Message)
 	}
 	if rows := triggertest.ReadMessages(t, "http://"+addr); len(rows) != 3 {
@@ -195,7 +208,7 @@ func TestDWSQueueReplaysLostReceiptWithFeedback(t *testing.T) {
 	if err := json.Unmarshal(raw, &feedback); err != nil {
 		t.Fatal(err)
 	}
-	key := feedbackKey(coreclient.Channel{ConversationID: egressConversation, MessageID: "long-wait"})
+	key := feedbackKey(nativeReplyTarget{ConversationID: egressConversation, MessageID: "long-wait"})
 	observed := feedback.Records[key].ObservedAt
 	delete(feedback.Records, key)
 	raw, err = json.Marshal(feedback)
@@ -263,9 +276,9 @@ func TestDWSQueueWriteFailurePreservesCommittedRow(t *testing.T) {
 		t.Fatal("storage failure was not sanitized")
 	}
 	queue := dwsQueue{db: db}
-	head, err := queue.head()
-	if err != nil || head.message.SourceMessageID != "committed" {
-		t.Fatalf("committed row unavailable: %+v, %v", head, err)
+	pending, err := queue.pending(0)
+	if err != nil || len(pending) != 1 || pending[0].submission.Message.SourceMessageID != "committed" {
+		t.Fatalf("committed row unavailable: %+v, %v", pending, err)
 	}
 	if count, failed, err := queue.counts(); err != nil || count != 1 || failed != 0 {
 		t.Fatalf("atomic insert counts %d, %d, %v", count, failed, err)
@@ -295,7 +308,7 @@ func TestDWSQueueRetainsPermanentFailure(t *testing.T) {
 	}
 	defer db.Close()
 	queue := dwsQueue{db: db}
-	if _, err := queue.head(); !errors.Is(err, sql.ErrNoRows) {
+	if pending, err := queue.pending(0); err != nil || len(pending) != 0 {
 		t.Fatalf("failed row remains at the pending head: %v", err)
 	}
 	var failure string

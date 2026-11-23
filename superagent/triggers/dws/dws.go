@@ -12,8 +12,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
 
 const (
@@ -162,11 +160,11 @@ func nestedDWSResult(raw json.RawMessage) *dwsResult {
 }
 
 type channelOutcome struct {
-	TaskID         string
-	Outcome        string
-	ErrorCode      string
-	ConversationID string
-	MessageID      string
+	TaskID         string `json:"taskId,omitempty"`
+	Outcome        string `json:"outcome,omitempty"`
+	ErrorCode      string `json:"errorCode,omitempty"`
+	ConversationID string `json:"conversationId,omitempty"`
+	MessageID      string `json:"messageId,omitempty"`
 }
 
 func (r *dwsResult) outcome() channelOutcome {
@@ -259,7 +257,7 @@ func dwsCall(ctx context.Context, c dwsConfig, args ...string) (dwsResult, bool)
 	return dwsResult{}, false
 }
 
-func sendDWS(ctx context.Context, c dwsConfig, channel coreclient.Channel, sendKey, peer, text string) channelOutcome {
+func sendDWS(ctx context.Context, c dwsConfig, channel nativeReplyTarget, sendKey, peer, text string) channelOutcome {
 	args := []string{"chat", "+messages-reply"}
 	if peer != "" {
 		args = append(args, "--open-dingtalk-id", peer)
