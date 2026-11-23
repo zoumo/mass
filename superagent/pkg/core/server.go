@@ -12,12 +12,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zoumo/mass/massd"
 )
 
 type Server struct {
+	admitting                    atomic.Bool
 	bindingOperations            sync.Map
 	sessionInputs                sync.Map
 	internalEventDispatchRetries sync.Map
@@ -133,6 +135,7 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	s.observerLife, s.observerCancel = context.WithCancel(context.Background())
 	routes := s.newHTTPAPI()
 	s.http = &http.Server{Handler: s.guardHTTP(routes.router), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	s.admitting.Store(true)
 	return s, nil
 }
 func (s *Server) Endpoint() string { return "http://" + s.listener.Addr().String() }
@@ -145,6 +148,7 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) (result error) {
+	s.admitting.Store(false)
 	if s.embeddedMassd != nil {
 		// Stop admitting WebSocket work while Core drains its own calls.
 		s.embeddedMassd.Handler().CloseExternalAdmission()
@@ -203,7 +207,7 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 		}
 		if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, MassdMountPath+"/") {
 			// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
-			s.massdHTTP.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
@@ -238,35 +242,11 @@ func (s *Server) serveLegacy(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		source, ok := s.authenticate(r)
-		if !ok {
-			s.fail(w, problem("unauthorized", "valid source credential is required"))
-			return
-		}
 		if isReadMethod(r.Method) {
-			ids := r.URL.Query()["sourceMessageId"]
-			if len(ids) != 1 || strings.TrimSpace(ids[0]) == "" {
-				s.fail(w, problem("invalid_argument", "one nonblank sourceMessageId is required"))
-				return
-			}
-			receipt, err := s.store.channelMessageReceipt(r.Context(), source, ids[0])
-			if err != nil {
-				s.fail(w, err)
-				return
-			}
-			s.write(w, http.StatusOK, receipt)
-			return
+			s.readTriggerReceipt(w, r)
+		} else {
+			s.postTriggerMessage(w, r)
 		}
-		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-			s.fail(w, problem("invalid_argument", "Content-Type must be application/json"))
-			return
-		}
-		receipt, err := s.store.submitChannelMessage(r.Context(), source, r.Body)
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.write(w, http.StatusOK, receipt)
 	case r.URL.Path == "/v1/channel/outbox" || strings.HasPrefix(r.URL.Path, "/v1/channel/outbox/"):
 		s.channelOutbox(w, r)
 	case r.URL.Path == "/v1/operator/input-recovery":
