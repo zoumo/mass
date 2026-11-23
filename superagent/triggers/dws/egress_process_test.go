@@ -126,7 +126,7 @@ func TestOutboxRendersStructuredReply(t *testing.T) {
 func (f *egressFixture) outbox(id string) outboxItem {
 	f.t.Helper()
 	var item outboxItem
-	if code := triggertest.Request(f.t, "GET", f.Endpoint, "/v1/observer/outbox/"+id, "", nil, &item); code != http.StatusOK {
+	if code := triggertest.Request(f.t, "GET", f.Endpoint, "/v1/core/outbox-messages/"+id, "", nil, &item); code != http.StatusOK {
 		f.t.Fatalf("outbox readback: %d", code)
 	}
 	return item
@@ -201,7 +201,7 @@ func TestEgressDurableTaskExactEchoAndLostWriteReceipt(t *testing.T) {
 	var mu sync.Mutex
 	var writes []outboxCommand
 	proxy := f.Proxy(func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path != outboxPath+"/result" {
+		if r.Method != http.MethodPatch || !strings.HasPrefix(r.URL.Path, outboxPath+"/") {
 			return false
 		}
 		data, _ := io.ReadAll(r.Body)
@@ -220,7 +220,7 @@ func TestEgressDurableTaskExactEchoAndLostWriteReceipt(t *testing.T) {
 		}
 		return false
 	}, func(res *http.Response) error {
-		if res.Request.URL.Path != outboxPath+"/result" || res.StatusCode != http.StatusOK {
+		if (res.Request.Method != http.MethodPatch || !strings.HasPrefix(res.Request.URL.Path, outboxPath+"/")) || res.StatusCode != http.StatusOK {
 			return nil
 		}
 		mu.Lock()
@@ -420,7 +420,7 @@ func TestEgressCrashBeforeTaskCommitAndEchoRelease(t *testing.T) {
 	f := newEgressFixture(t, true)
 	var blocked atomic.Bool
 	proxy := f.Proxy(func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path != outboxPath+"/result" {
+		if r.Method != http.MethodPatch || !strings.HasPrefix(r.URL.Path, outboxPath+"/") {
 			return false
 		}
 		blocked.Store(true)
@@ -473,7 +473,7 @@ func TestEgressKnownSuccessOnlyRetriesWrite(t *testing.T) {
 	f := newEgressFixture(t, false)
 	var allow, waiting atomic.Bool
 	proxy := f.Proxy(func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path == outboxPath+"/result" && !allow.Load() {
+		if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, outboxPath+"/") && !allow.Load() {
 			waiting.Store(true)
 			w.WriteHeader(http.StatusBadGateway)
 			return true
@@ -585,7 +585,7 @@ func TestEgressEarlyQuoteWaitsForCoreAndRecoversAfterRestart(t *testing.T) {
 	f := newEgressFixture(t, false)
 	var allow, sawSent atomic.Bool
 	proxy := f.Proxy(func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path != outboxPath+"/result" {
+		if r.Method != http.MethodPatch || !strings.HasPrefix(r.URL.Path, outboxPath+"/") {
 			return false
 		}
 		data, _ := io.ReadAll(r.Body)
@@ -619,7 +619,7 @@ func TestEgressEarlyQuoteWaitsForCoreAndRecoversAfterRestart(t *testing.T) {
 	_ = f.trigger(proxy.URL)
 	msg := f.message("quoted")
 	var detail map[string]any
-	code := triggertest.Request(t, http.MethodGet, f.Endpoint, "/v1/observer/messages/"+msg["id"].(string), "", nil, &detail)
+	code := triggertest.Request(t, http.MethodGet, f.Endpoint, "/v1/core/trigger-messages/"+msg["id"].(string), "", nil, &detail)
 	association, _ := detail["quotedReply"].(map[string]any)
 	if code != http.StatusOK || association["outboxId"] != id {
 		t.Fatalf("missing native quote association: HTTP %d, %+v", code, detail)
@@ -645,7 +645,7 @@ func TestEgressLateTaskResultSettlesBeforeRetry(t *testing.T) {
 	t.Parallel()
 	f := newEgressFixture(t, true)
 	proxy := f.Proxy(func(w http.ResponseWriter, r *http.Request) bool {
-		if strings.HasPrefix(r.URL.Path, outboxPath+"/items/") {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, outboxPath+"/") {
 			http.Error(w, "test unavailable", http.StatusServiceUnavailable)
 			return true
 		}

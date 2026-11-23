@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ type routerMessageRow struct {
 
 func routerRows(t *testing.T, p *process, query string) ([]routerMessageRow, string) {
 	t.Helper()
-	result := page(t, p, "router-messages"+query)
+	result := page(t, p, "trigger-messages?view=router"+strings.Replace(query, "?", "&", 1))
 	items := make([]routerMessageRow, len(result.Items))
 	for i, item := range result.Items {
 		require.NoError(t, json.Unmarshal(item, &items[i]))
@@ -98,15 +99,15 @@ func TestObserverRouterMessages(t *testing.T) {
 	require.Len(t, fresh[0].Targets, 1)
 	require.Equal(t, route.Reason, fresh[0].Targets[0].Reason)
 	for _, path := range []string{
-		"router-messages?order=oldest", "messages?order=newest&cursor=" + next,
-		"router-messages?messageId=" + promoted + "&cursor=" + next, "router-messages?topicId=" + topic.OwnerID,
+		"trigger-messages?view=router&order=oldest", "trigger-messages?order=newest&cursor=" + next,
+		"trigger-messages?view=router&messageId=" + promoted + "&cursor=" + next, "trigger-messages?view=router&topicId=" + topic.OwnerID,
 	} {
-		status, _ := request(t, http.MethodGet, p.endpoint, "/v1/observer/"+path, "", nil)
+		status, _ := request(t, http.MethodGet, p.endpoint, "/v1/core/"+path, "", nil)
 		require.Equal(t, http.StatusBadRequest, status, path)
 	}
-	status, _ := request(t, http.MethodHead, p.endpoint, "/v1/observer/router-messages", "", nil)
+	status, _ := request(t, http.MethodHead, p.endpoint, "/v1/core/trigger-messages?view=router", "", nil)
 	require.Equal(t, http.StatusOK, status)
-	status, _ = request(t, http.MethodPost, p.endpoint, "/v1/observer/router-messages", "", nil)
+	status, _ = request(t, http.MethodPut, p.endpoint, "/v1/core/trigger-messages?view=router", "", nil)
 	require.Equal(t, http.StatusMethodNotAllowed, status)
 
 	direct := submit(t, p, f, input("direct-after-route"))

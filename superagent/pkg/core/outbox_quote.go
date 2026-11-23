@@ -22,8 +22,8 @@ func validateReplyReference(ctx context.Context, tx *sql.Tx, m Message) error {
 	var valid bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM outbox o
  JOIN trigger_messages origin ON origin.id=o.message_id
- WHERE o.id=? AND o.status='sent' AND origin.source=? AND origin.account_id=? AND origin.thread_key=?)`,
-		m.InReplyToOutboxID, m.Source, m.AccountID, m.ThreadKey).Scan(&valid)
+ WHERE o.id=? AND o.status='sent' AND origin.source=? AND origin.account_id=? AND origin.thread_id=?)`,
+		m.InReplyToOutboxID, m.Source, m.AccountID, m.ThreadID).Scan(&valid)
 	if err != nil {
 		return storageError()
 	}

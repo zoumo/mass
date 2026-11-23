@@ -56,7 +56,7 @@ type queuedSubmission struct {
 	ReleaseReason  string            `json:"releaseReason,omitempty"`
 }
 
-func dwsThreadKey(source, conversationID string) string {
+func dwsThreadID(source, conversationID string) string {
 	escape := func(value string) string { return strings.ReplaceAll(url.PathEscape(value), ":", "%3A") }
 	return escape(source) + ":" + escape(conversationID)
 }
@@ -148,7 +148,7 @@ func normalize(line []byte, c dwsConfig, target subscription) (queuedSubmission,
 		meta["quotedMessage"] = e.Quoted
 	}
 	return newQueuedSubmission(coreclient.TriggerMessage{
-		SourceMessageID: e.MessageID, ThreadKey: dwsThreadKey(c.Source, e.ConversationID),
+		SourceMessageID: e.MessageID, ThreadID: dwsThreadID(c.Source, e.ConversationID),
 		Content: []massevents.ContentBlock{triggercontent.SourceText(text, e.SenderID, at)},
 	}, reply, meta, "dws-message:"+e.MessageID, e.ConversationID, selfSent, e.Quoted)
 }
@@ -180,7 +180,7 @@ func decodeQueuedSubmission(raw []byte) (queuedSubmission, error) {
 	if err := json.Unmarshal(raw, &submission); err != nil {
 		return submission, err
 	}
-	if submission.OperationID == "" || submission.Message.ThreadKey == "" || len(submission.Message.Content) == 0 ||
+	if submission.OperationID == "" || submission.Message.ThreadID == "" || len(submission.Message.Content) == 0 ||
 		!validNativeID(submission.Message.SourceMessageID) || !validNativeID(submission.ConversationID) {
 		return queuedSubmission{}, errors.New("invalid DWS queue record")
 	}

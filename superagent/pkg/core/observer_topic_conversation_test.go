@@ -3,6 +3,7 @@ package core_test
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ type conversationRow struct {
 	Title            string `json:"title"`
 	Kind             string `json:"kind"`
 	TopicID          string `json:"topicId"`
-	ThreadKey        string `json:"threadKey"`
+	ThreadID         string `json:"threadId"`
 	MessageID        string `json:"messageId"`
 	EventID          string `json:"eventId"`
 	Actor            string `json:"actor"`
@@ -32,10 +33,22 @@ type conversationRow struct {
 	Summary          string `json:"summary"`
 }
 
+func topicConversationPath(query url.Values) string {
+	path := "/v1/core/topics"
+	if id := query.Get("topicId"); id != "" {
+		path += "/" + url.PathEscape(id) + "/activity"
+		query.Del("topicId")
+	}
+	query.Set("view", "conversation")
+	return path + "?" + query.Encode()
+}
+
 func conversationPage(t *testing.T, p *process, query url.Values) ([]conversationRow, string) {
 	t.Helper()
-	query.Set("mode", "conversation")
-	result := page(t, p, "topic-activity?"+query.Encode())
+	status, body := request(t, http.MethodGet, p.endpoint, topicConversationPath(query), "", nil)
+	require.Equal(t, http.StatusOK, status, "%s", body)
+	var result core.Page
+	require.NoError(t, json.Unmarshal(body, &result))
 	rows := make([]conversationRow, 0, len(result.Items))
 	for _, raw := range result.Items {
 		var row conversationRow
@@ -102,14 +115,14 @@ func TestObserverTopicConversationIngress(t *testing.T) {
 	require.Equal(t, "thread_direct/"+direct.EventID, both[0].ID)
 	require.Equal(t, "thread_direct", both[0].Kind)
 	require.Equal(t, topicB, both[0].TopicID)
-	require.Equal(t, direct.ThreadKey, both[0].ThreadKey)
+	require.Equal(t, direct.ThreadID, both[0].ThreadID)
 	require.Equal(t, direct.MessageID, both[0].MessageID)
 	require.Equal(t, direct.EventID, both[0].EventID)
 	require.Equal(t, "core", both[0].Actor)
 	require.Equal(t, "topic", both[0].Recipient)
 	routed, _ := conversationPage(t, p, url.Values{"topicId": {topicB}, "filter": {"router_routed"}})
 	require.Len(t, routed, 2)
-	require.Equal(t, shared.ThreadKey, routed[1].ThreadKey)
+	require.Equal(t, shared.ThreadID, routed[1].ThreadID)
 	require.Equal(t, shared.MessageID, routed[1].MessageID)
 	require.Equal(t, decision.Targets[1].EventIDs[shared.MessageID], routed[1].EventID)
 	require.Equal(t, "router", routed[1].Actor)
@@ -129,8 +142,7 @@ func TestObserverTopicConversationIngress(t *testing.T) {
 		{"HEAD", url.Values{}, 200},
 		{"POST", url.Values{}, 405},
 	} {
-		check.query.Set("mode", "conversation")
-		status, body := request(t, check.method, p.endpoint, "/v1/observer/topic-activity?"+check.query.Encode(), "", nil)
+		status, body := request(t, check.method, p.endpoint, topicConversationPath(check.query), "", nil)
 		require.Equal(t, check.status, status, string(body))
 	}
 }
@@ -186,8 +198,7 @@ func TestObserverTopicConversationIssueDispatch(t *testing.T) {
 	require.Equal(t, "issue_created/"+issue.ID, remainder[0].ID)
 	require.Equal(t, ingress.MessageID, remainder[1].MessageID)
 
-	params := url.Values{"mode": {"conversation"}, "topicId": {topic.OwnerID}, "filter": {"issue_session_dispatch"}}
-	result := page(t, p, "topic-activity?"+params.Encode())
+	result := page(t, p, "topics/"+topic.OwnerID+"/activity?view=conversation&filter=issue_session_dispatch")
 	want := []struct {
 		kind, id, sessionBindingID string
 	}{
@@ -285,7 +296,7 @@ func TestObserverTopicConversationReport(t *testing.T) {
 	first, timelineCursor := conversationPage(t, p, url.Values{"topicId": {f.topicID}, "limit": {"1"}})
 	require.Len(t, first, 1)
 	require.Equal(t, "thread_direct/"+f.direct.EventID, first[0].ID)
-	require.Equal(t, f.direct.ThreadKey, first[0].ThreadKey)
+	require.Equal(t, f.direct.ThreadID, first[0].ThreadID)
 	require.NotEmpty(t, timelineCursor)
 
 	report := roleWork[core.Report](t, p, f.issueToken, "submit_report", f.report)

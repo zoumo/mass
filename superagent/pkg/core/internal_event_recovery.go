@@ -23,6 +23,14 @@ type RecoveryRequest struct {
 	StopRuntime             bool   `json:"stopRuntime,omitempty"`
 }
 
+type bindingRecoveryInput struct {
+	OperationID             string `json:"operationId" pattern:"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"`
+	Mode                    string `json:"mode" enum:"retry,replace,settle"`
+	Reconciliation          string `json:"reconciliation" minLength:"1" maxLength:"4096"`
+	AcceptPossibleDuplicate bool   `json:"acceptPossibleDuplicate" doc:"Must be true"`
+	StopRuntime             bool   `json:"stopRuntime,omitempty"`
+}
+
 type Recovery struct {
 	RecoveryRequest
 	ID                          string                  `json:"id"`
@@ -51,18 +59,24 @@ func ReadOperatorToken(path string) (string, error) {
 	return token, nil
 }
 
-func (s *Server) recoverInput(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
+func (s *Server) recoverBindingInput(w http.ResponseWriter, r *http.Request, id string) {
 	if !s.authorizeOperator(w, r) {
 		return
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
-	var req RecoveryRequest
-	if err != nil || decodeStrict(data, &req) != nil || !instanceIDFormat.MatchString(req.OperationID) ||
+	var input bindingRecoveryInput
+	if err != nil || decodeStrict(data, &input) != nil {
+		s.fail(w, problem("invalid_argument", "invalid recovery request"))
+		return
+	}
+	s.applyInputRecovery(w, r, RecoveryRequest{
+		SessionBindingID: id, OperationID: input.OperationID, Mode: input.Mode,
+		Reconciliation: input.Reconciliation, AcceptPossibleDuplicate: input.AcceptPossibleDuplicate, StopRuntime: input.StopRuntime,
+	})
+}
+
+func (s *Server) applyInputRecovery(w http.ResponseWriter, r *http.Request, req RecoveryRequest) {
+	if !instanceIDFormat.MatchString(req.OperationID) ||
 		req.SessionBindingID == "" || (req.Mode != "retry" && req.Mode != "replace" && req.Mode != "settle") ||
 		req.Mode == "retry" && req.StopRuntime ||
 		strings.TrimSpace(req.Reconciliation) == "" || len(req.Reconciliation) > 4096 || !req.AcceptPossibleDuplicate {

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -20,34 +21,36 @@ import (
 )
 
 type Source struct {
-	Source            string   `mapstructure:"source"`
-	AccountID         string   `mapstructure:"accountId"`
-	InstanceID        string   `mapstructure:"instanceId"`
-	OutboxConsumer    bool     `mapstructure:"outboxConsumer"`
-	TokenFile         string   `mapstructure:"tokenFile"`
-	ThreadKeys        []string `mapstructure:"threadKeys"`
-	ThreadKeyPrefixes []string `mapstructure:"threadKeyPrefixes"`
-	tokenHash         [32]byte
-	token             string
+	Source           string   `mapstructure:"source"`
+	AccountID        string   `mapstructure:"accountId"`
+	InstanceID       string   `mapstructure:"instanceId"`
+	OutboxConsumer   bool     `mapstructure:"outboxConsumer"`
+	TokenFile        string   `mapstructure:"tokenFile"`
+	ThreadIDs        []string `mapstructure:"threadIds"`
+	ThreadIDPrefixes []string `mapstructure:"threadIdPrefixes"`
+	tokenHash        [32]byte
+	token            string
 }
 
 var instanceIDFormat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
 type Config struct {
-	Massd                *MassdConfig    `mapstructure:"massd"`
-	Sessions             *SessionsConfig `mapstructure:"sessions"`
-	OperatorTokenFile    string          `mapstructure:"operatorTokenFile"`
-	operatorToken        string
-	DataDir              string   `mapstructure:"dataDir"`
-	Listen               string   `mapstructure:"listen"`
-	ExternalURL          string   `mapstructure:"externalURL"`
-	Sources              []Source `mapstructure:"sources"`
-	ObserverAllowedHosts []string `mapstructure:"observerAllowedHosts"`
+	Massd             *MassdConfig    `mapstructure:"massd"`
+	Sessions          *SessionsConfig `mapstructure:"sessions"`
+	OperatorTokenFile string          `mapstructure:"operatorTokenFile"`
+	operatorToken     string
+	DataDir           string   `mapstructure:"dataDir"`
+	Listen            string   `mapstructure:"listen"`
+	ExternalURL       string   `mapstructure:"externalURL"`
+	Sources           []Source `mapstructure:"sources"`
+	ReadAllowedHosts  []string `mapstructure:"readAllowedHosts"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
-	// ObserverOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
-	ObserverOTLPEndpoint string               `mapstructure:"-"`
-	ObserverTrace        *ObserverTraceConfig `mapstructure:"observerTrace"`
+	// WebOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
+	WebOTLPEndpoint string                `mapstructure:"-"`
+	TelemetryQuery  *TelemetryQueryConfig `mapstructure:"telemetryQuery"`
+	// ComposeTriggerStatus reads Trigger observations from the local supervisor.
+	ComposeTriggerStatus func(context.Context) TriggerStatuses `mapstructure:"-"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -121,21 +124,21 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		return p
 	}
 	c.DataDir = resolve(c.DataDir)
-	if c.ObserverTrace != nil {
-		c.ObserverTrace.CredentialFile = resolve(c.ObserverTrace.CredentialFile)
+	if c.TelemetryQuery != nil {
+		c.TelemetryQuery.CredentialFile = resolve(c.TelemetryQuery.CredentialFile)
 	}
 	strict := func(d *mapstructure.DecoderConfig) {
 		d.ErrorUnused = true
 		d.WeaklyTypedInput = false
 		d.DecodeHook = nil
 	}
-	if v.IsSet("observerAllowedHosts") {
-		if err := v.UnmarshalKey("observerAllowedHosts", &c.ObserverAllowedHosts, strict); err != nil {
-			return c, problem("invalid_argument", "observerAllowedHosts must be a list of strings")
+	if v.IsSet("readAllowedHosts") {
+		if err := v.UnmarshalKey("readAllowedHosts", &c.ReadAllowedHosts, strict); err != nil {
+			return c, problem("invalid_argument", "readAllowedHosts must be a list of strings")
 		}
-		for _, authority := range c.ObserverAllowedHosts {
+		for _, authority := range c.ReadAllowedHosts {
 			if !validObserverAuthority(authority) {
-				return c, problem("invalid_argument", "observerAllowedHosts entries must be DNS names with an optional port")
+				return c, problem("invalid_argument", "readAllowedHosts entries must be DNS names with an optional port")
 			}
 		}
 	}
@@ -230,9 +233,9 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if s.Source == "" || strings.ContainsAny(s.Source, ":/% \t\n") || s.AccountID == "" || s.TokenFile == "" {
 			return c, problem("invalid_argument", "source, accountId and tokenFile are required")
 		}
-		for _, key := range append(slices.Clone(s.ThreadKeys), s.ThreadKeyPrefixes...) {
-			if !validTriggerThreadKey(key) {
-				return c, problem("invalid_argument", "threadKeys and threadKeyPrefixes must contain valid opaque keys or prefixes")
+		for _, id := range append(slices.Clone(s.ThreadIDs), s.ThreadIDPrefixes...) {
+			if !validTriggerThreadID(id) {
+				return c, problem("invalid_argument", "threadIds and threadIdPrefixes must contain valid IDs or prefixes")
 			}
 		}
 		if account, ok := seenSource[s.Source]; ok && account != s.AccountID {

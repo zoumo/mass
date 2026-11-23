@@ -41,7 +41,7 @@ type dwsQueue struct {
 
 func dwsDatabaseIdentity(c dwsConfig) triggerdb.Identity {
 	return triggerdb.Identity{
-		ApplicationID: dwsDatabaseApplicationID, Version: 2,
+		ApplicationID: dwsDatabaseApplicationID, Version: 3,
 		Source: c.Source, AccountID: c.AccountID, InstanceID: c.InstanceID,
 	}
 }

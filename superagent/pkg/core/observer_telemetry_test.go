@@ -21,7 +21,7 @@ func startObserverTelemetryCore(t *testing.T, receiver string, options core.Tele
 	f := fixtureAt(t)
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	cfg.ObserverOTLPEndpoint = receiver
+	cfg.WebOTLPEndpoint = receiver
 	server, err := core.StartWithTelemetry(cfg, options)
 	require.NoError(t, err)
 	done := make(chan error, 1)
@@ -49,6 +49,10 @@ func TestObserverTelemetryGateway(t *testing.T) {
 			return
 		}
 		forwarded <- batch{r.Method, r.URL.Path, r.URL.RawQuery, string(body), r.Header.Clone()}
+		if string(body) == "large-response" {
+			_, _ = io.WriteString(w, strings.Repeat("a", 32769))
+			return
+		}
 		if string(body) == "try-redirect" {
 			http.Redirect(w, r, "/unexpected", http.StatusTemporaryRedirect)
 			return
@@ -93,6 +97,7 @@ func TestObserverTelemetryGateway(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, request(endpoint, http.MethodPost, path+"?destination=override", contentType, nil).status)
 	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodGet, path, contentType, nil).status)
 	require.Equal(t, http.StatusUnsupportedMediaType, request(endpoint, http.MethodPost, path, "application/json", nil).status)
+	require.Equal(t, http.StatusUnsupportedMediaType, request(endpoint, http.MethodPost, path, contentType, nil, [2]string{"Content-Encoding", "gzip"}).status)
 	for _, header := range [][2]string{{"Origin", "http://foreign.invalid"}, {"Sec-Fetch-Site", "cross-site"}, {"Host", "foreign.invalid"}} {
 		require.Equal(t, http.StatusForbidden, request(endpoint, http.MethodPost, path, contentType, nil, header).status)
 	}
@@ -123,9 +128,12 @@ func TestObserverTelemetryGateway(t *testing.T) {
 	res := request(endpoint, http.MethodPost, path, contentType, strings.NewReader("try-redirect"))
 	require.Equal(t, http.StatusBadGateway, res.status)
 	require.Empty(t, res.header.Get("Location"))
-	require.Len(t, forwarded, 1)
+	res = request(endpoint, http.MethodPost, path, contentType, strings.NewReader("large-response"))
+	require.Equal(t, http.StatusBadGateway, res.status)
+	require.Empty(t, res.body)
+	require.Len(t, forwarded, 2)
 	require.Empty(t, recorder.Ended(), "the gateway bypasses ordinary Core telemetry")
-	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodPost, "/v1/observer/health", contentType, nil).status)
+	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodPost, "/status", contentType, nil).status)
 }
 
 func TestObserverTelemetryRequiresLoopbackOrigin(t *testing.T) {
@@ -136,9 +144,72 @@ func TestObserverTelemetryRequiresLoopbackOrigin(t *testing.T) {
 		"http://example.com:4320", "http://127.0.0.1", "https://127.0.0.1:4320",
 		"http://user:secret@127.0.0.1:4320", "http://127.0.0.1:4320/prefix", "http://127.0.0.1:4320?secret",
 	} {
-		cfg.ObserverOTLPEndpoint = endpoint
+		cfg.WebOTLPEndpoint = endpoint
 		server, err := core.Start(cfg)
 		require.Nil(t, server)
-		require.EqualError(t, err, "invalid_argument: Observer OTLP endpoint must be an HTTP loopback origin with a port")
+		require.EqualError(t, err, "invalid_argument: Web OTLP endpoint must be an HTTP loopback origin with a port")
+	}
+}
+
+func TestTelemetryGatewayBoundsConcurrencyAndTime(t *testing.T) {
+	entered := make(chan struct{}, 8)
+	exited := make(chan struct{}, 8)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		entered <- struct{}{}
+		<-r.Context().Done()
+		exited <- struct{}{}
+	}))
+	t.Cleanup(upstream.Close)
+	endpoint := startObserverTelemetryCore(t, upstream.URL, core.TelemetryOptions{})
+	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+	defer cancel()
+	results := make(chan int, cap(entered))
+	for range cap(entered) {
+		go func() {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/telemetry/traces", strings.NewReader("batch"))
+			if err != nil {
+				results <- -1
+				return
+			}
+			req.Header.Set("Content-Type", "application/x-protobuf")
+			res, err := http.DefaultClient.Do(req)
+			// The response write deadline may close a timed-out connection.
+			if err != nil {
+				results <- 0
+				return
+			}
+			_ = res.Body.Close()
+			results <- res.StatusCode
+		}()
+	}
+	for range cap(entered) {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			t.Fatal("all eight exports did not reach the receiver")
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/telemetry/traces", strings.NewReader("excess"))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-protobuf")
+	res, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+	require.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+	for range cap(exited) {
+		select {
+		case <-exited:
+		case <-ctx.Done():
+			t.Fatal("the gateway did not cancel the upstream requests on deadline")
+		}
+	}
+	for range cap(results) {
+		select {
+		case status := <-results:
+			require.Contains(t, []int{0, http.StatusBadGateway}, status)
+		case <-ctx.Done():
+			t.Fatal("the gateway did not finish the client requests on deadline")
+		}
 	}
 }

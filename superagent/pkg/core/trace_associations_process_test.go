@@ -45,7 +45,7 @@ func spanLinksTrace(span *tracepb.Span, traceID string) bool {
 
 func observedTraces(t *testing.T, p *process, collection, id string) []observerTrace {
 	t.Helper()
-	status, body := request(t, http.MethodGet, p.endpoint, "/v1/observer/"+collection+"/"+id+"?trace=true", "", nil)
+	status, body := request(t, http.MethodGet, p.endpoint, "/v1/core/"+collection+"/"+id+"?trace=true", "", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	for _, key := range []string{`"traceparent"`, `"tracestate"`, `"spanId"`, `"baggage"`} {
 		require.NotContains(t, string(body), key)
@@ -71,7 +71,7 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 		t.Helper()
 		require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&schemaVersion))
 		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables))
-		require.Equal(t, 26, schemaVersion)
+		require.Equal(t, 27, schemaVersion)
 		require.Equal(t, expectedTables, tables)
 	}
 	checkSchema(8)
@@ -87,9 +87,9 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 
 	f.configure(0, "account-1")
 	p = f.start("OTEL_TRACES_EXPORTER=otlp", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:0")
-	require.Empty(t, observedTraces(t, p, "messages", historical.MessageID))
+	require.Empty(t, observedTraces(t, p, "trigger-messages", historical.MessageID))
 	saved := submit(t, p, f, input("after-tracing"))
-	original := observedTraces(t, p, "messages", saved.MessageID)
+	original := observedTraces(t, p, "trigger-messages", saved.MessageID)
 	require.Len(t, original, 1)
 	require.Equal(t, "admission", original[0].Phase)
 	checkSchema(9)
@@ -102,9 +102,9 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 	replay := submit(t, p, f, input("after-tracing"))
 	require.True(t, replay.Duplicate)
 	require.Equal(t, saved.MessageID, replay.MessageID)
-	require.Equal(t, original, observedTraces(t, p, "messages", saved.MessageID))
+	require.Equal(t, original, observedTraces(t, p, "trigger-messages", saved.MessageID))
 	untraced := submit(t, p, f, input("after-disabling"))
-	require.Empty(t, observedTraces(t, p, "messages", untraced.MessageID))
+	require.Empty(t, observedTraces(t, p, "trigger-messages", untraced.MessageID))
 }
 
 func TestTraceAssociationsRestartEvent(t *testing.T) {
@@ -131,7 +131,7 @@ func TestTraceAssociationsRestartEvent(t *testing.T) {
 
 	links := make(map[string]string)
 	for _, receipt := range receipts {
-		admission := observedTraces(t, p, "messages", receipt.MessageID)
+		admission := observedTraces(t, p, "trigger-messages", receipt.MessageID)
 		require.Len(t, admission, 1)
 		require.Equal(t, "admission", admission[0].Phase)
 		require.Equal(t, []observerTrace{{TraceID: admission[0].TraceID, Phase: "enqueue"}},
@@ -140,7 +140,7 @@ func TestTraceAssociationsRestartEvent(t *testing.T) {
 	}
 	require.Len(t, links, 2)
 	require.True(t, submit(t, p, f, inputs[0]).Duplicate)
-	current := observedTraces(t, p, "messages", first.MessageID)
+	current := observedTraces(t, p, "trigger-messages", first.MessageID)
 	require.Len(t, current, 1)
 	require.Equal(t, first.MessageID, links[current[0].TraceID])
 	p.stop(t, false)
@@ -248,7 +248,7 @@ func TestTraceAssociationsSingleEventParent(t *testing.T) {
 	for _, name := range []string{
 		"POST /v1/mcp", "superagent.internal_event.dispatch", "superagent.routing.decide",
 		"POST /v1/mcp", "superagent.internal_event.dispatch", "superagent.message.admit",
-		"POST /v1/channel/messages",
+		"POST /v1/core/trigger-messages",
 	} {
 		parent := byID[hex.EncodeToString(issue.GetParentSpanId())]
 		require.NotNil(t, parent, "missing parent %s of %s", name, issue.GetName())

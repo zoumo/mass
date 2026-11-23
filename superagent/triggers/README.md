@@ -59,8 +59,8 @@ settings.
    bin/superagent triggers dws status --endpoint http://127.0.0.1:24371
    ```
 
-The DWS adapter derives `threadKey` from the source and native conversation ID.
-Grant that prefix in the Core source's `threadKeyPrefixes`, for example `dws:`.
+The DWS adapter derives `threadId` from the source and native conversation ID.
+Grant that prefix in the Core source's `threadIdPrefixes`, for example `dws:`.
 The adapter includes the native sender and available source time in the text
 content block. The adapter saves native reply and quote identities, then sends
 Core an opaque reply target and any confirmed Outbox reference.
@@ -129,13 +129,13 @@ and discussion. It can recover only the history GitHub exposes. It leaves read
 status and the inbox unchanged.
 
 The GitHub Trigger uses `https://github.com/{owner}/{repo}/pull/{number}` as
-its PR Thread key. It lowercases the owner and repository. In `pullRequests.add`,
+its PR Thread ID. It lowercases the owner and repository. In `pullRequests.add`,
 submit that same URL without a query, fragment, or trailing slash. A PR message
 starts with a text block for the body and source facts. It then includes the PR
 URL and any distinct observation URL, such as a comment permalink or Actions
 run page, in that order as `resource_link` blocks with no `mimeType`. GitHub
-Issue messages retain their existing `github:` keys. Configure the Core source's
-`threadKeys` or `threadKeyPrefixes` to grant only the GitHub resources it should
+Issue messages retain their existing `github:` IDs. Configure the Core source's
+`threadIds` or `threadIdPrefixes` to grant only the GitHub resources it should
 write.
 
 A qualifying notification for
@@ -146,12 +146,11 @@ notification to resume tracking. See the [PR routing contract](../API.md#pull-re
 
 ## Replace deployed Triggers
 
-When switching an existing installation to structured Trigger Messages, stop the
-old Triggers and configure a fresh `databasePath` for each adapter. For DWS,
+When switching an existing installation to `threadId`, stop the old Triggers
+and configure a fresh `databasePath` for each adapter. For DWS,
 choose a path with a fresh adjacent `.dws-sends` directory and use a fresh
 `feedback.statePath` if reactions are enabled. Keep the former state paths for
-reference. Trigger SQLite databases at the previous schema version are
-rejected. On subsequent restarts, use the same paths to recover queued Messages,
+reference. The Triggers require SQLite schema 3. On subsequent restarts, use the same paths to recover queued Messages,
 GitHub checkpoints, and DWS send evidence.
 
 Run `make test-superagent` to exercise Core and the Triggers with local channel

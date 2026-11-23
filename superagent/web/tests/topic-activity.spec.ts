@@ -1,19 +1,19 @@
 import { expect, test } from '@playwright/test'
 
-const endpoint = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}`
+const endpoint = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`
 type Event = { id: string; kind: string; issueId?: string; messageId?: string; eventId?: string; at: string; status?: string; title?: string; summary?: string; sessionBindingId?: string }
 
 test('Topic activity opens source facts, pages both categories and restores the filter', async ({ page, request }, info) => {
-  const topics = await (await request.get(endpoint + '/v1/observer/topics')).json()
+  const topics = await (await request.get(endpoint + '/v1/core/topics')).json()
   const topic = topics.items.find((t: {title: string}) => t.title === 'Observer routing Topic')
-  const activityURL = endpoint + '/v1/observer/topic-activity?topicId=' + topic.id
+  const activityURL = endpoint + `/v1/core/topics/${topic.id}/activity?`
   const all: Event[] = (await (await request.get(activityURL + '&limit=200')).json()).items
   const pageSize = 10
   expect(all.length).toBeGreaterThan(pageSize)
   const methods = new Set<string>()
   page.on('request', req => { if (req.url().includes('/v1/')) methods.add(req.method()) })
   await page.setViewportSize({width:1360,height:900})
-  await page.goto(endpoint + '/observer/?perspective=topic&id=' + topic.id)
+  await page.goto(endpoint + '/superagent/?perspective=topic&id=' + topic.id)
   await page.getByRole('button', {name:'暂停自动刷新'}).click()
   const detail = page.getByRole('article', {name:'当前 Topic'})
   const feed = detail.getByRole('region', {name:'活动流',exact:true})
@@ -87,13 +87,13 @@ test('Topic activity opens source facts, pages both categories and restores the 
 })
 
 test('Topic activity retries a failed read without reporting an empty history', async ({page,request}) => {
-  const {items:[topic]} = await (await request.get(endpoint + '/v1/observer/topics')).json()
-  await page.route('**/v1/observer/topic-activity?**', route=>route.fulfill({status:503,body:'{}'}))
-  await page.goto(endpoint + '/observer/?perspective=topic&id=' + topic.id)
+  const {items:[topic]} = await (await request.get(endpoint + '/v1/core/topics')).json()
+  await page.route('**/v1/core/topics/*/activity?**', route=>route.fulfill({status:503,body:'{}'}))
+  await page.goto(endpoint + '/superagent/?perspective=topic&id=' + topic.id)
   const feed = page.getByRole('region',{name:'活动流',exact:true})
   await expect(feed.getByRole('alert')).toContainText('503')
   await expect(feed.getByText('暂无活动记录')).toHaveCount(0)
-  await page.unroute('**/v1/observer/topic-activity?**')
+  await page.unroute('**/v1/core/topics/*/activity?**')
   await page.getByRole('button',{name:'刷新',exact:true}).click()
   await expect(feed.locator('.topic-feed li').first()).toBeVisible()
   await expect(feed.getByRole('alert')).toHaveCount(0)
@@ -102,10 +102,10 @@ test('Topic activity retries a failed read without reporting an empty history', 
 
 for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] as const) {
   test(`Topic navigation shows persisted delivery and Issue flows (${screen})`, async ({ page,request },info) => {
-    const topics = await (await request.get(endpoint + '/v1/observer/topics')).json()
+    const topics = await (await request.get(endpoint + '/v1/core/topics')).json()
     const topic = topics.items.find((item: {title:string}) => item.title === 'Observer routing Topic')
     const facts = async (filter: string): Promise<Event[]> => {
-      const response = await request.get(endpoint + '/v1/observer/topic-activity?' + new URLSearchParams({topicId:topic.id,filter,limit:'10'}))
+      const response = await request.get(endpoint + `/v1/core/topics/${topic.id}/activity?` + new URLSearchParams({filter,limit:'10'}))
       expect(response.ok()).toBe(true)
       return (await response.json()).items
     }
@@ -116,14 +116,14 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
     const observed = new Set<string>()
     page.on('request', req => {
       const url = new URL(req.url())
-      if (url.pathname === '/v1/observer/topic-activity' && url.searchParams.get('topicId') === topic.id && !url.searchParams.has('mode')) {
+      if (url.pathname === `/v1/core/topics/${topic.id}/activity` && !url.searchParams.has('view')) {
         observed.add(url.searchParams.get('filter') || 'all')
         expect(req.method()).toBe('GET')
         expect(Number(url.searchParams.get('limit'))).toBeLessThanOrEqual(10)
       }
     })
     await page.setViewportSize({width,height})
-    await page.goto(endpoint + '/observer/')
+    await page.goto(endpoint + '/superagent/')
     await page.getByRole('navigation',{name:'观察视角'}).getByRole('link',{name:'Topic',exact:true}).click()
     const list = page.getByRole('complementary',{name:'最近的 Topic'})
     await expect(page.getByRole('region',{name:'Topic 活动流程'})).toBeVisible()
@@ -139,7 +139,7 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
     await expect(lane(returned).locator('.flow-issue')).toHaveCount(0)
     expect(observed).toEqual(new Set(['all','message','issue']))
     await graph.getByRole('button',{name:/再看/}).click()
-    await expect(lane(report).locator('.flow-session')).toHaveAttribute('href', `/observer/?view=session-bindings&id=${report.sessionBindingId}`)
+    await expect(lane(report).locator('.flow-session')).toHaveAttribute('href', `/superagent/?view=session-bindings&id=${report.sessionBindingId}`)
     await expect(lane(report).locator('.flow-report')).toContainText(report.summary!)
     await expect(lane(report).locator('.flow-issue')).toHaveAttribute('href',new RegExp(report.issueId!))
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
@@ -163,16 +163,16 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
 }
 
 test('Topic diagram retains the working category when a preview read fails', async ({page,request}) => {
-  const {items} = await (await request.get(endpoint + '/v1/observer/topics')).json()
+  const {items} = await (await request.get(endpoint + '/v1/core/topics')).json()
   const topic = items.find((item: {title:string}) => item.title === 'Observer routing Topic')
-  await page.route('**/v1/observer/topic-activity?**', route => new URL(route.request().url()).searchParams.get('filter') === 'message'
+  await page.route('**/v1/core/topics/*/activity?**', route => new URL(route.request().url()).searchParams.get('filter') === 'message'
     ? route.fulfill({status:503,body:'{}'}) : route.continue())
-  await page.goto(endpoint + '/observer/?perspective=topic&id=' + topic.id)
+  await page.goto(endpoint + '/superagent/?perspective=topic&id=' + topic.id)
   const graph = page.getByRole('region',{name:'Topic 活动流程'})
   await expect(graph).toContainText('消息 读取失败（HTTP 503）')
   await expect(graph.locator('.flow-issue').first()).toBeVisible()
   await expect(graph.getByText('暂无消息活动记录')).toHaveCount(0)
-  await page.unroute('**/v1/observer/topic-activity?**')
+  await page.unroute('**/v1/core/topics/*/activity?**')
   await page.getByRole('button',{name:'刷新',exact:true}).click()
   await expect(graph.locator('.flow-message').first()).toBeVisible()
   await expect(graph).not.toContainText('HTTP 503')

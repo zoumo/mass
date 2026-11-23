@@ -30,17 +30,17 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
     instanceId: sender
     outboxConsumer: true
     tokenFile: ./consumer.token
-    threadKeyPrefixes: ['opaque/']
+    threadIdPrefixes: ['opaque/']
   - source: synthetic
     accountId: account-test
     instanceId: ingress
     tokenFile: ./peer.token
-    threadKeyPrefixes: ['opaque/']
+    threadIdPrefixes: ['opaque/']
   - source: another
     accountId: account-other
     instanceId: sender
     tokenFile: ./other.token
-    threadKeyPrefixes: ['opaque/']
+    threadIdPrefixes: ['opaque/']
 `)
 	f.execution(boundary)
 	clock, advance := outboxClock(t, f)
@@ -50,10 +50,10 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	const thread = "opaque/Ticket-42"
 	newInput := func(id, text string) core.SubmitTriggerMessageRequest {
 		return core.SubmitTriggerMessageRequest{OperationID: id, Message: core.TriggerMessage{
-			SourceMessageID: id, ThreadKey: thread, Content: []events.ContentBlock{events.Text(text)},
+			SourceMessageID: id, ThreadID: thread, Content: []events.ContentBlock{events.Text(text)},
 		}}
 	}
-	const ingress = "/v1/channel/messages"
+	const ingress = "/v1/core/trigger-messages"
 	submit := func(input core.SubmitTriggerMessageRequest) core.Receipt {
 		t.Helper()
 		status, raw := request(t, http.MethodPost, p.endpoint, ingress, peer, input)
@@ -71,6 +71,15 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	origin := newInput("question-origin", "Please check the rollout.")
 	origin.ReplyTarget = target
 	message := submit(origin)
+	receiptPath := ingress + "?sourceMessageId=question-origin"
+	status, raw := request(t, http.MethodGet, p.endpoint, receiptPath, consumer, nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var receipt core.Receipt
+	require.NoError(t, json.Unmarshal(raw, &receipt))
+	require.Equal(t, message, receipt)
+	status, raw = request(t, http.MethodGet, p.endpoint, receiptPath, other, nil)
+	errorCode(t, status, raw, http.StatusNotFound, "not_found")
+
 	changed := origin
 	changed.ReplyTarget = json.RawMessage(`{"offset":18446744073709551615,"route":{"pointer":null,"path":["queue",42,null]}}`)
 	replay := submit(changed)
@@ -86,7 +95,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	}
 
 	noTarget := submit(newInput("no-target", "Informational only"))
-	status, raw := requestMCPTool(t, p.endpoint, "send_reply", routerToken, core.ReplyRequest{
+	status, raw = requestMCPTool(t, p.endpoint, "send_reply", routerToken, core.ReplyRequest{
 		OperationID: "unreplyable", MessageID: noTarget.MessageID, Content: markdownReply("Missing target"),
 	})
 	errorCode(t, status, raw, http.StatusConflict, "failed_precondition")
@@ -125,7 +134,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	require.Contains(t, string(pulled.ReplyTarget), "18446744073709551615")
 	record := outboxResult(item, "pending", "")
 	record.TaskID = "adapter:opaque:send:01"
-	detail := channelOutbox + "/items/" + item.ID
+	detail := channelOutbox + "/" + item.ID + "?view=delivery"
 	for _, test := range []struct {
 		token  string
 		status int
@@ -133,12 +142,20 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	}{{peer, http.StatusForbidden, "forbidden"}, {other, http.StatusNotFound, "not_found"}} {
 		gotStatus, response := request(t, http.MethodGet, p.endpoint, detail, test.token, nil)
 		errorCode(t, gotStatus, response, test.status, test.code)
-		gotStatus, response = request(t, http.MethodPost, p.endpoint, channelOutbox+"/result", test.token, record)
+		gotStatus, response = patchOutbox(t, p, test.token, record)
 		errorCode(t, gotStatus, response, test.status, test.code)
 	}
 	require.Empty(t, listOutbox(t, p.endpoint, other, "").Items)
-	stored := readRecord[core.Message](t, p, "messages/"+message.MessageID)
-	require.Empty(t, stored.ReplyTarget)
+	status, raw = request(t, http.MethodGet, p.endpoint, ingress+"/"+message.MessageID, "", nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	require.NotContains(t, string(raw), `"replyTarget"`)
+	require.NotContains(t, string(raw), `"inReplyToOutboxId"`)
+	status, raw = request(t, http.MethodGet, p.endpoint, channelOutbox+"/"+item.ID, "", nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	require.NotContains(t, string(raw), `"replyTarget"`)
+	require.NotContains(t, string(raw), `"accountId"`)
+	status, raw = request(t, http.MethodGet, p.endpoint, detail+"&view=", "", nil)
+	errorCode(t, status, raw, http.StatusBadRequest, "invalid_argument")
 	agent := roleWork[core.Message](t, p, role, "get_message", map[string]string{"messageId": message.MessageID})
 	require.Empty(t, agent.ReplyTarget)
 
@@ -148,8 +165,8 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	task := resultOutbox(t, p, consumer, record)
 	require.Equal(t, record.TaskID, task.Receipt.TaskID)
 	require.Equal(t, task, resultOutbox(t, p, consumer, record))
-	native := map[string]any{"outboxId": task.ID, "expected": task.OutboxState, "outcome": "sent", "taskId": task.Receipt.TaskID, "messageId": "legacy-id", "conversationId": "legacy-room"}
-	status, raw = request(t, http.MethodPost, p.endpoint, channelOutbox+"/result", consumer, native)
+	native := map[string]any{"outboxId": "body-override", "expected": task.OutboxState, "outcome": "sent", "taskId": task.Receipt.TaskID}
+	status, raw = request(t, http.MethodPatch, p.endpoint, channelOutbox+"/"+task.ID, consumer, native)
 	errorCode(t, status, raw, http.StatusBadRequest, "invalid_argument")
 	uncertain := outboxResult(task, "unknown", "result_missing")
 	failed := resultOutbox(t, p, consumer, uncertain)
@@ -165,7 +182,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	require.Equal(t, "sent", sent.Status)
 	require.True(t, sent.Receipt.Uncertain)
 	require.Equal(t, sent, resultOutbox(t, p, consumer, command))
-	status, raw = request(t, http.MethodPost, p.endpoint, channelOutbox+"/result", consumer, uncertain)
+	status, raw = patchOutbox(t, p, consumer, uncertain)
 	errorCode(t, status, raw, http.StatusConflict, "conflict")
 	require.Equal(t, sent, readOutbox(t, p, item.ID))
 	status, raw = request(t, http.MethodGet, p.endpoint, detail, consumer, nil)
@@ -176,7 +193,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 
 	rejectSubmit(other, answer, http.StatusConflict, "failed_precondition")
 	wrong := answer
-	wrong.Message.ThreadKey = "opaque/Other"
+	wrong.Message.ThreadID = "opaque/Other"
 	rejectSubmit(peer, wrong, http.StatusConflict, "failed_precondition")
 	accepted := submit(answer)
 	replay = submit(answer)
@@ -190,7 +207,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	require.NotNil(t, association.QuotedReply)
 	require.Equal(t, item.ID, association.QuotedReply.OutboxID)
 	require.Equal(t, *ref, association.QuotedReply.BlockerRef)
-	require.Equal(t, association, readRecord[quotedReplyRecord](t, p, "messages/"+accepted.MessageID))
+	require.Equal(t, association, readRecord[quotedReplyRecord](t, p, "trigger-messages/"+accepted.MessageID))
 	waitRouteStatus(t, p, accepted.EventID, "sent")
 	promptEvent := func(receipt core.Receipt) map[string]json.RawMessage {
 		t.Helper()

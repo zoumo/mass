@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-const routingURL = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}`
+const routingURL = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`
 
 test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit acceptance', async ({
   page,
@@ -14,9 +14,10 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
       expect(r.headers()['authorization']).toBeUndefined()
     }
   })
-  const { items: topics } = await (await request.get(routingURL + '/v1/observer/topics')).json()
+  const { items: topics } = await (await request.get(routingURL + '/v1/core/topics')).json()
   const { id: topicID } = topics.find((record: { title: string }) => record.title === 'Observer routing Topic')
-  const topicURL = routingURL + '/observer/?view=topics&id=' + topicID
+  const otherTopic = topics.find((record: { id: string }) => record.id !== topicID).id
+  const topicURL = routingURL + '/superagent/?view=topics&id=' + topicID
   await page.goto(topicURL)
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
   const topic = page.getByRole('article', { name: '当前 Topic' })
@@ -34,7 +35,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await message.getByRole('button', { name: 'Router', exact: true }).first().click()
   await expect(message.getByRole('region', { name: '路径详情' })).toContainText('已忽略 · 原因未记录')
   await expect(message.getByText('当前轮次').locator('xpath=following-sibling::dd[1]')).toHaveText('2')
-  await expect(page.getByRole('textbox', { name: '按线程键筛选' })).toHaveValue(/^dws:/)
+  await expect(page.getByRole('textbox', { name: '按线程 ID 筛选' })).toHaveValue(/^dws:/)
   await page.goBack()
   await topic.getByRole('link', { name: '所属 Issue' }).click()
   await page
@@ -48,7 +49,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await issue.getByRole('button', { name: 'Issue Session 提交报告 · Sample build verified' }).click()
   await expect(issue.getByRole('link', { name: '查看提交报告的会话' })).toHaveAttribute('href', /view=session-bindings&id=/)
   const issueID = new URL(page.url()).searchParams.get('id')
-  await page.goto(routingURL + '/observer/?view=issues&id=' + issueID)
+  await page.goto(routingURL + '/superagent/?view=issues&id=' + issueID)
   await page.reload()
   await expect(nav.getByRole('link', { name: 'Issue' })).toHaveAttribute('aria-current', 'page')
   await issue.getByRole('button', { name: 'Topic 已验收' }).click()
@@ -62,28 +63,28 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await expect(binding.getByText('模型', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('topic-model')
   await expect(binding.getByText('推理强度', { exact: true })).toHaveCount(0)
   expect(errors).toEqual([])
-  const topicEvents = `${routingURL}/v1/observer/routing-events?topicId=${topicID}`
+  const topicEvents = `${routingURL}/v1/core/topics/${topicID}/activity?filter=message`
   const first = await (await request.get(`${topicEvents}&limit=1&order=newest`)).json()
   expect(first.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
   const cursor = encodeURIComponent(first.nextCursor)
   const next = await (await request.get(`${topicEvents}&limit=1&order=newest&cursor=${cursor}`)).json()
   expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
   const timerMessage = await (
-    await request.get(`${routingURL}/v1/observer/messages/${next.items[0].messageId}`)
+    await request.get(`${routingURL}/v1/core/trigger-messages/${next.items[0].messageId}`)
   ).json()
   expect(timerMessage.source).toBe('core:timer')
   expect(timerMessage.content).toEqual([{ type: 'text', text: 'Review the archived build.' }])
-  expect(timerMessage.eventId).toBe(next.items[0].event_id)
+  expect(timerMessage.eventId).toBe(next.items[0].eventId)
   expect(next.nextCursor).toBeTruthy()
   const third = await (
     await request.get(`${topicEvents}&limit=1&order=newest&cursor=${encodeURIComponent(next.nextCursor)}`)
   ).json()
   expect(third.items.map((row: { kind: string }) => row.kind)).toEqual(['route_request'])
-  expect((await request.get(`${topicEvents}&limit=1&cursor=${cursor}`)).status()).toBe(400)
+  expect((await request.get(`${topicEvents}&limit=1&order=oldest&cursor=${cursor}`)).status()).toBe(400)
   expect(
     (
       await request.get(
-        `${routingURL}/v1/observer/routing-events?topicId=unrelated&order=newest&cursor=${cursor}`,
+        `${routingURL}/v1/core/topics/${otherTopic}/activity?filter=message&order=newest&cursor=${cursor}`,
       )
     ).status(),
   ).toBe(400)
@@ -96,8 +97,8 @@ test('Narrow Trigger view shows the original and supports pagination without pag
   await page.setViewportSize({ width: 390, height: 844 })
   const {
     items: [original],
-  } = await (await request.get('/v1/observer/messages?limit=1')).json()
-  await page.goto(`/observer/?view=messages&id=${original.id}`)
+  } = await (await request.get('/v1/core/trigger-messages?limit=1')).json()
+  await page.goto(`/superagent/?view=messages&id=${original.id}`)
   const message = page.getByRole('article', { name: '当前消息' })
   await expect(message.getByTestId('message-body')).toContainText('Long original text '.repeat(1500))
   await message.getByText('查看全文', { exact: true }).click()

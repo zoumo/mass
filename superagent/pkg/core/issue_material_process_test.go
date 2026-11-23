@@ -17,10 +17,10 @@ import (
 
 func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	f, boundary := fixtureAt(t), newRouteBoundary(t)
-	const threadKey = "work/structured-material"
+	const threadID = "work/structured-material"
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(config)+"    threadKeys: ['"+threadKey+"']\n")
+	write(t, f.config, string(config)+"    threadIds: ['"+threadID+"']\n")
 	f.execution(boundary)
 	boundary.driver.mu.Lock()
 	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}
@@ -29,10 +29,10 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	submitMaterial := func(id string, content ...events.ContentBlock) core.Receipt {
 		t.Helper()
-		status, body := request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", f.token, core.SubmitTriggerMessageRequest{
+		status, body := request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, core.SubmitTriggerMessageRequest{
 			OperationID: id,
 			Message: core.TriggerMessage{
-				SourceMessageID: id, ThreadKey: threadKey, Content: content,
+				SourceMessageID: id, ThreadID: threadID, Content: content,
 				Meta: json.RawMessage(`{"diagnostic":"adapter evidence"}`),
 			},
 		})
@@ -110,7 +110,7 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 
 	full := roleWork[core.Message](t, p, issueToken, "get_message", map[string]string{"messageId": oversize.MessageID})
 	require.Equal(t, bigContent, full.Content)
-	require.Equal(t, threadKey, full.ThreadKey)
+	require.Equal(t, threadID, full.ThreadID)
 	require.Equal(t, "dws", full.Source)
 	require.Empty(t, full.TriggerMeta)
 	budgetFallback := roleWork[core.Message](t, p, issueToken, "get_message", map[string]string{"messageId": extraMaterials[3].MessageID})
@@ -138,16 +138,16 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	require.Empty(t, event.Issue)
 	require.Equal(t, 1, injects)
 
-	diagnostic := readRecord[core.Message](t, p, "messages/"+second.MessageID)
+	diagnostic := readRecord[core.Message](t, p, "trigger-messages/"+second.MessageID)
 	require.Equal(t, []events.ContentBlock{attachment}, diagnostic.Content)
 	require.JSONEq(t, `{"diagnostic":"adapter evidence"}`, string(diagnostic.TriggerMeta))
 	for _, preview := range []struct {
 		path, field, id, expected string
 	}{
-		{"messages?preview=true", "text", first.MessageID, "Check the attached log."},
-		{"messages?preview=true", "text", second.MessageID, "[resource_link]"},
-		{"router-messages?messageId=" + first.MessageID, "text", first.MessageID, "Check the attached log."},
-		{"topic-activity?mode=conversation&topicId=" + topicID, "summary", "router_routed/" + routedID, "Check the attached log."},
+		{"trigger-messages?preview=true", "text", first.MessageID, "Check the attached log."},
+		{"trigger-messages?preview=true", "text", second.MessageID, "[resource_link]"},
+		{"trigger-messages?view=router&messageId=" + first.MessageID, "text", first.MessageID, "Check the attached log."},
+		{"topics/" + topicID + "/activity?view=conversation", "summary", "router_routed/" + routedID, "Check the attached log."},
 	} {
 		found := false
 		for _, raw := range page(t, p, preview.path).Items {

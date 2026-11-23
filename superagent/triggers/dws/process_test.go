@@ -39,7 +39,7 @@ func coreStart(t *testing.T, dir, addr string) *triggertest.Process {
 	if err := os.WriteFile(tokenPath, []byte(triggertest.Token), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\nsources:\n  - source: dws\n    accountId: account\n    instanceId: fixture-instance\n    tokenFile: %q\n    threadKeyPrefixes: ['dws:']\n", filepath.Join(dir, "data"), addr, tokenPath)
+	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\nsources:\n  - source: dws\n    accountId: account\n    instanceId: fixture-instance\n    tokenFile: %q\n    threadIdPrefixes: ['dws:']\n", filepath.Join(dir, "data"), addr, tokenPath)
 	path := filepath.Join(dir, "core.yaml")
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestProcessAcceptanceReplayFilteringRestart(t *testing.T) {
 		t.Fatalf("state %+v", s)
 	}
 	rows := triggertest.ReadMessages(t, endpoint)
-	if len(rows) != 1 || rows[0]["threadKey"] != dwsThreadKey("dws", fixtureSelfConversation) {
+	if len(rows) != 1 || rows[0]["threadId"] != dwsThreadID("dws", fixtureSelfConversation) {
 		t.Fatalf("rows %+v", rows)
 	}
 	original := rows[0]
@@ -138,7 +138,7 @@ func TestProcessAcceptanceReplayFilteringRestart(t *testing.T) {
 		t.Fatalf("native source changed: %+v", original)
 	}
 	var detail map[string]any
-	if code := triggertest.Request(t, "GET", endpoint, "/v1/observer/messages/"+original["id"].(string), "", nil, &detail); code != http.StatusOK {
+	if code := triggertest.Request(t, "GET", endpoint, "/v1/core/trigger-messages/"+original["id"].(string), "", nil, &detail); code != http.StatusOK {
 		t.Fatalf("read message detail: %d", code)
 	}
 	wantMeta := map[string]any{
@@ -229,11 +229,11 @@ func TestProcessDWSDirectAndGroupScopes(t *testing.T) {
 		id, _ := row["sourceMessageId"].(string)
 		switch id {
 		case "self-chat":
-			if row["threadKey"] != dwsThreadKey("dws", fixtureSelfConversation) || !strings.Contains(messageText(row), "Author: self") {
+			if row["threadId"] != dwsThreadID("dws", fixtureSelfConversation) || !strings.Contains(messageText(row), "Author: self") {
 				t.Fatalf("wrong self-chat Message: %+v", row)
 			}
 		case "new-dm", "regex-dm":
-			if strings.Contains(messageText(row), "Author: self") || row["threadKey"] == dwsThreadKey("dws", fixtureSelfConversation) {
+			if strings.Contains(messageText(row), "Author: self") || row["threadId"] == dwsThreadID("dws", fixtureSelfConversation) {
 				t.Fatalf("wrong inbound direct Message: %+v", row)
 			}
 		case "group-1", "group-2":
@@ -242,7 +242,7 @@ func TestProcessDWSDirectAndGroupScopes(t *testing.T) {
 				group, prompt, otherPrompt = groupTwo, promptTwo, promptOne
 			}
 			text := messageText(row)
-			if row["threadKey"] != dwsThreadKey("dws", group) ||
+			if row["threadId"] != dwsThreadID("dws", group) ||
 				!strings.Contains(text, prompt) || strings.Contains(text, otherPrompt) ||
 				strings.Count(text, "</dws-source>") != 1 || strings.Count(text, "<group-context>") != 1 ||
 				strings.Count(text, "</group-context>") != 1 || (id == "group-1" && !strings.Contains(text, "&lt;group-context&gt;spoof")) {

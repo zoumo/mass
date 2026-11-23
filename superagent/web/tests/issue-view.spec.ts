@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test'
 
-test.use({ baseURL: 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794') })
+test.use({ baseURL: 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894') })
 
 test('Issue shows blockers and report provenance before explicit acceptance', async ({ page, request }, testInfo) => {
-  const issues = (await (await request.get('/v1/observer/issues')).json()).items
+  const issues = (await (await request.get('/v1/core/issues')).json()).items
   const blocked = issues.find((r: {title: string}) => r.title === 'Review blocked build')
-  await page.goto('/observer/?perspective=issue&id=' + blocked.id)
+  await page.goto('/superagent/?perspective=issue&id=' + blocked.id)
   const issue = page.getByRole('article', { name: '当前 Issue' })
   await expect(issue.getByRole('heading', {name: blocked.title})).toBeVisible()
   await expect(issue.getByText('Confirm the archive with the reviewer', {exact:false})).toBeVisible()
@@ -16,7 +16,7 @@ test('Issue shows blockers and report provenance before explicit acceptance', as
   await expect(recorded).toContainText('Issue Session 提交')
   await expect(graph.getByText('业务验收', {exact: true})).toHaveCount(0)
   await issue.getByRole('button', {name:/Issue Session 提交报告/}).click()
-  const sessionHref = '/observer/?view=session-bindings&id=' + blocked.currentSessionBindingId + '&mode=records'
+  const sessionHref = '/superagent/?view=session-bindings&id=' + blocked.currentSessionBindingId + '&mode=records'
   await expect(issue.getByRole('link', {name:'查看当前会话 →'})).toHaveAttribute('href', sessionHref)
   await expect(issue.getByText('历史报告 · 目标版本 1')).toBeVisible()
   await expect(issue.getByRole('link', {name:'查看提交报告的会话'})).toHaveAttribute('href', sessionHref)
@@ -30,9 +30,9 @@ test('Issue shows blockers and report provenance before explicit acceptance', as
   await issue.getByRole('button', {name:'补充 Issue Session 上下文'}).last().click()
   await expect(issue.getByRole('heading', {name:'Archive review checklist'})).toBeVisible()
   await expect(issue.getByRole('link', {name:'查看接收指令的会话'})).toHaveAttribute('href', sessionHref)
-  const sessionBindings = await (await request.get('/v1/observer/session-bindings?issueId=' + blocked.id)).json()
+  const sessionBindings = await (await request.get('/v1/core/session-bindings?issueId=' + blocked.id)).json()
   expect(sessionBindings.items.map((binding: { id: string }) => binding.id)).toEqual([blocked.currentSessionBindingId])
-  const scoped = await request.get('/v1/observer/internal-events?preview=true&issueId=' + blocked.id)
+  const scoped = await request.get('/v1/core/internal-events?preview=true&issueId=' + blocked.id)
   expect(scoped.ok()).toBeTruthy()
   const {items} = await scoped.json()
   expect(items.some((d:{goalUpdate:boolean}) => d.goalUpdate)).toBeTruthy()
@@ -53,7 +53,7 @@ test('Issue shows blockers and report provenance before explicit acceptance', as
 
 test('narrow Issue list restores focus and history to the selected row', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/observer/?perspective=issue')
+  await page.goto('/superagent/?perspective=issue')
   await page.getByRole('link', { name: '返回 Issue 列表' }).click()
   const listURL = page.url()
   const row = page.getByRole('complementary', { name: '最近的 Issue' }).getByRole('link').nth(1)

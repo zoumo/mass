@@ -36,10 +36,10 @@ func newObserverTelemetryGateway(endpoint string) (*observerTelemetryGateway, er
 	if err != nil || u.Scheme != "http" || u.Opaque != "" || u.User != nil ||
 		u.ForceQuery || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" ||
 		(u.Path != "" && u.Path != "/") || !net.ParseIP(u.Hostname()).IsLoopback() {
-		return nil, problem("invalid_argument", "Observer OTLP endpoint must be an HTTP loopback origin with a port")
+		return nil, problem("invalid_argument", "Web OTLP endpoint must be an HTTP loopback origin with a port")
 	}
 	if port, portErr := strconv.ParseUint(u.Port(), 10, 16); portErr != nil || port == 0 {
-		return nil, problem("invalid_argument", "Observer OTLP endpoint must be an HTTP loopback origin with a port")
+		return nil, problem("invalid_argument", "Web OTLP endpoint must be an HTTP loopback origin with a port")
 	}
 	return &observerTelemetryGateway{
 		origin: "http://" + u.Host,
@@ -130,7 +130,7 @@ func (g *observerTelemetryGateway) serve(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	req.Header.Set("Content-Type", observerOTLPContentType)
-	req.Header.Set("User-Agent", "superagent-observer-gateway")
+	req.Header.Set("User-Agent", "superagent-web-otlp")
 	res, err := g.client.Do(req)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)

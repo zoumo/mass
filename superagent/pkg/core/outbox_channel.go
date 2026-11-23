@@ -13,71 +13,63 @@ import (
 	"time"
 )
 
-func (s *Server) channelOutbox(w http.ResponseWriter, r *http.Request) {
-	source, ok := s.authenticate(r)
-	if !ok {
-		s.fail(w, problem("unauthorized", "valid source credential is required"))
-		return
-	}
-	if source.InstanceID == "" || s.store.config.outboxConsumer(source.Source, source.AccountID) != source.InstanceID {
-		s.fail(w, problem("forbidden", "Outbox requires the configured account consumer"))
-		return
-	}
-	path := strings.TrimPrefix(r.URL.Path, "/v1/channel/outbox")
-	switch {
-	case path == "" || strings.HasPrefix(path, "/items/"):
-		if !readOnly(w, r) {
-			return
-		}
-		var result any
-		var err error
-		if path == "" {
-			q := r.URL.Query()
-			limit := 50
-			if value := q.Get("limit"); value != "" {
-				limit, err = strconv.Atoi(value)
-				if err != nil {
-					s.fail(w, problem("invalid_argument", "limit must be an integer"))
-					return
-				}
-			}
-			result, err = s.store.listScoped(r.Context(), QueryRequest{
-				Collection: "outbox", Cursor: q.Get("cursor"), Limit: limit,
-			}, nil, &source)
-		} else {
-			result, err = s.store.getScoped(r.Context(), "outbox", strings.TrimPrefix(path, "/items/"), nil, &source)
-		}
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.write(w, http.StatusOK, result)
-	case path == "/result":
-		s.outboxResult(w, r, source)
-	default:
-		s.fail(w, problem("not_found", "unknown Outbox path"))
-	}
-}
-
-func (s *Server) outboxResult(w http.ResponseWriter, r *http.Request, source Source) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
+func decodeOutboxResult(w http.ResponseWriter, r *http.Request, request any) error {
 	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" {
-		s.fail(w, problem("invalid_argument", "Content-Type must be application/json"))
-		return
+		return problem("invalid_argument", "Content-Type must be application/json")
 	}
-	var req OutboxCommand
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	dec.DisallowUnknownFields()
-	if err = dec.Decode(&req); err != nil || dec.Decode(new(any)) != io.EOF {
-		s.fail(w, problem("invalid_argument", "invalid Outbox command JSON"))
+	if err = dec.Decode(request); err != nil || dec.Decode(new(any)) != io.EOF {
+		return problem("invalid_argument", "invalid Outbox command JSON")
+	}
+	return nil
+}
+
+func (s *Server) authenticateOutboxConsumer(r *http.Request) (Source, error) {
+	source, ok := s.authenticate(r)
+	if !ok {
+		return Source{}, problem("unauthorized", "valid source credential is required")
+	}
+	if source.InstanceID == "" || s.store.config.outboxConsumer(source.Source, source.AccountID) != source.InstanceID {
+		return Source{}, problem("forbidden", "Outbox requires the configured account consumer")
+	}
+	return source, nil
+}
+
+func (s *Server) readOutboxDelivery(w http.ResponseWriter, r *http.Request, id string, list bool, source Source) {
+	var result any
+	var err error
+	if list {
+		q := r.URL.Query()
+		limit := 50
+		if value := q.Get("limit"); value != "" {
+			limit, err = strconv.Atoi(value)
+			if err != nil {
+				s.fail(w, problem("invalid_argument", "limit must be an integer"))
+				return
+			}
+		}
+		result, err = s.store.listScoped(r.Context(), QueryRequest{
+			Collection: "outbox", Cursor: q.Get("cursor"), Limit: limit,
+		}, nil, &source)
+	} else {
+		result, err = s.store.getScoped(r.Context(), "outbox", id, nil, &source)
+	}
+	if err != nil {
+		s.fail(w, err)
 		return
 	}
-	if err = req.validate(); err != nil {
+	s.write(w, http.StatusOK, result)
+}
+
+type outboxWriteReceipt struct {
+	ID string `json:"id"`
+	OutboxState
+}
+
+func (s *Server) writeOutboxResult(w http.ResponseWriter, r *http.Request, source Source, req OutboxCommand) {
+	if err := req.validate(); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -86,10 +78,7 @@ func (s *Server) outboxResult(w http.ResponseWriter, r *http.Request, source Sou
 		s.fail(w, err)
 		return
 	}
-	s.write(w, http.StatusOK, struct {
-		ID string `json:"id"`
-		OutboxState
-	}{ID: result.ID, OutboxState: result.OutboxState})
+	s.write(w, http.StatusOK, outboxWriteReceipt{ID: result.ID, OutboxState: result.OutboxState})
 }
 
 type OutboxCommand struct {

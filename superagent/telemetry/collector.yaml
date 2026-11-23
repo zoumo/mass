@@ -29,12 +29,12 @@ processors:
     error_mode: propagate
     trace_statements:
       - keep_keys(resource.attributes, ["service.instance.id"])
-      - set(resource.attributes["service.name"], "superagent-observer")
+      - set(resource.attributes["service.name"], "superagent-web")
       - keep_keys(span.attributes, ["http.request.method", "http.response.status_code", "superagent.observer.api", "superagent.observer.view", "superagent.outcome"])
       - set(span.status.message, "")
     metric_statements:
       - keep_keys(resource.attributes, ["service.instance.id"])
-      - set(resource.attributes["service.name"], "superagent-observer")
+      - set(resource.attributes["service.name"], "superagent-web")
       - keep_keys(datapoint.attributes, ["http.request.method", "http.response.status_code", "superagent.observer.api", "superagent.observer.view", "superagent.outcome"])
 
 exporters:

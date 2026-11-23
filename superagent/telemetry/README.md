@@ -1,7 +1,7 @@
 # Run Superagent telemetry locally
 
 Run the local Collector and OpenObserve to read traces and metrics from Core,
-MASS, and Observer.
+MASS, and Superagent Web.
 
 ## Start the stack
 
@@ -33,14 +33,14 @@ bin/superagent serve --config /absolute/run/core.yaml
 
 Embedded MASS uses Core's trace and metric providers. For standalone `massd`,
 set the same export variables in the daemon environment. Submit a Message or
-open Observer to generate requests. Use
+open Superagent Web to generate requests. Use
 `OTEL_METRIC_EXPORT_INTERVAL=1000` to shorten the metric export interval for a
 smoke test.
 
 ## Query Core telemetry
 
 In **Traces**, search by the Message's `trace_id` across services. A Message
-submission produces `POST /v1/channel/messages` and its `superagent.message.admit`
+submission produces `POST /v1/core/trigger-messages` and its `superagent.message.admit`
 child span. A single-source workflow continues through role input, routing, Issue
 creation, Issue Session preparation, and the Report. The trace can also include
 MASS RPC, Service, and SDK spans.
@@ -74,8 +74,8 @@ Tool attempt metrics are independent of trace sampling.
 
 ## Query process and Go runtime metrics
 
-Set `observerTrace` in the [Core configuration](../config.example.yaml) to
-query OpenObserve from Observer. In **Metrics**, filter process charts by
+Set `telemetryQuery` in the [Core configuration](../config.example.yaml) to
+query OpenObserve from Superagent Web. In **Metrics**, filter process charts by
 service and instance. For MCP failure rate, group or filter by role, tool, or
 action. The denominator includes all outcomes.
 
@@ -99,29 +99,30 @@ A missing OS sample produces a gap. Use the [process collectors](../../massd/pkg
 for instrument names and units. Use deployment monitoring for host, container,
 and Agent subprocess measurements.
 
-## Enable Observer telemetry
+## Enable Superagent Web telemetry
 
-Set `SUPERAGENT_OBSERVER_OTLP_ENDPOINT=http://127.0.0.1:14320` when starting
-Core. Build the Observer with `make build-superagent`. Use a loopback HTTP
-origin with an explicit port. Browser telemetry passes through the same-origin
-Core gateway to the Collector's separate Observer receiver. Keep the gateway
-within the trusted Observer network boundary.
+Build Web with `VITE_SUPERAGENT_WEB_TELEMETRY=on make build-superagent-web`.
+Set `SUPERAGENT_WEB_OTLP_ENDPOINT=http://127.0.0.1:14320` when starting Core.
+Use a loopback HTTP origin with an explicit port. Web submits telemetry through
+the same-origin gateway and Core to the Collector's browser receiver. Use the
+updated Collector configuration to set `service.name` to `superagent-web`.
 
-Open an Observer view and search **Traces** for `service_name = superagent-observer`.
-An `observer.http` client span and its Core server span share a trace ID. In
-**Metrics**, aggregate page instances by the attributes relevant to the query.
-The view histogram measures data loads, including refreshes, by view.
+Open a Superagent Web view and search **Traces** for `service_name = superagent-web`.
+An `observer.http` client span and its Core server span share a trace ID. Web
+keeps the `superagent.observer.*` span and metric attribute names. Update the
+service filter in queries for newly exported data. The view histogram measures
+data loads, including refreshes, by view.
 
 ```promql
-sum by (superagent_observer_api) (http_client_request_duration_count{service_name="superagent-observer"})
-sum by (superagent_observer_view) (superagent_observer_view_duration_count{service_name="superagent-observer"})
+sum by (superagent_observer_api) (http_client_request_duration_count{service_name="superagent-web"})
+sum by (superagent_observer_view) (superagent_observer_view_duration_count{service_name="superagent-web"})
 ```
 
 ## Find a trace from a Core record
 
 Open a Message, Internal Event, Scheduled Task, SessionBinding, or Outbox record
-in Observer Diagnostics. Select its Trace ID to open the waterfall in Observer
-when `observerTrace` is configured.
+in Superagent Web Diagnostics. Select its Trace ID to open the waterfall
+when `telemetryQuery` is configured.
 Core saves the trace association with its business record when tracing is
 enabled and reads saved associations after export is disabled. A singleton
 dispatch continues its source trace. A batch links the source traces, so search

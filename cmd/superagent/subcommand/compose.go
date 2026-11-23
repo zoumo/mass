@@ -91,7 +91,16 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		diagnostics = &composeDiagnostics{output: diagnostics}
 	}
 
-	coreCommand := exec.CommandContext(context.Background(), superagent, "serve", "--config", path, "--compose-config-stdin")
+	statusServer, err := startComposeStatus(ctx, triggers)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, statusServer.close()) }()
+	arguments := []string{"serve", "--config", path, "--compose-config-stdin", "--compose-status-socket", statusServer.socket}
+	for _, trigger := range triggers {
+		arguments = append(arguments, "--compose-status-trigger", trigger.kind)
+	}
+	coreCommand := exec.CommandContext(context.Background(), superagent, arguments...)
 	coreCommand.Stdin, coreCommand.Stderr = bytes.NewReader(config.core), diagnostics
 	coreCommand.Env = sharedEnvironment
 	server, err := startChild("core", coreCommand)
@@ -104,7 +113,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	parseCoreEndpoint := func(line []byte) (*url.URL, error) {
 		return coreStartupEndpoint(line, coreConfig.Listen)
 	}
-	coreEndpoint, err := awaitStartup(ctx, server, parseCoreEndpoint, "/v1/observer/health")
+	coreEndpoint, err := awaitStartup(ctx, server, parseCoreEndpoint, "/readyz")
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -114,7 +123,6 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 
 	addresses := composeStartup{
 		Endpoint:         coreEndpoint,
-		ObserverEndpoint: coreEndpoint + "/observer/",
 		TriggerEndpoints: make(map[string]string, len(triggers)),
 		Status:           "ready",
 	}
@@ -141,8 +149,15 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 			return err
 		}
 		child.diagnostics = diagnostics
+		statusServer.register(trigger.kind, "", child)
 		triggerChildren = append(triggerChildren, child)
-		endpoint, err := awaitStartup(ctx, child, triggerStartupEndpoint, "/status", children...)
+		endpoint, err := awaitStartup(ctx, child, func(line []byte) (*url.URL, error) {
+			endpoint, err := triggerStartupEndpoint(line)
+			if err == nil {
+				statusServer.register(trigger.kind, endpoint.String(), child)
+			}
+			return endpoint, err
+		}, "/status", children...)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -168,7 +183,6 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 
 type composeStartup struct {
 	Endpoint         string            `json:"endpoint"`
-	ObserverEndpoint string            `json:"observerEndpoint"`
 	MassdEndpoint    string            `json:"massdEndpoint,omitempty"`
 	Status           string            `json:"status"`
 	TriggerEndpoints map[string]string `json:"triggerEndpoints,omitempty"`

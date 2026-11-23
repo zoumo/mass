@@ -54,7 +54,7 @@ function Edge({ row, selected, toggle }: { row: InternalEvent, selected: Selecti
 
 export default function MessagePath({ message }: { message: MessageRecord }) {
   const query = '?messageId=' + encodeURIComponent(message.id) + '&preview=true&trace=true'
-  const internalEvents = usePages<InternalEvent>('routing-events' + query + '&limit=20')
+  const internalEvents = usePages<InternalEvent>('internal-events' + query + '&limit=20')
   const issues = usePages<Issue>('issues' + query + '&limit=6')
   const replies = usePages<Reply>('outbox' + query + '&limit=6')
   const [selected, select] = useState<Selection | null>(null)
@@ -148,7 +148,7 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
       <div className="path-detail-title"><h3>{{ core: 'Core 接收记录', channel: '来源渠道', router: 'Router 处理记录', issue: 'Issue 材料引用', topic: '目标 Topic', event: '事件详情' }[selected.kind]}</h3>
         <button onClick={close} aria-label="收起路径详情"><X size={17}/></button></div>
       {selected.kind === 'event' && <InternalEventDetail id={selected.id}/>}
-      {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadKey], ['Trace', <TraceLinks associations={message.traceAssociations} at={message.receivedAt}/>]]}/>}
+      {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadId], ['Trace', <TraceLinks associations={message.traceAssociations} at={message.receivedAt}/>]]}/>}
       {selected.kind === 'channel' && <Fields fields={[['渠道', source], ['渠道消息 ID', message.sourceMessageId], ['原文', messageBody(message)]]}/>}
       {selected.kind === 'router' && <><Fields fields={[['本消息路由状态', result === 'pending' ? '待决策' : result === 'ignored' ? '已忽略 · 原因未记录' : stateLabel(result)], ['当前轮次', message.routing?.round]]}/>
         <a className="path-link" href={viewHref('router', message.id)}>查看 Router<ArrowRight size={14}/></a></>}
@@ -157,13 +157,13 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
     {(replies.data?.length || replies.next || replies.error) ? <section className="path-outbox"><h3><ArrowDownRight size={16}/>渠道回执 · {source}</h3>
       {replies.data?.map(row => <details key={row.id}><summary><span>{row.preview}</span><b>{row.status === 'sent' ? '渠道已发送' : '渠道 · ' + stateLabel(row.status)}</b></summary>
         <Fields fields={[['Outbox ID', row.id], ['任务 ID', row.receipt?.taskId], ['错误码', row.receipt?.errorCode], ['Trace', <TraceLinks associations={row.traceAssociations} at={row.createdAt}/>]]}/>
-        <a className="path-link" href={'/observer/?view=outbox&id=' + encodeURIComponent(row.id)}>查看渠道回执<ArrowRight size={14}/></a>
+        <a className="path-link" href={'/superagent/?view=outbox&id=' + encodeURIComponent(row.id)}>查看渠道回执<ArrowRight size={14}/></a>
       </details>)}<PageStatus page={replies} name="渠道回执"/></section> : null}
   </section>
 }
 
 function InternalEventDetail({ id }: { id: string }) {
-  const read = useRecord<InternalEvent>('routing-events/' + encodeURIComponent(id) + '?trace=true')
+  const read = useRecord<InternalEvent>('internal-events/' + encodeURIComponent(id) + '?trace=true')
   const row = read.data
   return <>{read.error && <p className="path-error">{read.error}{row && ' · 快照已过时'}</p>}
     {row ? <Fields fields={[['事件 ID', row.event_id], ['发送方', partyLabel(row.sender)], ['接收方', partyLabel(row.recipient)],

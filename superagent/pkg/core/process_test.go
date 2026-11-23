@@ -39,11 +39,7 @@ var (
 func build(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
-		tags := "coretest"
-		if os.Getenv("SUPERAGENT_BROWSER_TEST") == "1" {
-			tags += ",observerweb"
-		}
-		cmd := exec.CommandContext(context.Background(), "go", "build", "-race", "-tags", tags, "-o", binary, "../../../cmd/superagent")
+		cmd := exec.CommandContext(context.Background(), "go", "build", "-race", "-tags", "coretest", "-o", binary, "../../../cmd/superagent")
 		cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build: %w: %s", err, b)
@@ -67,6 +63,41 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(filepath.Dir(binary))
 	}
 	os.Exit(code)
+}
+
+func TestObserveCoreResourceCLI(t *testing.T) {
+	f := fixtureAt(t)
+	p := f.start()
+	message := input("cli-resource")
+	submit(t, p, f, message)
+
+	run := func(args ...string) []byte {
+		t.Helper()
+		args = append([]string{"observe", "--endpoint", p.endpoint}, args...)
+		out, err := exec.CommandContext(t.Context(), build(t), args...).CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return out
+	}
+	var status struct {
+		Core     core.CoreStatus      `json:"core"`
+		Massd    core.ComponentStatus `json:"massd"`
+		Triggers core.TriggerStatuses `json:"triggers"`
+	}
+	require.NoError(t, json.Unmarshal(run("status"), &status))
+	require.Equal(t, "ready", status.Core.Status)
+	require.Equal(t, "disabled", status.Massd.Status)
+	require.Equal(t, "not_managed", status.Triggers.GitHub.Status)
+	var messages core.Page
+	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-id", message.Message.ThreadID, "--limit", "1"), &messages))
+	require.Len(t, messages.Items, 1)
+	require.Contains(t, string(messages.Items[0]), "cli-resource")
+	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-id", "dws:unrelated"), &messages))
+	require.Empty(t, messages.Items)
+
+	help := string(run("--help"))
+	for _, removed := range []string{"pull-requests", "subscriptions", "relations", "routing-events"} {
+		require.NotContains(t, help, removed)
+	}
 }
 
 type process struct {
@@ -93,7 +124,7 @@ func fixtureAt(t *testing.T) *fixture {
 
 func (f *fixture) configure(pages int, account string) {
 	f.t.Helper()
-	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\nsources:\n  - source: dws\n    accountId: %s\n    tokenFile: %s\n    threadKeyPrefixes: ['dws:']\n", f.data, pages, account, filepath.Join(f.dir, "source.token")))
+	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\nsources:\n  - source: dws\n    accountId: %s\n    tokenFile: %s\n    threadIdPrefixes: ['dws:']\n", f.data, pages, account, filepath.Join(f.dir, "source.token")))
 }
 
 func write(t *testing.T, p, s string) {
@@ -191,7 +222,7 @@ func (p *process) waitStopped(t *testing.T, kill bool) {
 		t.Fatal("process failed to exit")
 	}
 	client := http.Client{Timeout: 300 * time.Millisecond}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.endpoint+"/v1/observer/health", http.NoBody)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.endpoint+"/status", http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,12 +235,12 @@ func (p *process) waitStopped(t *testing.T, kill bool) {
 
 const fixtureConversation = "conversation:Case/%原文"
 
-func fixtureThreadKey(conversation string) string {
+func fixtureThreadID(conversation string) string {
 	return "dws:" + strings.ReplaceAll(url.PathEscape(conversation), ":", "%3A")
 }
 
 func moveInput(req *core.SubmitTriggerMessageRequest, conversation string) {
-	req.Message.ThreadKey = fixtureThreadKey(conversation)
+	req.Message.ThreadID = fixtureThreadID(conversation)
 	req.ReplyTarget = json.RawMessage(fmt.Sprintf(`{"type":"dws","conversationId":%q,"messageId":%q,"actorId":"sender-1"}`, conversation, req.Message.SourceMessageID))
 }
 
@@ -256,7 +287,7 @@ func request(t *testing.T, method, endpoint, path, token string, body any) (int,
 
 func submit(t *testing.T, p *process, f *fixture, r core.SubmitTriggerMessageRequest) core.Receipt {
 	t.Helper()
-	status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
+	status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, r)
 	if status != 200 {
 		t.Fatalf("submit %d: %s", status, b)
 	}
@@ -269,7 +300,7 @@ func submit(t *testing.T, p *process, f *fixture, r core.SubmitTriggerMessageReq
 
 func page(t *testing.T, p *process, kind string) core.Page {
 	t.Helper()
-	status, b := request(t, "GET", p.endpoint, "/v1/observer/"+kind, "", nil)
+	status, b := request(t, "GET", p.endpoint, "/v1/core/"+kind, "", nil)
 	if status != 200 {
 		t.Fatalf("query %d %s", status, b)
 	}
@@ -328,22 +359,22 @@ func TestPublicIngressDurability(t *testing.T) {
 			case "content":
 				conflict.Message.Content[0].Text.Text = "changed"
 			case "thread":
-				conflict.Message.ThreadKey = fixtureThreadKey("other")
+				conflict.Message.ThreadID = fixtureThreadID("other")
 			case "reply":
 				conflict.ReplyTarget = json.RawMessage(`{"anotherAddress":"opaque"}`)
 			}
-			status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, conflict)
+			status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, conflict)
 			errorCode(t, status, b, 409, "conflict")
 		})
 	}
-	if len(page(t, p, "messages").Items) != 1 || len(page(t, p, "threads").Items) != 1 || len(page(t, p, "routing-events").Items) != 1 {
+	if len(page(t, p, "trigger-messages").Items) != 1 || len(page(t, p, "threads").Items) != 1 || len(page(t, p, "internal-events").Items) != 1 {
 		t.Fatal("duplicate/failed commands created records")
 	}
-	event := page(t, p, "routing-events")
+	event := page(t, p, "internal-events")
 	if !bytes.Contains(event.Items[0], []byte(`"status":"pending"`)) || !bytes.Contains(event.Items[0], []byte(`"kind":"route_request"`)) {
 		t.Fatal("event was not pending")
 	}
-	status, b := request(t, "GET", p.endpoint, "/v1/observer/messages/"+accepted.MessageID, "", nil)
+	status, b := request(t, "GET", p.endpoint, "/v1/core/trigger-messages/"+accepted.MessageID, "", nil)
 	if status != 200 {
 		t.Fatalf("detail %s", b)
 	}
@@ -356,9 +387,9 @@ func TestPublicIngressDurability(t *testing.T) {
 	require.Equal(t, r.Message.SourceMessageID, m.SourceMessageID)
 	require.Equal(t, r.Message.Content, m.Content)
 	require.JSONEq(t, `{"a":1,"b":"reference","quotedMessage":{"text":"quote"}}`, string(m.TriggerMeta))
-	require.Equal(t, r.Message.ThreadKey, accepted.ThreadKey)
+	require.Equal(t, r.Message.ThreadID, accepted.ThreadID)
 	// Queries through the shipped CLI require no source credential.
-	cmd := exec.CommandContext(context.Background(), build(t), "observe", "messages", accepted.MessageID, "--endpoint", p.endpoint)
+	cmd := exec.CommandContext(context.Background(), build(t), "observe", "trigger-messages", accepted.MessageID, "--endpoint", p.endpoint)
 	cmd.Env = []string{"HOME=" + f.dir, "PATH=" + f.dir}
 	out, err := cmd.CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte(accepted.MessageID)) {
@@ -369,14 +400,14 @@ func TestPublicIngressDurability(t *testing.T) {
 	if got := submit(t, p, f, input("message-2")); got.MessageID != "mass-m2" {
 		t.Fatalf("numbering did not resume after restart: %+v", got)
 	}
-	if len(page(t, p, "messages").Items) != 2 || len(page(t, p, "routing-events").Items) != 2 {
+	if len(page(t, p, "trigger-messages").Items) != 2 || len(page(t, p, "internal-events").Items) != 2 {
 		t.Fatal("restart lost commit")
 	}
 	replay := submit(t, p, f, r)
 	if replay != duplicate {
 		t.Fatal("persisted operation receipt changed after restart")
 	}
-	t.Logf("durable receipt message=%s event=%s thread=%s", accepted.MessageID, accepted.EventID, accepted.ThreadKey)
+	t.Logf("durable receipt message=%s event=%s thread=%s", accepted.MessageID, accepted.EventID, accepted.ThreadID)
 }
 
 func TestPublicAdmissionKeepsTriggerMetadataOpaque(t *testing.T) {
@@ -387,7 +418,7 @@ func TestPublicAdmissionKeepsTriggerMetadataOpaque(t *testing.T) {
 	r.Message.Meta = json.RawMessage(`{"addressed":"broadcast","sender":"source-specific"}`)
 	r.Message.Content[0].Text.Text = "Original group message\n\nGroup instructions"
 	accepted := submit(t, p, f, r)
-	message := readRecord[core.Message](t, p, "messages/"+accepted.MessageID)
+	message := readRecord[core.Message](t, p, "trigger-messages/"+accepted.MessageID)
 	require.Equal(t, r.Message.SourceMessageID, message.SourceMessageID)
 	require.Equal(t, r.Message.Content, message.Content)
 	require.JSONEq(t, string(r.Message.Meta), string(message.TriggerMeta))
@@ -398,22 +429,31 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
 	r := input("one")
-	status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", "", r)
+	for _, path := range []string{
+		"/v1/channel/messages", "/v1/channel/outbox/result", "/v1/observer/health", "/v1/operator/input-recovery",
+		"/v1/core/pull-requests", "/v1/core/subscriptions", "/v1/core/relations", "/v1/core/routing-events", "/v1/core/trigger-message-receipts",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			status, body := request(t, method, p.endpoint, path, f.token, nil)
+			errorCode(t, status, body, http.StatusNotFound, "not_found")
+		}
+	}
+	status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", "", r)
 	errorCode(t, status, b, 401, "unauthorized")
 	for _, field := range []string{"source", "accountId", "threadRef", "text", "actor", "addressed", "channel", "quotedMessage"} {
 		t.Run(field, func(t *testing.T) {
 			bad := map[string]any{"operationId": "legacy-" + field, "message": map[string]any{
-				"sourceMessageId": field, "threadKey": r.Message.ThreadKey, "content": r.Message.Content, field: "legacy",
+				"sourceMessageId": field, "threadId": r.Message.ThreadID, "content": r.Message.Content, field: "legacy",
 			}}
-			gotStatus, gotBody := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, bad)
+			gotStatus, gotBody := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, bad)
 			errorCode(t, gotStatus, gotBody, 400, "invalid_argument")
 		})
 	}
 	unauthorizedThread := r
-	unauthorizedThread.Message.ThreadKey = "other:opaque"
-	status, b = request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, unauthorizedThread)
+	unauthorizedThread.Message.ThreadID = "other:opaque"
+	status, b = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, unauthorizedThread)
 	errorCode(t, status, b, 403, "forbidden")
-	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/routing-events", "/v1/observer/health", "/observer/"} {
+	for _, path := range []string{"/v1/core/threads", "/v1/core/internal-events", "/status"} {
 		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 			gotStatus, _ := request(t, method, p.endpoint, path, f.token, map[string]string{"write": "no"})
 			if gotStatus != 405 {
@@ -422,7 +462,7 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 		}
 	}
 	for _, h := range []string{"Origin", "Sec-Fetch-Site", "Host"} {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.endpoint+"/v1/observer/messages", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.endpoint+"/v1/core/trigger-messages", http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -443,16 +483,16 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 			t.Fatal("foreign browser request accepted")
 		}
 	}
-	if len(page(t, p, "messages").Items) != 0 {
+	if len(page(t, p, "trigger-messages").Items) != 0 {
 		t.Fatal("rejected requests wrote state")
 	}
 	r.Message.Content[0].Text.Text = "Untrusted content: " + f.token + " <script>window.attack=true</script>"
 	submit(t, p, f, r)
-	_, b = request(t, "GET", p.endpoint, "/v1/observer/messages", "", nil)
+	_, b = request(t, "GET", p.endpoint, "/v1/core/trigger-messages", "", nil)
 	if bytes.Contains(b, []byte(f.token)) || !bytes.Contains(b, []byte("[redacted]")) {
 		t.Fatal("query leaked source credential")
 	}
-	status, b = request(t, "HEAD", p.endpoint, "/v1/observer/messages", "", nil)
+	status, b = request(t, "HEAD", p.endpoint, "/v1/core/trigger-messages", "", nil)
 	if status != 200 || len(b) != 0 {
 		t.Fatal("HEAD returned body")
 	}
@@ -464,7 +504,7 @@ func TestPublicStablePagination(t *testing.T) {
 	for i := range 6 {
 		submit(t, p, f, input(strconv.Itoa(i)))
 	}
-	status, b := request(t, "GET", p.endpoint, "/v1/observer/messages?limit=2", "", nil)
+	status, b := request(t, "GET", p.endpoint, "/v1/core/trigger-messages?limit=2", "", nil)
 	if status != 200 {
 		t.Fatalf("list %s", b)
 	}
@@ -495,7 +535,7 @@ func TestPublicStablePagination(t *testing.T) {
 		if result.NextCursor == "" {
 			break
 		}
-		status, b = request(t, "GET", p.endpoint, "/v1/observer/messages?limit=2&cursor="+result.NextCursor, "", nil)
+		status, b = request(t, "GET", p.endpoint, "/v1/core/trigger-messages?limit=2&cursor="+result.NextCursor, "", nil)
 		if status != 200 {
 			t.Fatalf("cursor %s", b)
 		}
@@ -507,8 +547,8 @@ func TestPublicStablePagination(t *testing.T) {
 	if len(seen) != 6 {
 		t.Fatalf("pagination lost rows %d", len(seen))
 	}
-	for _, path := range []string{"messages?limit=201", "messages?limit=0", "messages?cursor=bad", "threads?cursor=" + first.NextCursor, "messages?cursor=" + first.NextCursor + "&threadKey=other"} {
-		status, b = request(t, "GET", p.endpoint, "/v1/observer/"+path, "", nil)
+	for _, path := range []string{"trigger-messages?limit=201", "trigger-messages?limit=0", "trigger-messages?cursor=bad", "threads?cursor=" + first.NextCursor, "trigger-messages?cursor=" + first.NextCursor + "&threadId=other"} {
+		status, b = request(t, "GET", p.endpoint, "/v1/core/"+path, "", nil)
 		errorCode(t, status, b, 400, "invalid_argument")
 	}
 }
@@ -524,7 +564,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			outcome := make(chan error, 1)
 			go func() {
 				b, _ := json.Marshal(r)
-				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, p.endpoint+"/v1/channel/messages", bytes.NewReader(b))
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, p.endpoint+"/v1/core/trigger-messages", bytes.NewReader(b))
 				if err != nil {
 					outcome <- err
 					return
@@ -560,7 +600,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			if stage == "after_commit" {
 				count = 1
 			}
-			for _, kind := range []string{"messages", "threads", "routing-events"} {
+			for _, kind := range []string{"trigger-messages", "threads", "internal-events"} {
 				if len(page(t, p, kind).Items) != count {
 					t.Fatalf("partial transaction after %s in %s", stage, kind)
 				}
@@ -575,7 +615,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			if receipt.Status != "accepted" {
 				t.Fatal("recovery replay failed")
 			}
-			for _, kind := range []string{"messages", "threads", "routing-events"} {
+			for _, kind := range []string{"trigger-messages", "threads", "internal-events"} {
 				if len(page(t, p, kind).Items) != 1 {
 					t.Fatal("recovery replay duplicated records")
 				}
@@ -596,7 +636,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		f.fails("failed_precondition")
 		f.configure(0, "account-1")
 		p = f.start()
-		if len(page(t, p, "messages").Items) != 1 {
+		if len(page(t, p, "trigger-messages").Items) != 1 {
 			t.Fatal("account failure damaged data")
 		}
 	})
@@ -626,9 +666,9 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		p := f.start()
 		r := input("oversize")
 		r.Message.Content[0].Text.Text = strings.Repeat("x", 512*1024)
-		status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
+		status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, r)
 		errorCode(t, status, b, 503, "unavailable")
-		for _, kind := range []string{"messages", "threads", "routing-events"} {
+		for _, kind := range []string{"trigger-messages", "threads", "internal-events"} {
 			if len(page(t, p, kind).Items) != 0 {
 				t.Fatal("failed persistence left partial state")
 			}
@@ -636,7 +676,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		p.stop(t, true)
 		f.configure(0, "account-1")
 		p = f.start()
-		if len(page(t, p, "messages").Items) != 0 {
+		if len(page(t, p, "trigger-messages").Items) != 0 {
 			t.Fatal("storage failure was committed")
 		}
 		submit(t, p, f, input("oversize"))
@@ -674,7 +714,7 @@ func TestPublicConcurrentDuplicate(t *testing.T) {
 		}
 		id = value
 	}
-	if len(page(t, p, "routing-events").Items) != 1 {
+	if len(page(t, p, "internal-events").Items) != 1 {
 		t.Fatal("concurrent duplicate event")
 	}
 }
@@ -719,7 +759,7 @@ func TestPublicOptionalReplyAddress(t *testing.T) {
 	r := input("no-reply-address")
 	r.ReplyTarget = nil
 	receipt := submit(t, p, f, r)
-	status, b := request(t, "GET", p.endpoint, "/v1/observer/messages/"+receipt.MessageID, "", nil)
+	status, b := request(t, "GET", p.endpoint, "/v1/core/trigger-messages/"+receipt.MessageID, "", nil)
 	var m core.Message
 	if status != 200 || json.Unmarshal(b, &m) != nil || len(m.ReplyTarget) != 0 {
 		t.Fatalf("reply address was required or fabricated: %s", b)
@@ -731,7 +771,7 @@ func TestPublicOptionalReplyAddress(t *testing.T) {
 	}
 	r.OperationID = "conflicting-address"
 	r.ReplyTarget = json.RawMessage(`{"resource":"https://example.com/review/3","replyTokenRef":"external-adapter-reference"}`)
-	status, b = request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
+	status, b = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, r)
 	errorCode(t, status, b, 409, "conflict")
 	r = input("generic-reply-address")
 	r.ReplyTarget = json.RawMessage(`{"resource":"https://example.com/review/3"}`)
@@ -758,7 +798,7 @@ func TestConfigDefaultAndExplicitListen(t *testing.T) {
 	p := f.start()
 	_, port, _ := net.SplitHostPort(strings.TrimPrefix(p.endpoint, "http://"))
 	p.endpoint = "http://127.0.0.1:" + port
-	status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", "", input("unauth"))
+	status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", "", input("unauth"))
 	errorCode(t, status, b, 401, "unauthorized")
 	submit(t, p, f, input("explicit-bind"))
 }
@@ -806,7 +846,7 @@ func TestPublicSpecialDataPathAndCLIError(t *testing.T) {
 	f.configure(0, "account-1")
 	p := f.start()
 	submit(t, p, f, input("special-path"))
-	cmd := exec.CommandContext(context.Background(), build(t), "observe", "messages", "--endpoint", p.endpoint, "--limit", "201")
+	cmd := exec.CommandContext(context.Background(), build(t), "observe", "trigger-messages", "--endpoint", p.endpoint, "--limit", "201")
 	cmd.Env = []string{"HOME=" + f.dir, "PATH=" + f.dir}
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -820,7 +860,7 @@ func TestPublicSpecialDataPathAndCLIError(t *testing.T) {
 	}
 	p.stop(t, true)
 	p = f.start()
-	if len(page(t, p, "messages").Items) != 1 {
+	if len(page(t, p, "trigger-messages").Items) != 1 {
 		t.Fatal("special-path database was not reopened")
 	}
 }

@@ -50,7 +50,7 @@ func (s *Server) mcpQuery(ctx context.Context, b SessionBinding, tool string, ra
 		}
 		if slices.Contains(q.Include, "thread") {
 			var thread string
-			_ = json.Unmarshal(value["threadKey"], &thread)
+			_ = json.Unmarshal(value["threadId"], &thread)
 			value["thread"], err = s.store.getScoped(ctx, "threads", thread, &b, nil)
 			if err != nil {
 				return nil, err
@@ -189,14 +189,14 @@ func (s *Server) mcpList(ctx context.Context, b SessionBinding, tool string, raw
 	switch tool {
 	case "list_messages":
 		var r struct {
-			ThreadKey string `json:"threadKey,omitempty"`
-			Cursor    string `json:"cursor,omitempty"`
-			Limit     *int   `json:"limit,omitempty"`
+			ThreadID string `json:"threadId,omitempty"`
+			Cursor   string `json:"cursor,omitempty"`
+			Limit    *int   `json:"limit,omitempty"`
 		}
 		if err := decodeStrict(raw, &r); err != nil {
 			return nil, err
 		}
-		q = QueryRequest{Collection: "messages", ThreadKey: r.ThreadKey, Cursor: r.Cursor, Limit: 50}
+		q = QueryRequest{Collection: "messages", ThreadID: r.ThreadID, Cursor: r.Cursor, Limit: 50}
 		if r.Limit != nil {
 			q.Limit = *r.Limit
 		}

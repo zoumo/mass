@@ -3,7 +3,7 @@ package core
 // The current schema is used to initialize fresh Core stores.
 const schema = `
 CREATE TABLE threads (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE,
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
  source TEXT NOT NULL, native_id TEXT NOT NULL, created_at TEXT NOT NULL,
  last_message_at TEXT NOT NULL, subscriptions TEXT NOT NULL DEFAULT '[]',
  UNIQUE(source,native_id)
@@ -12,11 +12,11 @@ CREATE TABLE trigger_messages (
  seq INTEGER PRIMARY KEY AUTOINCREMENT,
  id TEXT GENERATED ALWAYS AS ('mass-m' || seq) STORED NOT NULL UNIQUE,
  source TEXT NOT NULL, account_id TEXT NOT NULL, native_id TEXT NOT NULL,
- thread_key TEXT NOT NULL REFERENCES threads(key), accepted_at TEXT NOT NULL,
+ thread_id TEXT NOT NULL REFERENCES threads(id), accepted_at TEXT NOT NULL,
  canonical BLOB NOT NULL, body BLOB NOT NULL, routing_state TEXT,
  UNIQUE(source,account_id,native_id)
 );
-CREATE INDEX trigger_messages_thread ON trigger_messages(thread_key,accepted_at,id);
+CREATE INDEX trigger_messages_thread ON trigger_messages(thread_id,accepted_at,id);
 CREATE TABLE topics (
  seq INTEGER PRIMARY KEY AUTOINCREMENT,
  id TEXT GENERATED ALWAYS AS ('mass-t' || seq) STORED NOT NULL UNIQUE,

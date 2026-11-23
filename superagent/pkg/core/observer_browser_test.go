@@ -62,7 +62,7 @@ func (a *observerBrowserAudit) pollOutbox(ctx context.Context, endpoint, token, 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+channelOutbox+"?limit=200", http.NoBody)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+channelOutbox+"?view=delivery&limit=200", http.NoBody)
 			if err != nil {
 				return
 			}
@@ -97,7 +97,7 @@ func (a *observerBrowserAudit) pollOutbox(ctx context.Context, endpoint, token, 
 func serveObserverBrowserAudit(t *testing.T, audit *observerBrowserAudit, boundary *routeBoundary, f *fixture, p *process, binding core.SessionBinding, roleToken string) {
 	t.Helper()
 	var sentID string
-	for _, row := range page(t, p, "outbox?preview=true").Items {
+	for _, row := range page(t, p, "outbox-messages?preview=true").Items {
 		var item struct {
 			ID      string `json:"id"`
 			Preview string `json:"preview"`
@@ -250,7 +250,7 @@ func seedObserverSessionReuse(t *testing.T) map[string]string {
 	const stored = "Session history recorded before the binding changed"
 	require.NoError(t, emitObserverMessage(t.Context(), boundary.driver, original, stored, true))
 	require.Eventually(t, func() bool {
-		status, data := request(t, http.MethodGet, p.endpoint, "/v1/observer/session-preview/"+original.ID+"/history", "", nil)
+		status, data := request(t, http.MethodGet, p.endpoint, "/v1/core/session-bindings/"+original.ID+"/history", "", nil)
 		return status == http.StatusOK && strings.Contains(string(data), stored)
 	}, 5*time.Second, 25*time.Millisecond)
 	oldReport := roleWork[core.Report](t, p, roleToken(t, f, original), "submit_report", core.ReportRequest{

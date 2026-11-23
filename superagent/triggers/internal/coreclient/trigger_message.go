@@ -8,7 +8,7 @@ import (
 
 type TriggerMessage struct {
 	SourceMessageID string                `json:"sourceMessageId"`
-	ThreadKey       string                `json:"threadKey"`
+	ThreadID        string                `json:"threadId"`
 	Content         []events.ContentBlock `json:"content"`
 	Meta            json.RawMessage       `json:"_meta,omitempty"`
 }

@@ -26,10 +26,11 @@ type Health = {
   issueStates: Counts
   eventStates: Counts
   outboxStates: Counts
+  timerStates: Counts | null
   unknownStops: number
 }
-const statusCounts = (counts: Counts) =>
-  Object.entries(counts)
+const statusCounts = (counts: Counts | null) =>
+  Object.entries(counts || {})
     .map(([k, v]) => v + ' ' + stateLabel(k))
     .join(' · ') || '无'
 const workViews = { messages: 'message', issues: 'issue', topics: 'topic' } as const
@@ -38,7 +39,7 @@ function href(view: Kind, filterId = '', scope: Filter = 'topicId', id = '') {
   if (id) q.set('id', id)
   if (filterId) q.set(scope, filterId)
   if (view in workViews) q.set('mode', 'records')
-  return '/observer/?' + q
+  return '/superagent/?' + q
 }
 function nameOf(kind: Kind, row: DiagnosticRow) {
   if (kind === 'messages') return row.text || identity(row)
@@ -81,25 +82,22 @@ function columns(kind: Kind): Column[] {
         ['报告类型', (r) => stateLabel(r.kind)],
         ['报告状态', (r) => (r.current ? '当前报告' : '历史报告')],
       ]
-    case 'relations':
-    case 'routing-events':
-      return [
-        ['Topic', (r) => r.topicId],
-        ['Session 投递', (r) => r.status && eventStatusLabel(r.status)],
-        ...(kind === 'routing-events' ? [internalEventTrace] : []),
-      ]
-    case 'subscriptions':
-      return [['Topic', (r) => r.topicId]]
     case 'internal-events':
       return [['Session 投递', (r) => eventStatusLabel(r.status)], internalEventTrace]
     default:
       return []
   }
 }
-function Overview({ health }: { health: Health }) {
+type Component = { status: string }
+type StackStatus = { status: string; core: Health; massd: Component; triggers: { github: Component; dws: Component } }
+
+function Overview({ stack }: { stack: StackStatus }) {
+  const health = stack.core
   return (
     <section className="diag-health" aria-label="运行概况">
       <dl>
+        <dt>整体状态</dt>
+        <dd>{stateLabel(stack.status)}</dd>
         <dt>接收状态</dt>
         <dd>{health.ingress === 'ready' ? '核心服务已就绪' : stateLabel(health.ingress)}</dd>
         <dt>路由器准备状态</dt>
@@ -113,13 +111,21 @@ function Overview({ health }: { health: Health }) {
       </dl>
       <dl>
         <dt>待处理输入</dt>
-        <dd>{(health.eventStates.pending || 0) + (health.eventStates.dispatching || 0)}</dd>
+        <dd>{(health.eventStates?.pending || 0) + (health.eventStates?.dispatching || 0)}</dd>
         <dt>Session 已受理</dt>
-        <dd>{health.eventStates.sent || 0}</dd>
+        <dd>{health.eventStates?.sent || 0}</dd>
         <dt>回执</dt>
         <dd>{statusCounts(health.outboxStates)}</dd>
       </dl>
       <dl>
+        <dt>massd</dt>
+        <dd>{stateLabel(stack.massd.status)}</dd>
+        <dt>GitHub Trigger</dt>
+        <dd>{stateLabel(stack.triggers.github.status)}</dd>
+        <dt>DWS Trigger</dt>
+        <dd>{stateLabel(stack.triggers.dws.status)}</dd>
+        <dt>定时器</dt>
+        <dd>{statusCounts(health.timerStates)}</dd>
         <dt>原生停止未知</dt>
         <dd>{health.unknownStops}</dd>
       </dl>
@@ -130,16 +136,16 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   const { online } = useRefresh()
   const kind = kinds.find((k) => k === query.get('view')) || 'messages'
   const id = query.get('id') || ''
-  const scope = (['threadKey', 'topicId', 'messageId', 'issueId'] as const).find((key) => query.has(key))
+  const scope = (['threadId', 'topicId', 'messageId', 'issueId'] as const).find((key) => query.has(key))
   const filter = scope ? query.get(scope) || '' : ''
   const params = new URLSearchParams({ limit: '50', preview: 'true' })
   if (scope && filter) params.set(scope, filter)
-  if (kind === 'internal-events' || kind === 'routing-events') params.set('trace', 'true')
+  if (kind === 'internal-events') params.set('trace', 'true')
   const list = usePages<DiagnosticRow>(kind + '?' + params)
   const detail = useRecord<DiagnosticRow>(id ? kind + '/' + encodeURIComponent(id) + '?trace=true' : '')
-  const health = useRecord<Health>('health')
+  const status = useRecord<StackStatus>('status')
   const [draft, setDraft] = useState(filter)
-  useEffect(() => setDraft(scope === 'threadKey' ? filter : ''), [scope, filter])
+  useEffect(() => setDraft(scope === 'threadId' ? filter : ''), [scope, filter])
   const rows = list.data || []
   const cols = columns(kind)
   const open: OpenCollection = (view, filterId, key, selected) => {
@@ -169,10 +175,10 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   }
   return (
     <div className="diagnostic-workspace">
-      {health.data && <Overview health={health.data} />}
-      {health.error && (
+      {status.data && <Overview stack={status.data} />}
+      {status.error && (
         <p className="read-error" role="alert">
-          {health.error}
+          {status.error}
         </p>
       )}
       <nav className="diag-collections" aria-label="诊断列表">
@@ -197,12 +203,12 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              open(kind, draft.trim(), 'threadKey')
+              open(kind, draft.trim(), 'threadId')
             }}
           >
             <input
-              aria-label="按线程键筛选"
-              placeholder="输入完整线程键"
+              aria-label="按线程 ID 筛选"
+              placeholder="输入完整线程 ID"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
             />

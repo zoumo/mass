@@ -34,20 +34,27 @@ func TestObserverTraceReadProjectsKnownFields(t *testing.T) {
  ]}`, id, spanID, id, childID, spanID, childID)
 	}))
 	t.Cleanup(server.Close)
-	reader, err := newObserverTraceReader(&ObserverTraceConfig{Endpoint: server.URL})
+	reader, err := newObserverTraceReader(&TelemetryQueryConfig{Endpoint: server.URL})
 	require.NoError(t, err)
 	t.Cleanup(reader.client.CloseIdleConnections)
-	result, err := reader.read(t.Context(), id, nil)
-	require.NoError(t, err)
+	s, httpServer := startCoreResourceFixture(t)
+	s.observerTraces = reader
+	path := telemetryTracePath + "/" + id
+	status, _, body := resourceRequest(t, httpServer.URL, http.MethodGet, path)
+	require.Equal(t, http.StatusOK, status, "%s", body)
+	var result telemetryTrace
+	require.NoError(t, json.Unmarshal(body, &result))
 	require.Len(t, result.Spans, 2)
 	require.Equal(t, spanID, result.Spans[1].ParentID)
 	require.InDelta(t, 137, result.Spans[1].OffsetUS, 0)
 	require.EqualValues(t, 42, result.Spans[1].DurationUS)
-	body, err := json.Marshal(result)
-	require.NoError(t, err)
 	require.NotContains(t, string(body), "secret")
-	_, err = reader.read(t.Context(), "invalid", nil)
-	require.Error(t, err)
+	status, _, body = resourceRequest(t, httpServer.URL, http.MethodHead, path)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body)
+	status, _, body = resourceRequest(t, httpServer.URL, http.MethodGet, path+"?at=invalid")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Contains(t, string(body), "invalid Trace time anchor")
 }
 
 func TestObserverIssueTracePreservesReports(t *testing.T) {

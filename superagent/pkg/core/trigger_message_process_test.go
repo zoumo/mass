@@ -3,6 +3,7 @@ package core_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 func TestStructuredTriggerMessageProcess(t *testing.T) {
 	f := fixtureAt(t)
 	const thread = "opaque/Case%2f:入口"
+	const ingress = "/v1/core/trigger-messages"
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
 	config = []byte(strings.Replace(string(config), "['dws:']", "['opaque/']", 1))
@@ -26,18 +28,18 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 		tokens[source] = strings.Repeat(source, 16)
 		file := filepath.Join(f.dir, source+".token")
 		write(t, file, tokens[source])
-		config = append(config, []byte("  - source: "+source+"\n    accountId: "+source+"-account\n    tokenFile: "+file+"\n    threadKeys: ['"+thread+"']\n")...)
+		config = append(config, []byte("  - source: "+source+"\n    accountId: "+source+"-account\n    tokenFile: "+file+"\n    threadIds: ['"+thread+"']\n")...)
 	}
 	write(t, f.config, string(config))
 	p := f.start()
 	newInput := func(op, id string, blocks ...events.ContentBlock) core.SubmitTriggerMessageRequest {
 		return core.SubmitTriggerMessageRequest{OperationID: op, Message: core.TriggerMessage{
-			SourceMessageID: id, ThreadKey: thread, Content: blocks,
+			SourceMessageID: id, ThreadID: thread, Content: blocks,
 		}}
 	}
 	submit := func(source string, input core.SubmitTriggerMessageRequest) core.Receipt {
 		t.Helper()
-		status, data := request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", tokens[source], input)
+		status, data := request(t, http.MethodPost, p.endpoint, ingress, tokens[source], input)
 		require.Equal(t, http.StatusOK, status, string(data))
 		var receipt core.Receipt
 		require.NoError(t, json.Unmarshal(data, &receipt))
@@ -45,7 +47,7 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	}
 	reject := func(token string, input any, status int, code string) {
 		t.Helper()
-		got, data := request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", token, input)
+		got, data := request(t, http.MethodPost, p.endpoint, ingress, token, input)
 		errorCode(t, got, data, status, code)
 	}
 	attachment := events.ContentBlock{ResourceLink: &events.ContentBlockResourceLink{URI: "file:///logs/checks.log", Name: "checks.log"}}
@@ -58,7 +60,7 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	large := submit("antcode", largeInput)
 	require.NotEqual(t, first.MessageID, second.MessageID)
 	for _, receipt := range []core.Receipt{first, second, large} {
-		require.Equal(t, thread, receipt.ThreadKey)
+		require.Equal(t, thread, receipt.ThreadID)
 		require.NotEmpty(t, receipt.EventID)
 	}
 
@@ -71,28 +73,28 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	require.Equal(t, first, replayed)
 	replay.Message.Content = []events.ContentBlock{attachment, firstInput.Message.Content[0]}
 	reject(tokens["custom"], replay, http.StatusConflict, "conflict")
-	changedKey := newInput("second", "repeat-dws-id", events.Text("test"))
-	submit("dws", changedKey)
-	changedKey.Message.ThreadKey = "opaque/another"
-	reject(tokens["dws"], changedKey, http.StatusConflict, "conflict")
-	changedKey.Message.ThreadKey = strings.ToLower(thread)
-	reject(tokens["custom"], changedKey, http.StatusForbidden, "forbidden")
+	changedThread := newInput("second", "repeat-dws-id", events.Text("test"))
+	submit("dws", changedThread)
+	changedThread.Message.ThreadID = "opaque/another"
+	reject(tokens["dws"], changedThread, http.StatusConflict, "conflict")
+	changedThread.Message.ThreadID = strings.ToLower(thread)
+	reject(tokens["custom"], changedThread, http.StatusForbidden, "forbidden")
 	for _, invalid := range []string{
-		`{"operationId":"o","message":{"sourceMessageId":"m","threadKey":"x","content":[]}}`,
-		`{"operationId":"o","message":{"sourceMessageId":"m","threadKey":"x","content":[{"type":"resource_link","uri":"file:///log"}]}}`,
-		`{"operationId":"o","message":{"sourceMessageId":"m","threadKey":"x","content":[{"type":"text","text":"ok","group":true}]}}`,
-		`{"operationId":"o","message":{"sourceMessageId":"m","threadKey":"x","content":[{"type":"text","text":"ok"}],"_meta":null}}`,
-		`{"operationId":"o","message":{"sourceMessageId":"m","threadKey":"x","content":[{"type":"text","text":"ok"}],"source":"spoofed"}}`,
+		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[]}}`,
+		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[{"type":"resource_link","uri":"file:///log"}]}}`,
+		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[{"type":"text","text":"ok","group":true}]}}`,
+		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[{"type":"text","text":"ok"}],"_meta":null}}`,
+		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[{"type":"text","text":"ok"}],"source":"spoofed"}}`,
 	} {
 		reject(tokens["custom"], json.RawMessage(invalid), http.StatusBadRequest, "invalid_argument")
 	}
 	reject("", firstInput, http.StatusUnauthorized, "unauthorized")
-	stored := readRecord[core.Message](t, p, "messages/"+first.MessageID)
+	stored := readRecord[core.Message](t, p, "trigger-messages/"+first.MessageID)
 	require.Equal(t, "custom", stored.Source)
 	require.Equal(t, "custom-account", stored.AccountID)
 	require.JSONEq(t, string(firstInput.Message.Meta), string(stored.TriggerMeta))
 	require.Len(t, page(t, p, "threads").Items, 1)
-	require.Len(t, page(t, p, "messages").Items, 4)
+	require.Len(t, page(t, p, "trigger-messages").Items, 4)
 	require.Len(t, routingEvents(t, p, first.MessageID), 1)
 
 	// Reopen with execution configured so the first three committed events enter
@@ -101,6 +103,37 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f.execution(boundary)
 	p = f.start()
+	lookup := ingress + "?sourceMessageId=" + url.QueryEscape(firstInput.Message.SourceMessageID)
+	status, raw := request(t, http.MethodGet, p.endpoint, lookup, tokens["custom"], nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var readback core.Receipt
+	require.NoError(t, json.Unmarshal(raw, &readback))
+	require.Equal(t, first, readback)
+	require.NotContains(t, string(raw), `"content"`)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, tokens["github"], nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &readback))
+	require.Equal(t, second, readback)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, tokens["dws"], nil)
+	errorCode(t, status, raw, http.StatusNotFound, "not_found")
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, "", nil)
+	errorCode(t, status, raw, http.StatusUnauthorized, "unauthorized")
+	status, raw = request(t, http.MethodHead, p.endpoint, lookup, tokens["custom"], nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, raw)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup+"&view=router", "", nil)
+	errorCode(t, status, raw, http.StatusBadRequest, "invalid_argument")
+	status, raw = request(t, http.MethodGet, p.endpoint, ingress+"?sourceMessageId=%zz", "", nil)
+	errorCode(t, status, raw, http.StatusBadRequest, "invalid_argument")
+	status, raw = request(t, http.MethodGet, p.endpoint, ingress+"/"+first.MessageID, "", nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	require.NotContains(t, string(raw), `"inReplyToOutboxId"`)
+	status, raw = request(t, http.MethodGet, p.endpoint, ingress+"?view=router&messageId="+first.MessageID, "", nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var routedPage core.Page
+	require.NoError(t, json.Unmarshal(raw, &routedPage))
+	require.Len(t, routedPage.Items, 1)
+	require.Contains(t, string(routedPage.Items[0]), first.MessageID)
 	router := waitBinding(t, p, "router", "", "ready")
 	routerToken := roleToken(t, f, router)
 	for _, receipt := range []core.Receipt{first, second, large} {
@@ -162,5 +195,5 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	multi := submit("antcode", newInput("multi", "multiple-subscriptions", events.Text("Multiple candidate Topics.")))
 	waitDelivered(t, p, multi.MessageID, "router", "")
 	require.Len(t, routingEvents(t, p, multi.MessageID), 1)
-	t.Log("Core HTTP, scoped MCP, SQLite and MASS SendPrompt preserved typed blocks and exact Thread keys across distinct Trigger sources")
+	t.Log("Core HTTP, scoped MCP, SQLite and MASS SendPrompt preserved typed blocks and exact Thread IDs across distinct Trigger sources")
 }

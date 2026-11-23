@@ -1,20 +1,21 @@
 # Core v1 API
 
-This reference covers the Core interfaces for channel adapters, Observer readers,
-and role MCP clients. See the [deployment guide](README.md) for startup and
+This reference covers the Core interfaces for Triggers, trusted readers,
+Operators, and role MCP clients. The [OpenAPI document](openapi.json) defines
+the methods, schemas, and credential requirements. See the [deployment guide](README.md) for startup and
 configuration. MASS Runtime and Session operations follow the
 [MASS JSON-RPC contract](../harness/bindings/jsonrpc.md).
 
 ## Start and ownership
 
 One Core process owns `dataDir` at a time. A successful start returns
-`status: ready`, `endpoint`, and `observerEndpoint`. Accepted records survive
+`status: ready` and `endpoint`. Accepted records survive
 process exit. For a lost intake response, use the Message's original identity.
 See [data directory requirements](README.md#reuse-an-existing-core-data-directory).
 
 ## Submit Message
 
-`POST /v1/channel/messages` with `Content-Type: application/json` and
+`POST /v1/core/trigger-messages` with `Content-Type: application/json` and
 `Authorization: Bearer TOKEN`. The token identifies exactly one configured
 source/account; body fields cannot select another identity.
 
@@ -23,7 +24,7 @@ source/account; body fields cannot select another identity.
   "operationId": "stable-adapter-operation-17",
   "message": {
     "sourceMessageId": "native-message-id",
-    "threadKey": "https://github.example/org/repo/pull/42",
+    "threadId": "https://github.example/org/repo/pull/42",
     "content": [
       {"type": "text", "text": "Review requested."},
       {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42", "name": "URL"},
@@ -36,10 +37,10 @@ source/account; body fields cannot select another identity.
 ```
 
 `operationId` and `sourceMessageId` are required. The adapter supplies the
-final `threadKey`. Core stores it and matches subscriptions by exact string.
-A key is at most 2048 UTF-8 bytes and has no control characters or leading
-or trailing whitespace. A `sources` entry authorizes writes with `threadKeys`
-for exact matches and `threadKeyPrefixes` for literal prefixes. List the same
+final `threadId`. Core stores it and matches subscriptions by exact string.
+A Thread ID is at most 2048 UTF-8 bytes and has no control characters or leading
+or trailing whitespace. A `sources` entry authorizes writes with `threadIds`
+for exact matches and `threadIdPrefixes` for literal prefixes. List the same
 range in multiple entries to let their accounts write to the same Threads.
 A structured request needs a match in at least one of the configured lists.
 
@@ -48,7 +49,7 @@ The supported types are `text`, `image`, `audio`, `resource`, and `resource_link
 Use text for source facts. For a webpage URL, use a `resource_link` with
 `mimeType` omitted. The SDK passes the original URI to the Agent as text.
 `resource_link` can also reference attachments. Optional `_meta` is an opaque
-JSON object. Core saves it for Observer diagnostics and omits it from Agent
+JSON object. Core saves it for trusted diagnostics and omits it from Agent
 tools and Session input.
 Core generates `receivedAt`. Unknown fields and trailing JSON values fail.
 
@@ -61,12 +62,12 @@ Message has the same source, account and Thread.
 Success HTTP 200:
 
 ```json
-{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadKey":"https://github.example/org/repo/pull/42","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
+{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadId":"https://github.example/org/repo/pull/42","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
 ```
 
 Message, Thread update and the initial internal event commit together.
 The receipt identifies the accepted Message and Thread. Its `eventId` is the initial event ID. Read it through
-`/v1/observer/routing-events/{event_id}`.
+`GET /v1/core/internal-events/{eventId}`.
 
 Zero or multiple Thread subscriptions enqueue a `route_request` to Router.
 Exactly one queues a `routed_message` to that Topic. Both reference the
@@ -75,14 +76,14 @@ becomes `sent` after massd accepts the Session input.
 
 Admission deduplicates by the authenticated source, account, and
 `sourceMessageId`. Duplicate intake returns the original Message ID, Thread
-key, acceptance time, and initial event ID with `duplicate=true`. Changing
-the Thread key, ordered content, reply target or Outbox reference under that
+ID, acceptance time, and initial event ID with `duplicate=true`. Changing
+the Thread ID, ordered content, reply target or Outbox reference under that
 identity returns `conflict`.
 Object field order is immaterial. Changing `_meta` alone returns the original
 receipt and preserves the first metadata. `operationId` correlates a caller's
 request and does not participate in Message deduplication.
 
-`GET /v1/channel/messages?sourceMessageId={encoded-native-id}` uses the same
+`GET /v1/core/trigger-messages?sourceMessageId={encoded-native-id}` uses the same
 source credential and returns the stored acceptance receipt with `duplicate=false`.
 The lookup scopes the native ID to the authenticated source and account and
 returns `not_found` when the scoped Message is absent. It returns no Message
@@ -101,44 +102,47 @@ account fails forbidden. Storage errors never return accepted. After an
 unavailable storage result or lost connection, retry with the same `operationId`
 and native identity. The retry can recover an acceptance after restart.
 
-## Read-only observation
+## Trusted resource reads
 
-No write credential is needed or sent by these trusted-reader endpoints:
+The Core and telemetry paths below support `GET` and `HEAD` for trusted reads.
+Brackets indicate an optional detail path.
 
-- GET/HEAD `/v1/observer/health`
-- GET/HEAD `/v1/observer/performance`
-- GET/HEAD `/v1/observer/traces/{traceId}`
-- GET/HEAD `/v1/observer/messages[/{id}]`
-- GET/HEAD `/v1/observer/threads[/{escaped-key}]`
-- GET/HEAD `/v1/observer/topics[/{id}]`
-- GET/HEAD `/v1/observer/topic-activity?topicId={id}&filter=all|message|issue`
-- GET/HEAD `/v1/observer/topic-activity?mode=conversation`
-- GET/HEAD `/v1/observer/issues[/{id}]`
-- GET/HEAD `/v1/observer/reports[/{id}]`
-- GET/HEAD `/v1/observer/timers[/{id}]`
-- GET/HEAD `/v1/observer/pull-requests[/{id}]`
-- GET/HEAD `/v1/observer/outbox[/{id}]`
-- GET/HEAD `/v1/observer/router-messages`
-- GET/HEAD `/v1/observer/routing-events[/{event_id}]`
-- GET/HEAD `/v1/observer/subscriptions[/{id}]`
-- GET/HEAD `/v1/observer/relations[/{id}]`
-- GET/HEAD `/v1/observer/session-bindings[/{id}]`
-- GET/HEAD `/v1/observer/internal-events[/{event_id}]`
-- GET/HEAD `/v1/observer/session-preview/{sessionBindingId}/history`
-- GET/HEAD `/v1/observer/session-preview/{sessionBindingId}/live`
-- GET/HEAD `/observer/` and its static assets
+| Resource | Path |
+| --- | --- |
+| Trigger Messages | `/v1/core/trigger-messages[/{messageId}]` |
+| Router view | `/v1/core/trigger-messages?view=router` |
+| Outbox history | `/v1/core/outbox-messages[/{outboxId}]` |
+| Threads | `/v1/core/threads[/{threadId}]` |
+| Topics | `/v1/core/topics[/{topicId}]` |
+| Topic activity and conversation | `/v1/core/topics/{topicId}/activity` |
+| Issues | `/v1/core/issues[/{issueId}]` |
+| Reports | `/v1/core/reports[/{reportId}]` |
+| Timers | `/v1/core/timers[/{timerId}]` |
+| Internal Events | `/v1/core/internal-events[/{eventId}]` |
+| Session Bindings | `/v1/core/session-bindings[/{bindingId}]` |
+| Stored Session history | `/v1/core/session-bindings/{bindingId}/history` |
+| Live Session preview | `/v1/core/session-bindings/{bindingId}/live` |
+| Trace | `/v1/telemetry/traces/{traceId}` |
+| Performance | `/v1/telemetry/performance` |
 
-`trace=true` includes saved Trace associations in supported Observer record
+Percent-encode the Thread ID as one path segment. Topic and Issue details
+contain PR links. Thread details contain subscriptions. Trigger Message
+details contain routing relations.
+
+Superagent Web serves `/superagent/` and its assets from a separate static
+service. The same-origin gateway forwards resource requests to Core.
+
+`trace=true` includes saved Trace associations in supported Core resource
 reads. Topic activity timelines include the associations with each event.
 An Issue has a creation Trace link when Core saved its creation association.
 
-`/traces/{traceId}` returns spans from the OpenObserve stream configured under
-`observerTrace`. Specify a 32-character hexadecimal Trace ID. Lookup covers
+`/v1/telemetry/traces/{traceId}` returns spans from the OpenObserve stream configured under
+`telemetryQuery`. Specify a 32-character hexadecimal Trace ID. Lookup covers
 the past seven days by default, or seven days on either side of an optional
 RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
-partial results. The Observer links to `/observer/?perspective=trace&id={traceId}`.
+partial results. Superagent Web links to `/superagent/?perspective=trace&id={traceId}`.
 
-`GET /v1/observer/performance` queries OTel time series in OpenObserve. `window`
+`GET /v1/telemetry/performance` queries OTel time series in OpenObserve. `window`
 accepts `15m`, `1h`, `6h` and `24h` and defaults to `1h`.
 
 - `metric=process` is the default and returns `cpu`, `rss`, `goroutines` and
@@ -158,17 +162,28 @@ Values are cores for `cpu`, bytes for `rss`, counts for `goroutines` and
 `mcp_failure_rate`, and seconds for `mcp_p95`. An empty series list indicates
 no samples. An `unavailable: true` metric indicates a query failure.
 
-Topic activity merges routing events and saved Issue facts in descending `(at, id)` order. The filter applies before pagination. `limit` defaults to 20 and accepts 1–200. `nextCursor` binds the Topic, filter and first-page watermark. Each row identifies its source record. An `issue_snapshot` describes the saved state at `updatedAt`. Lifecycle entries use the timestamp on the saved transition.
+`POST /v1/telemetry/traces` and `POST /v1/telemetry/metrics` accept
+uncompressed OTLP Protobuf when Core starts with `SUPERAGENT_WEB_OTLP_ENDPOINT`.
+See the
+[telemetry deployment guide](telemetry/README.md#enable-superagent-web-telemetry).
 
-In `mode=conversation`, omitting `topicId` lists Topics by their latest
+Topic activity merges routing events and saved Issue facts in descending
+`(at, id)` order. Use `filter=all`, `filter=message`, or `filter=issue` to
+select entries before pagination. `limit` defaults to 20 and accepts 1–200.
+`nextCursor` binds the Topic, filter, and first-page watermark. Each row
+identifies its source record. An `issue_snapshot` describes the saved state
+at `updatedAt`. Lifecycle entries use the timestamp on the saved transition.
+
+`GET /v1/core/topics?view=conversation` lists Topics by their latest
 conversation message, newest first. Topics without messages follow in
 creation order, newest first. Equal timestamps sort by Topic ID descending.
-Use `search` to match a substring of the title or ID. Supply `topicId` to
-list that Topic's timeline in descending `(at, id)` order. Use `filter`
+Use `search` to match a substring of the title or ID. Use
+`/v1/core/topics/{topicId}/activity?view=conversation` to list the Topic's
+conversation timeline in descending `(at, id)` order. Use `filter`
 with `all`, `router_routed`, `thread_direct`, `issue_created`, `issue_session_dispatch`
 or `report`.
 Ingress rows identify the saved Message and event and include the source
-`threadKey` when present. Issue creation appears on the timeline while activity
+`threadId` when present. Issue creation appears on the timeline while activity
 ordering uses conversation messages. Issue Session dispatch rows identify the saved
 event, its Issue and the recipient `sessionBindingId`. Their
 `dispatchKind` identifies startup, continuation, goal notification or context
@@ -180,16 +195,28 @@ An exact `eventId` within a Topic returns a single row in the standard page
 envelope. `limit` defaults to 20 and accepts 1–200. Continuation cursors bind the
 query scope and first-page watermarks.
 
-Health reports `ingress: ready` for Core HTTP intake. It shows Router
-preparation, Topic and Issue business states, unknown native stops and echoes,
-and counts by internal event and Outbox status. Use the Trigger's local
-status command and logs for channel readiness and admission health.
+## Health and massd
+
+`GET /livez` checks whether Core can respond. `GET /readyz` checks Core
+admission and database access. It returns `503` when admission is closed.
+`GET /status` returns Core, massd, and the built-in GitHub and DWS Trigger
+states. Core includes Router preparation, Topic and Issue states, unknown
+native stops and echoes, and counts by Internal Event, Outbox, and Timer
+state. Standalone Core reports the Trigger states as `not_managed`. Compose
+adds their observed states. An unavailable component can make `/status`
+report `degraded` while `/readyz` remains ready.
+
+When massd is exposed under `/massd`, `GET /massd/livez` and
+`GET /massd/readyz` check massd. `GET /massd/jsonrpc` upgrades to a WebSocket
+using the massd instance credential.
+
+## Read projections and pagination
 
 Router is `not_started` when execution is
 omitted, or its persisted `pending/ready/blocked` preparation state. Messages
-include current `routing: {round,state}`. Observer/Router projections also include
+include current `routing: {round,state}`. Trusted HTTP reads and Router MCP projections also include
 source reception/return relations. Topic-role Message queries omit other Topics'
-relations. Thread details expose the key and timestamps. SessionBindings expose fixed
+relations. Thread details expose the identifier as `id` and include timestamps. SessionBindings expose fixed
 role, owner, generation, workspace, namespace/name, `runtimeRef`, `model`,
 optional `effort`, actual Session IDs,
 preparation state and any error, and the next attempt time. Credentials and MCP capability files stay private.
@@ -197,22 +224,23 @@ Internal event details expose sender, recipient, content references, status
 and the Session acceptance timestamp.
 
 Lists return `{"items":[...],"nextCursor":"opaque"}`. Default limit 50,
-valid range 1–200. Messages and subscriptions accept an exact `threadKey`.
-Issues, Timers, PR associations, routing events, routing relations and subscriptions accept `topicId`. Routing events also accept `messageId`. An event includes its sender, recipient, content references, status and return link.
-SessionBindings, Reports and PR associations accept `issueId`. Internal events accept the same filter for explicit Issue references. Their preview marks recorded goal-update notifications with `goalUpdate` and includes the target revision. Supply one parent
-filter at a time. The Observer also supports `topicId` on Outbox to find replies to messages in the
-Topic's routing history. Outbox and routing relations accept `messageId`. Observer Issues accept
-`messageId` to select Issues with an explicit matching material across all Topics. Message-filtered
-Issue and routing-event previews include the owning or participating Topic's title when available.
-Observer lists accept `preview=true` for compact rows. Message, reply and Timer
-previews contain up to 240 characters. A Message preview uses the first
-nonblank text block or lists its content types. Open a record by ID for its
+valid range 1–200. Trigger Messages and Outbox history accept an exact
+`threadId`. Issues, Timers, and Outbox history accept `topicId`. Reports,
+Session Bindings, and Internal Events accept `issueId`. Internal Events and
+Outbox history accept `messageId`. Issues accept `messageId` to select Issues
+with matching materials across Topics. Supply one parent filter at a time.
+Message-filtered Issue and Internal Event previews include available Topic
+names. Internal Event previews mark recorded goal updates with `goalUpdate`
+and include the target revision. Supported lists accept `preview=true` for
+compact rows. Message, reply, and Timer previews contain up to 240
+characters. A Message preview uses the first nonblank text block or lists
+its content types. Open a record by ID for its
 full `content` and diagnostic `_meta` when present. Continuation
 cursors bind collection, filter and the first page's sequence high-water mark.
 Rows accepted later never enter that traversal. Ordering uses fixed nanosecond
-UTC Core timestamps plus stable ID (Thread key for Threads). Thread ordering
+UTC Core timestamps plus stable ID (Thread ID for Threads). Thread ordering
 uses immutable `createdAt`. `lastMessageAt` reflects the last accepted Message
-and is omitted until the Thread receives its first source input.
+and is `null` until the Thread receives its first source input.
 Router Messages default to 20 rows and accept an exact `messageId`. Rows represent
 distinct Messages with a request to or delivery from the Router. They sort by the
 most recent qualifying event registration time and Message ID, newest first.
@@ -223,27 +251,23 @@ return references. An ignored Message has no persisted ignore reason or decision
 timestamp.
 
 A fresh first-page request refreshes the snapshot. Cursors are opaque reader
-state, not capabilities; malformed or scope-mismatched cursors fail. Set
-`order=newest` on Observer lists for descending time and ID order. Reuse the
-same order when following a continuation cursor.
+state. Malformed or scope-mismatched cursors fail. Set `order=newest` on
+supported collections for descending time and ID order. Follow a continuation
+cursor with the same order.
 
 Run `superagent observe --help` for CLI collections, and request the chosen
 collection's `--help` for filters. The CLI accepts a numeric HTTP origin and
-uses the same read API without loading the channel configuration or tokens.
+uses the same read API without loading the Trigger configuration or tokens.
 
 By default, `Host` must match the connection's numeric local endpoint.
-`observerAllowedHosts` also accepts exact `Host` values for `GET` and `HEAD`
-requests to the Observer UI and `/v1/observer/` API. Each entry is a DNS name
-with a port when clients include one. All other routes retain the numeric
-endpoint requirement. `externalURL` independently sets the Session MCP address.
+`readAllowedHosts` adds exact `Host` values for `GET` and `HEAD` resource
+reads. Each entry is a DNS name with a port when clients include one.
+`externalURL` sets the address that role Sessions use for MCP.
 
-Core rejects foreign Origins and cross-site Fetch Metadata. Observer reads do
-not require authentication. Limit access to trusted readers at the network
-boundary. Observer requests with write methods return `405` on the numeric
-endpoint and `403` through an allowed DNS name. No query parameter grants write
-authority. No CORS credentials or browser-side write token is configured.
-`Cache-Control` is `no-store`.
-Reads preserve Core business state.
+Core rejects foreign Origins and cross-site Fetch Metadata. Limit access to
+trusted readers at the network boundary. Core sends `Cache-Control: no-store` for reads and preserves business state. Source receipt lookups and the
+Outbox delivery view require their configured Source credentials even on
+`GET` and `HEAD`.
 
 Session preview resolves a recorded SessionBinding, then verifies the Session
 identity through massd. The history endpoint reads up to 50 durable events and
@@ -396,7 +420,7 @@ Other targets and Thread subscriptions continue to apply. The Router can
 explicitly select the same Topic again.
 
 Router can include `routing` on `get_message` for its routing state and
-relations. Observer exposes the saved routing event records.
+relations. The Internal Events resource exposes the saved routing deliveries.
 
 Subscription selection includes completed/canceled Topics. Receiving, preparing
 or waking a Topic preserves its business status. Use `update_topic` with the `complete` transition to record acceptance. Routing keeps Issue ownership within its original Topic.
@@ -441,7 +465,7 @@ SessionBinding and registers an `issue_session_started` event in one
 transaction. `start_issue` also resolves any supplied blockers in that
 transaction. Another start with a current SessionBinding returns `conflict`.
 Each SessionBinding retains its starting goal revision, Runtime, model and
-effort. Its Observer detail includes the `startup` event state.
+effort. The Session Binding detail includes the `startup` event state.
 
 Topic verifies the result and records acceptance with a reason and evidence.
 Core saves the author and timestamp. Topic completion also requires all Issues
@@ -501,7 +525,7 @@ goal revision match the current Issue and it was submitted before the binding
 retired. A Report from a retired binding uses its saved goal revision bounds
 and is marked `historical`. Both historical Reports and Reports for a prior
 goal revision send `context_supplement`. Topic `get_report`, the Agent report
-view and the Observer Reports collection compute `current` at read time.
+view and the Core Reports collection compute `current` at read time.
 Topic owns acceptance.
 
 ### Issue Session observation and report reminder
@@ -534,7 +558,7 @@ SessionBinding detail projects `workObservation` with the binding and Session
 identities, attempt ID, optional diagnostic work reference, continuity, and
 the observed idle under `end` or the observation gap. They also project `reminderScheduled`,
 `reminderEligibility` and `reminder` with its event status when scheduled.
-Observer links to the event and separately shows Issue, Topic and stop status.
+Superagent Web links to the event and separately shows Issue, Topic and stop status.
 
 ### Retirement and stop observation
 
@@ -585,7 +609,7 @@ round in `route_messages.rounds`. After a stale round error or when the event
 contains only a reference, use `get_message` with `include: ["routing"]`.
 
 ```json
-{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"messageContent":[{"messageId":"mass-m1","blockCount":2}],"threadKey":"opaque/42","routing":{"round":1,"state":"pending"}}]}
+{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"messageContent":[{"messageId":"mass-m1","blockCount":2}],"threadId":"opaque/42","routing":{"round":1,"state":"pending"}}]}
 ```
 
 For a Topic `routed_message`, Core may inline short content, matched quoted
@@ -607,17 +631,19 @@ mutations that respond to an event.
 
 Batches of `context_supplement` use `session.inject`. A batch containing any
 other kind uses `session.prompt`. Core records `sent` after it confirms input
-acceptance, and may redeliver an unsettled event with the original ID. The
-Observer records input acceptance separately from work completion. See
+acceptance, and may redeliver an unsettled event with the original ID. Core
+records input acceptance separately from work completion. See
 [ADR 0002](docs/adr/0002-settle-session-input-with-evidence.md).
 
 ### Local operator reconciliation
 
 Set `operatorTokenFile` to a distinct private credential with at
 least 32 non-whitespace bytes and bind Core to loopback. Inspection uses
-`GET /v1/operator/session-bindings/{sessionBindingId}` to read the saved binding, its stop
-evidence and a live identity-checked massd snapshot. Recovery uses
-`POST /v1/operator/input-recovery`. Both require the local operator credential.
+`GET /v1/core/session-bindings/{bindingId}/runtime-evidence` to read the saved
+binding, its stop evidence, and a live identity-checked massd snapshot. Submit
+recovery with `POST /v1/core/session-bindings/{bindingId}/recoveries`. The path
+selects the binding. Both require the local Operator credential and a direct
+loopback Core connection.
 
 ```sh
 superagent inspect-session-binding SESSION_BINDING_ID --endpoint http://127.0.0.1:24370 \
@@ -705,7 +731,7 @@ decides a race between firing, updating, canceling and Topic termination.
 Firing keeps the selected revision and commits `firedAt`, the task Thread,
 its Topic subscription, and one Trigger Message with its routing event in
 the same transaction. The internal source is `core:timer`. The task provides
-its final Thread key and uses its task ID as `sourceMessageId`. The Message
+its final Thread ID and uses its task ID as `sourceMessageId`. The Message
 contains the followup reason in a text block. The `followup` field in the
 `routed_message` and Topic `get_message` results gives the task ID, revision,
 due time, and material references from the scheduled task.
@@ -720,8 +746,8 @@ history. On restart, due scheduled Timers can fire and valid unconfirmed
 events use the same event ID on retry.
 
 `get_topic` with `include: ["followups"]` lists followups in the bound Topic.
-Observer and `observe timers --topic-id TOPIC_ID` expose the
-revision, due and fired times, state, `triggerMessageId`, `threadKey` and
+`GET /v1/core/timers?topicId={topicId}` and `observe timers --topic-id TOPIC_ID` expose the
+revision, due and fired times, state, `triggerMessageId`, `threadId` and
 `followup` routing event.
 
 ## Pull request registration and subscriptions
@@ -732,23 +758,18 @@ its bound Issue before submitting its Report. Core checks current ownership
 before writing or reusing the association.
 
 Core saves the canonical URL in the Topic's `pullRequests` and, when scoped
-to an Issue, in that Issue's `pullRequests`. Both writes, the Thread, the Topic
+to an Issue, in that Issue's `pullRequests`. The PR links, Thread, and Topic
 subscription share a transaction. A link returns
-`id`, `canonicalUrl`, `threadKey`, `topicId`, `subscriptionId` and
+`id`, `canonicalUrl`, `threadId`, `topicId`, `subscriptionId` and
 `createdAt`. Issue links also carry `issueId` and the initiating
 `sessionBindingId` if an Issue Session registered that link. Registration reuses the link for the same canonical URL and Topic or Issue,
 including across Issue Session generations. Multiple Issues can share one parent Topic–Thread
 subscription. Each further Topic has its own subscription.
 
-The read-only `pull-requests` collection projects the links from Topics and
-Issues. Filter by `topicId` for the Topic's followed URLs or by `issueId` for
-the Issue's URLs. The PR details link to the shared Thread and the Topic
-subscription.
-
 Each entry in `pullRequests.add` is the final, absolute HTTP(S) PR URL without
 embedded credentials. Core validates the URL and uses the supplied string
-verbatim as both `canonicalUrl` and `threadKey`. The caller must normalize the
-URL to the same key used by the Trigger for that PR.
+verbatim as both `canonicalUrl` and `threadId`. The caller must normalize the
+URL to the same Thread ID used by the Trigger for that PR.
 
 For public GitHub, use `https://github.com/{owner}/{repo}/pull/{number}` with
 lowercase owner and repository and a positive decimal number without leading
@@ -817,17 +838,17 @@ account's item IDs return `not_found`.
 
 | Method and path | Result |
 | --- | --- |
-| GET `/v1/channel/outbox` | A page of eligible replies ordered by insertion. Pass optional `limit` (default 50, max 200) and `cursor`. Pull is read-only. |
-| GET `/v1/channel/outbox/items/{id}` | One reply in the account, including terminal states. |
-| POST `/v1/channel/outbox/result` | Update one reply and return its committed {id, status, receipt?}. |
+| GET `/v1/core/outbox-messages?view=delivery` | A page of eligible replies ordered by insertion. Pass optional `limit` (default 50, max 200) and `cursor`. Pull is read-only. |
+| GET `/v1/core/outbox-messages/{outboxId}?view=delivery` | One reply in the account, including terminal states. |
+| PATCH `/v1/core/outbox-messages/{outboxId}` | Update one reply and return its committed {id, status, receipt?}. |
 
-Channel reads include `source`, `accountId` and the original Message's
+Delivery reads include `source`, `accountId` and the original Message's
 `replyTarget`.
 Query results include pending replies with and without known tasks.
 Failed replies with an elapsed `receipt.retryAt` are eligible for retry.
 
-Result writes accept `Content-Type: application/json` with `outboxId`,
-`expected: {status, receipt?}` from the read, and `outcome`:
+Result writes take the item ID from the path. Send `Content-Type: application/json`
+with `expected: {status, receipt?}` from the read, and `outcome`.
 
 | Outcome | Additional fields and behavior |
 | --- | --- |
@@ -848,7 +869,8 @@ again using the same channel idempotency key.
 
 ### Reply history
 
-Observer shows pending, failed and sent replies by `messageId` or `threadKey`.
+The default Outbox history view shows pending, failed and sent replies by
+`messageId` or `threadId`.
 The author can request reply history for one Message via `get_message`. Details show
 the original Message, any blocker reference and available channel receipt.
 

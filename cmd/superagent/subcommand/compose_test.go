@@ -112,7 +112,7 @@ func TestComposeRejectsInvalidEmbeddedMASS(t *testing.T) {
 func TestCoreStartupAndReadiness(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/observer/health" || r.Header.Get("Authorization") != "" {
+		if r.URL.Path != "/readyz" || r.Header.Get("Authorization") != "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -128,7 +128,7 @@ func TestCoreStartupAndReadiness(t *testing.T) {
 	child := startStubCore(t, fmt.Sprintf("printf '%%s\\n' '{\"status\":\"ready\",\"endpoint\":%q}'\nexec /bin/sleep 10\n", endpoint))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	actual, err := child.waitReady(ctx, parseFixtureCoreStartup, "/v1/observer/health")
+	actual, err := child.waitReady(ctx, parseFixtureCoreStartup, "/readyz")
 	require.NoError(t, err)
 	require.Equal(t, endpoint, actual)
 	require.GreaterOrEqual(t, requests.Load(), int32(2))
@@ -150,7 +150,7 @@ func TestCoreStartupFailures(t *testing.T) {
 			child := startStubCore(t, tc.script)
 			ctx, cancel := context.WithTimeout(t.Context(), tc.deadline)
 			defer cancel()
-			_, err := child.waitReady(ctx, parseFixtureCoreStartup, "/v1/observer/health")
+			_, err := child.waitReady(ctx, parseFixtureCoreStartup, "/readyz")
 			require.ErrorContains(t, err, tc.failure)
 			if tc.exitCode != 0 {
 				select {
@@ -173,7 +173,7 @@ func TestCoreReadinessTimeout(t *testing.T) {
 	child := startStubCore(t, fmt.Sprintf("printf '%%s\\n' '{\"status\":\"ready\",\"endpoint\":%q}'\nexec /bin/sleep 30\n", endpoint))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := child.waitReady(ctx, parseFixtureCoreStartup, "/v1/observer/health")
+	_, err := child.waitReady(ctx, parseFixtureCoreStartup, "/readyz")
 	require.ErrorContains(t, err, "waiting for core readiness: context deadline exceeded")
 }
 
@@ -186,7 +186,7 @@ func TestCoreForcedShutdownWaitsForExit(t *testing.T) {
 	child := startStubCore(t, fmt.Sprintf("trap '' TERM\nprintf '%%s\\n' '{\"status\":\"ready\",\"endpoint\":%q}'\nexec /bin/sleep 10\n", endpoint))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := child.waitReady(ctx, parseFixtureCoreStartup, "/v1/observer/health")
+	_, err := child.waitReady(ctx, parseFixtureCoreStartup, "/readyz")
 	require.NoError(t, err)
 	require.ErrorContains(t, child.stop(10*time.Millisecond), "core exceeded shutdown timeout")
 	require.NotNil(t, child.cmd.ProcessState)

@@ -77,7 +77,7 @@ func (s *Store) topicActivity(ctx context.Context, q url.Values) (Page, error) {
 	if filter == "" {
 		filter = "all"
 	}
-	if topic == "" || q.Get("messageId") != "" || q.Get("threadKey") != "" || q.Get("issueId") != "" || (filter != "all" && filter != "message" && filter != "issue") || (q.Get("order") != "" && q.Get("order") != "newest") {
+	if topic == "" || q.Get("messageId") != "" || q.Get("threadId") != "" || q.Get("issueId") != "" || (filter != "all" && filter != "message" && filter != "issue") || (q.Get("order") != "" && q.Get("order") != "newest") {
 		return p, problem("invalid_argument", "topic-activity requires a topicId, a valid filter and newest order")
 	}
 	limit := 20

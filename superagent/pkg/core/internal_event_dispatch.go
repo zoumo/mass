@@ -224,10 +224,10 @@ func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sq
 	if err != nil {
 		return err
 	}
-	columns := `CASE WHEN length(CAST(body->'$.content' AS BLOB))<=? THEN body->'$.content' END, thread_key`
+	columns := `CASE WHEN length(CAST(body->'$.content' AS BLOB))<=? THEN body->'$.content' END, thread_id`
 	params := []any{inlineMessageBytes}
 	var content, routing, followup, quote []byte
-	targets := []any{&content, &d.threadKey}
+	targets := []any{&content, &d.threadID}
 	if b.Role == "router" {
 		columns += ",json_object('round'," + routingRound + ",'state'," + routingState + ")"
 		scope += " AND " + routingState + "='pending'"

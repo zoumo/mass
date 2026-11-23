@@ -66,20 +66,20 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 	}
 	body, err := json.Marshal(input(secret))
 	require.NoError(t, err)
-	response := request(http.MethodPost, "/v1/channel/messages", "http://foreign.invalid", "00-"+traceID+"-"+parent+"-01", body)
+	response := request(http.MethodPost, "/v1/core/trigger-messages", "http://foreign.invalid", "00-"+traceID+"-"+parent+"-01", body)
 	require.Equal(t, http.StatusForbidden, response.StatusCode)
 	require.NoError(t, response.Body.Close())
 	require.Empty(t, recorder.Ended())
 
 	for _, sampled := range []string{"01", "00"} {
-		response = request(http.MethodPost, "/v1/channel/messages?ignored="+secret, server.Endpoint(), "00-"+traceID+"-"+parent+"-"+sampled, body)
+		response = request(http.MethodPost, "/v1/core/trigger-messages?ignored="+secret, server.Endpoint(), "00-"+traceID+"-"+parent+"-"+sampled, body)
 		require.Equal(t, http.StatusOK, response.StatusCode)
 		var receipt core.Receipt
 		require.NoError(t, json.NewDecoder(response.Body).Decode(&receipt))
 		require.NoError(t, response.Body.Close())
 		require.Equal(t, sampled == "00", receipt.Duplicate)
 	}
-	response = request(http.MethodGet, "/v1/observer/messages/"+secret, "", "invalid", nil)
+	response = request(http.MethodGet, "/v1/core/trigger-messages/"+secret, "", "invalid", nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode)
 	require.NoError(t, response.Body.Close())
 
@@ -94,7 +94,7 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 			require.NotContains(t, attr.Value.String(), f.token)
 		}
 	}
-	serverSpan := spans["POST /v1/channel/messages"]
+	serverSpan := spans["POST /v1/core/trigger-messages"]
 	operation := spans["superagent.message.admit"]
 	require.NotNil(t, serverSpan)
 	require.NotNil(t, operation)
@@ -102,8 +102,8 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 	require.Equal(t, parent, serverSpan.Parent().SpanID().String())
 	require.Equal(t, traceID, serverSpan.SpanContext().TraceID().String())
 	require.Equal(t, serverSpan.SpanContext(), operation.Parent())
-	require.NotNil(t, spans["GET /v1/observer/messages/{id}"])
-	require.False(t, spans["GET /v1/observer/messages/{id}"].Parent().IsValid())
+	require.NotNil(t, spans["GET /v1/core/trigger-messages/{messageId}"])
+	require.False(t, spans["GET /v1/core/trigger-messages/{messageId}"].Parent().IsValid())
 
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &collected))

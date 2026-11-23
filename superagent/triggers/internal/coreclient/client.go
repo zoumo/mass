@@ -13,6 +13,8 @@ import (
 	"github.com/zoumo/mass/superagent/triggers/internal/trigger"
 )
 
+const TriggerMessagesPath = "/v1/core/trigger-messages"
+
 type Client struct {
 	endpoint, token string
 	http            *http.Client
@@ -21,7 +23,7 @@ type Receipt struct {
 	Status     string `json:"status"`
 	Duplicate  bool   `json:"duplicate"`
 	MessageID  string `json:"messageId"`
-	ThreadKey  string `json:"threadKey"`
+	ThreadID   string `json:"threadId"`
 	AcceptedAt string `json:"acceptedAt"`
 	EventID    string `json:"eventId"`
 }
@@ -39,23 +41,23 @@ func New(endpoint string, timeout time.Duration, token string) (*Client, error) 
 }
 
 func (c *Client) SubmitPayload(ctx context.Context, payload []byte) SubmitResult {
-	data, code, retry := c.Request(ctx, http.MethodPost, "/v1/channel/messages", bytes.NewReader(payload), 65536)
+	data, code, retry := c.Request(ctx, http.MethodPost, TriggerMessagesPath, bytes.NewReader(payload), 65536)
 	if code != "" {
 		return SubmitResult{Code: code, Retry: retry}
 	}
 	var receipt Receipt
-	if json.Unmarshal(data, &receipt) != nil || (receipt.Status != "accepted" && receipt.Status != "duplicate") || receipt.MessageID == "" || receipt.ThreadKey == "" || receipt.AcceptedAt == "" {
+	if json.Unmarshal(data, &receipt) != nil || (receipt.Status != "accepted" && receipt.Status != "duplicate") || receipt.MessageID == "" || receipt.ThreadID == "" || receipt.AcceptedAt == "" {
 		return SubmitResult{Code: "core_receipt_unknown", Retry: true}
 	}
 	return SubmitResult{Receipt: receipt}
 }
 
-func (c *Client) Post(ctx context.Context, path string, payload any) (data []byte, code string, retry bool) {
+func (c *Client) Patch(ctx context.Context, path string, payload any) (data []byte, code string, retry bool) {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, "invalid_message", false
 	}
-	return c.Request(ctx, http.MethodPost, path, bytes.NewReader(b), 65536)
+	return c.Request(ctx, http.MethodPatch, path, bytes.NewReader(b), 65536)
 }
 
 func (c *Client) Request(ctx context.Context, method, path string, body io.Reader, limit int64) (data []byte, code string, retry bool) {

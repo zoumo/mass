@@ -111,7 +111,7 @@ func (s *Server) callRoleTool(ctx context.Context, b SessionBinding, tool string
 type QueryRequest struct {
 	Collection    string `json:"collection"`
 	ID            string `json:"id,omitempty"`
-	ThreadKey     string `json:"threadKey,omitempty"`
+	ThreadID      string `json:"threadId,omitempty"`
 	TopicID       string `json:"topicId,omitempty"`
 	IssueID       string `json:"issueId,omitempty"`
 	MessageID     string `json:"messageId,omitempty"`
@@ -126,7 +126,7 @@ type QueryRequest struct {
 
 func (s *Store) RoleQuery(ctx context.Context, b SessionBinding, q QueryRequest) (any, error) {
 	if q.ID != "" {
-		if q.Cursor != "" || q.ThreadKey != "" || q.TopicID != "" || q.IssueID != "" || q.MessageID != "" || q.Limit != 0 {
+		if q.Cursor != "" || q.ThreadID != "" || q.TopicID != "" || q.IssueID != "" || q.MessageID != "" || q.Limit != 0 {
 			return nil, problem("invalid_argument", "detail query cannot have list parameters")
 		}
 		return s.getScoped(ctx, q.Collection, q.ID, &b, nil)
@@ -161,7 +161,7 @@ func scopeSQL(kind string, b *SessionBinding) (string, []any, error) {
 	case "routing-events":
 		return " AND topic_id=?", []any{b.OwnerID}, nil
 	case "threads":
-		return " AND key IN (SELECT thread_key FROM thread_subscriptions WHERE topic_id=?)", []any{b.OwnerID}, nil
+		return " AND id IN (SELECT thread_id FROM thread_subscriptions WHERE topic_id=?)", []any{b.OwnerID}, nil
 	case "topics":
 		return " AND id=?", []any{b.OwnerID}, nil
 	case "issues", "timers", "pull-requests":
@@ -179,22 +179,24 @@ const reportCurrentSQL = `EXISTS (
   AND json_extract(issues.body,'$.goalRevision')=json_extract(reports.body,'$.goalRevision')
 )`
 
+const routingEventProjection = `json_patch(json_object('event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
+ 'messageId',message_id,'topicId',topic_id,'returnedEventId',returned_event_id,'sender',json(sender),
+ 'recipient',json(recipient),'refs',json(refs),'returned',json(CASE WHEN EXISTS(
+ SELECT 1 FROM internal_events r WHERE r.kind='route_request' AND ` + returnedEventID + `=routing_events.event_id
+ ) THEN 'true' ELSE 'false' END)),json_object('content',json(content),'body',json(body)))`
+
 func projection(kind string, b *SessionBinding) string {
 	switch kind {
 	case "internal-events":
 		return internalEventProjection
 	case "routing-events":
-		return `json_patch(json_object('event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
- 'messageId',message_id,'topicId',topic_id,'returnedEventId',returned_event_id,'sender',json(sender),
- 'recipient',json(recipient),'refs',json(refs),'returned',json(CASE WHEN EXISTS(
- SELECT 1 FROM internal_events r WHERE r.kind='route_request' AND ` + returnedEventID + `=routing_events.event_id
- ) THEN 'true' ELSE 'false' END)),json_object('content',json(content),'body',json(body)))`
+		return routingEventProjection
 	case "threads":
 		if b != nil && b.Role == "topic" {
 			// The Topic can see its subscription through the Thread scope. Peer subscriptions are visible to Router and Observer.
-			return "json_object('key',key,'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''))"
+			return "json_object('id',id,'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''))"
 		}
-		return "json_object('key',key,'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''),'subscriptions',json(subscriptions))"
+		return "json_object('id',id,'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''),'subscriptions',json(subscriptions))"
 	case "outbox":
 		return outboxProjection
 	case "messages":
@@ -241,7 +243,7 @@ func projection(kind string, b *SessionBinding) string {
 		return `json_patch(issues.body,json_object('latestRequirementsNotification',json_remove(` + workNotificationProjection("issues", "latestRequirementsEventId") + `,'$.payload','$.content')))`
 	case "timers":
 		return `json_patch(scheduled_tasks.body,coalesce((
- SELECT json_object('triggerMessageId',m.id,'threadKey',m.thread_key,'followup',
+ SELECT json_object('triggerMessageId',m.id,'threadId',m.thread_id,'followup',
  json_object('event_id',d.event_id,'kind',d.kind,'status',d.status,'sentAt',d.sent_at,'messageId',d.message_id,'topicId',d.topic_id))
  FROM trigger_messages m JOIN routing_events d ON d.event_id=json_extract(m.body,'$.eventId')
  WHERE m.id=scheduled_tasks.trigger_message_id
@@ -250,7 +252,7 @@ func projection(kind string, b *SessionBinding) string {
 	return "body"
 }
 
-const agentSourceMessageProjection = `json_object('id',id,'source',source,'threadKey',thread_key,
+const agentSourceMessageProjection = `json_object('id',id,'source',source,'threadId',thread_id,
  'content',json(body->'$.content'))`
 
 // Projection placeholders precede filter placeholders in both list and detail queries.

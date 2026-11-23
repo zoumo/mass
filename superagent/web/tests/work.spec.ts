@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test'
+import { fixtureOrigins } from './endpoints.mjs'
 
 test.use({
- baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}`,
+ baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`,
  viewport: { width: 1280, height: 1060 },
 })
 
@@ -12,7 +13,7 @@ test('Topic Timer shows the fired revision and followup delivery evidence', asyn
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/observer/?view=topics&mode=records')
+ await page.goto('/superagent/?view=topics&mode=records')
  await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
  await page.getByRole('button', { name: '查看 Topic 定时器', exact: true }).click()
  await expect(page).toHaveURL(/view=timers&topicId=/)
@@ -32,16 +33,16 @@ test('Topic Timer shows the fired revision and followup delivery evidence', asyn
  const taskURL = page.url()
  await dialog.getByRole('button', { name: '查看跟进事件', exact: true }).click()
  await expect(dialog.getByText('Session 已受理', { exact: true })).toBeVisible()
- await expect(page).toHaveURL(/view=routing-events&id=evt_/)
+ await expect(page).toHaveURL(/view=internal-events&id=evt_/)
  await page.goto(taskURL)
  await dialog.getByRole('button', { name: '查看触发消息', exact: true }).click()
  await expect(page).toHaveURL(/view=messages&id=mass-m[1-9]\d*(?:&|$)/)
  await expect(dialog.getByText('Review the archived build.', { exact: true })).toBeVisible()
  await dialog.getByRole('button', { name: /^查看线程 core%3Atimer:/ }).click()
- await expect(dialog.getByRole('button', { name: '查看线程订阅' })).toBeVisible()
- expect((await request.get('/v1/observer/timers')).status()).toBe(200)
- expect((await request.head('/v1/observer/timers')).status()).toBe(200)
- expect((await request.post('/v1/observer/timers', { data: {} })).status()).toBe(405)
+ await expect(dialog.getByRole('button', { name: '查看线程消息' })).toBeVisible()
+ expect((await request.get('/v1/core/timers')).status()).toBe(200)
+ expect((await request.head('/v1/core/timers')).status()).toBe(200)
+ expect((await request.post('/v1/core/timers', { data: {} })).status()).toBe(405)
 })
 
 test('Issue requirements, reports, input evidence and business acceptance are read only', async ({ page, request }, testInfo) => {
@@ -54,7 +55,7 @@ test('Issue requirements, reports, input evidence and business acceptance are re
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/observer/?view=topics&mode=records')
+ await page.goto('/superagent/?view=topics&mode=records')
  await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
  await page.getByRole('button', { name: '查看 Topic 下的 Issue', exact: true }).click()
  await expect(page).toHaveURL(/view=issues&topicId=/)
@@ -91,20 +92,20 @@ test('Issue requirements, reports, input evidence and business acceptance are re
  await expect(page).toHaveURL(/view=reports&issueId=/)
  await expect(page.getByRole('button', { name: 'Sample build verified', exact: true })).toBeVisible()
  for (const collection of ['issues', 'session-bindings', 'reports']) {
-  expect((await request.get(`/v1/observer/${collection}`)).status()).toBe(200)
-  expect((await request.head(`/v1/observer/${collection}`)).status()).toBe(200)
-  expect((await request.post(`/v1/observer/${collection}`, { data: {} })).status()).toBe(405)
+  expect((await request.get(`/v1/core/${collection}`)).status()).toBe(200)
+  expect((await request.head(`/v1/core/${collection}`)).status()).toBe(200)
+  expect((await request.post(`/v1/core/${collection}`, { data: {} })).status()).toBe(405)
  }
  await expect(page.getByRole('navigation').getByRole('button', { name: '执行记录', exact: true })).toHaveCount(0)
- expect((await request.get('/v1/observer/executions')).status()).toBe(404)
- expect((await request.get('/v1/observer/bindings')).status()).toBe(404)
+ expect((await request.get('/v1/core/executions')).status()).toBe(404)
+ expect((await request.get('/v1/core/bindings')).status()).toBe(404)
  expect(errors).toEqual([])
  expect(methods.length).toBeGreaterThan(0)
  expect(methods.every(method => method === 'GET')).toBeTruthy()
 })
 
 test('Blocked Issue shows separate Issue Session observation, dependency and requirements delivery', async ({ page }, testInfo) => {
- await page.goto('/observer/?view=issues&mode=records')
+ await page.goto('/superagent/?view=issues&mode=records')
  await page.getByRole('button', { name: 'Review blocked build', exact: true }).click()
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByText('受阻', { exact: true })).toBeVisible()
@@ -122,7 +123,7 @@ test('Blocked Issue shows separate Issue Session observation, dependency and req
  await page.screenshot({ path: testInfo.outputPath('issue-blocked.png'), fullPage: true, animations: 'disabled' })
  await dialog.getByRole('button', { name: '通知事件', exact: true }).click()
  await expect(dialog.getByTestId('routing-record')).toContainText('issue_session_update')
- await page.goto('/observer/?view=issues&mode=records')
+ await page.goto('/superagent/?view=issues&mode=records')
  await page.getByRole('button', { name: 'Review blocked build', exact: true }).click()
  await dialog.getByRole('button', { name: /^查看依赖的 Issue mass-t[1-9]\d*-i[1-9]\d*$/ }).click()
  await expect(dialog.getByText('Reviewed the sample build log', { exact: true })).toBeVisible()
@@ -137,7 +138,7 @@ test('Cancellation and native stop evidence remain separate and read only', asyn
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/observer/?view=issues&mode=records')
+ await page.goto('/superagent/?view=issues&mode=records')
  await page.getByRole('button', { name: 'Canceled sample validation', exact: true }).click()
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByText('已取消', { exact: true })).toBeVisible()
@@ -154,8 +155,8 @@ test('Cancellation and native stop evidence remain separate and read only', asyn
  await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
  await page.screenshot({ path: testInfo.outputPath('cancellation-stop-unknown.png'), fullPage: true, animations: 'disabled' })
  expect(paths.length).toBeGreaterThan(0)
- expect(paths.every(p => p.startsWith('/v1/observer/'))).toBeTruthy()
- expect((await request.post('/v1/observer/session-bindings', { data: {} })).status()).toBe(405)
+ expect(paths.every(p => p.startsWith('/v1/core/'))).toBeTruthy()
+ expect((await request.post('/v1/core/session-bindings', { data: {} })).status()).toBe(405)
  expect((await request.post('/v1/operator/input-recovery', { data: {} })).status()).toBe(404)
 })
 
@@ -165,11 +166,12 @@ test('A reopened Issue links each report to its own binding and retains shared M
  const seed = await request.get(`${audit}/session-reuse-fixture`)
  expect(seed.ok()).toBeTruthy()
  const fixture = await seed.json()
- const { endpoint, issueId, originalSessionBindingId, currentSessionBindingId, originalReportId, currentReportId, retainedHistory } = fixture
+ const endpoint = fixtureOrigins['session-reuse-fixture']
+ const { issueId, originalSessionBindingId, currentSessionBindingId, originalReportId, currentReportId, retainedHistory } = fixture
  const [original, current, reports] = await Promise.all([
-  request.get(`${endpoint}/v1/observer/session-bindings/${originalSessionBindingId}`),
-  request.get(`${endpoint}/v1/observer/session-bindings/${currentSessionBindingId}`),
-  request.get(`${endpoint}/v1/observer/reports?issueId=${issueId}`),
+  request.get(`${endpoint}/v1/core/session-bindings/${originalSessionBindingId}`),
+  request.get(`${endpoint}/v1/core/session-bindings/${currentSessionBindingId}`),
+  request.get(`${endpoint}/v1/core/reports?issueId=${issueId}`),
  ].map(async response => (await response).json()))
  expect(original).toMatchObject({ id: originalSessionBindingId, state: 'revoked' })
  expect(current).toMatchObject({ id: currentSessionBindingId, state: 'ready', sessionId: original.sessionId, sessionUid: original.sessionUid })
@@ -177,13 +179,13 @@ test('A reopened Issue links each report to its own binding and retains shared M
   expect.objectContaining({ id: originalReportId, current: false, sessionBindingId: originalSessionBindingId }),
   expect.objectContaining({ id: currentReportId, current: true, sessionBindingId: currentSessionBindingId }),
  ]))
- await page.goto(`${endpoint}/observer/?perspective=issue&id=${issueId}`)
+ await page.goto(`${endpoint}/superagent/?perspective=issue&id=${issueId}`)
  const issue = page.getByRole('article', { name: '当前 Issue' })
  const currentSession = issue.getByRole('link', { name: '查看当前会话 →' })
- await expect(currentSession).toHaveAttribute('href', `/observer/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
+ await expect(currentSession).toHaveAttribute('href', `/superagent/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
  await issue.getByRole('button', { name: /Report after Session reuse/ }).click()
  await expect(issue.getByText(/^当前报告 · 目标版本/)).toBeVisible()
- await expect(issue.getByRole('link', { name: '查看提交报告的会话' })).toHaveAttribute('href', `/observer/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
+ await expect(issue.getByRole('link', { name: '查看提交报告的会话' })).toHaveAttribute('href', `/superagent/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
  await issue.getByRole('button', { name: /Report before Session reuse/ }).click()
  await expect(issue.getByText(/^历史报告 · 目标版本/)).toBeVisible()
  await issue.getByRole('link', { name: '查看提交报告的会话' }).click()

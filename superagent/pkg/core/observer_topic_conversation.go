@@ -17,7 +17,7 @@ const conversationEvents = `
  CASE json_extract(d.sender,'$.kind') WHEN 'router' THEN 'router_routed' ELSE 'thread_direct' END,
  d.created_at,d.event_id,
  json_object('actor',json_extract(d.sender,'$.kind'),'recipient','topic',
-  'messageId',d.message_id,'eventId',d.event_id,'threadKey',trigger_messages.thread_key,
+  'messageId',d.message_id,'eventId',d.event_id,'threadId',trigger_messages.thread_id,
   'summary',substr(` + observerMessagePreview + `,1,240),'status',d.status)
  FROM routing_events d LEFT JOIN trigger_messages ON trigger_messages.id=d.message_id
  WHERE d.kind='routed_message' AND json_extract(d.recipient,'$.kind')='topic'

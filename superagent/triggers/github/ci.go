@@ -148,7 +148,7 @@ func githubCIObservations(repo string, pull githubPullRecord, stream *githubStre
 				if item.URL == "" {
 					item.URL = prURL + "/checks"
 				}
-				item.ThreadKey = prURL
+				item.ThreadID = prURL
 				item.Title = fmt.Sprintf("GitHub Actions for %s#%d", repo, pull.Number)
 				item.Body = fmt.Sprintf("%s completed with %s (attempt %d)\nCommit %s", run.Name, run.Conclusion, run.Attempt, revision.SHA)
 				item.SourceEventID = "github:actions:" + key

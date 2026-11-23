@@ -26,7 +26,7 @@ type PullRequest struct {
 	TopicID          string `json:"topicId"`
 	IssueID          string `json:"issueId,omitempty"`
 	SessionBindingID string `json:"sessionBindingId,omitempty"`
-	ThreadKey        string `json:"threadKey"`
+	ThreadID         string `json:"threadId"`
 	SubscriptionID   string `json:"subscriptionId"`
 	CreatedAt        string `json:"createdAt"`
 }
@@ -36,8 +36,8 @@ type pullRequestLink struct {
 	Sequence int64 `json:"sequence"`
 }
 
-func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, key, sessionBindingID string) error {
-	matches := func(link pullRequestLink) bool { return link.CanonicalURL == key }
+func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonicalURL, sessionBindingID string) error {
+	matches := func(link pullRequestLink) bool { return link.CanonicalURL == canonicalURL }
 	topicIndex := slices.IndexFunc(topic.PullRequests, matches)
 	if issue.ID == "" && topicIndex >= 0 {
 		return nil
@@ -47,13 +47,13 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 	}
 
 	link := pullRequestLink{PullRequest: PullRequest{
-		CanonicalURL: key, TopicID: topic.ID, ThreadKey: key, CreatedAt: now(),
+		CanonicalURL: canonicalURL, TopicID: topic.ID, ThreadID: canonicalURL, CreatedAt: now(),
 	}}
-	if err := upsertThread(ctx, tx, link.ThreadKey, link.CreatedAt, ""); err != nil {
+	if err := upsertThread(ctx, tx, link.ThreadID, link.CreatedAt, ""); err != nil {
 		return err
 	}
 	subID, err := ensureSubscription(ctx, tx, Subscription{
-		TopicID: topic.ID, ThreadKey: link.ThreadKey, CreatedAt: link.CreatedAt,
+		TopicID: topic.ID, ThreadID: link.ThreadID, CreatedAt: link.CreatedAt,
 	})
 	if err != nil {
 		return err

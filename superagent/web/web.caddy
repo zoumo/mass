@@ -1,0 +1,29 @@
+(superagent_web) {
+	route {
+		@web path /superagent /superagent/*
+		@other_method {
+			path /superagent /superagent/*
+			not method GET HEAD
+		}
+		header @other_method Allow "GET, HEAD"
+		respond @other_method 405
+		header @web {
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+			X-Content-Type-Options nosniff
+			Referrer-Policy no-referrer
+			Cross-Origin-Resource-Policy same-origin
+			Cache-Control no-store
+		}
+		@root path /superagent
+		redir @root /superagent/ 308
+		handle_path /superagent/* {
+			root * "{$SUPERAGENT_WEB_DIST:dist}"
+			@asset path /assets/*
+			file_server @asset
+			@page path_regexp ^/([^./]+/)*[^./]*$
+			rewrite @page /index.html
+			file_server
+		}
+		respond 404
+	}
+}

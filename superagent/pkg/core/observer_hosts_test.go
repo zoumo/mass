@@ -12,14 +12,14 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-func TestObserverAllowedHostsConfig(t *testing.T) {
+func TestReadAllowedHostsConfig(t *testing.T) {
 	f := fixtureAt(t)
 	base, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(base)+"observerAllowedHosts: [observer.example.com:5970, other.example.com]\n")
+	write(t, f.config, string(base)+"readAllowedHosts: [observer.example.com:5970, other.example.com]\n")
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	require.Equal(t, []string{"observer.example.com:5970", "other.example.com"}, config.ObserverAllowedHosts)
+	require.Equal(t, []string{"observer.example.com:5970", "other.example.com"}, config.ReadAllowedHosts)
 
 	for _, invalid := range []string{
 		"observer.example.com",
@@ -40,16 +40,16 @@ func TestObserverAllowedHostsConfig(t *testing.T) {
 		"[127.0.0.1:5970]",
 	} {
 		t.Run(invalid, func(t *testing.T) {
-			write(t, f.config, string(base)+"observerAllowedHosts: "+invalid+"\n")
+			write(t, f.config, string(base)+"readAllowedHosts: "+invalid+"\n")
 			_, err := core.LoadConfig(f.config)
-			require.ErrorContains(t, err, "observerAllowedHosts")
+			require.ErrorContains(t, err, "readAllowedHosts")
 		})
 	}
 }
 
-func TestObserverAllowedHostsHTTP(t *testing.T) {
+func TestReadAllowedHostsHTTP(t *testing.T) {
 	const allowed = "observer.example.com:5970"
-	const health = "/v1/observer/health"
+	const readPath = "/v1/core/threads"
 	f := fixtureAt(t)
 	base, err := os.ReadFile(f.config)
 	require.NoError(t, err)
@@ -72,29 +72,31 @@ func TestObserverAllowedHostsHTTP(t *testing.T) {
 	}
 
 	defaultServer := f.start()
-	require.Equal(t, http.StatusOK, requestStatus(t, defaultServer, http.MethodGet, health, "", "", ""))
-	require.Equal(t, http.StatusForbidden, requestStatus(t, defaultServer, http.MethodGet, health, allowed, "", ""))
+	require.Equal(t, http.StatusOK, requestStatus(t, defaultServer, http.MethodGet, readPath, "", "", ""))
+	require.Equal(t, http.StatusForbidden, requestStatus(t, defaultServer, http.MethodGet, readPath, allowed, "", ""))
 	defaultServer.stop(t, false)
 
-	write(t, f.config, string(base)+"observerAllowedHosts: ["+allowed+"]\n")
+	write(t, f.config, string(base)+"readAllowedHosts: ["+allowed+"]\n")
 	p := f.start()
 	for _, tc := range []struct {
 		name, method, path, host, origin, fetchSite string
 		want                                        int
 	}{
-		{name: "allowed GET", method: http.MethodGet, path: health, host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
-		{name: "allowed HEAD", method: http.MethodHead, path: health, host: allowed, want: http.StatusOK},
-		{name: "numeric GET", method: http.MethodGet, path: health, want: http.StatusOK},
-		{name: "numeric POST", method: http.MethodPost, path: health, want: http.StatusMethodNotAllowed},
-		{name: "allowed host POST", method: http.MethodPost, path: health, host: allowed, want: http.StatusForbidden},
+		{name: "allowed GET", method: http.MethodGet, path: readPath, host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
+		{name: "allowed HEAD", method: http.MethodHead, path: readPath, host: allowed, want: http.StatusOK},
+		{name: "allowed Core read", method: http.MethodGet, path: "/v1/core/topics", host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
+		{name: "operator evidence requires the direct Core host", method: http.MethodGet, path: "/v1/core/session-bindings/example/runtime-evidence", host: allowed, want: http.StatusForbidden},
+		{name: "numeric GET", method: http.MethodGet, path: readPath, want: http.StatusOK},
+		{name: "numeric POST", method: http.MethodPost, path: readPath, want: http.StatusMethodNotAllowed},
+		{name: "allowed host POST", method: http.MethodPost, path: readPath, host: allowed, want: http.StatusForbidden},
 		{name: "allowed host MCP", method: http.MethodPost, path: "/v1/mcp", host: allowed, want: http.StatusForbidden},
-		{name: "allowed host channel", method: http.MethodPost, path: "/v1/channel/messages", host: allowed, want: http.StatusForbidden},
+		{name: "allowed host channel", method: http.MethodPost, path: "/v1/core/trigger-messages", host: allowed, want: http.StatusForbidden},
 		{name: "allowed host telemetry", method: http.MethodPost, path: "/v1/telemetry/traces", host: allowed, want: http.StatusForbidden},
 		{name: "allowed host unrelated GET", method: http.MethodGet, path: "/", host: allowed, want: http.StatusForbidden},
-		{name: "host prefix", method: http.MethodGet, path: health, host: "other." + allowed, want: http.StatusForbidden},
-		{name: "missing port", method: http.MethodGet, path: health, host: strings.TrimSuffix(allowed, ":5970"), want: http.StatusForbidden},
-		{name: "foreign Origin", method: http.MethodGet, path: health, host: allowed, origin: p.endpoint, want: http.StatusForbidden},
-		{name: "cross-site", method: http.MethodGet, path: health, host: allowed, fetchSite: "cross-site", want: http.StatusForbidden},
+		{name: "host prefix", method: http.MethodGet, path: readPath, host: "other." + allowed, want: http.StatusForbidden},
+		{name: "missing port", method: http.MethodGet, path: readPath, host: strings.TrimSuffix(allowed, ":5970"), want: http.StatusForbidden},
+		{name: "foreign Origin", method: http.MethodGet, path: readPath, host: allowed, origin: p.endpoint, want: http.StatusForbidden},
+		{name: "cross-site", method: http.MethodGet, path: readPath, host: allowed, fetchSite: "cross-site", want: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, requestStatus(t, p, tc.method, tc.path, tc.host, tc.origin, tc.fetchSite))
@@ -102,7 +104,7 @@ func TestObserverAllowedHostsHTTP(t *testing.T) {
 	}
 	for _, path := range []string{"/observer", "/observer/", "/observer/assets/missing.js"} {
 		numericStatus := requestStatus(t, p, http.MethodGet, path, "", "", "")
-		require.NotEqual(t, http.StatusForbidden, numericStatus)
-		require.Equal(t, numericStatus, requestStatus(t, p, http.MethodGet, path, allowed, "", ""))
+		require.Equal(t, http.StatusNotFound, numericStatus)
+		require.Equal(t, http.StatusForbidden, requestStatus(t, p, http.MethodGet, path, allowed, "", ""))
 	}
 }

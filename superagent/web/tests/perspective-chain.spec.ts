@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
+import { fixtureOrigins } from './endpoints.mjs'
 
-const audit = 'http://127.0.0.1:' + (process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795')
 type Issue = { id: string; title: string; topicId: string; materials: { messageId?: string }[] }
 
 for (const [size, width, height] of [
@@ -12,9 +12,9 @@ for (const [size, width, height] of [
     context,
     request,
   }, info) => {
-    const { endpoint } = await (await request.get(audit + '/message-path-fixture')).json()
-    const get = async (path: string) => (await request.get(endpoint + '/v1/observer/' + path)).json()
-    const messages = (await get('messages?limit=200')).items
+    const endpoint = fixtureOrigins['message-path-fixture']
+    const get = async (path: string) => (await request.get(endpoint + '/v1/core/' + path)).json()
+    const messages = (await get('trigger-messages?limit=200')).items
     const msg = messages.find((m: { sourceMessageId: string }) => m.sourceMessageId === 'observer-path-rerouted')
     const topic = (await get('topics')).items.find((t: { title: string }) => t.title === '发布准备')
     const issues: Issue[] = (await get('issues?messageId=' + msg.id)).items
@@ -25,7 +25,7 @@ for (const [size, width, height] of [
     page.on('pageerror', (e) => errors.push(e.message))
     page.on('request', (req) => {
       if (new URL(req.url()).pathname.startsWith('/v1/')) {
-        expect(new URL(req.url()).pathname).toMatch(/^\/v1\/observer\//)
+        expect(new URL(req.url()).pathname).toMatch(/^\/v1\/core\//)
         methods.add(req.method())
       }
     })
@@ -37,7 +37,7 @@ for (const [size, width, height] of [
       )
     })
     await page.setViewportSize({ width, height })
-    const documentResponse = await page.goto(endpoint + '/observer/?perspective=message')
+    const documentResponse = await page.goto(endpoint + '/superagent/?perspective=message')
     expect(documentResponse?.headers()['content-security-policy']).toContain("script-src 'self'")
     const capture = async (name: string) => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
@@ -123,9 +123,9 @@ for (const [size, width, height] of [
 
 for (const width of [1380, 390]) {
   test(`each primary tab opens its own populated flow at ${width}px`, async ({ page, request }, info) => {
-    const { endpoint } = await (await request.get(audit + '/message-path-fixture')).json()
+    const endpoint = fixtureOrigins['message-path-fixture']
     await page.setViewportSize({ width, height: width === 390 ? 844 : 920 })
-    await page.goto(endpoint + '/observer/')
+    await page.goto(endpoint + '/superagent/')
     const tabs = page.getByRole('navigation', { name: '观察视角' })
     for (const [tab, region] of [
       ['Message', '消息路径'],

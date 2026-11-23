@@ -141,7 +141,7 @@ func waitWorkEvent(t *testing.T, p *process, id, status string) workEventRecord 
 func nativeWorkTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, router *roleMCPClient, name string) (core.SessionBinding, core.Receipt) {
 	t.Helper()
 	msg := input(name)
-	msg.Message.ThreadKey, msg.ReplyTarget = fixtureThreadKey(name), nil
+	msg.Message.ThreadID, msg.ReplyTarget = fixtureThreadID(name), nil
 	source := submit(t, p, f, msg)
 	start := peer.next(t, "turn/start")
 	decodeInternalBatch(t, start, source.EventID)
@@ -176,7 +176,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	foreign := startRoleMCP(t, f, otherBinding)
 	token := roleToken(t, f, mainBinding)
 	long := input("long-issue-material")
-	long.Message.ThreadKey, long.ReplyTarget = fixtureThreadKey("work-main"), nil
+	long.Message.ThreadID, long.ReplyTarget = fixtureThreadID("work-main"), nil
 	long.Message.Content[0].Text.Text = strings.Repeat("界", 700)
 	longReceipt := submit(t, p, f, long)
 	longEvent := peer.next(t, "turn/start")
@@ -319,7 +319,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, "turn-"+issueBinding.SessionID, observed.WorkObservation.WorkID)
 	material := mcpWork[core.Message](t, issue, "get_message", map[string]string{"messageId": source.MessageID})
 	require.Equal(t, source.MessageID, material.ID)
-	require.Equal(t, fixtureThreadKey("work-main"), material.ThreadKey)
+	require.Equal(t, fixtureThreadID("work-main"), material.ThreadID)
 	require.Equal(t, input("work-main").Message.Content, material.Content)
 	require.Empty(t, material.TriggerMeta)
 	longMaterial := mcpWork[core.Message](t, issue, "get_message", map[string]string{"messageId": longReceipt.MessageID})
@@ -493,7 +493,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	mcpWorkError(t, topic, "topic_complete", "conflict", topicComplete)
 	mcpWorkError(t, topic, "create_issue", "failed_precondition", issueInput(f.dir, "after-completion"))
 	followUp := input("new-source-after-complete")
-	followUp.Message.ThreadKey, followUp.ReplyTarget = fixtureThreadKey("work-main"), nil
+	followUp.Message.ThreadID, followUp.ReplyTarget = fixtureThreadID("work-main"), nil
 	follow := submit(t, p, f, followUp)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, mainBinding.SessionID, call.session)

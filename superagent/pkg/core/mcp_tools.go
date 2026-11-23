@@ -19,7 +19,7 @@ func roleTools(role string) []mcpTool {
 	material := objectSchema(map[string]any{"label": text, "messageId": text, "uri": text})
 	material["oneOf"] = []map[string]any{{"required": []string{"messageId"}}, {"required": []string{"uri"}}}
 	materials := array(material)
-	prs := objectSchema(map[string]any{"add": map[string]any{"type": "array", "items": text, "minItems": 1, "description": "Final PR URLs used verbatim as Thread keys. Normalize each URL before calling this tool."}}, "add")
+	prs := objectSchema(map[string]any{"add": map[string]any{"type": "array", "items": text, "minItems": 1, "description": "Final PR URLs used verbatim as Thread IDs. Normalize each URL before calling this tool."}}, "add")
 	transition := objectSchema(map[string]any{"action": enum("complete", "cancel", "reopen"), "reason": text, "evidence": map[string]any{"type": "array", "items": text, "minItems": 1}}, "action", "reason")
 	transition["if"] = map[string]any{"properties": map[string]any{"action": enum("complete")}}
 	transition["then"] = map[string]any{"required": []string{"evidence"}}
@@ -44,7 +44,7 @@ func roleTools(role string) []mcpTool {
 	}
 	tools = append(tools,
 		tool("get_message", "Read a scoped Message and its full content blocks. Request only the expansions you need. Router can request routing round, state, and return reasons.", map[string]any{"messageId": text, "include": include(messageIncludes...)}, "messageId"),
-		tool("list_messages", "Read visible Message history. Keep the same filters when using a cursor.", map[string]any{"threadKey": text, "cursor": text, "limit": limit}),
+		tool("list_messages", "Read visible Message history. Keep the same filters when using a cursor.", map[string]any{"threadId": text, "cursor": text, "limit": limit}),
 		tool("send_reply", "Queue a structured reply to a specific Message. Reuse the same operationId on retry.", replyArgs, "operationId", "messageId", "content"),
 	)
 	if role == "router" {

@@ -1,8 +1,8 @@
 import { writeFile } from 'node:fs/promises'
 import { test, expect, type APIRequestContext } from '@playwright/test'
+import { fixtureOrigins } from './endpoints.mjs'
 
-const audit = 'http://127.0.0.1:' + (process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795')
-const standard = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794')
+const standard = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894')
 type Message = { id: string, sourceMessageId: string }
 type InternalEvent = {
   event_id: string, kind: string, status: string, topicId?: string, sender: { kind: string }, recipient: { kind: string },
@@ -15,25 +15,25 @@ async function get<T>(request: APIRequestContext, url: string): Promise<T> {
   return response.json()
 }
 async function findMessage(request: APIRequestContext, origin: string, nativeID: string) {
-  const { items } = await get<{ items: Message[] }>(request, origin + '/v1/observer/messages?limit=200')
+  const { items } = await get<{ items: Message[] }>(request, origin + '/v1/core/trigger-messages?limit=200')
   return items.find(row => row.sourceMessageId === nativeID)!
 }
 async function sampleOrigin(request: APIRequestContext) {
-  return (await get<{ endpoint: string }>(request, audit + '/message-path-fixture')).endpoint
+  return fixtureOrigins['message-path-fixture']
 }
 
 test('Message branches use the sender, acceptance and explicit return ID committed by Core', async ({ request, page }, testInfo) => {
   const origin = await sampleOrigin(request)
   const msg = await findMessage(request, origin, 'observer-path-rerouted')
-  const api = origin + '/v1/observer/'
-  const routes = (await get<{ items: InternalEvent[] }>(request, api + 'routing-events?messageId=' + msg.id)).items
+  const api = origin + '/v1/core/'
+  const routes = (await get<{ items: InternalEvent[] }>(request, api + 'internal-events?messageId=' + msg.id)).items
   const returned = routes.find(row => row.returnedEventId)!
   const original = routes.find(row => row.event_id === returned.returnedEventId)!
   expect(original.status).toBe('superseded')
   const redispatched = routes.filter(row => row.sender.kind === 'router' && row.recipient.kind === 'topic')
   expect(new Set(redispatched.map(row => row.topicId)).size).toBe(2)
   await page.setViewportSize({ width: 1380, height: 960 })
-  await page.goto(origin + '/observer/?perspective=message&id=' + msg.id)
+  await page.goto(origin + '/superagent/?perspective=message&id=' + msg.id)
   const graph = page.getByRole('region', { name: '消息路径' })
   const panel = page.getByRole('region', { name: '路径详情' })
   await expect(graph.locator('[data-event-id]')).toHaveCount(routes.length)
@@ -98,20 +98,20 @@ test('direct, pending, ignored and channel acknowledgements stop at their record
   const extra = await sampleOrigin(request)
   const direct = await findMessage(request, extra, 'observer-path-direct')
   const graph = page.getByRole('region', { name: '消息路径' })
-  await page.goto(extra + '/observer/?perspective=message&id=' + direct.id)
+  await page.goto(extra + '/superagent/?perspective=message&id=' + direct.id)
   await expect(graph.getByRole('button', { name: /直投/ })).toBeVisible()
   await expect(graph.getByRole('button', { name: 'Router', exact: true })).toHaveCount(0)
   await expect(graph.getByText('尚无 Issue 材料引用本消息')).toBeVisible()
 
   const missingRoute = await findMessage(request, extra, 'observer-path-material-only')
-  await page.goto(extra + '/observer/?perspective=message&id=' + missingRoute.id)
+  await page.goto(extra + '/superagent/?perspective=message&id=' + missingRoute.id)
   await expect(graph.getByRole('heading', { name: '材料引用 · 缺少对应 Topic 事件记录' })).toBeVisible()
   await expect(graph.locator('[data-target-event]')).toHaveCount(0)
   await graph.getByRole('button', { name: 'Issue 留存材料核对' }).click()
   await expect(page.getByRole('region', { name: '路径详情' })).toContainText(missingRoute.id)
 
   const pending = await findMessage(request, standard, 'outbox-observer-source')
-  await page.goto(standard + '/observer/?perspective=message&id=' + pending.id)
+  await page.goto(standard + '/superagent/?perspective=message&id=' + pending.id)
   await expect(graph.getByText('待决策', { exact: true })).toBeVisible()
   await expect(graph.getByRole('button', { name: 'Router', exact: true })).toBeVisible()
   await expect(graph.locator('.path-topic')).toHaveCount(0)
@@ -121,18 +121,18 @@ test('direct, pending, ignored and channel acknowledgements stop at their record
   await expect(replies).toContainText('observer-send-task')
 
   const ignored = await findMessage(request, standard, 'observer-routing')
-  await page.goto(standard + '/observer/?perspective=message&id=' + ignored.id)
+  await page.goto(standard + '/superagent/?perspective=message&id=' + ignored.id)
   await expect(graph.getByText('已忽略 · 原因未记录', { exact: true })).toBeVisible()
 })
 
 test('a failed reference page preserves known branches and does not announce an empty result', async ({ page, request }) => {
   const origin = await sampleOrigin(request)
   const msg = await findMessage(request, origin, 'observer-path-rerouted')
-  await page.goto(origin + '/observer/?perspective=message&id=' + msg.id)
+  await page.goto(origin + '/superagent/?perspective=message&id=' + msg.id)
   const graph = page.getByRole('region', { name: '消息路径' })
   await page.getByRole('button', { name: '暂停自动刷新' }).click()
   const more = graph.getByRole('button', { name: '加载更多Issue 引用' })
-  const match = '**/v1/observer/issues?*cursor=*'
+  const match = '**/v1/core/issues?*cursor=*'
   await page.route(match, route => route.fulfill({ status: 503, body: '{}' }))
   await more.click()
   await expect(graph.getByRole('status')).toContainText('读取失败（HTTP 503）')

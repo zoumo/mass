@@ -23,7 +23,7 @@ func TestRouterTopicListPaginationAcrossIndexInstall(t *testing.T) {
 	createTopic := func(op, title string) string {
 		t.Helper()
 		in := input(op)
-		in.Message.ThreadKey = fixtureThreadKey(op)
+		in.Message.ThreadID = fixtureThreadID(op)
 		in.ReplyTarget = nil
 		message := submit(t, p, f, in)
 		request := newRoute(op, []string{message.MessageID}, f.dir)
@@ -97,7 +97,7 @@ func TestRouterTopicListPaginationAcrossIndexInstall(t *testing.T) {
 	p.stop(t, false)
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 26, version)
+	require.Equal(t, 27, version)
 
 	p = f.start()
 	var indexSQL string

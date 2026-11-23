@@ -47,7 +47,7 @@ type githubObservation struct {
 	UpdatedAt              time.Time
 	Data                   json.RawMessage
 	Kind, Title, Body, URL string
-	ThreadKey              string
+	ThreadID               string
 	Actor                  string
 	Human                  bool
 	SourceEventID          string
@@ -75,8 +75,8 @@ func (o githubObservation) submission(c githubConfig, repo githubRepository, str
 	}
 	content := []events.ContentBlock{triggercontent.SourceText(githubMessageText(o.Title, o.Body, repo.Prompt), o.Actor, o.At)}
 	prURL := ""
-	if strings.HasPrefix(o.ThreadKey, "https://") {
-		prURL = o.ThreadKey
+	if strings.HasPrefix(o.ThreadID, "https://") {
+		prURL = o.ThreadID
 		content = append(content, triggercontent.WebLink(prURL))
 	}
 	if o.URL != "" && o.URL != prURL {
@@ -87,7 +87,7 @@ func (o githubObservation) submission(c githubConfig, repo githubRepository, str
 		return coreclient.TriggerSubmission{}, err
 	}
 	return coreclient.TriggerSubmission{OperationID: id, Message: coreclient.TriggerMessage{
-		SourceMessageID: id, ThreadKey: o.ThreadKey, Content: content, Meta: diagnostics,
+		SourceMessageID: id, ThreadID: o.ThreadID, Content: content, Meta: diagnostics,
 	}}, nil
 }
 

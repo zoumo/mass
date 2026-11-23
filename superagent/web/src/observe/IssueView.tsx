@@ -27,7 +27,7 @@ type SessionBinding = WorkbenchRow & { id: string; createdAt: string; startEvent
 type Event = { id: string; at: string; title: string; detail?: ReactNode; traces?: TraceAssociation[] }
 
 function recordLink(view: string, id: string) {
-  return '/observer/?' + new URLSearchParams({ view, id, mode: 'records' })
+  return '/superagent/?' + new URLSearchParams({ view, id, mode: 'records' })
 }
 function Evidence({ items }: { items?: string[] }) {
   return items?.length ? <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul> : null
@@ -172,7 +172,7 @@ function IssueDetail({ id, scope }: { id: string; scope: string }) {
     <section className="panel issue-sources"><details><summary>来源材料（{issue.materials?.length || 0}）</summary>
       {issue.materials?.length ? <ul>{issue.materials.map((m, i) => <li key={i}>{m.messageId ? <a href={viewHref('message', m.messageId)}>{m.label || '查看来源 Message'}</a> : [m.label, m.uri].filter(Boolean).join(' · ')}</li>)}</ul> : <p>未记录来源材料</p>}</details>
       <div className="issue-links"><a href={recordLink('issues', issue.id)}>查看完整记录</a>
-      {issue.pullRequests?.map(pr => <span key={pr.id}><a href={recordLink('pull-requests', pr.id)}>{pr.canonicalUrl}</a> · <a href={recordLink('subscriptions', pr.subscriptionId)}>查看订阅</a></span>)}</div>
+      {issue.pullRequests?.map(pr => <a key={pr.id} href={pr.canonicalUrl}>{pr.canonicalUrl}</a>)}</div>
     </section>
   </article>
 }

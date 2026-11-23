@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -45,7 +46,7 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	liveCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	preview := "/v1/observer/session-preview/" + router.ID
+	preview := "/v1/core/session-bindings/" + router.ID
 	req, err := http.NewRequestWithContext(liveCtx, http.MethodGet, p.endpoint+preview+"/live", http.NoBody)
 	require.NoError(t, err)
 	httpClient := &http.Client{Timeout: 8 * time.Second}
@@ -56,6 +57,11 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 	frames := bufio.NewScanner(response.Body)
 	require.True(t, frames.Scan(), "%v", frames.Err())
 	require.JSONEq(t, `{"kind":"connected"}`, frames.Text())
+	for _, view := range []string{"history", "live"} {
+		status, head := request(t, http.MethodHead, p.endpoint, preview+"/"+view, "", nil)
+		require.Equal(t, http.StatusOK, status)
+		require.Empty(t, head)
+	}
 
 	receipt := submit(t, p, f, input("embedded-mass-router"))
 	first := peer.next(t, "turn/start")
@@ -69,6 +75,8 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 	require.NoError(t, json.Unmarshal(frames.Bytes(), &frame))
 	require.Contains(t, []string{"preview", "history_changed"}, frame.Kind)
 	cancel()
+	require.False(t, frames.Scan())
+	require.ErrorIs(t, frames.Err(), context.Canceled)
 	require.Eventually(t, func() bool {
 		status, history := request(t, http.MethodGet, p.endpoint, preview+"/history", "", nil)
 		return status == http.StatusOK && bytes.Contains(history, []byte("embedded persisted message"))
@@ -108,6 +116,23 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 	decodeInternalBatch(t, second, receipt.EventID)
 	second.answer <- nativeSubmitAnswer{workID: "embedded-mass-second", complete: true}
 	waitRouteStatus(t, p, receipt.EventID, "sent")
+
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.data, "core.sqlite")+"?_pragma=busy_timeout(1000)")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), `INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body)
+ SELECT 'stale-binding',role,owner_id,generation+10,created_at,'fixture-stale-binding-token',spec,'revoked',
+ json_set(body,'$.id','stale-binding','$.state','revoked','$.sessionUid','different-session-uid')
+ FROM session_bindings WHERE id=?`, router.ID)
+	require.NoError(t, err)
+	for _, view := range []string{"history", "live"} {
+		path := "/v1/core/session-bindings/stale-binding/" + view
+		status, body := request(t, http.MethodGet, p.endpoint, path, "", nil)
+		errorCode(t, status, body, http.StatusServiceUnavailable, "unavailable")
+		status, body = request(t, http.MethodHead, p.endpoint, path, "", nil)
+		require.Equal(t, http.StatusServiceUnavailable, status)
+		require.Empty(t, body)
+	}
 }
 
 func TestEmbeddedMASSDispatchDuringShutdown(t *testing.T) {
@@ -234,7 +259,7 @@ func embeddedProcessFixture(t *testing.T, peer *nativeSubmitPeer) (*fixture, str
 
 func requireEmbeddedHistory(t *testing.T, p *process, bindingID string, messages ...string) {
 	t.Helper()
-	path := "/v1/observer/session-preview/" + bindingID + "/history"
+	path := "/v1/core/session-bindings/" + bindingID + "/history"
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		status, history := request(t, http.MethodGet, p.endpoint, path, "", nil)
 		assert.Equal(collect, http.StatusOK, status, string(history))

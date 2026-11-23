@@ -16,13 +16,12 @@ import (
 )
 
 const (
-	observerTracePath   = "/v1/observer/traces/"
 	observerTraceLimit  = 1000
 	observerTraceWindow = 7 * 24 * time.Hour
 )
 
-// ObserverTraceConfig configures OpenObserve reads for traces and metrics.
-type ObserverTraceConfig struct {
+// TelemetryQueryConfig configures OpenObserve reads for traces and metrics.
+type TelemetryQueryConfig struct {
 	Endpoint       string `mapstructure:"endpoint"`
 	Organization   string `mapstructure:"organization"`
 	Stream         string `mapstructure:"stream"`
@@ -37,14 +36,14 @@ type observerTraceReader struct {
 	inFlight, metricsInFlight               chan struct{}
 }
 
-func newObserverTraceReader(config *ObserverTraceConfig) (*observerTraceReader, error) {
+func newObserverTraceReader(config *TelemetryQueryConfig) (*observerTraceReader, error) {
 	if config == nil {
 		return nil, nil
 	}
 	u, err := url.Parse(config.Endpoint)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" ||
 		u.User != nil || (u.Path != "" && u.Path != "/") || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
-		return nil, problem("invalid_argument", "observerTrace endpoint must be an HTTP or HTTPS origin")
+		return nil, problem("invalid_argument", "telemetryQuery endpoint must be an HTTP or HTTPS origin")
 	}
 	org, stream := config.Organization, config.Stream
 	if org == "" {
@@ -54,7 +53,7 @@ func newObserverTraceReader(config *ObserverTraceConfig) (*observerTraceReader, 
 		stream = "default"
 	}
 	if !traceStreamName.MatchString(org) || !traceStreamName.MatchString(stream) {
-		return nil, problem("invalid_argument", "invalid observerTrace organization or stream")
+		return nil, problem("invalid_argument", "invalid telemetryQuery organization or stream")
 	}
 	base := u.Scheme + "://" + u.Host + "/api/" + org
 	reader := &observerTraceReader{
@@ -70,19 +69,19 @@ func newObserverTraceReader(config *ObserverTraceConfig) (*observerTraceReader, 
 	if config.CredentialFile != "" {
 		info, err := os.Lstat(config.CredentialFile)
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 4096 {
-			return nil, problem("invalid_argument", "observerTrace credentialFile must be a private regular file")
+			return nil, problem("invalid_argument", "telemetryQuery credentialFile must be a private regular file")
 		}
 		data, err := os.ReadFile(config.CredentialFile)
 		lines := strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n"), "\n")
 		if err != nil || len(lines) != 2 || lines[0] == "" || strings.Contains(lines[0], ":") || lines[1] == "" {
-			return nil, problem("invalid_argument", "observerTrace credentialFile requires a username and password on separate lines")
+			return nil, problem("invalid_argument", "telemetryQuery credentialFile requires a username and password on separate lines")
 		}
 		reader.user, reader.password = lines[0], lines[1]
 	}
 	return reader, nil
 }
 
-type observerSpan struct {
+type telemetrySpan struct {
 	ID         string  `json:"id"`
 	ParentID   string  `json:"parentId,omitempty"`
 	Name       string  `json:"name"`
@@ -98,11 +97,11 @@ type observerSpan struct {
 	EventID    string  `json:"eventId,omitempty"`
 }
 
-type observerTrace struct {
-	TraceID   string         `json:"traceId"`
-	StartedAt time.Time      `json:"startedAt"`
-	Spans     []observerSpan `json:"spans"`
-	Truncated bool           `json:"truncated"`
+type telemetryTrace struct {
+	TraceID   string          `json:"traceId"`
+	StartedAt time.Time       `json:"startedAt"`
+	Spans     []telemetrySpan `json:"spans"`
+	Truncated bool            `json:"truncated"`
 }
 
 type traceSearchHit struct {
@@ -122,8 +121,8 @@ type traceSearchHit struct {
 	EventID    string `json:"superagent_event_id"`
 }
 
-func (r *observerTraceReader) read(ctx context.Context, id string, query url.Values) (observerTrace, error) {
-	result := observerTrace{TraceID: id, Spans: []observerSpan{}}
+func (r *observerTraceReader) read(ctx context.Context, id string, query url.Values) (telemetryTrace, error) {
+	result := telemetryTrace{TraceID: id, Spans: []telemetrySpan{}}
 	if _, err := trace.TraceIDFromHex(id); err != nil {
 		return result, problem("invalid_argument", "invalid Trace ID")
 	}
@@ -193,7 +192,7 @@ func (r *observerTraceReader) read(ctx context.Context, id string, query url.Val
 			first = hit.StartNS
 			result.StartedAt = time.Unix(0, first).UTC()
 		}
-		result.Spans = append(result.Spans, observerSpan{
+		result.Spans = append(result.Spans, telemetrySpan{
 			ID: hit.ID, ParentID: hit.ParentID, Name: hit.Name, Service: hit.Service,
 			OffsetUS: float64(hit.StartNS-first) / 1000, DurationUS: hit.DurationUS, Status: hit.Status,
 			Role: hit.Role, Tool: hit.Tool, Action: hit.Action, Outcome: hit.Outcome, CallerID: hit.CallerID, EventID: hit.EventID,
