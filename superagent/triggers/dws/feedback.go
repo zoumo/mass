@@ -336,7 +336,7 @@ func (w *feedbackWorker) advance(ctx context.Context, record feedbackRecord) str
 		if attempt.OutboxID != "" {
 			return feedbackSuppressed
 		}
-		raw, code, _ := w.core.Request(ctx, http.MethodGet, "/v1/channel/messages?sourceMessageId="+url.QueryEscape(record.Channel.MessageID), nil, 65536)
+		raw, code, _ := w.core.Request(ctx, http.MethodGet, coreclient.TriggerMessagesPath+"?sourceMessageId="+url.QueryEscape(record.Channel.MessageID), nil, 65536)
 		var receipt coreclient.Receipt
 		if code != "" || json.Unmarshal(raw, &receipt) != nil || receipt.MessageID == "" {
 			return feedbackAwaiting
@@ -394,7 +394,7 @@ func (w *feedbackWorker) advance(ctx context.Context, record feedbackRecord) str
 func (w *feedbackWorker) replyDelivered(ctx context.Context, record feedbackRecord) bool {
 	var terminalFailures []string
 	for _, id := range record.OutboxIDs {
-		raw, code, _ := w.core.Request(ctx, http.MethodGet, outboxPath+"/items/"+url.PathEscape(id), nil, 65536)
+		raw, code, _ := w.core.Request(ctx, http.MethodGet, outboxDeliveryPath(id), nil, 65536)
 		var item outboxItem
 		if code != "" || json.Unmarshal(raw, &item) != nil || item.ID != id {
 			continue
