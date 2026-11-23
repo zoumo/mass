@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -13,8 +14,9 @@ import (
 )
 
 type composeConfig struct {
-	core     []byte
-	triggers map[string][]byte
+	core             []byte
+	triggers         map[string][]byte
+	watchdogInterval time.Duration
 }
 
 func loadComposeConfig(path string) (composeConfig, error) {
@@ -58,6 +60,12 @@ func decodeComposeConfig(input io.Reader) (composeConfig, error) {
 			if err != nil {
 				return config, err
 			}
+		case "watchdog":
+			var err error
+			config.watchdogInterval, err = decodeComposeWatchdog(value)
+			if err != nil {
+				return config, err
+			}
 		default:
 			return config, fmt.Errorf("unknown Compose configuration section at line %d", key.Line)
 		}
@@ -66,6 +74,30 @@ func decodeComposeConfig(input io.Reader) (composeConfig, error) {
 		return config, errors.New("missing core configuration")
 	}
 	return config, nil
+}
+
+func decodeComposeWatchdog(node *yaml.Node) (time.Duration, error) {
+	if node.Kind != yaml.MappingNode {
+		return 0, errors.New("watchdog configuration must be a mapping")
+	}
+	if err := checkMappingKeys(node, "watchdog configuration"); err != nil {
+		return 0, err
+	}
+	var interval time.Duration
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		if key.Value != "interval" {
+			return 0, fmt.Errorf("unknown watchdog configuration field at line %d", key.Line)
+		}
+		if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!str" {
+			return 0, errors.New("watchdog.interval must be a positive duration string")
+		}
+		interval, _ = time.ParseDuration(value.Value)
+	}
+	if interval <= 0 {
+		return 0, errors.New("watchdog.interval must be a positive duration string")
+	}
+	return interval, nil
 }
 
 func decodeComposeTriggers(node *yaml.Node) (map[string][]byte, error) {

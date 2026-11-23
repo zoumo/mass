@@ -223,17 +223,37 @@ func codexEnvironment(workspace string) ([]string, error) {
 		}
 	}
 	env := []string{"HOME=" + home, "CODEX_HOME=" + codexHome}
-	for _, key := range []string{
-		"PATH", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR",
-		"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL",
-		"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
-		"https_proxy", "http_proxy", "all_proxy", "no_proxy",
-	} {
-		if value, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+value)
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		if allowCodexEnvironment(key) {
+			env = append(env, item)
 		}
 	}
 	return env, nil
+}
+
+// ProcessEnvironment selects the inputs required by a Compose Watchdog child.
+func ProcessEnvironment(environment []string) []string {
+	filtered := make([]string, 0, len(environment))
+	for _, item := range environment {
+		key, _, _ := strings.Cut(item, "=")
+		if key == "HOME" || key == "CODEX_HOME" || key == "TMPDIR" || allowCodexEnvironment(key) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func allowCodexEnvironment(key string) bool {
+	switch key {
+	case "PATH", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR",
+		"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL",
+		"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
+		"https_proxy", "http_proxy", "all_proxy", "no_proxy":
+		return true
+	default:
+		return false
+	}
 }
 
 func copyCodexAuth(source, target string) error {

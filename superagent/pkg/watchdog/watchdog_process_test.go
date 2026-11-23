@@ -304,6 +304,7 @@ type peerEvent struct {
 	Method             string          `json:"method"`
 	Params             json.RawMessage `json:"params"`
 	PID                int             `json:"pid"`
+	ParentPID          int             `json:"parentPid"`
 	ThreadID           string          `json:"threadId"`
 	Home               string          `json:"home"`
 	HasCoreCredentials bool            `json:"hasCoreCredentials"`
@@ -402,7 +403,8 @@ func codexPeer() error {
 			return fmt.Errorf("unexpected request %q", req.Method)
 		}
 		if err := trace.Encode(peerEvent{
-			Method: req.Method, Params: req.Params, PID: pid, ThreadID: threadID, Home: os.Getenv("HOME"),
+			Method: req.Method, Params: req.Params, PID: pid, ParentPID: os.Getppid(),
+			ThreadID: threadID, Home: os.Getenv("HOME"),
 			HasCoreCredentials: os.Getenv("MASS_TOKEN") != "", HasAuthFile: auth == nil, HasUserConfig: config == nil,
 			HasProxy: os.Getenv("HTTPS_PROXY") == "http://127.0.0.1:1" && os.Getenv("no_proxy") == "fixture.local",
 		}); err != nil {
@@ -412,7 +414,22 @@ func codexPeer() error {
 			return err
 		}
 		if req.Method == "turn/start" && string(mode) != "hang" {
-			if err := completePeerTurn(out, threadID, string(mode)); err != nil {
+			outcome := string(mode)
+			if outcome == "gated-invalid" {
+				outcome = "invalid"
+				// Observe the release marker, even if the fixture is slow to advance.
+				for deadline := time.Now().Add(time.Minute); ; {
+					_, err := os.Stat(filepath.Join(dir, "release"))
+					if err == nil {
+						break
+					}
+					if !errors.Is(err, os.ErrNotExist) || time.Now().After(deadline) {
+						return err
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			if err := completePeerTurn(out, threadID, outcome); err != nil {
 				return err
 			}
 		}
