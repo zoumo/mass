@@ -44,9 +44,6 @@ func (s *Server) mcpQuery(ctx context.Context, b SessionBinding, tool string, ra
 		if err != nil {
 			return nil, err
 		}
-		if meta := value["meta"]; len(meta) != 0 {
-			value["meta"] = agentFollowupMeta(meta)
-		}
 		if !slices.Contains(q.Include, "routing") {
 			delete(value, "routing")
 			delete(value, "relations")

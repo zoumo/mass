@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zoumo/mass/massd/pkg/events"
 )
 
 const (
@@ -245,6 +247,7 @@ func (s *Store) fireTimer(ctx context.Context, id string, revision int, cutoff s
 	ctx, finish := s.telemetry.startOperation(ctx, "timer.fire", "", trace.WithLinks(links...))
 	defer func() { finish(operationOutcome(retErr, "fired")) }()
 	t.Status, t.FiredAt, t.UpdatedAt = "fired", at, at
+	t.ThreadKey = "core%3Atimer:" + t.ID
 	receipt, err := admitTimerMessage(ctx, tx, t)
 	if err != nil {
 		return err
@@ -260,30 +263,31 @@ func (s *Store) fireTimer(ctx context.Context, id string, revision int, cutoff s
 	return nil
 }
 
+// The scheduled task owns the followup facts. Join by its primary key and
+// verify the persisted firing link before exposing them with the Message.
+const messageFollowupProjection = `(SELECT json_patch(json_object(
+ 'type','followup','followupId',t.id,'topicId',t.topic_id,
+ 'revision',t.body->>'$.revision','dueAt',t.body->>'$.dueAt'),
+ json_object('materials',json(t.body->'$.materials')))
+ FROM scheduled_tasks t WHERE t.id=trigger_messages.native_id
+ AND t.trigger_message_id=trigger_messages.id AND t.topic_id=? AND trigger_messages.source='` + timerSource + `')`
+
 func admitTimerMessage(ctx context.Context, tx *sql.Tx, t Timer) (Receipt, error) {
 	source := Source{Source: timerSource}
-	ref := ThreadRef{Source: source.Source, ID: t.ID}
-	request := SubmitRequest{Message: MessageInput{
-		Source: source.Source, SourceMessageID: t.ID, ThreadRef: ref,
-		Actor: "Core", Text: t.Content, At: t.FiredAt,
-		Meta: map[string]any{
-			"type": t.Type, "taskId": t.ID, "topicId": t.TopicID,
-			"taskRevision": t.Revision, "dueAt": t.DueAt, "materials": t.Materials,
-		},
+	request := SubmitTriggerMessageRequest{Message: TriggerMessage{
+		SourceMessageID: t.ID, ThreadKey: t.ThreadKey,
+		Content: []events.ContentBlock{events.Text(t.Content)},
 	}}
-	if err := request.Message.validate(source); err != nil {
-		return Receipt{}, err
-	}
-	canonical, err := request.Message.canonical()
+	message, canonical, err := request.prepare(source)
 	if err != nil {
-		return Receipt{}, storageError()
-	}
-	key, at := ThreadKey(ref), now()
-	if err := upsertThread(ctx, tx, key, ref, at, ""); err != nil {
 		return Receipt{}, err
 	}
-	if _, err := ensureSubscription(ctx, tx, Subscription{TopicID: t.TopicID, ThreadKey: key, CreatedAt: at}); err != nil {
+	at := now()
+	if err := upsertThread(ctx, tx, t.ThreadKey, at, ""); err != nil {
 		return Receipt{}, err
 	}
-	return admitTriggerMessage(ctx, tx, source, request, canonical)
+	if _, err := ensureSubscription(ctx, tx, Subscription{TopicID: t.TopicID, ThreadKey: t.ThreadKey, CreatedAt: at}); err != nil {
+		return Receipt{}, err
+	}
+	return admitTriggerMessage(ctx, tx, source, message, canonical)
 }

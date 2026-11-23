@@ -21,7 +21,7 @@ type Identity struct {
 	InstanceID    string
 }
 
-// Lock the configured destination before opening it or installing a migration.
+// Lock the configured destination before opening it.
 func lockTriggerDatabase(path string) (canonical string, unlock func(), err error) {
 	if !filepath.IsAbs(path) {
 		return "", nil, errors.New("databasePath must be an absolute path")
@@ -66,6 +66,7 @@ func Open(path string, identity Identity, schema string) (*sql.DB, func(), error
 
 // The caller owns the destination lock or provides a private temporary path.
 func openLockedTriggerDatabase(path string, identity Identity, schema string) (*sql.DB, error) {
+	fresh := true
 	created, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	switch {
 	case err == nil:
@@ -76,6 +77,10 @@ func openLockedTriggerDatabase(path string, identity Identity, schema string) (*
 		return nil, errors.New("cannot create Trigger database")
 	default:
 		if err := checkTriggerDatabaseFile(path); err != nil {
+			return nil, err
+		}
+		fresh, err = checkTriggerDatabase(path, identity)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -91,7 +96,7 @@ func openLockedTriggerDatabase(path string, identity Identity, schema string) (*
 		return nil, errors.New("cannot open Trigger database")
 	}
 	db.SetMaxOpenConns(1)
-	if err := initializeTriggerDatabase(db, identity, schema); err != nil {
+	if err := initializeTriggerDatabase(db, identity, schema, fresh); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -114,38 +119,67 @@ func checkTriggerDatabaseFile(path string) error {
 	return nil
 }
 
-func initializeTriggerDatabase(db *sql.DB, identity Identity, schema string) error {
-	var applicationID, version int
-	if db.QueryRowContext(context.Background(), "PRAGMA application_id").Scan(&applicationID) != nil ||
-		db.QueryRowContext(context.Background(), "PRAGMA user_version").Scan(&version) != nil {
-		return errors.New("invalid Trigger database")
+// Probe the existing file without creating or altering SQLite sidecars.
+func checkTriggerDatabase(path string, identity Identity) (fresh bool, err error) {
+	uri := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&immutable=1"}
+	db, err := sql.Open("sqlite", uri.String())
+	if err != nil {
+		return false, errors.New("cannot inspect Trigger database")
 	}
-	fresh := applicationID == 0 && version == 0
-	if fresh {
+	defer db.Close()
+	ctx := context.Background()
+	var applicationID, version int
+	if db.QueryRowContext(ctx, "PRAGMA application_id").Scan(&applicationID) != nil ||
+		db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version) != nil {
+		return false, errors.New("invalid Trigger database")
+	}
+	if applicationID == 0 && version == 0 {
+		// Older databases could first write their identity to WAL. The
+		// immutable probe cannot treat that database as an empty file.
+		if info, err := os.Stat(path + "-wal"); err == nil && info.Size() != 0 {
+			return false, errors.New("cannot identify Trigger database with an uncheckpointed schema. Configure a new databasePath")
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, errors.New("cannot inspect Trigger database WAL")
+		}
 		var objects int
-		if db.QueryRowContext(context.Background(), "SELECT count(*) FROM sqlite_schema").Scan(&objects) != nil || objects != 0 {
-			return errors.New("invalid Trigger database type")
+		if db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema").Scan(&objects) != nil || objects != 0 {
+			return false, errors.New("invalid Trigger database type")
 		}
-	} else {
-		if applicationID != identity.ApplicationID || version != identity.Version {
-			return errors.New("invalid Trigger database type or schema version")
-		}
-		var source, accountID, instanceID string
-		if err := db.QueryRowContext(context.Background(), "SELECT source, account_id, instance_id FROM trigger_identity WHERE id = 1").
-			Scan(&source, &accountID, &instanceID); err != nil {
-			return errors.New("invalid Trigger database identity")
-		}
-		if source != identity.Source || accountID != identity.AccountID || instanceID != identity.InstanceID {
-			return errors.New("the Trigger database belongs to a different source, account or instance")
+		return true, nil
+	}
+	if applicationID != identity.ApplicationID {
+		return false, errors.New("invalid Trigger database type")
+	}
+	if version != identity.Version {
+		return false, fmt.Errorf("unsupported Trigger database schema version %d (expected %d). Configure a new databasePath", version, identity.Version)
+	}
+	var source, accountID, instanceID string
+	if db.QueryRowContext(ctx, "SELECT source, account_id, instance_id FROM trigger_identity WHERE id = 1").
+		Scan(&source, &accountID, &instanceID) != nil {
+		return false, errors.New("invalid Trigger database identity")
+	}
+	if source != identity.Source || accountID != identity.AccountID || instanceID != identity.InstanceID {
+		return false, errors.New("the Trigger database belongs to a different source, account or instance")
+	}
+	return false, nil
+}
+
+func initializeTriggerDatabase(db *sql.DB, identity Identity, schema string, fresh bool) error {
+	// Store the identity and schema in the main file before enabling WAL so
+	// the next startup can verify the version even after an unclean exit.
+	if fresh {
+		if err := createTriggerSchema(db, identity, schema); err != nil {
+			return err
 		}
 	}
 	var journal string
 	if err := db.QueryRowContext(context.Background(), "PRAGMA journal_mode = WAL").Scan(&journal); err != nil || journal != "wal" {
 		return errors.New("cannot enable WAL for Trigger database")
 	}
-	if !fresh {
-		return nil
-	}
+	return nil
+}
+
+func createTriggerSchema(db *sql.DB, identity Identity, schema string) error {
 	err := Transaction(db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(context.Background(), `CREATE TABLE trigger_identity (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -196,9 +230,19 @@ func CheckParent(path string) error {
 	}
 }
 
-func CheckDestination(path string) error {
+func CheckDestination(path string, identity Identity) error {
 	if err := CheckParent(path); err != nil {
 		return fmt.Errorf("databasePath: %w", err)
 	}
-	return checkTriggerDatabaseFile(path)
+	if err := checkTriggerDatabaseFile(path); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return errors.New("cannot inspect Trigger database")
+	}
+	_, err := checkTriggerDatabase(path, identity)
+	return err
 }

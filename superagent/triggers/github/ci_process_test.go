@@ -17,7 +17,7 @@ import (
 
 func TestGitHubDiscoveredPullTracksActionsAndStopsOnClosure(t *testing.T) {
 	t.Parallel()
-	f := triggertest.NewCoreFixture(t, false, githubSource)
+	f := newGitHubCoreFixture(t)
 	const repo = "demo/sdk"
 	old := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	recent := time.Now().UTC().Truncate(time.Second).Add(5 * time.Second)
@@ -146,6 +146,8 @@ func TestGitHubDiscoveredPullTracksActionsAndStopsOnClosure(t *testing.T) {
 	triggertest.Wait(t, "first attempt completion", func() bool { return status().Accepted == 3 })
 	failure := githubActionMessage(t, f, "failure")
 	require.Equal(t, prURL, failure["threadKey"])
+	require.Contains(t, githubFixtureMessageText(t, failure), "Commit "+head)
+	githubAssertMessageLinks(t, failure, prURL, "https://github.com/demo/sdk/actions/runs/90")
 	githubAssertTopicDelivery(t, f, failure, topic)
 	triggertest.Terminate(t, proc)
 
@@ -223,7 +225,7 @@ func githubFixtureSuite(id int, status, conclusion string, attempt int, associat
 func githubActionMessage(t *testing.T, f *triggertest.CoreFixture, conclusion string) map[string]any {
 	t.Helper()
 	for _, m := range triggertest.ReadMessages(t, f.Endpoint) {
-		meta, _ := m["meta"].(map[string]any)
+		meta := githubMessageMeta(m)
 		run, _ := meta["workflowRun"].(map[string]any)
 		if meta["observation"] == "actions_completed" && run["id"] == "workflow-run-90" && run["conclusion"] == conclusion {
 			return m

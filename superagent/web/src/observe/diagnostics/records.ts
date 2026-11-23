@@ -8,7 +8,6 @@ export type DiagnosticRow = WorkbenchRow & {
   lastMessageAt?: string
   subscriptionId?: string
   pullRequestId?: string
-  ref?: { source: string; id: string }
   close?: { at: string; resourceVersion?: string; method: string; reusable: boolean }
   resolvedBlockers?: {
     id: string
@@ -40,17 +39,8 @@ export type DiagnosticRow = WorkbenchRow & {
   possibleDuplicate?: boolean
   errorCode?: string
   retryAt?: string
-  channel?: {
-    type: string
-    conversationId: string
-    messageId: string
-    actorId?: string
-    address?: Record<string, unknown>
-  }
   receipt?: {
     taskId?: string
-    conversationId?: string
-    messageId?: string
     errorCode?: string
     retryAt?: string
     uncertain?: boolean

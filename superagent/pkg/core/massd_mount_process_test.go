@@ -110,7 +110,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	require.JSONEq(t, `{"kind":"connected"}`, frames.Text())
 
 	submitted := input("mounted-mass-router")
-	submitted.Message.Text += " " + token
+	submitted.Message.Content[0].Text.Text += " " + token
 	receipt := submit(t, p, f, submitted)
 	status, observed := request(t, http.MethodGet, p.endpoint, "/v1/observer/messages", "", nil)
 	require.Equal(t, http.StatusOK, status)

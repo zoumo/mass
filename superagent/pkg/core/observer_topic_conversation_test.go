@@ -45,10 +45,9 @@ func conversationPage(t *testing.T, p *process, query url.Values) ([]conversatio
 	return rows, result.NextCursor
 }
 
-func conversationInput(id, thread string) core.SubmitRequest {
+func conversationInput(id, thread string) core.SubmitTriggerMessageRequest {
 	msg := input(id)
-	msg.Message.ThreadRef.ID = thread
-	msg.Message.Channel.ConversationID = thread
+	moveInput(&msg, thread)
 	return msg
 }
 

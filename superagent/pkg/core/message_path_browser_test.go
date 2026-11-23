@@ -29,7 +29,7 @@ func seedMessagePathObserver(t *testing.T) string {
 	waitDelivered(t, p, direct.MessageID, "topic", first)
 
 	r := input("observer-path-rerouted")
-	r.Message.Text = "发布前检查：请确认版本、回归结果与值班交接。"
+	r.Message.Content[0].Text.Text = "发布前检查：请确认版本、回归结果与值班交接。"
 	// Hold native acceptance until the Topic has returned the original delivery.
 	m := func() core.Receipt {
 		boundary.driver.mu.Lock()

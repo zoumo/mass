@@ -148,7 +148,7 @@ func New() *cobra.Command {
 		observe.AddCommand(cmd)
 	}
 	root.AddCommand(observe)
-	root.AddCommand(newRecoverInput(), newInspectBinding(), newReleaseEcho())
+	root.AddCommand(newRecoverInput(), newInspectBinding())
 	return root
 }
 

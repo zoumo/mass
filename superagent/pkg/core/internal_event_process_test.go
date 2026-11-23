@@ -22,18 +22,25 @@ type eventParty struct {
 	SessionBindingID string `json:"session_binding_id,omitempty"`
 }
 
+type attachedMessage struct {
+	MessageID  string `json:"messageId"`
+	BlockCount int    `json:"blockCount"`
+}
+
 type internalEvent struct {
-	ID        string                  `json:"event_id"`
-	Kind      string                  `json:"kind"`
-	Sender    eventParty              `json:"sender"`
-	Recipient eventParty              `json:"recipient"`
-	Content   *core.StructuredContent `json:"content,omitempty"`
-	Body      json.RawMessage         `json:"body,omitempty"`
-	Refs      []json.RawMessage       `json:"refs,omitempty"`
-	Truncated bool                    `json:"truncated,omitempty"`
-	Issue     json.RawMessage         `json:"issue,omitempty"`
-	Report    json.RawMessage         `json:"report,omitempty"`
-	Messages  []json.RawMessage       `json:"messages,omitempty"`
+	ID             string                  `json:"event_id"`
+	Kind           string                  `json:"kind"`
+	Sender         eventParty              `json:"sender"`
+	Recipient      eventParty              `json:"recipient"`
+	Content        *core.StructuredContent `json:"content,omitempty"`
+	Body           json.RawMessage         `json:"body,omitempty"`
+	Refs           []json.RawMessage       `json:"refs,omitempty"`
+	Truncated      bool                    `json:"truncated,omitempty"`
+	Issue          json.RawMessage         `json:"issue,omitempty"`
+	Report         json.RawMessage         `json:"report,omitempty"`
+	Messages       []json.RawMessage       `json:"messages,omitempty"`
+	MessageContent []attachedMessage       `json:"messageContent,omitempty"`
+	Followup       json.RawMessage         `json:"followup,omitempty"`
 }
 
 type internalEventRow struct {

@@ -24,7 +24,6 @@ type Receipt struct {
 	ThreadKey  string `json:"threadKey"`
 	AcceptedAt string `json:"acceptedAt"`
 	EventID    string `json:"eventId"`
-	EchoStatus string `json:"echoStatus,omitempty"`
 }
 type SubmitResult struct {
 	Receipt Receipt

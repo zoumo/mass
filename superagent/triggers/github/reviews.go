@@ -71,7 +71,7 @@ func pollGitHubReviews(ctx context.Context, api *githubAPI, repo string, number 
 		if known && string(data) == string(previous.Data) {
 			continue
 		}
-		suppliedNumber, thread, err := githubDiscussionThread(review.URL, repo, "review", int64(id))
+		suppliedNumber, threadKey, err := githubDiscussionThreadKey(review.URL, repo, "review", int64(id))
 		if err != nil || suppliedNumber != number {
 			return nil, errors.New("github_invalid_review_thread")
 		}
@@ -105,8 +105,8 @@ func pollGitHubReviews(ctx context.Context, api *githubAPI, repo string, number 
 		}
 		actor, human := githubDiscussionAuthor(review.Author, meta)
 		observations = append(observations, githubObservation{
-			Key: key, Data: data, Kind: kind, UpdatedAt: at, At: at, Actor: actor, Human: human, URL: review.URL, Thread: thread,
-			Title: fmt.Sprintf("GitHub review %s#%d %s (%s)\n%s", repo, number, kind, review.State, review.URL), Body: review.Body, Meta: meta,
+			Key: key, Data: data, Kind: kind, UpdatedAt: at, At: at, Actor: actor, Human: human, URL: review.URL, ThreadKey: threadKey,
+			Title: fmt.Sprintf("GitHub review %s#%d %s (%s)", repo, number, kind, review.State), Body: review.Body, Meta: meta,
 		})
 	}
 	githubSortObservations(observations)

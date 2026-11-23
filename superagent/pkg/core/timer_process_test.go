@@ -60,31 +60,20 @@ func assertTimerFollowup(t *testing.T, p *process, timer timerRecord) {
 	require.Equal(t, timerEventType, timer.Type)
 	message := readRecord[core.Message](t, p, "messages/"+timer.TriggerMessageID)
 	require.Equal(t, timer.ID, message.SourceMessageID)
-	require.Equal(t, core.ThreadRef{Source: "core:timer", ID: timer.ID}, message.ThreadRef)
-	require.Equal(t, message.ThreadRef.Source, message.Source)
-	require.Equal(t, core.ThreadKey(message.ThreadRef), timer.ThreadKey)
+	require.Equal(t, "core:timer", message.Source)
+	require.Equal(t, "core%3Atimer:"+timer.ID, timer.ThreadKey)
 	require.Equal(t, timer.ThreadKey, message.ThreadKey)
-	require.Equal(t, timer.Content, message.Text)
-	require.Nil(t, message.Channel)
-	require.Equal(t, timerEventType, message.Meta["type"])
-	require.Equal(t, timer.ID, message.Meta["taskId"])
-	require.Equal(t, timer.TopicID, message.Meta["topicId"])
-	require.Equal(t, timer.DueAt, message.Meta["dueAt"])
-	require.EqualValues(t, timer.Revision, message.Meta["taskRevision"])
-	if len(timer.Materials) > 0 {
-		actual, err := json.Marshal(message.Meta["materials"])
-		require.NoError(t, err)
-		expected, err := json.Marshal(timer.Materials)
-		require.NoError(t, err)
-		require.JSONEq(t, string(expected), string(actual))
-	}
+	require.Len(t, message.Content, 1)
+	require.Equal(t, timer.Content, message.Content[0].Text.Text)
+	require.Empty(t, message.TriggerMeta)
+	require.Empty(t, message.ReplyTarget)
 
 	type subscribedThread struct {
 		core.Thread
 		Subscriptions []core.Subscription `json:"subscriptions"`
 	}
 	thread := readRecord[subscribedThread](t, p, "threads/"+url.PathEscape(timer.ThreadKey))
-	require.Equal(t, message.ThreadRef, thread.Ref)
+	require.Equal(t, timer.ThreadKey, thread.Key)
 	require.Len(t, thread.Subscriptions, 1)
 	require.Equal(t, timer.TopicID, thread.Subscriptions[0].TopicID)
 	require.Len(t, page(t, p, "messages?threadKey="+url.QueryEscape(timer.ThreadKey)).Items, 1)
@@ -190,18 +179,27 @@ func TestTimerNativeEventAndAuthority(t *testing.T) {
 	require.Equal(t, binding.SessionID, advance.session)
 	nativeEvent := decodeInternalBatch(t, advance, fired.Followup.ID)[0]
 	require.Equal(t, "routed_message", nativeEvent.Kind)
-	require.NotNil(t, nativeEvent.Content)
+	require.Equal(t, []attachedMessage{{MessageID: fired.TriggerMessageID, BlockCount: 1}}, nativeEvent.MessageContent)
+	require.Len(t, advance.blocks, 2)
+	require.Equal(t, fired.Content, advance.blocks[1].Text)
 	require.Len(t, nativeEvent.Refs, 1)
 	require.JSONEq(t, `{"kind":"trigger_message","id":"`+fired.TriggerMessageID+`"}`, string(nativeEvent.Refs[0]))
-	message := roleWork[core.Message](t, p, roleToken(t, f, binding), "get_message", map[string]string{"messageId": fired.TriggerMessageID})
-	require.Equal(t, fired.Content, message.Text)
-	require.Equal(t, "followup", message.Meta["type"])
-	require.Equal(t, fired.ID, message.Meta["followupId"])
-	materials, err := json.Marshal(message.Meta["materials"])
-	require.NoError(t, err)
-	var sourceMaterials []core.Material
-	require.NoError(t, json.Unmarshal(materials, &sourceMaterials))
-	require.Equal(t, fired.Materials, sourceMaterials)
+	type followupView struct {
+		Type       string
+		FollowupID string
+		Revision   int
+		Materials  []core.Material
+	}
+	var followup followupView
+	require.NoError(t, json.Unmarshal(nativeEvent.Followup, &followup))
+	require.Equal(t, followupView{Type: "followup", FollowupID: fired.ID, Revision: fired.Revision, Materials: fired.Materials}, followup)
+	message := roleWork[struct {
+		core.Message
+		Followup followupView `json:"followup"`
+	}](t, p, roleToken(t, f, binding), "get_message", map[string]string{"messageId": fired.TriggerMessageID})
+	require.Len(t, message.Content, 1)
+	require.Equal(t, fired.Content, message.Content[0].Text.Text)
+	require.Equal(t, followup, message.Followup)
 	mcpWorkError(t, topic, "send_reply", "failed_precondition", core.ReplyRequest{OperationID: "timer-reply", MessageID: message.ID, Content: markdownReply("fixture")})
 	advance.answer <- nativeSubmitAnswer{complete: true}
 	d := waitTimerEvent(t, p, fired.Followup.ID, "sent")

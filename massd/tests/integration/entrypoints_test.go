@@ -357,8 +357,8 @@ func (s *entrypointSuite) basic(kind string) {
 	if kind == "claude" {
 		// Unsupported input after settlement still rejects before dispatch. Actual
 		// repeated text input uses the dedicated continuity peer below this suite.
-		image := events.ContentBlock{Image: &events.ContentBlockImage{Data: "AA==", MIMEType: "image/png"}}
-		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{image}}}, nil)
+		audio := events.ContentBlock{Audio: &events.ContentBlockAudio{Data: "AA==", MIMEType: "audio/wav"}}
+		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{audio}}}, nil)
 		var public *transport.Error
 		s.Require().ErrorAs(e, &public)
 		s.Equal("unsupported", public.Code)
@@ -594,7 +594,7 @@ func (s *entrypointSuite) TestDualAgentDirectory() {
 func (s *entrypointSuite) unsupportedMedia(kind string) {
 	ref, _, _ := s.open(kind, "basic")
 	var input runtime.Input
-	err := json.Unmarshal([]byte(`{"content":[{"type":"image","data":"YQ==","mimeType":"image/png"}]}`), &input)
+	err := json.Unmarshal([]byte(`{"content":[{"type":"resource_link","uri":"https://example.test/archive.zip","name":"archive.zip","mimeType":"application/zip"}]}`), &input)
 	s.Require().NoError(err)
 	err = newHTTPClient(s.T(), s.url, "").SendPrompt(ctx(s.T()), ref, input, nil)
 	var public *transport.Error

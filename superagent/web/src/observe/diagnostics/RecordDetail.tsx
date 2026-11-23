@@ -3,7 +3,7 @@ import { Button } from '../../components/ui/button'
 import { TraceLink } from '../TraceLinks'
 import ExecutionProfileFields from '../ExecutionProfileFields'
 import StructuredContent from '../StructuredContent'
-import { eventStatusLabel, stateLabel } from '../../workbench'
+import { eventStatusLabel, messageBody, stateLabel } from '../../workbench'
 import SessionEvidence from './SessionEvidence'
 import ChannelEvidence from './ChannelEvidence'
 import { followupLabel, identity, replyLabel, type RecordProps, type Kind } from './records'
@@ -31,6 +31,7 @@ function TraceID({ traceId, phase, at }: { traceId: string; phase: string; at?: 
 export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
   const showRecord = (view: Kind, id: string) => navigate(view, '', undefined, id)
   const showThread = (key: string) => showRecord('threads', key)
+  const body = kind === 'messages' ? messageBody(detail) : detail.text
   return (
     <>
       {kind !== 'session-bindings' && (detail.acceptance || detail.status || detail.state) && (
@@ -45,11 +46,10 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       {detail.title && <h2>{detail.title}</h2>}
       {detail.reason && <p>{detail.reason}</p>}
       {detail.lastError && <p role="status">{detail.lastError}</p>}
-      {detail.actor && <h2>{detail.actor}</h2>}
       {(kind === 'outbox' || kind === 'internal-events') && detail.content && typeof detail.content !== 'string' && <StructuredContent content={detail.content} />}
-      {detail.text && (
+      {body && (
         <pre className="body-text" data-testid="message-body">
-          {detail.text}
+          {body}
         </pre>
       )}
       <dl>

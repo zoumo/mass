@@ -10,7 +10,7 @@ configuration. MASS Runtime and Session operations follow the
 One Core process owns `dataDir` at a time. A successful start returns
 `status: ready`, `endpoint`, and `observerEndpoint`. Accepted records survive
 process exit. For a lost intake response, use the Message's original identity.
-See [data directory upgrades](README.md#reuse-an-existing-core-data-directory).
+See [data directory requirements](README.md#reuse-an-existing-core-data-directory).
 
 ## Submit Message
 
@@ -22,87 +22,71 @@ source/account; body fields cannot select another identity.
 {
   "operationId": "stable-adapter-operation-17",
   "message": {
-    "source": "dws",
-    "accountId": "configured-native-account",
     "sourceMessageId": "native-message-id",
-    "threadRef": { "source": "dws", "id": "native-conversation-id" },
-    "actor": "native-sender-id",
-    "text": "Original input text",
-    "addressed": "direct",
-    "channel": {
-      "type": "dws",
-      "conversationId": "native-conversation-id",
-      "messageId": "native-message-id",
-      "actorId": "native-sender-id"
-    }
+    "threadKey": "https://github.example/org/repo/pull/42",
+    "content": [
+      {"type": "text", "text": "Review requested."},
+      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42", "name": "URL"},
+      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42#comment", "name": "URL"},
+      {"type": "resource_link", "uri": "file:///logs/checks.log", "name": "checks.log"}
+    ],
+    "_meta": {"observationId": "obs-17"}
   }
 }
 ```
 
-Required Message fields are source, accountId, sourceMessageId, threadRef,
-actor and nonblank text. No identity is synthesized. Optional fields: absolute
-RFC3339 `at`, tri-state `human`, `addressed`, `channel`, absolute HTTP(S) `url`
-without credentials, JSON object `meta`, JSON `quotedMessage`, `sourceEventId`,
-`collectedAt` and `collectorInstance`. Core generates `receivedAt`.
-Core rejects unknown request fields and trailing JSON values.
+`operationId` and `sourceMessageId` are required. The adapter supplies the
+final `threadKey`. Core stores it and matches subscriptions by exact string.
+A key is at most 2048 UTF-8 bytes and has no control characters or leading
+or trailing whitespace. A `sources` entry authorizes writes with `threadKeys`
+for exact matches and `threadKeyPrefixes` for literal prefixes. List the same
+range in multiple entries to let their accounts write to the same Threads.
+A structured request needs a match in at least one of the configured lists.
 
-`channel` is optional: absence means there is no supplied reply address, and
-Core never guesses one. A provided channel needs a `type`; its `address` object
-can preserve other adapters' native addressing fields. For `type=dws`,
-`conversationId` and `messageId` must match the native Thread and Message IDs.
-When present, `actorId` must match `actor`. DWS direct and self-chat Messages
-use `addressed=direct`. DWS group Messages use `addressed=group` with the native
-group conversation ID in `threadRef.id`. A reply-enabled group supplies
-`channel.type=dws`, `channel.actorId=actor`, and both `groupOpenConversationId`
-and `senderOpenDingtalkId` in `channel.address`. These entries must match
-`threadRef.id` and `actor`, respectively. Inbound-only groups omit `channel`.
+`content` is a nonempty ordered array using the same content union as Prompt.
+The supported types are `text`, `image`, `audio`, `resource`, and `resource_link`.
+Use text for source facts. For a webpage URL, use a `resource_link` with
+`mimeType` omitted. The SDK passes the original URI to the Agent as text.
+`resource_link` can also reference attachments. Optional `_meta` is an opaque
+JSON object. Core saves it for Observer diagnostics and omits it from Agent
+tools and Session input.
+Core generates `receivedAt`. Unknown fields and trailing JSON values fail.
 
-Thread identity compares source/id independently. The key is each UTF-8
-component URL-path escaped with colon escaped too, joined by one literal colon.
-Ordinary DWS keys remain `dws:conversationId`; `dws:a%3Ab%2Fc%25` reverses to
-conversation ID `a:b/c%`. Case is retained. No hash, account path or collector
-instance becomes part of the Thread identity.
-For PR Messages, send `threadRef: {"source":"pr:url","id":"https://..."}`.
-The `pr:url` reference kind uses the canonical resource URL as the Thread key.
-The outer `source` and `accountId` still match the authenticated collector and
-scope native message deduplication. A PR Thread requires a non-DWS source and
-cannot carry a DWS reply address. Use the optional Message `url` for a source
-link, such as a comment permalink, when available. See
-[PR URL rules](#pull-request-registration-and-subscriptions).
+The request can include `replyTarget` and `inReplyToOutboxId` beside `message`.
+`replyTarget` is an opaque JSON object of at most 16 KiB. It enables replies
+and is visible to the account's configured Outbox consumer. To link an answer
+to a prior reply, supply the `inReplyToOutboxId` of a sent item whose original
+Message has the same source, account and Thread.
 
 Success HTTP 200:
 
 ```json
-{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadKey":"dws:native-conversation-id","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
+{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadKey":"https://github.example/org/repo/pull/42","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
 ```
 
 Message, Thread update and the initial internal event commit together.
-The receipt identifies the accepted Message and Thread. Its optional
-`eventId` is the initial event ID for routable input and can be read
-through `/v1/observer/routing-events/{event_id}`. Echo handling may admit a
-Message without an event ID.
+The receipt identifies the accepted Message and Thread. Its `eventId` is the initial event ID. Read it through
+`/v1/observer/routing-events/{event_id}`.
 
 Zero or multiple Thread subscriptions enqueue a `route_request` to Router.
 Exactly one queues a `routed_message` to that Topic. Both reference the
 stored original Message. Initial event status is `pending`. The event
 becomes `sent` after massd accepts the Session input.
 
-Admission deduplicates by source, account and native `sourceMessageId`.
-Duplicate intake returns the original Message ID, Thread key, acceptance time
-and initial event ID with `duplicate=true`. Changing text, actor, Thread,
-reply address or other business content under that native identity conflicts.
-Canonical comparison sorts JSON object keys and normalizes absolute source
-time and quoted JSON. Collection timestamps, collector instance and raw
-source event envelope IDs are excluded from comparison. `operationId` is a
-required caller correlation value.
+Admission deduplicates by the authenticated source, account, and
+`sourceMessageId`. Duplicate intake returns the original Message ID, Thread
+key, acceptance time, and initial event ID with `duplicate=true`. Changing
+the Thread key, ordered content, reply target or Outbox reference under that
+identity returns `conflict`.
+Object field order is immaterial. Changing `_meta` alone returns the original
+receipt and preserves the first metadata. `operationId` correlates a caller's
+request and does not participate in Message deduplication.
 
 `GET /v1/channel/messages?sourceMessageId={encoded-native-id}` uses the same
 source credential and returns the stored acceptance receipt with `duplicate=false`.
 The lookup scopes the native ID to the authenticated source and account and
 returns `not_found` when the scoped Message is absent. It returns no Message
-body. POST and GET receipts include `echoStatus` when Core has classified the
-Message. A duplicate POST returns the current echo classification with the
-original acceptance facts.
+body.
 
 ## Errors and uncertain responses
 
@@ -205,7 +189,7 @@ Router is `not_started` when execution is
 omitted, or its persisted `pending/ready/blocked` preparation state. Messages
 include current `routing: {round,state}`. Observer/Router projections also include
 source reception/return relations. Topic-role Message queries omit other Topics'
-relations. Thread details expose key, ref and timestamps. SessionBindings expose fixed
+relations. Thread details expose the key and timestamps. SessionBindings expose fixed
 role, owner, generation, workspace, namespace/name, `runtimeRef`, `model`,
 optional `effort`, actual Session IDs,
 preparation state and any error, and the next attempt time. Credentials and MCP capability files stay private.
@@ -221,8 +205,9 @@ Topic's routing history. Outbox and routing relations accept `messageId`. Observ
 `messageId` to select Issues with an explicit matching material across all Topics. Message-filtered
 Issue and routing-event previews include the owning or participating Topic's title when available.
 Observer lists accept `preview=true` for compact rows. Message, reply and Timer
-previews contain up to 240 characters. Open a record by ID for its full body
-and evidence. Continuation
+previews contain up to 240 characters. A Message preview uses the first
+nonblank text block or lists its content types. Open a record by ID for its
+full `content` and diagnostic `_meta` when present. Continuation
 cursors bind collection, filter and the first page's sequence high-water mark.
 Rows accepted later never enter that traversal. Ordering uses fixed nanosecond
 UTC Core timestamps plus stable ID (Thread key for Threads). Thread ordering
@@ -501,8 +486,9 @@ including observation time or an unknown-state reason.
 ### Issue Session tools
 
 Call `tools/list` for the Issue Session tool schemas. `get_issue` resolves the
-bound Issue. `get_message` requires a Message in its materials. Use
-`submit_report` with the `goalRevision` used during work.
+bound Issue. `get_message` returns the complete `content` array for a Message
+in the Issue's materials. Use `submit_report` with the `goalRevision` used
+during work.
 
 Report kinds are `progress`, `ready`, `blocked` and `failed`. The Issue Session
 supplies the goal revision it used. Core records the authenticated
@@ -586,15 +572,20 @@ canceled until that owner explicitly reopens it with `update_topic`.
 
 ## Internal event dispatch
 
-Core sends each Session a JSON object with ordered `events`. Read `kind` to
-select the action. Deduplicate by `event_id`.
+Core sends the ordered `events` JSON as the first text block of Session
+`Input.Content`. Read `kind` to select the action. Deduplicate by `event_id`.
+An event's `messageContent` lists the `messageId` and `blockCount` for each
+attached Message. The blocks after the header follow event order and then
+`messageContent` order. Each block retains its Prompt content type. A Message
+that exceeds the budget keeps its reference. `get_message` returns its full
+`content` array.
 
 For a Router `route_request`, use the Message ID from `refs`. Pass the current
 round in `route_messages.rounds`. After a stale round error or when the event
 contains only a reference, use `get_message` with `include: ["routing"]`.
 
 ```json
-{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"content":{"type":"markdown","data":{"text":"Verify the report."}},"threadKey":"dws:release","routing":{"round":1,"state":"pending"}}]}
+{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"messageContent":[{"messageId":"mass-m1","blockCount":2}],"threadKey":"opaque/42","routing":{"round":1,"state":"pending"}}]}
 ```
 
 For a Topic `routed_message`, Core may inline short content, matched quoted
@@ -603,9 +594,12 @@ Message, its source facts, and any available quote association. When handling
 `report_submitted`, check whether the Report is current and verify its evidence
 against the current Issue goal. Use `get_report` and `get_issue` for readback.
 
-Issue Session events can inline the Issue goal, `goalRevision`, blockers, and
-short material Messages. Use `get_issue` for current Issue state and
-`get_message` for referenced material. If `truncated` is true, use
+Issue Session startup and update events can include the current Issue
+snapshot, with goal, `goalRevision`, blockers, and material references.
+`messageContent` identifies any attached blocks. A `context_supplement`
+attaches only material Messages linked to that event. These events share the
+same content budget. Use `get_issue` for current Issue state and `get_message`
+for referenced material. If `truncated` is true, use
 `get_internal_event` with `event_id` to read the complete Agent view. See the
 [role instructions](pkg/core/execution.go) for the actions associated with
 individual event kinds. Pass `event_id` as `triggerEventId` on supported
@@ -710,14 +704,14 @@ time is eligible on the next scan. The first valid transaction to commit
 decides a race between firing, updating, canceling and Topic termination.
 Firing keeps the selected revision and commits `firedAt`, the task Thread,
 its Topic subscription, and one Trigger Message with its routing event in
-the same transaction. The internal source is `core:timer`. The task ID is both
-the native Thread ID and `sourceMessageId`. The Message text is the followup
-reason. Its `meta` includes `type: timer.followup`, `taskId`, `topicId`,
-`taskRevision`, `dueAt` and any task materials. The Message carries no
-external reply address.
+the same transaction. The internal source is `core:timer`. The task provides
+its final Thread key and uses its task ID as `sourceMessageId`. The Message
+contains the followup reason in a text block. The `followup` field in the
+`routed_message` and Topic `get_message` results gives the task ID, revision,
+due time, and material references from the scheduled task.
 
-The usual single-subscription rule routes the Message to the Topic. Core submits the `routed_message` through StartOrSteer. Use `get_message` to read the Message reference and `get_topic` with
-`include: ["followups"]` to check the current task.
+The single-subscription rule routes the Message to its Topic via StartOrSteer.
+Use `get_topic` with `include: ["followups"]` to check the current task.
 
 Completing or canceling the Topic atomically invalidates scheduled Timers and
 supersedes unconfirmed followup events. Accepted events and their
@@ -751,21 +745,18 @@ Issues. Filter by `topicId` for the Topic's followed URLs or by `issueId` for
 the Issue's URLs. The PR details link to the shared Thread and the Topic
 subscription.
 
-Use an explicit absolute HTTP(S) resource URL without embedded credentials.
+Each entry in `pullRequests.add` is the final, absolute HTTP(S) PR URL without
+embedded credentials. Core validates the URL and uses the supplied string
+verbatim as both `canonicalUrl` and `threadKey`. The caller must normalize the
+URL to the same key used by the Trigger for that PR.
 
-- For public GitHub, Core accepts `github.com/{owner}/{repo}/pull/{number}`.
-  It emits HTTPS with lowercase host, owner and repository, positive decimal
-  number and no trailing slash or default port. It removes numbered
-  `#issuecomment-N`, `#discussion_rN` and `#pullrequestreview-N` fragments and
-  the query parameters `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`,
-  `utm_content`, `utm_id`, `gclid` and `fbclid`. Supply the resource URL
-  directly for other anchors, query fields or GitHub subpages.
-- For other hosts, the caller declares the supplied URL canonical. Core
-  validates it and preserves it verbatim, including its path, query and
-  fragment. Core performs no redirects, short-link resolution or
-  network requests.
+For public GitHub, use `https://github.com/{owner}/{repo}/pull/{number}` with
+lowercase owner and repository and a positive decimal number without leading
+zeros. Submit the PR page URL without a trailing slash, port, query, fragment,
+or comment permalink. For other platforms, follow the corresponding Trigger's
+normalization rules.
 
-Message intake and registration share these URL rules. Admission after one
+Admission after one
 subscription routes directly to its Topic. Admission with zero or multiple
 subscriptions targets Router. When a Message arrived earlier, registration
 reuses its Thread and any existing Topic subscription. The earlier routing
@@ -788,7 +779,7 @@ Router may give one explicit `messageId` or the distinct `messageIds` of its
 current routing input. Topic may give an explicit associated Message or omit
 the target to use its oldest associated Message. Core orders the candidates by
 its own `receivedAt` then the stable SQLite acceptance sequence. It checks the
-chosen Message's channel after selection. No match, missing native address or
+chosen Message's reply target after selection. No match, missing reply target or
 an out-of-scope target returns an error. Issue Session has no reply capability.
 
 An Outbox item carries `id`, `messageId`, `content` and `status`, with optional
@@ -798,13 +789,10 @@ in its own Issue. Router replies cannot set this field.
 
 ### Quoted answers
 
-For DWS, Core matches the inbound `quotedMessage.message_id` against the
-native `receipt.messageId` of a sent question. Source, account and the inbound
-native conversation must match. If `quotedMessage.conversation_id` is provided,
-it must also match. Topic `get_message` on an associated Message returns
-`quotedReply: {outboxId, blockerRef}` for a unique match within its Topic.
-The lookup takes effect as soon as the send receipt is saved, including for
-answers already admitted.
+`inReplyToOutboxId` records the adapter's match at
+admission. Topic `get_message` on an associated Message can return
+`quotedReply: {outboxId, blockerRef?}`. The Topic Session receives the related
+blocker context while the blocker remains open and belongs to that Topic.
 
 A match identifies the original blocker. The Topic reads the current Issue
 and decides whether the answer is sufficient. With no match, the Topic
@@ -818,7 +806,7 @@ Issue Session after resolving the last blocker, set `blockers.unblockedStatus` t
 
 ## Trigger Outbox
 
-Core resolves the account and address from the original Message. For each
+Core resolves the account and reply target from the original Message. For each
 account, run a single active sender and stop it before starting a replacement.
 Configure the Core source with the sender's `instanceId` and Bearer token. If
 there is more than one instance-bound credential for an account, set
@@ -833,8 +821,9 @@ account's item IDs return `not_found`.
 | GET `/v1/channel/outbox/items/{id}` | One reply in the account, including terminal states. |
 | POST `/v1/channel/outbox/result` | Update one reply and return its committed {id, status, receipt?}. |
 
-Channel reads join `source`, `accountId` and `channel` from the original
-Message. Query results include pending replies with and without known tasks.
+Channel reads include `source`, `accountId` and the original Message's
+`replyTarget`.
+Query results include pending replies with and without known tasks.
 Failed replies with an elapsed `receipt.retryAt` are eligible for retry.
 
 Result writes accept `Content-Type: application/json` with `outboxId`,
@@ -843,7 +832,7 @@ Result writes accept `Content-Type: application/json` with `outboxId`,
 | Outcome | Additional fields and behavior |
 | --- | --- |
 | `pending` | Save `taskId` before querying. Subsequent pulls can query the same native task. |
-| `sent` | Preserve the current task ID when present. Save the actual native `conversationId` and `messageId` if available. A native message ID requires its conversation ID. |
+| `sent` | Preserve the current task ID when present. Adapters preserve native delivery identifiers in their own state. |
 | `retryable_failure` | Save `errorCode` and schedule retry after 60 seconds. |
 | `permanent_failure` | Save `errorCode` and notify the author through Core event dispatch. |
 | `unknown` | Save `errorCode`, mark the receipt uncertain, and schedule retry after 60 seconds. Use when the send result is unknown and its task cannot be queried. |
@@ -865,39 +854,7 @@ the original Message, any blocker reference and available channel receipt.
 
 ## DWS outbound echoes
 
-On `POST /v1/channel/messages`, an instance-bound DWS adapter can set
-`selfSent: true` beside `operationId` and `message` when the original sender's
-openDingTalk ID matches its configured native identity.
-
-Core checks sent Outbox receipts for the same source, account and actual
-native conversation/message pair. An exact match records
-`echo.status: "outbound_echo"` and the matching Outbox ID. It stays out of
-role delivery. A self-sent Message without an exact match may wait up to 60
-seconds when its conversation has a pending reply or an uncertain send in its
-retry window. Held Messages are durably admitted. When all candidate replies
-settle with known nonmatching results, Core clears the hold and routes once.
-An unresolved hold becomes `echo_unknown`. An exact result arriving later can
-still settle it as `outbound_echo`.
-
-Channel consumers can use the receipt's `echoStatus` to defer feedback while
-it is `held` or `echo_unknown`. An omitted value, `cleared` or `released`
-allows feedback on a routable Message. `outbound_echo` suppresses feedback.
-An exact late match takes precedence in the receipt even if Observer retains
-the earlier `cleared` or `released` routing history.
-
-Use `GET /v1/observer/messages/{id}` for `echo.status`, the deadline, candidate
-links, the precise match and any routing event ID. The original acceptance
-event is retained for auditing. A locally authenticated operator can route
-an `echo_unknown` Message once after reconciliation:
-
-```sh
-bin/superagent release-echo MESSAGE_ID --endpoint http://127.0.0.1:24370 \
-  --operator-token-file /absolute/private/operator.token --operation-id OPERATION_ID \
-  --reason "Verified as user input"
-```
-
-The CLI uses `POST /v1/operator/echo-release` with `messageId`, `operationId`
-and `reason`, authenticated with `operatorTokenFile` on the
-loopback listener. A replay of that release returns its recorded routing
-event. A later match on an already routed Message is recorded for inspection
-without another delivery.
+The DWS adapter records native send evidence and matches native echoes and
+quotes before admission. Inspect and reconcile that evidence with the
+[DWS Trigger commands](triggers/README.md#recover-dws-intake-and-replies). Core records
+the adapter's `inReplyToOutboxId` for an admitted quoted answer.

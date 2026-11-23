@@ -83,6 +83,11 @@ func runComposeFixture(dir string, args []string) int {
 			return runComposeHTTPFixture(dir, "github")
 		}
 		recordComposeEvent(dir, role)
+		if role == "dws:serve" && os.Getenv("TEST_COMPOSE_INVALID_DWS_DATABASE_ON_SERVE") != "" {
+			if err := os.WriteFile(filepath.Join(dir, "dws.sqlite"), []byte("invalid SQLite fixture"), 0o600); err != nil {
+				panic(err)
+			}
+		}
 		if role == "github:check" {
 			// The Trigger process tests exercise the actual HTTP preflight.
 			// This fixture verifies Compose's isolated configuration and wiring.
@@ -362,8 +367,8 @@ func composeFixtureConfig(t *testing.T, dir, coreListen string, github, dws bool
   listen: %q
   dataDir: ./core-state
   sources:
-    - {source: github, accountId: fixture-github, instanceId: github-adapter, tokenFile: github-token}
-    - {source: dws, accountId: fixture-dws, instanceId: dws-adapter, tokenFile: dws-token, outboxConsumer: true}
+    - {source: github, accountId: fixture-github, instanceId: github-adapter, tokenFile: github-token, threadKeyPrefixes: ["https://github.com/"]}
+    - {source: dws, accountId: fixture-dws, instanceId: dws-adapter, tokenFile: dws-token, outboxConsumer: true, threadKeyPrefixes: ["dws:"]}
 `, coreListen)
 	if !github && !dws {
 		return config
@@ -600,7 +605,7 @@ func TestComposeProcessPreflight(t *testing.T) {
 		{"missing Core credential", "", "", "triggers.github preflight: coreTokenEnv", []string{composeGitHubCoreEnv + "="}},
 		{"wrong Core credential", "", "", "triggers.dws preflight: configured Core token does not match", []string{composeDWSCoreEnv + "=" + composeGitHubCore}},
 		{"unbound source credential", "    instanceId: dws-adapter", "    instanceId: unregistered", "triggers.dws preflight: source, accountId and instanceId", nil},
-		{"DWS Outbox role", "outboxConsumer: true}", "outboxConsumer: false}\n    - {source: dws, accountId: fixture-dws, instanceId: another-adapter, tokenFile: another-token, outboxConsumer: true}", "triggers.dws preflight: the reply-enabled Trigger", nil},
+		{"DWS Outbox role", "outboxConsumer: true, threadKeyPrefixes: [\"dws:\"]}", "outboxConsumer: false}\n    - {source: dws, accountId: fixture-dws, instanceId: another-adapter, tokenFile: another-token, outboxConsumer: true}", "triggers.dws preflight: the reply-enabled Trigger", nil},
 		{"credential shared across scopes", "", "", "triggers.dws preflight: credential references must hold distinct tokens", []string{composeGitHubEnv + "=" + composeDWSToken}},
 		{"remote plaintext", "127.0.0.1:0", "192.0.2.1:0", "remote coreEndpoint requires HTTPS", nil},
 		{"state under MASS", "./dws.sqlite", "./massd-data/dws.sqlite", "triggers.dws databasePath conflicts with core.massd.embedded dataDir", nil},
@@ -633,8 +638,8 @@ func TestComposeProcessPreflight(t *testing.T) {
 
 func TestComposeProcessSecondTriggerStartupFailure(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dws.sqlite"), []byte("invalid SQLite fixture"), 0o600))
-	p := startComposeFixture(t, dir, composeFixtureConfig(t, dir, "127.0.0.1:0", true, true))
+	p := startComposeFixture(t, dir, composeFixtureConfig(t, dir, "127.0.0.1:0", true, true),
+		"TEST_COMPOSE_INVALID_DWS_DATABASE_ON_SERVE=1")
 	require.Error(t, p.wait(t))
 	require.Empty(t, readComposeFile(t, p.stdout))
 	require.Contains(t, readComposeFile(t, p.logs), "triggers.dws")

@@ -2,7 +2,7 @@ import CopyLink from './CopyLink'
 import { useState, type ReactNode } from 'react'
 import { Activity, ChevronDown, CircleDot, Mail } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { formatTime, eventStatusLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
+import { formatTime, eventStatusLabel, messageBody, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
 import { usePages, useRecord, viewHref, type ViewProps } from './observer'
@@ -57,8 +57,8 @@ function MessageFacts({ row }: { row: Event }) {
       <Fact label="登记时间">{row.at}</Fact>
       {internalEvent.data?.sentAt && <Fact label={row.kind === 'route_request' ? 'Router Session 受理' : 'Topic Session 受理'}>{internalEvent.data.sentAt}</Fact>}
       {typeof reason === 'string' && <Fact label={row.kind === 'route_request' ? '退回原因' : '路由依据'}>{reason}</Fact>}
-      {message.data && <><Fact label="来源">{sourceLabel(message.data.source)}{message.data.actor && ' · ' + message.data.actor}</Fact>
-        <Fact label="消息原文"><pre>{message.data.text || '未记录正文'}</pre></Fact></>}
+      {message.data && <><Fact label="来源">{sourceLabel(message.data.source)}</Fact>
+        <Fact label="消息原文"><pre>{messageBody(message.data) || '未记录正文'}</pre></Fact></>}
     </dl>
     {(internalEvent.loading && !internalEvent.data || row.messageId && message.loading && !message.data) && <p>正在读取详情…</p>}
     <div className="topic-links">

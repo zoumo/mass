@@ -18,7 +18,7 @@ import (
 
 func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 	t.Parallel()
-	f := triggertest.NewCoreFixture(t, false, githubSource)
+	f := newGitHubCoreFixture(t)
 	const sdk, mass = "demo/sdk", "elsewhere/mass"
 	old := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
 	fresh := old.Add(65 * time.Second)
@@ -160,15 +160,16 @@ func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 	require.NotEmpty(t, first)
 	require.NotEmpty(t, bot)
 	require.NotEmpty(t, second)
-	require.Equal(t, true, first["human"])
-	require.Equal(t, false, bot["human"])
-	require.Equal(t, false, second["human"])
+	require.Equal(t, true, githubMessageMeta(first)["human"])
+	require.Equal(t, false, githubMessageMeta(bot)["human"])
+	require.Equal(t, false, githubMessageMeta(second)["human"])
+	require.Equal(t, "github:https%3A%2F%2Fgithub.com%2Felsewhere%2Fmass%2Fissues%2F42", second["threadKey"])
 	require.NotEqual(t, first["threadKey"], second["threadKey"])
 	require.Equal(t, second["id"], delivery.Repositories[mass].LastReceipt.MessageID)
 	require.Equal(t, bot["id"], delivery.Repositories[sdk].LastReceipt.MessageID)
-	require.Contains(t, first["text"], "historical discussion")
-	require.Contains(t, second["text"], "subscribed")
-	require.Contains(t, second["text"], githubObjectURL(mass, "issues", 42))
+	require.Contains(t, githubFixtureMessageText(t, first), "historical discussion")
+	require.Contains(t, githubFixtureMessageText(t, second), "subscribed")
+	githubAssertMessageLinks(t, second, githubObjectURL(mass, "issues", 42))
 	require.Nil(t, githubMessage(t, f, sdk, "comment_created", "501"))
 	captureMu.Lock()
 	captured := append([][]byte(nil), captures...)
@@ -186,7 +187,7 @@ func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 
 func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 	t.Parallel()
-	f := triggertest.NewCoreFixture(t, false, githubSource)
+	f := newGitHubCoreFixture(t)
 	const repo = "demo/sdk"
 	old := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	fresh := time.Now().UTC().Truncate(time.Second).Add(3 * time.Second)
@@ -252,11 +253,11 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 		return githubMessage(t, f, repo, "notification_received", "742") != nil
 	})
 	fallback := githubMessage(t, f, repo, "notification_received", "742")
-	require.Equal(t, false, fallback["human"])
-	require.Contains(t, fallback["text"], "review_requested")
-	require.Contains(t, fallback["text"], "old PR discussion")
-	require.Contains(t, fallback["text"], "Review SDK compatibility")
-	require.Contains(t, fallback["text"], prURL)
+	require.Equal(t, false, githubMessageMeta(fallback)["human"])
+	require.Contains(t, githubFixtureMessageText(t, fallback), "review_requested")
+	require.Contains(t, githubFixtureMessageText(t, fallback), "old PR discussion")
+	require.Contains(t, githubFixtureMessageText(t, fallback), "Review SDK compatibility")
+	githubAssertMessageLinks(t, fallback, prURL)
 	f.AssertRouted(fallback, 1)
 	topic := githubCreateTopic(t, f, fallback)
 	githubRegisterFixturePR(t, f, topic, prURL)
@@ -264,11 +265,19 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 	triggertest.Wait(t, "all discussion changes in the next Notifications version reach Core", func() bool {
 		return len(triggertest.ReadMessages(t, f.Endpoint)) == 4
 	})
-	for id, kind := range map[string]string{"602": "comment_created", "603": "comment_created", "604": "review_submitted"} {
-		msg := githubMessage(t, f, repo, kind, id)
-		require.NotNil(t, msg, "missing %s %s", kind, id)
+	for _, comment := range []struct{ id, kind, fragment, text string }{
+		{"602", "comment_created", "#issuecomment-602", "new comment"},
+		{"603", "comment_created", "#discussion_r603", "inline review comment"},
+		{"604", "review_submitted", "#pullrequestreview-604", "review from native ID"},
+	} {
+		msg := githubMessage(t, f, repo, comment.kind, comment.id)
+		require.NotNil(t, msg, "missing %s %s", comment.kind, comment.id)
 		require.Equal(t, prURL, msg["threadKey"])
-		require.Equal(t, true, msg["human"])
+		require.Equal(t, true, githubMessageMeta(msg)["human"])
+		text := githubFixtureMessageText(t, msg)
+		require.Contains(t, text, comment.text)
+		require.NotContains(t, text, prURL)
+		githubAssertMessageLinks(t, msg, prURL, prURL+comment.fragment)
 		githubAssertTopicDelivery(t, f, msg, topic)
 	}
 	require.Zero(t, outsideReads.Load())
@@ -282,7 +291,7 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 		return readGitHubStatus(t, statusURL).Notifications.LastSuccessAt.After(last)
 	})
 	for _, msg := range triggertest.ReadMessages(t, f.Endpoint) {
-		require.NotContains(t, msg["text"], "demo/outside")
+		require.NotContains(t, githubFixtureMessageText(t, msg), "demo/outside")
 	}
 	require.Len(t, triggertest.ReadMessages(t, f.Endpoint), 4)
 }

@@ -27,7 +27,6 @@ type Health = {
   eventStates: Counts
   outboxStates: Counts
   unknownStops: number
-  unknownEchoes: number
 }
 const statusCounts = (counts: Counts) =>
   Object.entries(counts)
@@ -54,16 +53,10 @@ function nameOf(kind: Kind, row: DiagnosticRow) {
 }
 type Column = [string, (row: DiagnosticRow) => ReactNode]
 const internalEventTrace: Column = ['Trace ID', row => <TraceLinks associations={row.traceAssociations} at={row.createdAt} label={false}/>]
-function columns(kind: Kind, rows: DiagnosticRow[]): Column[] {
+function columns(kind: Kind): Column[] {
   switch (kind) {
-    case 'messages': {
-      const items: Column[] = [
-        ['发送方', (r) => r.actor],
-        ['来源', (r) => r.source],
-      ]
-      if (rows.some((r) => r.echo)) items.push(['回声', (r) => r.echo && stateLabel(r.echo.status)])
-      return items
-    }
+    case 'messages':
+      return [['来源', (r) => r.source]]
     case 'topics':
     case 'issues':
       return [['业务状态', (r) => stateLabel(r.status)]]
@@ -129,8 +122,6 @@ function Overview({ health }: { health: Health }) {
       <dl>
         <dt>原生停止未知</dt>
         <dd>{health.unknownStops}</dd>
-        <dt>回声未知</dt>
-        <dd>{health.unknownEchoes}</dd>
       </dl>
     </section>
   )
@@ -150,7 +141,7 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   const [draft, setDraft] = useState(filter)
   useEffect(() => setDraft(scope === 'threadKey' ? filter : ''), [scope, filter])
   const rows = list.data || []
-  const cols = columns(kind, rows)
+  const cols = columns(kind)
   const open: OpenCollection = (view, filterId, key, selected) => {
     if (!key && view === 'reports') key = 'issueId'
     navigate(href(view, filterId, key, selected))

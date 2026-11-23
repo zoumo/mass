@@ -25,11 +25,10 @@ import (
 )
 
 const (
-	schemaVersion         = 25
-	previousSchemaVersion = 24
-	applicationID         = 1398096210
-	storeStartupTimeout   = 10 * time.Second
-	queryIndexTimeout     = 2 * time.Minute
+	schemaVersion       = 26
+	applicationID       = 1398096210
+	storeStartupTimeout = 10 * time.Second
+	queryIndexTimeout   = 2 * time.Minute
 )
 
 type Store struct {
@@ -62,7 +61,7 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		if c.Sessions != nil && e.Name() == mcpCredentialsDir {
 			info, err := e.Info()
 			if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-				return nil, problem("failed_precondition", "MCP credentials directory must be private")
+				return nil, problem("failed_precondition", "Core subdirectory "+e.Name()+" must be private")
 			}
 			continue
 		}
@@ -154,12 +153,6 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	default:
 		if err := checkDatabaseIdentity(version, app); err != nil {
 			return nil, err
-		}
-		if version == previousSchemaVersion {
-			if _, err = tx.ExecContext(ctx, `DROP TABLE mcp_mutation_receipts;
-DROP TABLE mcp_tool_calls;`+fmt.Sprintf("PRAGMA user_version=%d;", schemaVersion)); err != nil {
-				return nil, storageError()
-			}
 		}
 	}
 	if s.telemetry.tracesEnabled {
@@ -261,7 +254,7 @@ func checkDatabaseIdentity(version, app uint32) error {
 	if app != applicationID {
 		return problem("failed_precondition", "database belongs to another format; set dataDir to a new empty directory")
 	}
-	if version != schemaVersion && version != previousSchemaVersion {
+	if version != schemaVersion {
 		return problem("unsupported", fmt.Sprintf("schema version %d is unsupported; set dataDir to a new empty directory for schema %d", version, schemaVersion))
 	}
 	return nil
@@ -282,7 +275,7 @@ func (s *Store) Close() error {
 	return err
 }
 
-func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (result Receipt, retErr error) {
+func (s *Store) submitMessage(ctx context.Context, source Source, message Message, canonical []byte) (result Receipt, retErr error) {
 	ctx, finish := s.telemetry.startOperation(ctx, "message.admit", "")
 	defer func() {
 		outcome := "accepted"
@@ -291,16 +284,6 @@ func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (res
 		}
 		finish(operationOutcome(retErr, outcome))
 	}()
-	if strings.TrimSpace(r.OperationID) == "" {
-		return result, problem("invalid_argument", "operationId is required")
-	}
-	if err := r.Message.validate(source); err != nil {
-		return result, err
-	}
-	canonical, err := r.Message.canonical()
-	if err != nil {
-		return result, problem("invalid_argument", "message cannot be encoded")
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -308,7 +291,7 @@ func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (res
 		return result, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err = admitTriggerMessage(ctx, tx, source, r, canonical)
+	result, err = admitTriggerMessage(ctx, tx, source, message, canonical)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -326,12 +309,12 @@ func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (res
 // admitTriggerMessage takes a validated input and its canonical form. Keeping
 // this inside the caller's transaction lets scheduled intake commit its firing
 // state with the same Message, Thread and delivery facts as channel intake.
-func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r SubmitRequest, canonical []byte) (Receipt, error) {
+func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Message, canonical []byte) (Receipt, error) {
 	var result Receipt
 	var fingerprint, saved []byte
 	var stored Message
 	err := tx.QueryRowContext(ctx, "SELECT canonical,body FROM trigger_messages WHERE source=? AND account_id=? AND native_id=?",
-		source.Source, source.AccountID, r.Message.SourceMessageID).Scan(&fingerprint, &saved)
+		source.Source, source.AccountID, m.SourceMessageID).Scan(&fingerprint, &saved)
 	if err == nil {
 		if !bytes.Equal(fingerprint, canonical) {
 			return result, problem("conflict", "sourceMessageId already has different business content")
@@ -344,21 +327,20 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r Submi
 	if !errors.Is(err, sql.ErrNoRows) {
 		return result, storageError()
 	}
+	if m.InReplyToOutboxID != "" {
+		if err := validateReplyReference(ctx, tx, m); err != nil {
+			return result, err
+		}
+	}
 
-	at, key := now(), ThreadKey(r.Message.ThreadRef)
-	m := Message{MessageInput: r.Message, ThreadKey: key, ReceivedAt: at, Acceptance: "accepted"}
-	m.Echo, err = classifyEcho(ctx, tx, m, r.SelfSent && source.InstanceID != "")
-	if err != nil {
-		return result, err
-	}
-	if m.Echo == nil {
-		m.EventID = newID("evt")
-	}
-	if err := upsertThread(ctx, tx, key, r.Message.ThreadRef, at, at); err != nil {
+	at := now()
+	m.ReceivedAt, m.Acceptance = at, "accepted"
+	m.EventID = newID("evt")
+	if err := upsertThread(ctx, tx, m.ThreadKey, at, at); err != nil {
 		return Receipt{}, err
 	}
 	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_key,accepted_at,canonical,body)
- VALUES(?,?,?,?,?,?,'{}') RETURNING id`, source.Source, source.AccountID, r.Message.SourceMessageID, key, at, canonical).Scan(&m.ID); err != nil {
+ VALUES(?,?,?,?,?,?,'{}') RETURNING id`, source.Source, source.AccountID, m.SourceMessageID, m.ThreadKey, at, canonical).Scan(&m.ID); err != nil {
 		return Receipt{}, storageError()
 	}
 	if err := putJSON(ctx, tx, "UPDATE trigger_messages SET body=?2 WHERE id=?1", m, m.ID); err != nil {
@@ -367,21 +349,14 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, r Submi
 	if err := messageAdmission.save(ctx, tx, m.ID, 0); err != nil {
 		return Receipt{}, err
 	}
-	if m.Echo == nil {
-		err = acceptRoute(ctx, tx, m, m.EventID, at)
-	}
-	return messageReceipt(m, false), err
+	return messageReceipt(m, false), acceptRoute(ctx, tx, m, m.EventID, at)
 }
 
 func messageReceipt(m Message, duplicate bool) Receipt {
-	result := Receipt{Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID, ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID}
-	if m.Echo != nil {
-		result.EchoStatus = m.Echo.Status
-		if m.Echo.Match != nil {
-			result.EchoStatus = "outbound_echo"
-		}
+	return Receipt{
+		Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID,
+		ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID,
 	}
-	return result
 }
 
 func (s *Store) channelMessageReceipt(ctx context.Context, source Source, nativeID string) (Receipt, error) {
@@ -398,10 +373,10 @@ func (s *Store) channelMessageReceipt(ctx context.Context, source Source, native
 	return messageReceipt(m, false), nil
 }
 
-func upsertThread(ctx context.Context, tx *sql.Tx, key string, ref ThreadRef, createdAt, lastMessageAt string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO threads(key,source,native_id,created_at,last_message_at) VALUES(?,?,?,?,?)
- ON CONFLICT(source,native_id) DO UPDATE SET last_message_at=excluded.last_message_at WHERE excluded.last_message_at<>''`,
-		key, ref.Source, ref.ID, createdAt, lastMessageAt)
+func upsertThread(ctx context.Context, tx *sql.Tx, key, createdAt, lastMessageAt string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO threads(key,source,native_id,created_at,last_message_at) VALUES(?,'',?,?,?)
+ ON CONFLICT(key) DO UPDATE SET last_message_at=excluded.last_message_at WHERE excluded.last_message_at<>''`,
+		key, key, createdAt, lastMessageAt)
 	if err != nil {
 		return storageError()
 	}
@@ -451,7 +426,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		scopeID = binding.ID
 	}
 	if source != nil {
-		scopeID = ThreadKey(ThreadRef{Source: source.Source, ID: source.InstanceID})
+		scopeID = strings.ReplaceAll(url.PathEscape(source.Source), ":", "%3A") + ":" + strings.ReplaceAll(url.PathEscape(source.InstanceID), ":", "%3A")
 	}
 	var parentColumn, parent string
 	var relatedFilter string

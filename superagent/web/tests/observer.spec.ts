@@ -1,5 +1,30 @@
 import { test, expect } from '@playwright/test'
 
+test('shows structured Message body and attachment types while retaining Thread navigation', async ({ page, request }) => {
+ const result = await (await request.get('/v1/observer/messages?limit=1')).json()
+ const { id } = result.items[0]
+ let content = [
+  { type: 'text', text: 'Inspect the attached log.' },
+  { type: 'resource_link', uri: 'file:///checks.log', name: 'checks.log' },
+  { type: 'text', text: 'Confirm the exit code.' },
+ ]
+ await page.route(`**/v1/observer/messages/${id}*`, async route => {
+  const response = await route.fetch()
+  const record = await response.json()
+  await route.fulfill({ response, json: { ...record, content } })
+ })
+ const url = `/observer/?perspective=message&id=${id}`
+ await page.goto(url)
+ await page.getByText('查看全文', { exact: true }).click()
+ await expect(page.getByTestId('message-body')).toHaveText('Inspect the attached log.\nConfirm the exit code.')
+ await expect(page.getByRole('link', { name: '查看线程' })).toBeVisible()
+
+ content = [content[1]]
+ await page.reload()
+ await page.getByText('查看全文', { exact: true }).click()
+ await expect(page.getByTestId('message-body')).toHaveText('[resource_link]')
+})
+
 test('committed lists, full original text, Thread navigation and safe rendering', async ({ page }) => {
  const bad: string[] = []
  page.on('pageerror', e => bad.push(e.message))
@@ -88,13 +113,12 @@ test('offline snapshot stays visible and reconnect gets fresh filtered pages and
  await context.setOffline(true)
  await expect(page.getByRole('alert')).toContainText('快照已过时')
  await expect(page.getByTestId('message-body')).toHaveText('Browser row 54')
- const source = { source: first.source, accountId: first.accountId, actor: first.actor, addressed: first.addressed }
- const submit = async (id: string, threadRef: typeof first.threadRef) => request.post('/v1/channel/messages', {
+ const submit = async (id: string, threadKey: string) => request.post('/v1/channel/messages', {
   headers: { Authorization: `Bearer ${'a'.repeat(48)}` },
-  data: { operationId: id, message: { ...source, threadRef, sourceMessageId: id, text: id } },
+  data: { operationId: id, message: { threadKey, sourceMessageId: id, content: [{ type: 'text', text: id }] } },
  })
- expect((await submit('Committed while offline', first.threadRef)).ok()).toBeTruthy()
- expect((await submit('Unrelated Thread', { ...first.threadRef, id: 'unrelated-thread' })).ok()).toBeTruthy()
+ expect((await submit('Committed while offline', first.threadKey)).ok()).toBeTruthy()
+ expect((await submit('Unrelated Thread', 'dws:unrelated-thread')).ok()).toBeTruthy()
  await context.setOffline(false)
  await expect(page.getByRole('alert')).toHaveCount(0)
  await expect(page.getByTestId('message-body')).toHaveText('Browser row 54')

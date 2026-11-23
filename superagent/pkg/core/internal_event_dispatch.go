@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
 type inputBatch struct {
@@ -23,7 +24,7 @@ const inlineMessageBytes = 2 * 1024
 
 type internalEventBatch struct {
 	boundIssueRevision int
-	wire               []byte
+	input              runtime.Input
 	items              []internalEvent
 	queuedAt           time.Time
 	method             string
@@ -89,6 +90,8 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 	var boundIssue *Issue
 	batch.method = "inject"
 	var envelope inputBatch
+	var blocks []events.ContentBlock
+	batchSize := len(`{"events":[]}`)
 	at, full := time.Now(), false
 	for _, q := range queue {
 		current, err := businessEventCurrent(ctx, tx, q.item)
@@ -111,7 +114,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 		if created.After(deadline) {
 			break
 		}
-		var raw, referenceOnly json.RawMessage
+		var raw json.RawMessage
 		view := q.item
 		raw, err = view.MarshalAgentPromptJSON()
 		if err == nil && len(raw) > previewBytes {
@@ -120,7 +123,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 		}
 		inlineTopic := b.Role == "topic" && view.Kind == routedMessageKind
 		inlineRouter := b.Role == "router" && view.Kind == routeRequestKind
-		maxViewBytes := min(previewBytes, batchBytes-len(batch.wire)-1)
+		maxViewBytes := min(previewBytes, batchBytes-batchSize-1)
 		issueContext := false
 		if err == nil && !view.truncated && inlineTopic {
 			if boundTopic == nil {
@@ -132,9 +135,9 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 			}
 			view.topic = boundTopic
 		}
-		if err == nil && !view.truncated && view.Content == nil && len(view.Refs) == 1 &&
+		if err == nil && !view.truncated && view.Content == nil && len(view.Refs) != 0 &&
 			view.Refs[0].Kind == messageRefKind && (inlineTopic || inlineRouter) {
-			err = view.loadInlineTriggerMessage(ctx, tx, b)
+			err = view.loadStructuredTriggerMessage(ctx, tx, b)
 		} else if err == nil && !view.truncated {
 			switch {
 			case b.Role == "topic" && view.Kind == reportSubmittedKind:
@@ -148,39 +151,47 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 					boundIssue = &issue
 				}
 				err = view.loadInlineIssueContext(ctx, tx, boundIssue, maxViewBytes)
-				issueContext = view.issue != nil || len(view.messages) != 0
+				issueContext = view.issue != nil || len(view.messageContent) != 0
 			}
 		}
-		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0) {
+		var contents []eventMessageContent
+		var contentSize int
+		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.followup) != 0 || len(view.routing) != 0 || len(view.quotedReply) != 0 || len(view.messageContent) != 0) {
 			var enriched json.RawMessage
 			enriched, err = view.MarshalAgentPromptJSON()
-			if err == nil && len(enriched) <= maxViewBytes {
-				referenceOnly, raw = raw, enriched
+			for _, content := range view.messageContent {
+				contentSize += content.size
+			}
+			if err == nil && contentSize != 0 && len(enriched)+contentSize > maxViewBytes {
+				view.messageContent, contentSize = nil, 0
+				enriched, err = view.MarshalAgentPromptJSON()
+			}
+			if err == nil && len(enriched)+contentSize <= maxViewBytes {
+				raw = enriched
+				contents = view.messageContent
 				if issueContext {
 					batch.boundIssueRevision = boundIssue.Revision
 				}
+			} else {
+				contentSize = 0
 			}
 		}
 		if err != nil {
 			return batch, err
 		}
-		envelope.Events = append(envelope.Events, raw)
-		wire, err := json.Marshal(envelope)
-		if err != nil {
-			return batch, err
+		eventSize := len(raw) + contentSize
+		if len(envelope.Events) != 0 {
+			eventSize++ // Comma between event objects.
 		}
-		if len(wire) > batchBytes && referenceOnly != nil {
-			envelope.Events[len(envelope.Events)-1] = referenceOnly
-			wire, err = json.Marshal(envelope)
-			if err != nil {
-				return batch, err
-			}
-		}
-		if len(wire) > batchBytes {
+		if batchSize+eventSize > batchBytes {
 			full = true
 			break
 		}
-		batch.wire = wire
+		batchSize += eventSize
+		envelope.Events = append(envelope.Events, raw)
+		for _, content := range contents {
+			blocks = append(blocks, content.Blocks...)
+		}
 		if len(batch.items) == 0 {
 			batch.queuedAt = created
 		}
@@ -191,6 +202,12 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 	}
 	if len(batch.items) == 0 || !full && len(batch.items) < batchLimit && at.Before(deadline) {
 		batch = internalEventBatch{}
+	} else {
+		header, err := json.Marshal(envelope)
+		if err != nil {
+			return batch, err
+		}
+		batch.input = runtime.Input{Content: append([]events.ContentBlock{events.Text(string(header))}, blocks...)}
 	}
 	if s.telemetry.tracesEnabled {
 		for _, item := range batch.items {
@@ -200,90 +217,92 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 	return batch, tx.Commit()
 }
 
-// loadInlineTriggerMessage uses the same scope as get_trigger_message. A matched Topic
-// quote carries the open blocker snapshot from the same transaction.
-func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
+// loadStructuredTriggerMessage uses the same role scope as get_message. It
+// loads complete block groups that fit and leaves larger Messages as references.
+func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
 	scope, args, err := scopeSQL("messages", &b)
 	if err != nil {
 		return err
 	}
-	var text, threadKey string
-	var routing []byte
-	var followup []byte
-	var hasQuote bool
-	var quotedReply []byte
-	columns := "body->>'$.text'"
-	var projectionArgs []any
-	filter := " AND body->>'$.quotedMessage' IS NULL"
-	dest := []any{&text}
+	columns := `CASE WHEN length(CAST(body->'$.content' AS BLOB))<=? THEN body->'$.content' END, thread_key`
+	params := []any{inlineMessageBytes}
+	var content, routing, followup, quote []byte
+	targets := []any{&content, &d.threadKey}
 	if b.Role == "router" {
-		columns += ",thread_key,json_object('round'," + routingRound + ",'state'," + routingState + ")"
-		filter += " AND " + routingState + "='pending' AND " + routingRound + "=1"
-		dest = append(dest, &threadKey, &routing)
+		columns += ",json_object('round'," + routingRound + ",'state'," + routingState + ")"
+		scope += " AND " + routingState + "='pending'"
+		targets = append(targets, &routing)
 	} else {
-		columns += ",body->>'$.quotedMessage' IS NOT NULL,CASE WHEN body->>'$.quotedMessage' IS NOT NULL THEN " + quotedReplyForTopic + " END"
-		projectionArgs = append(projectionArgs, b.OwnerID)
-		dest = append(dest, &hasQuote, &quotedReply)
-		filter = ""
+		columns += "," + messageFollowupProjection + "," + quotedReplyForTopic
+		params = append(params, b.OwnerID, b.OwnerID)
+		targets = append(targets, &followup, &quote)
 	}
-	sourceFilter := " AND source<>? AND (body->>'$.meta' IS NULL OR body->>'$.meta'='{}')"
-	if b.Role == "topic" {
-		columns += ",CASE WHEN source=? THEN body->'$.meta' END"
-		projectionArgs = append(projectionArgs, timerSource)
-		dest = append(dest, &followup)
-		sourceFilter = " AND (source=? OR body->>'$.meta' IS NULL OR body->>'$.meta'='{}')"
-	}
-	projectionArgs = append(projectionArgs, d.Refs[0].ID, timerSource, pullRequestSource, pullRequestSource, inlineMessageBytes)
+	id := d.Refs[0].ID
+	params = append(params, id)
+	params = append(params, args...)
 	err = tx.QueryRowContext(ctx, `SELECT `+columns+` FROM trigger_messages
- WHERE id=?`+sourceFilter+` AND source<>'github' AND source<>? AND body->>'$.threadRef.source'<>?
- AND length(CAST(body->>'$.text' AS BLOB))<=?`+filter+scope, append(projectionArgs, args...)...).Scan(dest...)
+ WHERE id=?`+scope, params...).Scan(targets...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(text) == "" || hasQuote && len(quotedReply) == 0 {
-		return nil
-	}
-	data, err := json.Marshal(markdownContentData{Text: text})
-	if err != nil {
-		return err
-	}
-	content := StructuredContent{Type: "markdown", Data: data}
-	contentJSON, err := json.Marshal(content)
-	if err != nil {
-		return err
-	}
-	if len(contentJSON) > inlineMessageBytes {
-		return nil
-	}
-	if hasQuote {
-		var match struct {
-			BlockerRef BlockerRef `json:"blockerRef"`
-		}
-		if err := json.Unmarshal(quotedReply, &match); err != nil {
+	d.routing, d.followup = routing, followup
+	if len(quote) != 0 {
+		if _, err := d.attachQuotedReply(ctx, tx, b, quote); err != nil {
 			return err
 		}
+	}
+	if len(content) != 0 {
+		if err := d.attachMessageContent(id, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *internalEvent) attachMessageContent(id string, raw json.RawMessage) error {
+	if len(raw) == 0 || len(raw) > inlineMessageBytes {
+		return nil
+	}
+	var blocks []events.ContentBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return err
+	}
+	if len(blocks) != 0 {
+		// Replacing the array brackets with a leading comma gives its size in Input.Content.
+		d.messageContent = append(d.messageContent, eventMessageContent{ID: id, Blocks: blocks, size: len(raw) - 1})
+	}
+	return nil
+}
+
+func (c eventMessageContent) reference() messageContentReference {
+	return messageContentReference{MessageID: c.ID, BlockCount: len(c.Blocks)}
+}
+
+func (d *internalEvent) attachQuotedReply(ctx context.Context, tx *sql.Tx, b SessionBinding, raw []byte) (bool, error) {
+	var match quotedReply
+	if err := json.Unmarshal(raw, &match); err != nil {
+		return false, err
+	}
+	if match.BlockerRef != nil {
 		issue, err := topicIssue(ctx, tx, b, match.BlockerRef.IssueID)
 		if errorCode(err) == "not_found" {
-			return nil
+			return false, nil
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
 		if terminal(issue.Status) || !slices.ContainsFunc(issue.Blockers, func(blocker Blocker) bool {
-			return blocker.ID == match.BlockerRef.BlockerID
+			return blocker.ID == match.BlockerRef.BlockerID && blocker.Kind == "human"
 		}) {
-			return nil
+			return false, nil
 		}
-		d.quotedReply, d.issue = quotedReply, &issue
+		d.issue = &issue
 	}
-	if len(followup) != 0 && string(followup) != "null" {
-		d.followup = agentFollowupMeta(followup)
-	}
-	d.Content, d.threadKey, d.routing = &content, threadKey, routing
-	return nil
+	d.quotedReply = raw
+	return true, nil
 }
 
 func (d *internalEvent) loadInlineReport(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
@@ -323,22 +342,28 @@ func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, 
 	if err != nil {
 		return err
 	}
-	remaining := maxBytes - len(raw) - len(`,"messages":[]`)
+	remaining := maxBytes - len(raw)
 	if remaining <= 0 {
 		return nil
 	}
-	var ids []string
+	materials := make(map[string]struct{}, len(issue.Materials))
+	ids := make([]string, 0, len(issue.Materials))
 	for _, material := range issue.Materials {
 		if material.MessageID == "" {
 			continue
 		}
-		if d.Kind == contextSupplement && !slices.ContainsFunc(d.Refs, func(ref eventReference) bool {
-			return ref.Kind == messageRefKind && ref.ID == material.MessageID
-		}) {
-			continue
-		}
-		if !slices.Contains(ids, material.MessageID) {
+		if _, exists := materials[material.MessageID]; !exists {
+			materials[material.MessageID] = struct{}{}
 			ids = append(ids, material.MessageID)
+		}
+	}
+	if d.Kind == contextSupplement {
+		ids = ids[:0]
+		for _, ref := range d.Refs {
+			if _, authorized := materials[ref.ID]; ref.Kind == messageRefKind && authorized {
+				ids = append(ids, ref.ID)
+				delete(materials, ref.ID)
+			}
 		}
 	}
 	if len(ids) == 0 {
@@ -348,31 +373,40 @@ func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, 
 	if err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.body->>'$.text',m.body->>'$.actor',
- COALESCE(m.body->>'$.at',''),COALESCE(m.body->>'$.url','')
+	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.body->'$.content'
  FROM json_each(?) ref JOIN trigger_messages m ON m.id=ref.value
- WHERE length(CAST(m.body->>'$.text' AS BLOB))<=?
+ WHERE length(CAST(m.body->'$.content' AS BLOB))<=?
  ORDER BY ref.key`, string(payload), inlineMessageBytes)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var message Message
-		if err := rows.Scan(&message.ID, &message.Text, &message.Actor, &message.At, &message.URL); err != nil {
+		var id string
+		var blocks []byte
+		if err := rows.Scan(&id, &blocks); err != nil {
 			return err
 		}
-		raw, err := message.MarshalAgentPromptJSON()
+		before := len(d.messageContent)
+		if err := d.attachMessageContent(id, blocks); err != nil {
+			return err
+		}
+		if len(d.messageContent) == before {
+			continue
+		}
+		content := d.messageContent[before]
+		ref, err := json.Marshal(content.reference())
 		if err != nil {
 			return err
 		}
-		if len(raw) > inlineMessageBytes || len(raw) > remaining {
-			continue
+		required := content.size + len(ref) + 1
+		if before == 0 {
+			required += len(`,"messageContent":[]`) - 1
 		}
-		d.messages = append(d.messages, raw)
-		remaining -= len(raw) + 1 // Space for the comma before a subsequent item.
-		if remaining <= 0 {
-			break
+		if required > remaining {
+			d.messageContent = d.messageContent[:before]
+		} else {
+			remaining -= required
 		}
 	}
 	return rows.Err()
@@ -489,7 +523,7 @@ func (s *Server) coordinateInternalEvents(life, call context.Context, b SessionB
 	}
 	a := Attempt{ID: newID("attempt")}
 	admitted := false
-	a, watch := s.dispatchSessionInput(call, b, spec, a, batch.method, batch.wire, func(watch *issueWatch) (bool, error) {
+	a, watch := s.dispatchSessionInput(call, b, spec, a, batch.method, batch.input, func(watch *issueWatch) (bool, error) {
 		armed, err := s.store.admitInternalBatch(call, b, batch, watch)
 		admitted = err == nil
 		return armed, err

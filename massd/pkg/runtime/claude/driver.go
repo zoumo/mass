@@ -443,7 +443,7 @@ func (d *Driver) get(id string) (*session, error) {
 }
 
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
-	if err := validateClaudeInput(input); err != nil {
+	if err := runtime.ValidateInput(input); err != nil {
 		return runtime.InputReceipt{}, err
 	}
 	s, err := d.get(id)

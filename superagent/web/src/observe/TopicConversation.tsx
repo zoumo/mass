@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowDown, Hash, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { formatTime, eventStatusLabel, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
+import { formatTime, eventStatusLabel, messageBody, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import CopyLink from './CopyLink'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { ObjectAvatar, ConversationCard, type Participant } from './ConversationCard'
@@ -295,14 +295,14 @@ function IngressDetails({ event }: { event: IngressEvent }) {
   return <>
     {[internalEvent, message].map((result, i) => result.error && <ReadError key={i} error={result.error} stale={!!result.data}/>)}
     <section className="conversation-section">
-      <h3>{labels[event.kind]}</h3><p className="conversation-original">{message.data?.text || event.summary || event.messageId}</p>
+      <h3>{labels[event.kind]}</h3><p className="conversation-original">{message.data && messageBody(message.data) || event.summary || event.messageId}</p>
     </section>
     <section className="conversation-section">
       <dl>
         <Fact label="登记时间"><time dateTime={event.at}>{formatTime(event.at)}</time></Fact>
         <Fact label="发送状态">{eventStatusLabel(internalEvent.data?.status || event.status)}</Fact>
         {internalEvent.data?.body && <Fact label="路由依据">{internalEvent.data.body}</Fact>}
-        {message.data && <Fact label="来源">{sourceLabel(message.data.source)}{message.data.actor && ` · ${message.data.actor}`}</Fact>}
+        {message.data && <Fact label="来源">{sourceLabel(message.data.source)}</Fact>}
         {event.threadKey && <Fact label="来源 Thread"><ThreadLink threadKey={event.threadKey}/></Fact>}
       </dl>
       <div className="conversation-links">

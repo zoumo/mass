@@ -54,7 +54,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  const sentPath = `/v1/observer/outbox/${before.sentId}`
  const sentBefore = await (await request.get(sentPath)).json()
  expect(sentBefore).toMatchObject({
-  status: 'sent', receipt: { conversationId: 'actual:conversation', messageId: 'observer-actual-message' },
+  status: 'sent', receipt: { taskId: 'observer-send-task' },
  })
  const errors: string[] = []
  const headers: Promise<Record<string, string>>[] = []

@@ -4,53 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 )
 
-// This Thread namespace cannot be used as a configured collector source.
-const pullRequestSource = "pr:url"
-
-var (
-	githubPullPath = regexp.MustCompile(`^/([a-zA-Z0-9-]+)/([a-zA-Z0-9_.-]+)/pull/(\d+)/?$`)
-	githubComment  = regexp.MustCompile(`^(issuecomment-|discussion_r|pullrequestreview-)\d+$`)
-)
-
-func canonicalPullRequestURL(raw string) (string, error) {
+func parsePullRequestURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Opaque != "" || u.Hostname() == "" || u.User != nil ||
 		(u.Scheme != "https" && u.Scheme != "http") || strings.ContainsAny(raw, " \t\r\n\\") {
-		return "", problem("invalid_argument", "PR URL must be an absolute HTTP(S) resource URL without credentials")
+		return nil, problem("invalid_argument", "PR URL must be an absolute HTTP(S) resource URL without credentials")
 	}
 	if _, err := url.QueryUnescape(u.RawQuery); err != nil {
-		return "", problem("invalid_argument", "PR URL has invalid query escaping")
+		return nil, problem("invalid_argument", "PR URL has invalid query escaping")
 	}
-	// Keep unknown platforms' explicitly supplied identity byte for byte.
-	if !strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), "github.com") {
-		return raw, nil
-	}
-	path := githubPullPath.FindStringSubmatch(u.EscapedPath())
-	defaultPort := (u.Scheme == "https" && u.Port() == "443") || (u.Scheme == "http" && u.Port() == "80")
-	if len(path) == 0 || path[2] == "." || path[2] == ".." || (u.Port() != "" && !defaultPort) {
-		return "", problem("invalid_argument", "GitHub PR URL must identify github.com/owner/repo/pull/number")
-	}
-	number := strings.TrimLeft(path[3], "0")
-	if number == "" || (u.Fragment != "" && !githubComment.MatchString(u.Fragment)) {
-		return "", problem("invalid_argument", "GitHub PR URL has an invalid number or unsupported fragment")
-	}
-	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return "", problem("invalid_argument", "GitHub PR URL has an invalid query")
-	}
-	for field := range query {
-		switch field {
-		case "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id", "gclid", "fbclid":
-		default:
-			return "", problem("invalid_argument", "remove unsupported query fields from the GitHub PR URL")
-		}
-	}
-	return "https://github.com/" + strings.ToLower(path[1]+"/"+path[2]) + "/pull/" + number, nil
+	return u, nil
 }
 
 type PullRequest struct {
@@ -69,8 +36,8 @@ type pullRequestLink struct {
 	Sequence int64 `json:"sequence"`
 }
 
-func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonical, sessionBindingID string) error {
-	matches := func(link pullRequestLink) bool { return link.CanonicalURL == canonical }
+func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, key, sessionBindingID string) error {
+	matches := func(link pullRequestLink) bool { return link.CanonicalURL == key }
 	topicIndex := slices.IndexFunc(topic.PullRequests, matches)
 	if issue.ID == "" && topicIndex >= 0 {
 		return nil
@@ -79,11 +46,10 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 		return nil
 	}
 
-	ref := ThreadRef{Source: pullRequestSource, ID: canonical}
 	link := pullRequestLink{PullRequest: PullRequest{
-		CanonicalURL: canonical, TopicID: topic.ID, ThreadKey: ThreadKey(ref), CreatedAt: now(),
+		CanonicalURL: key, TopicID: topic.ID, ThreadKey: key, CreatedAt: now(),
 	}}
-	if err := upsertThread(ctx, tx, link.ThreadKey, ref, link.CreatedAt, ""); err != nil {
+	if err := upsertThread(ctx, tx, link.ThreadKey, link.CreatedAt, ""); err != nil {
 		return err
 	}
 	subID, err := ensureSubscription(ctx, tx, Subscription{

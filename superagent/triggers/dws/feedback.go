@@ -49,6 +49,8 @@ func (c feedbackConfig) validate() error {
 }
 
 const (
+	feedbackStateVersion = 2
+
 	feedbackAwaiting   = "awaiting_admission"
 	feedbackReady      = "ready"
 	feedbackThinking   = "thinking"
@@ -57,12 +59,12 @@ const (
 )
 
 type feedbackRecord struct {
-	Channel    coreclient.Channel `json:"channel"`
-	ObservedAt time.Time          `json:"observedAt"`
-	Thinking   textEmotion        `json:"thinking"`
-	Done       textEmotion        `json:"done"`
-	Phase      string             `json:"phase"`
-	OutboxIDs  []string           `json:"outboxIds,omitempty"`
+	Channel    nativeReplyTarget `json:"channel"`
+	ObservedAt time.Time         `json:"observedAt"`
+	Thinking   textEmotion       `json:"thinking"`
+	Done       textEmotion       `json:"done"`
+	Phase      string            `json:"phase"`
+	OutboxIDs  []string          `json:"outboxIds,omitempty"`
 }
 
 type feedbackState struct {
@@ -74,15 +76,16 @@ type feedbackState struct {
 }
 
 type feedbackWorker struct {
-	config dwsConfig
-	core   *coreclient.Client
-	log    func(string, string)
-	wake   chan struct{}
-	mu     sync.Mutex
-	state  feedbackState
+	config   dwsConfig
+	core     *coreclient.Client
+	evidence *sendEvidenceStore
+	log      func(string, string)
+	wake     chan struct{}
+	mu       sync.Mutex
+	state    feedbackState
 }
 
-func openFeedback(c dwsConfig, core *coreclient.Client, log func(string, string)) (*feedbackWorker, func(), error) {
+func openFeedback(c dwsConfig, core *coreclient.Client, evidence *sendEvidenceStore, log func(string, string)) (*feedbackWorker, func(), error) {
 	if c.Feedback == nil {
 		return nil, func() {}, nil
 	}
@@ -99,14 +102,22 @@ func openFeedback(c dwsConfig, core *coreclient.Client, log func(string, string)
 		closeLock()
 		return nil, nil, errors.New("cannot acquire DWS feedback state lock")
 	}
-	state := feedbackState{Version: 1, Profile: c.Profile, Source: c.Source, Instance: c.InstanceID, Records: map[string]feedbackRecord{}}
+	state := feedbackState{Version: feedbackStateVersion, Profile: c.Profile, Source: c.Source, Instance: c.InstanceID, Records: map[string]feedbackRecord{}}
 	file, err := os.Open(path)
 	switch {
 	case err == nil:
 		defer file.Close()
 		decoder := json.NewDecoder(file)
 		err = decoder.Decode(&state)
-		if err != nil || decoder.Decode(new(any)) != io.EOF || !state.validFor(c) {
+		if err != nil || decoder.Decode(new(any)) != io.EOF {
+			closeLock()
+			return nil, nil, errors.New("invalid DWS feedback state")
+		}
+		if state.Version != feedbackStateVersion {
+			closeLock()
+			return nil, nil, errors.New("unsupported DWS feedback state version. Configure a new feedback.statePath")
+		}
+		if !state.validFor(c) {
 			closeLock()
 			return nil, nil, errors.New("invalid or mismatched DWS feedback state")
 		}
@@ -114,7 +125,7 @@ func openFeedback(c dwsConfig, core *coreclient.Client, log func(string, string)
 		closeLock()
 		return nil, nil, errors.New("cannot read DWS feedback state")
 	}
-	w := &feedbackWorker{config: c, core: core, log: log, wake: make(chan struct{}, 1), state: state}
+	w := &feedbackWorker{config: c, core: core, evidence: evidence, log: log, wake: make(chan struct{}, 1), state: state}
 	if err := w.save(); err != nil {
 		closeLock()
 		return nil, nil, errors.New("cannot initialize DWS feedback state")
@@ -123,7 +134,7 @@ func openFeedback(c dwsConfig, core *coreclient.Client, log func(string, string)
 }
 
 func (s feedbackState) validFor(c dwsConfig) bool {
-	if s.Version != 1 || s.Profile != c.Profile || s.Source != c.Source || s.Instance != c.InstanceID || s.Records == nil {
+	if s.Profile != c.Profile || s.Source != c.Source || s.Instance != c.InstanceID || s.Records == nil {
 		return false
 	}
 	for key, record := range s.Records {
@@ -168,7 +179,7 @@ func (w *feedbackWorker) save() error {
 	return dir.Sync()
 }
 
-func feedbackKey(c coreclient.Channel) string {
+func feedbackKey(c nativeReplyTarget) string {
 	return c.ConversationID + "\x00" + c.MessageID
 }
 
@@ -181,11 +192,11 @@ func (w *feedbackWorker) notify() {
 	}
 }
 
-func (w *feedbackWorker) remember(message coreclient.Message, observedAt time.Time) error {
-	if w == nil || message.Channel == nil {
+func (w *feedbackWorker) remember(target *nativeReplyTarget, observedAt time.Time) error {
+	if w == nil || target == nil {
 		return nil
 	}
-	channel := *message.Channel
+	channel := *target
 	if _, allowed := replyTarget(w.config, channel); !allowed {
 		return nil
 	}
@@ -206,11 +217,11 @@ func (w *feedbackWorker) remember(message coreclient.Message, observedAt time.Ti
 	return nil
 }
 
-func (w *feedbackWorker) recordAdmission(message coreclient.Message, receipt coreclient.Receipt) error {
-	if w == nil || message.Channel == nil {
+func (w *feedbackWorker) recordAdmission(target *nativeReplyTarget, receipt coreclient.Receipt) error {
+	if w == nil || target == nil {
 		return nil
 	}
-	key := feedbackKey(*message.Channel)
+	key := feedbackKey(*target)
 	w.mu.Lock()
 	record, found := w.state.Records[key]
 	w.mu.Unlock()
@@ -234,17 +245,10 @@ func admittedFeedback(record feedbackRecord, receipt coreclient.Receipt, checkAg
 			return feedbackSuppressed
 		}
 	}
-	switch receipt.EchoStatus {
-	case "outbound_echo":
-		return feedbackSuppressed
-	case "", "cleared", "released":
-		return feedbackReady
-	default:
-		return feedbackAwaiting
-	}
+	return feedbackReady
 }
 
-func (w *feedbackWorker) trackReply(channel coreclient.Channel, id string) error {
+func (w *feedbackWorker) trackReply(channel nativeReplyTarget, id string) error {
 	if w == nil {
 		return nil
 	}
@@ -327,6 +331,11 @@ func (w *feedbackWorker) advance(ctx context.Context, record feedbackRecord) str
 		return record.Phase
 	}
 	if record.Phase == feedbackAwaiting {
+		ref := nativeMessageRef{ConversationID: record.Channel.ConversationID, MessageID: record.Channel.MessageID}
+		attempt, _ := w.evidence.match(ref, record.ObservedAt)
+		if attempt.OutboxID != "" {
+			return feedbackSuppressed
+		}
 		raw, code, _ := w.core.Request(ctx, http.MethodGet, "/v1/channel/messages?sourceMessageId="+url.QueryEscape(record.Channel.MessageID), nil, 65536)
 		var receipt coreclient.Receipt
 		if code != "" || json.Unmarshal(raw, &receipt) != nil || receipt.MessageID == "" {
@@ -387,14 +396,13 @@ func (w *feedbackWorker) replyDelivered(ctx context.Context, record feedbackReco
 	for _, id := range record.OutboxIDs {
 		raw, code, _ := w.core.Request(ctx, http.MethodGet, outboxPath+"/items/"+url.PathEscape(id), nil, 65536)
 		var item outboxItem
-		if code != "" || json.Unmarshal(raw, &item) != nil || item.ID != id || item.Receipt == nil {
+		if code != "" || json.Unmarshal(raw, &item) != nil || item.ID != id {
 			continue
 		}
-		if item.Status == "sent" && item.Receipt.ConversationID == record.Channel.ConversationID &&
-			validNativeID(item.Receipt.MessageID) {
+		if item.Status == "sent" && w.evidence.hasSent(id, record.Channel.ConversationID) {
 			return true
 		}
-		if item.Status == "failed" && item.Receipt.RetryAt == "" {
+		if item.Status == "failed" && item.Receipt != nil && item.Receipt.RetryAt == "" {
 			terminalFailures = append(terminalFailures, id)
 		}
 	}
@@ -404,7 +412,7 @@ func (w *feedbackWorker) replyDelivered(ctx context.Context, record feedbackReco
 	return false
 }
 
-func (w *feedbackWorker) forgetFailedReplies(channel coreclient.Channel, failures []string) {
+func (w *feedbackWorker) forgetFailedReplies(channel nativeReplyTarget, failures []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	key := feedbackKey(channel)

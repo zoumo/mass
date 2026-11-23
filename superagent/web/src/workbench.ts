@@ -22,7 +22,7 @@ export type WorkbenchRow = {
  id?: string; key?: string; title?: string; text?: string; actor?: string; source?: string
  topicId?: string; messageId?: string; threadKey?: string; createdAt?: string; receivedAt?: string
  status?: string; kind?: string; at?: string; updatedAt?: string; summary?: string
- description?: string; acceptance?: string; addressed?: string; goal?: string
+ description?: string; acceptance?: string; goal?: string
  goalRevision?: number; currentSessionBindingId?: string; sessionBindingId?: string
  reason?: string; decisionId?: string; action?: string
  completion?: { reason: string; evidence: string[]; completedAt: string; sessionBindingId: string }
@@ -34,12 +34,6 @@ export type WorkbenchRow = {
  issueSession?: { sessionBindingId: string; state: string; observedAt?: string; observationGap?: string }
  startup?: { status: string }
  targets?: { topicId: string; messageIds: string[]; create?: { title: string } }[]
- echo?: {
-  status: string; resolvedAt?: string; releaseReason?: string
-  match?: { outboxId: string }
-  candidates?: { outboxId: string }[]
-  deadline?: string; routingEventId?: string
- }
  round?: number; rounds?: Record<string, number>; messageIds?: string[]
  relations?: RoutingRelation[]
  routing?: { round: number; state: string }
@@ -57,8 +51,6 @@ export function formatTime(at?: string) {
 const statusLabels: Record<string, string> = {
  active: '进行中', completed: '已完成', blocked: '受阻', canceled: '已取消', reopened: '已重开',
  ready: '已就绪', pending: '待处理', sent: '已送达', failed: '失败', unknown: '未知',
- held: '等待发送结果', outbound_echo: '自身回声', echo_unknown: '回声状态未知',
- cleared: '确认发送结果后已路由', released: '已人工放行',
  accepted: '已接收', ignored: '已忽略', routed: '已路由', received: '已收到', returned: '已退回',
  route: '路由', ignore: '忽略', route_request: '路由请求', routed_message: 'Topic 消息', progress: '进展',
  dispatching: '投递中', delivered: '已投递', blocked_unknown: '原生执行结果未确认',
@@ -87,16 +79,24 @@ export function eventStatusLabel(state?: string) {
 }
 
 export function messageTitle(row: WorkbenchRow) {
- const firstLine = row.text?.trim().split('\n')[0]
+ const firstLine = messageBody(row).trim().split('\n')[0]
  if (!firstLine) return '无正文消息'
  const subject = firstLine.split(/[。！？]|[.!?](?=\s|$)/, 1)[0]?.trim() || firstLine
  const characters = Array.from(subject)
  return characters.length > 88 ? characters.slice(0, 87).join('').trimEnd() + '…' : subject
 }
 
+export function messageBody(row: WorkbenchRow) {
+ if (!Array.isArray(row.content)) return row.text || ''
+ const blocks = row.content as { type: string; text?: string }[]
+ const text = blocks.filter(block => block.type === 'text').map(block => block.text || '').join('\n')
+ if (text.trim()) return text
+ const types = [...new Set(blocks.map(block => block.type))]
+ return types.length ? '[' + types.join(',') + ']' : ''
+}
+
 export function sourceLabel(source?: string) {
  if (source === 'dws') return 'DWS'
- if (source === 'core:timer' || source === 'core%3Atimer') return 'Core 定时任务'
- if (source === 'pr:url') return '拉取请求'
+ if (source === 'core:timer') return 'Core 定时任务'
  return source || '未记录来源'
 }

@@ -15,7 +15,6 @@ type observerHealth struct {
 	EventStates   map[string]int `json:"eventStates"`
 	OutboxStates  map[string]int `json:"outboxStates"`
 	UnknownStops  int            `json:"unknownStops"`
-	UnknownEchoes int            `json:"unknownEchoes"`
 }
 
 func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
@@ -27,9 +26,8 @@ func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
 	defer func() { _ = tx.Rollback() }()
 	err = tx.QueryRowContext(ctx, `SELECT
  COALESCE((SELECT state FROM session_bindings WHERE role='router' AND state<>'revoked'),'not_started'),
- (SELECT count(*) FROM session_bindings WHERE json_extract(body,'$.stop.workState')='unknown'),
- (SELECT count(*) FROM trigger_messages WHERE json_extract(body,'$.echo.status')='echo_unknown')`).
-		Scan(&health.Router, &health.UnknownStops, &health.UnknownEchoes)
+ (SELECT count(*) FROM session_bindings WHERE json_extract(body,'$.stop.workState')='unknown')`).
+		Scan(&health.Router, &health.UnknownStops)
 	if err != nil {
 		return health, storageError()
 	}
@@ -72,7 +70,9 @@ func observerCounts(ctx context.Context, tx *sql.Tx, query string) (map[string]i
 func observerListProjection(kind, full string) string {
 	switch kind {
 	case "messages":
-		return `json_set(json_remove(body,'$.meta','$.quotedMessage','$.channel'), '$.text', substr(json_extract(body,'$.text'),1,240))`
+		return `json_set(json_remove(body,'$.content','$._meta',
+ '$.replyTarget','$.inReplyToOutboxId'),
+ '$.text', substr(` + observerMessagePreview + `,1,240))`
 	case "outbox":
 		return `json_set(json_remove(` + full + `,'$.content'), '$.preview',
  substr(COALESCE(json_extract(outbox.content,'$.data.text'),json_extract(outbox.content,'$.data.prompt')),1,240))`
@@ -90,6 +90,13 @@ func observerListProjection(kind, full string) string {
 		return full
 	}
 }
+
+const observerMessagePreview = `coalesce(
+ (SELECT value->>'$.text' FROM json_each(trigger_messages.body,'$.content')
+  WHERE value->>'$.type'='text' AND trim(value->>'$.text',char(9,10,13,32))<>''
+  ORDER BY key LIMIT 1),
+ (SELECT '['||group_concat(DISTINCT value->>'$.type')||']'
+  FROM json_each(trigger_messages.body,'$.content')))`
 
 const internalEventProjection = `json_patch(json_object(
  'event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,

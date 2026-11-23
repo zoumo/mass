@@ -38,18 +38,18 @@ reaches Core. See the [Observer Host and Origin rules](API.md#read-only-observat
 
 ### Reuse an existing Core data directory
 
-Stop Core before backing up its data. Schema 24 upgrades to 25 in a transaction
-that removes MCP tool-call history and mutation receipts. The upgrade preserves
-business records, internal events, and saved trace associations. Use an empty
-`dataDir` for schema 23 or earlier, JSON v4 state, or a migration from Core's
-stdio role MCP. Read retained state with its original version. If both Core
-directories share `massd`, use distinct `sessions.namespace` values.
+Core uses schema 26 and rejects older schemas before opening the database.
+Use a new, empty `dataDir` when switching from an earlier Core release. Keep
+its old data directory and binary to access the prior state. Reuse an existing
+schema 26 directory on restart. If two Core installations share `massd`, give
+them distinct `sessions.namespace` values.
 
-Core checks source and account configuration against admitted Messages at
-startup. Preserve both when replacing a Trigger. `storageMaxPages` limits the
-main SQLite database, including initialization. Leave room for WAL and other
-filesystem overhead. When the budget runs out, ingestion returns `unavailable`
-without an acceptance receipt.
+Configure each Trigger to use the new Core and set its allowed `threadKeys`
+or `threadKeyPrefixes` in Core's source configuration.
+
+`storageMaxPages` limits the main SQLite database. Leave room for WAL and
+other filesystem overhead. When the budget runs out, ingestion returns
+`unavailable` without an acceptance receipt.
 
 ## Running MASS inside Core
 

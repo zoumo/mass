@@ -13,7 +13,7 @@ var _ runtime.InjectDriver = (*Driver)(nil)
 
 func (d *Driver) Inject(ctx context.Context, id string, input runtime.Input) (runtime.InjectReceipt, error) {
 	notSent := runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(false)}}
-	if err := validateClaudeInput(input); err != nil {
+	if err := runtime.ValidateInput(input); err != nil {
 		return notSent, err
 	}
 	s, err := d.get(id)

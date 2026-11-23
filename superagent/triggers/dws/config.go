@@ -204,8 +204,11 @@ func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConf
 		if err := c.Feedback.validate(); err != nil {
 			return c, err
 		}
-		if filepath.Clean(c.DatabasePath) == filepath.Clean(c.Feedback.StatePath) {
-			return c, errors.New("databasePath and feedback.statePath must be separate")
+		database := filepath.Clean(c.DatabasePath)
+		feedbackPath := filepath.Clean(c.Feedback.StatePath)
+		evidence := database + ".dws-sends"
+		if database == feedbackPath || feedbackPath == evidence || strings.HasPrefix(feedbackPath, evidence+string(filepath.Separator)) {
+			return c, errors.New("feedback.statePath must be separate from the queue and send evidence")
 		}
 	}
 	return c, nil

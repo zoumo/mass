@@ -238,7 +238,8 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	batch, err := reopened.selectInternalBatch(t.Context(), binding)
 	require.NoError(t, err)
 	wire := `{"events":[{"event_id":"saved-event","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}]}]}`
-	require.JSONEq(t, wire, string(batch.wire))
+	require.Len(t, batch.input.Content, 1)
+	require.JSONEq(t, wire, batch.input.Content[0].Text.Text)
 }
 
 func TestClaudeRouterReplacementRespectsInputAndOwnership(t *testing.T) {

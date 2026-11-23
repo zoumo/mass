@@ -14,11 +14,6 @@ import (
 const githubDatabaseApplicationID = 0x47485452 // GHTR
 
 const githubDatabaseSchema = `
-CREATE TABLE github_migration (
-	id INTEGER PRIMARY KEY CHECK (id = 1),
-	source_sha256 TEXT NOT NULL,
-	result BLOB NOT NULL
-);
 CREATE TABLE github_rate_limit (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	pause_until INTEGER NOT NULL
@@ -129,7 +124,7 @@ type githubPendingItem struct {
 
 func githubDatabaseIdentity(c githubConfig) triggerdb.Identity {
 	return triggerdb.Identity{
-		ApplicationID: githubDatabaseApplicationID, Version: 1,
+		ApplicationID: githubDatabaseApplicationID, Version: 2,
 		Source: githubSource, AccountID: c.AccountID, InstanceID: c.InstanceID,
 	}
 }
@@ -361,7 +356,10 @@ func applyGitHubObservations(tx *sql.Tx, c githubConfig, repo githubRepository, 
 		version := stream.Items[item.Key].Version
 		if item.Kind != "" {
 			version++
-			submission := item.submission(c, repo, scope, version)
+			submission, err := item.submission(c, repo, scope, version)
+			if err != nil {
+				return 0, err
+			}
 			payload, err := json.Marshal(submission)
 			if err != nil {
 				return 0, err

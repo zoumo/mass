@@ -8,7 +8,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggerdb"
 )
 
@@ -32,29 +31,35 @@ var errDWSQueueConflict = errors.New("pending_message_conflict")
 type dwsQueueItem struct {
 	sequence   int64
 	observedAt time.Time
-	payload    []byte
-	message    coreclient.Message
+	submission queuedSubmission
 }
 
-type dwsQueue struct{ db *sql.DB }
+type dwsQueue struct {
+	db        *sql.DB
+	accountID string
+}
+
+func dwsDatabaseIdentity(c dwsConfig) triggerdb.Identity {
+	return triggerdb.Identity{
+		ApplicationID: dwsDatabaseApplicationID, Version: 2,
+		Source: c.Source, AccountID: c.AccountID, InstanceID: c.InstanceID,
+	}
+}
 
 func openDWSQueue(c dwsConfig) (dwsQueue, func(), error) {
-	db, closeDB, err := triggerdb.Open(c.DatabasePath, triggerdb.Identity{
-		ApplicationID: dwsDatabaseApplicationID, Version: 1,
-		Source: c.Source, AccountID: c.AccountID, InstanceID: c.InstanceID,
-	}, dwsQueueSchema)
-	return dwsQueue{db: db}, closeDB, err
+	db, closeDB, err := triggerdb.Open(c.DatabasePath, dwsDatabaseIdentity(c), dwsQueueSchema)
+	return dwsQueue{db: db, accountID: c.AccountID}, closeDB, err
 }
 
 func (q dwsQueue) counts() (pending, failed int, err error) {
 	err = q.db.QueryRowContext(context.Background(), `SELECT
 		(SELECT count(*) FROM dws_submissions WHERE failure IS NULL),
-		(SELECT count(*) FROM dws_submissions WHERE failure IS NOT NULL)`).
+		(SELECT count(*) FROM dws_submissions WHERE failure IS NOT NULL AND failure NOT IN ('outbound_echo','released'))`).
 		Scan(&pending, &failed)
 	return pending, failed, err
 }
 
-func (q dwsQueue) enqueue(s coreclient.Submission, observedAt time.Time) (inserted bool, err error) {
+func (q dwsQueue) enqueue(s queuedSubmission, observedAt time.Time) (inserted bool, err error) {
 	payload, err := json.Marshal(s)
 	if err != nil {
 		return false, err
@@ -62,7 +67,7 @@ func (q dwsQueue) enqueue(s coreclient.Submission, observedAt time.Time) (insert
 	err = triggerdb.Transaction(q.db, func(tx *sql.Tx) error {
 		var stored []byte
 		err := tx.QueryRowContext(context.Background(), `SELECT payload FROM dws_submissions WHERE account_id = ? AND native_message_id = ?`,
-			s.Message.AccountID, s.Message.SourceMessageID).Scan(&stored)
+			q.accountID, s.Message.SourceMessageID).Scan(&stored)
 		switch {
 		case err == nil:
 			original, err := dwsBusinessPayload(stored)
@@ -81,7 +86,7 @@ func (q dwsQueue) enqueue(s coreclient.Submission, observedAt time.Time) (insert
 			return err
 		}
 		_, err = tx.ExecContext(context.Background(), `INSERT INTO dws_submissions (account_id, native_message_id, observed_at, payload)
-			VALUES (?, ?, ?, ?)`, s.Message.AccountID, s.Message.SourceMessageID, observedAt.UTC().Format(time.RFC3339Nano), payload)
+			VALUES (?, ?, ?, ?)`, q.accountID, s.Message.SourceMessageID, observedAt.UTC().Format(time.RFC3339Nano), payload)
 		inserted = err == nil
 		return err
 	})
@@ -89,39 +94,89 @@ func (q dwsQueue) enqueue(s coreclient.Submission, observedAt time.Time) (insert
 }
 
 func dwsBusinessPayload(raw []byte) ([]byte, error) {
-	// DWS may redeliver an identical native Message in another subscription envelope.
-	var payload struct {
-		OperationID string         `json:"operationId"`
-		Message     map[string]any `json:"message"`
-		SelfSent    bool           `json:"selfSent,omitempty"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
+	submission, err := decodeQueuedSubmission(raw)
+	if err != nil {
 		return nil, err
 	}
-	delete(payload.Message, "sourceEventId")
-	return json.Marshal(payload)
+	// Delivery diagnostics and operator dispositions do not redefine an input.
+	submission.Message.Meta = nil
+	submission.ReleaseReason = ""
+	submission.Prepared = false
+	submission.InReplyToOutboxID = ""
+	return json.Marshal(submission)
 }
 
-func (q dwsQueue) head() (dwsQueueItem, error) {
-	var item dwsQueueItem
-	var observedAt string
-	err := q.db.QueryRowContext(context.Background(), `SELECT sequence, observed_at, payload FROM dws_submissions
-		WHERE failure IS NULL ORDER BY sequence LIMIT 1`).Scan(&item.sequence, &observedAt, &item.payload)
+const dwsQueueReadLimit = 16
+
+func (q dwsQueue) pending(after int64) ([]dwsQueueItem, error) {
+	rows, err := q.db.QueryContext(context.Background(), `SELECT sequence, observed_at, payload FROM dws_submissions
+        WHERE failure IS NULL AND sequence > ? ORDER BY sequence LIMIT ?`, after, dwsQueueReadLimit)
 	if err != nil {
-		return item, err
+		return nil, err
 	}
-	item.observedAt, err = time.Parse(time.RFC3339Nano, observedAt)
+	defer rows.Close()
+	var items []dwsQueueItem
+	for rows.Next() {
+		var item dwsQueueItem
+		var observedAt string
+		var payload []byte
+		if err := rows.Scan(&item.sequence, &observedAt, &payload); err != nil {
+			return nil, err
+		}
+		item.observedAt, err = time.Parse(time.RFC3339Nano, observedAt)
+		if err != nil {
+			return nil, err
+		}
+		item.submission, err = decodeQueuedSubmission(payload)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (q dwsQueue) prepare(item dwsQueueItem, outboxID string) (queuedSubmission, error) {
+	s := item.submission
+	if s.Prepared {
+		return s, nil
+	}
+	s.Prepared = true
+	s.InReplyToOutboxID = outboxID
+	payload, err := json.Marshal(s)
 	if err != nil {
-		return item, err
+		return s, err
 	}
-	var stored struct {
-		Message coreclient.Message `json:"message"`
+	_, err = q.db.ExecContext(context.Background(), `UPDATE dws_submissions SET payload=? WHERE sequence=? AND failure IS NULL`, payload, item.sequence)
+	return s, err
+}
+
+func (item dwsQueueItem) classify(evidence *sendEvidenceStore) (string, string) {
+	s := item.submission
+	if s.Prepared {
+		return "ready", s.InReplyToOutboxID
 	}
-	err = json.Unmarshal(item.payload, &stored)
-	item.message = stored.Message
-	return item, err
+	ref := nativeMessageRef{ConversationID: s.ConversationID, MessageID: s.Message.SourceMessageID}
+	a, unresolved := evidence.match(ref, item.observedAt)
+	if a.OutboxID != "" {
+		return "outbound_echo", a.OutboxID
+	}
+	if s.ReleaseReason != "" {
+		return "released", ""
+	}
+	if s.SelfSent && unresolved {
+		return "held", ""
+	}
+	if s.Quote != nil {
+		a, unresolved = evidence.match(*s.Quote, item.observedAt)
+		if a.Settled {
+			return "quoted_reply", a.OutboxID
+		}
+		if unresolved || a.OutboxID != "" {
+			return "held", a.OutboxID
+		}
+	}
+	return "ready", ""
 }
 
 func (q dwsQueue) finish(sequence int64, failure string) error {

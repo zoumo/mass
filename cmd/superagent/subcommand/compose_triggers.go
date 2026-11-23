@@ -143,6 +143,11 @@ func (t composeTrigger) reserveState(paths map[string]string) error {
 			return err
 		}
 	}
+	if t.kind == triggers.DWS {
+		if err := reserveComposePath(paths, t.binding.DatabasePath+".dws-sends", t.name()+" send evidence"); err != nil {
+			return err
+		}
+	}
 	if t.binding.FeedbackPath != "" {
 		for _, suffix := range []string{"", ".lock"} {
 			if err := reserveComposePath(paths, t.binding.FeedbackPath+suffix, t.name()+" feedback.statePath"); err != nil {

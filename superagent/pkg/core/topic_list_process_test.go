@@ -23,8 +23,8 @@ func TestRouterTopicListPaginationAcrossIndexInstall(t *testing.T) {
 	createTopic := func(op, title string) string {
 		t.Helper()
 		in := input(op)
-		in.Message.ThreadRef.ID = op
-		in.Message.Channel = nil
+		in.Message.ThreadKey = fixtureThreadKey(op)
+		in.ReplyTarget = nil
 		message := submit(t, p, f, in)
 		request := newRoute(op, []string{message.MessageID}, f.dir)
 		request.Targets[0].Create.Title = title
@@ -83,11 +83,11 @@ func TestRouterTopicListPaginationAcrossIndexInstall(t *testing.T) {
 		}
 		return topics
 	}
-	// Match the cursor bytes produced by schema 25 before the index was added.
-	legacy := base64.RawURLEncoding.EncodeToString(fmt.Appendf(nil, `{"s":%q,"k":"topics","u":3,"a":%q,"i":%q}`, router.ID, tied, first))
+	// Match the cursor bytes before startup installs the index.
+	cursor := base64.RawURLEncoding.EncodeToString(fmt.Appendf(nil, `{"s":%q,"k":"topics","u":3,"a":%q,"i":%q}`, router.ID, tied, first))
 	oldest := mcpWork[core.Page](t, r, "list_topics", map[string]any{"limit": 1})
 	checkPage(oldest, first)
-	require.Equal(t, legacy, oldest.NextCursor)
+	require.Equal(t, cursor, oldest.NextCursor)
 	newest := page(t, p, "topics?order=newest&limit=1")
 	checkPage(newest, third)
 	require.NotEmpty(t, newest.NextCursor)
@@ -97,17 +97,17 @@ func TestRouterTopicListPaginationAcrossIndexInstall(t *testing.T) {
 	p.stop(t, false)
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 25, version)
+	require.Equal(t, 26, version)
 
 	p = f.start()
 	var indexSQL string
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT sql FROM sqlite_schema WHERE name='topics_created_at'").Scan(&indexSQL))
 	require.Contains(t, indexSQL, "ON topics(created_at,id)")
 	r = startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))
-	continued := mcpWork[core.Page](t, r, "list_topics", map[string]string{"cursor": legacy})
+	continued := mcpWork[core.Page](t, r, "list_topics", map[string]string{"cursor": cursor})
 	checkPage(continued, second, third)
 	require.Empty(t, continued.NextCursor)
-	mcpWorkError(t, r, "list_topics", "invalid_argument", map[string]string{"cursor": legacy, "query": "deploy"})
+	mcpWorkError(t, r, "list_topics", "invalid_argument", map[string]string{"cursor": cursor, "query": "deploy"})
 
 	continued = page(t, p, "topics?order=newest&limit=1&cursor="+url.QueryEscape(newest.NextCursor))
 	checkPage(continued, second)

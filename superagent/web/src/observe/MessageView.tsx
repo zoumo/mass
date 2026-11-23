@@ -1,8 +1,8 @@
 import CopyLink from './CopyLink'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Inbox, ListFilter, Mail, Text, UserRound } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Inbox, ListFilter, Mail, Text } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { formatTime, messageTitle, sourceLabel, stateLabel } from '../workbench'
+import { formatTime, messageBody, messageTitle, sourceLabel, stateLabel } from '../workbench'
 import { navigate, usePages, useRecord, viewHref, type MessageRecord, type ViewProps } from './observer'
 import MessagePath from './MessagePath'
 
@@ -68,7 +68,7 @@ function Messages({ query }: ViewProps) {
         {list.data?.map(row => <a href={viewHref('message', row.id, { threadKey })} key={row.id} className="message-row" aria-current={id === row.id ? 'true' : undefined}>
           <span className="row-meta"><span><i/>{sourceLabel(row.source)}</span><time dateTime={row.receivedAt}>{formatTime(row.receivedAt)}</time></span>
           <span className="row-title">{messageTitle(row)}</span>
-          <span className="row-bottom">{row.actor || '发送者未记录'}<ChevronRight size={14}/></span>
+          <span className="row-bottom">{row.id}<ChevronRight size={14}/></span>
         </a>)}
         {!list.data && !list.error && <p className="empty">正在读取消息…</p>}
         {list.data?.length === 0 && <p className="empty">当前范围暂无消息</p>}
@@ -101,8 +101,8 @@ function MessageDetail({ row, threadKey }: { row: MessageRecord, threadKey: stri
         <div className="observable-actions"><CopyLink href={viewHref('message', row.id, {threadKey})}/></div></div>
       <div className="detail-body"><div className="source-line"><span className="source-tag">{sourceLabel(row.source)}</span><span className="acceptance"><Check size={13}/>{stateLabel(row.acceptance)}</span></div>
         <h2 ref={heading} tabIndex={-1}>{messageTitle(row)}</h2>
-        <div className="message-meta"><span><UserRound/>{row.actor || '发送者未记录'}</span><span><Clock3/><time dateTime={row.receivedAt}>{formatTime(row.receivedAt)}</time></span></div>
-        <details className="original-text"><summary><Text size={16}/><span>查看全文</span><ChevronDown size={15}/></summary><pre data-testid="message-body" tabIndex={0}>{row.text || '渠道未提供正文。'}</pre></details>
+        <div className="message-meta"><span><Clock3/><time dateTime={row.receivedAt}>{formatTime(row.receivedAt)}</time></span></div>
+        <details className="original-text"><summary><Text size={16}/><span>查看全文</span><ChevronDown size={15}/></summary><pre data-testid="message-body" tabIndex={0}>{messageBody(row) || '渠道未提供正文。'}</pre></details>
         <div className="topic-links"><a href={'/observer/?' + new URLSearchParams({view:'messages',mode:'records',id:row.id})}>完整记录</a>
           {row.threadKey && <a href={'/observer/?' + new URLSearchParams({view:'threads',id:row.threadKey})}>查看线程</a>}</div>
       </div>

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/zoumo/mass/massd/pkg/events"
 )
 
 const internalEventSchema = `
@@ -52,6 +54,12 @@ type eventReference struct {
 	GoalRevision int    `json:"goal_revision,omitempty"`
 }
 
+type eventMessageContent struct {
+	ID     string
+	Blocks []events.ContentBlock
+	size   int
+}
+
 type internalEvent struct {
 	ID        string             `json:"event_id"`
 	Kind      string             `json:"kind"`
@@ -61,15 +69,20 @@ type internalEvent struct {
 	Body      json.RawMessage    `json:"body,omitempty"`
 	Refs      []eventReference   `json:"refs,omitempty"`
 	// Optional facts on the copy used for dispatch.
-	truncated   bool
-	threadKey   string
-	routing     json.RawMessage
-	quotedReply json.RawMessage
-	topic       *Topic
-	issue       *Issue
-	report      *Report
-	followup    json.RawMessage
-	messages    []json.RawMessage
+	truncated      bool
+	threadKey      string
+	routing        json.RawMessage
+	quotedReply    json.RawMessage
+	topic          *Topic
+	issue          *Issue
+	report         *Report
+	followup       json.RawMessage
+	messageContent []eventMessageContent
+}
+
+type messageContentReference struct {
+	MessageID  string `json:"messageId"`
+	BlockCount int    `json:"blockCount"`
 }
 
 // AgentPromptView encodes the fields an agent needs to act on the source record.
@@ -124,6 +137,13 @@ func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 		event["threadKey"] = d.threadKey
 		event["routing"] = d.routing
 	}
+	if len(d.messageContent) != 0 {
+		list := make([]messageContentReference, 0, len(d.messageContent))
+		for _, content := range d.messageContent {
+			list = append(list, content.reference())
+		}
+		event["messageContent"] = list
+	}
 	if len(d.followup) != 0 {
 		event["followup"] = d.followup
 	}
@@ -151,9 +171,6 @@ func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 			return nil, err
 		}
 		event["report"] = json.RawMessage(raw)
-	}
-	if len(d.messages) != 0 {
-		event["messages"] = d.messages
 	}
 	if len(bodyKeys) != 0 && len(d.Body) != 0 {
 		var body map[string]json.RawMessage
