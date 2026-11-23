@@ -14,15 +14,21 @@ CREATE TABLE trigger_messages (
  source TEXT NOT NULL, account_id TEXT NOT NULL, native_id TEXT NOT NULL,
  thread_id TEXT NOT NULL REFERENCES threads(id), accepted_at TEXT NOT NULL,
  canonical BLOB NOT NULL, body BLOB NOT NULL, routing_state TEXT,
+ scheduled_task_id TEXT REFERENCES scheduled_tasks(id),
+ scheduled_task_revision INTEGER,
+ scheduled_trigger TEXT CHECK(scheduled_trigger IN ('scheduled','manual')),
+ scheduled_for TEXT,
  UNIQUE(source,account_id,native_id)
 );
 CREATE INDEX trigger_messages_thread ON trigger_messages(thread_id,accepted_at,id);
+CREATE INDEX trigger_messages_scheduled_task ON trigger_messages(scheduled_task_id,accepted_at,id) WHERE scheduled_task_id IS NOT NULL;
+CREATE INDEX trigger_messages_source ON trigger_messages(source,accepted_at,id);
 CREATE TABLE topics (
  seq INTEGER PRIMARY KEY AUTOINCREMENT,
  id TEXT GENERATED ALWAYS AS ('mass-t' || seq) STORED NOT NULL UNIQUE,
  created_at TEXT NOT NULL, body BLOB NOT NULL,
  creation_key TEXT NOT NULL UNIQUE, creation_digest TEXT NOT NULL,
- issue_number INTEGER NOT NULL DEFAULT 0, timer_number INTEGER NOT NULL DEFAULT 0
+ issue_number INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE session_bindings (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, role TEXT NOT NULL, owner_id TEXT NOT NULL, generation INTEGER NOT NULL, created_at TEXT NOT NULL, token TEXT NOT NULL UNIQUE, spec BLOB NOT NULL, state TEXT NOT NULL, next_attempt_at TEXT NOT NULL DEFAULT '', body BLOB NOT NULL, UNIQUE(role,owner_id,generation));
 CREATE UNIQUE INDEX sole_router ON session_bindings(role) WHERE role='router' AND state<>'revoked';
@@ -38,15 +44,19 @@ CREATE INDEX issues_topic ON issues(topic_id,created_at,id);
 CREATE UNIQUE INDEX current_issue_session_binding ON session_bindings(owner_id) WHERE role='issue' AND state<>'revoked';
 CREATE INDEX session_bindings_stop ON session_bindings(id) WHERE json_extract(body,'$.stop.status')='requested';
 CREATE TABLE scheduled_tasks (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL REFERENCES topics(id),
- number INTEGER NOT NULL CHECK(number>0),
- id TEXT GENERATED ALWAYS AS (topic_id || '-tm' || number) STORED NOT NULL UNIQUE,
- created_at TEXT NOT NULL, body BLOB NOT NULL, trigger_message_id TEXT REFERENCES trigger_messages(id),
+ seq INTEGER PRIMARY KEY AUTOINCREMENT,
+ id TEXT GENERATED ALWAYS AS ('mass-st' || seq) STORED NOT NULL UNIQUE,
+ owner_type TEXT CHECK(owner_type='topic'), owner_id TEXT REFERENCES topics(id),
+ topic_generation INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL, schedule_anchor TEXT NOT NULL, deleted_at TEXT, body BLOB NOT NULL,
+ status TEXT GENERATED ALWAYS AS (body->>'$.status') STORED NOT NULL CHECK(status IN ('active','paused','completed')),
+ next_run_at TEXT GENERATED ALWAYS AS (body->>'$.nextRunAt') STORED,
  creation_key TEXT NOT NULL UNIQUE, creation_digest TEXT NOT NULL,
- UNIQUE(topic_id,number)
+ CHECK((owner_type IS NULL) = (owner_id IS NULL)),
+ CHECK((status='active') = (next_run_at IS NOT NULL))
 );
-CREATE INDEX scheduled_tasks_topic ON scheduled_tasks(topic_id,created_at,id);
-CREATE INDEX scheduled_tasks_due ON scheduled_tasks(` + timerDueAt + `,seq) WHERE ` + timerStatus + `='scheduled';
+CREATE INDEX scheduled_tasks_owner ON scheduled_tasks(owner_type,owner_id,created_at,id) WHERE deleted_at IS NULL;
+CREATE INDEX scheduled_tasks_due ON scheduled_tasks(next_run_at,seq) WHERE status='active' AND deleted_at IS NULL;
 CREATE TABLE outbox (
  id TEXT PRIMARY KEY NOT NULL,
  message_id TEXT NOT NULL REFERENCES trigger_messages(id),

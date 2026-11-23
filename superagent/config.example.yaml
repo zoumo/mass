@@ -39,7 +39,7 @@ storageMaxPages: 0
 #     expose:  # optional, requires a loopback Core listener
 #       tokenFile: ./embedded-massd.token  # private file and dedicated token
 #       allowedOrigins: [https://ops.example.com]  # optional, if clients send Origin
-# operatorTokenFile: ./operator.token  # optional, for loopback CLI input recovery
+# operatorTokenFile: ./operator.token  # optional, for loopback ScheduledTask management and input recovery
 # sessions:
 #   routerWorkspace: /absolute/workspace
 #   namespace: superagent

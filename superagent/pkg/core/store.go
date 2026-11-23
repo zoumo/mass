@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	schemaVersion       = 27
+	schemaVersion       = 28
 	applicationID       = 1398096210
 	storeStartupTimeout = 10 * time.Second
 	queryIndexTimeout   = 2 * time.Minute
@@ -167,6 +167,9 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, err
 	}
 	if err := recoverInternalEvents(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := recoverScheduledTasks(ctx, tx, scheduledTaskNow()); err != nil {
 		return nil, err
 	}
 	if err := recoverStops(ctx, tx); err != nil {
@@ -339,8 +342,18 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Messa
 	if err := upsertThread(ctx, tx, m.ThreadID, at, at); err != nil {
 		return Receipt{}, err
 	}
-	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_id,accepted_at,canonical,body)
- VALUES(?,?,?,?,?,?,'{}') RETURNING id`, source.Source, source.AccountID, m.SourceMessageID, m.ThreadID, at, canonical).Scan(&m.ID); err != nil {
+	var taskID, taskRevision, trigger, scheduledFor any
+	if activation := m.scheduled; activation != nil {
+		taskID, taskRevision, trigger = activation.taskID, activation.revision, activation.method
+		if activation.scheduledFor != "" {
+			scheduledFor = activation.scheduledFor
+		}
+	}
+	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_id,accepted_at,canonical,body,
+ scheduled_task_id,scheduled_task_revision,scheduled_trigger,scheduled_for)
+ VALUES(?,?,?,?,?,?,'{}',?,?,?,?) RETURNING id`,
+		source.Source, source.AccountID, m.SourceMessageID, m.ThreadID, at, canonical,
+		taskID, taskRevision, trigger, scheduledFor).Scan(&m.ID); err != nil {
 		return Receipt{}, storageError()
 	}
 	if err := putJSON(ctx, tx, "UPDATE trigger_messages SET body=?2 WHERE id=?1", m, m.ID); err != nil {
@@ -384,15 +397,19 @@ func upsertThread(ctx context.Context, tx *sql.Tx, threadID, createdAt, lastMess
 }
 
 type cursor struct {
-	Scope  string `json:"s,omitempty"`
-	Kind   string `json:"k"`
-	Thread string `json:"t,omitempty"`
-	Parent string `json:"p,omitempty"`
-	Filter string `json:"f,omitempty"`
-	Newest bool   `json:"n,omitempty"`
-	Upper  int64  `json:"u"`
-	At     string `json:"a"`
-	ID     string `json:"i"`
+	Scope           string `json:"s,omitempty"`
+	Kind            string `json:"k"`
+	Thread          string `json:"t,omitempty"`
+	Parent          string `json:"p,omitempty"`
+	Filter          string `json:"f,omitempty"`
+	Source          string `json:"source,omitempty"`
+	ScheduledTaskID string `json:"scheduledTaskId,omitempty"`
+	OwnerType       string `json:"ownerType,omitempty"`
+	OwnerID         string `json:"ownerId,omitempty"`
+	Newest          bool   `json:"n,omitempty"`
+	Upper           int64  `json:"u"`
+	At              string `json:"a"`
+	ID              string `json:"i"`
 }
 
 // A continuation must match the collection, filters, role and ordering of the first page.
@@ -431,7 +448,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 	var parentColumn, parent string
 	var relatedFilter string
 	switch {
-	case q.TopicID != "" && q.IssueID == "" && (kind == "issues" || kind == "timers" || kind == "pull-requests" || kind == "subscriptions" || kind == "relations" || kind == "routing-events"):
+	case q.TopicID != "" && q.IssueID == "" && (kind == "issues" || kind == "pull-requests" || kind == "subscriptions" || kind == "relations" || kind == "routing-events"):
 		parentColumn, parent = "topic_id", q.TopicID
 		if kind == "pull-requests" {
 			relatedFilter = "topic_id=? AND issue_id IS NULL"
@@ -451,7 +468,18 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 	case q.TopicID != "" || q.IssueID != "":
 		return p, problem("invalid_argument", "unsupported topicId or issueId filter; use only one parent")
 	}
-	c := cursor{Kind: kind, Thread: thread, Parent: parent, Scope: scopeID, Newest: q.newest}
+	taskHistory := q.Source != "" || q.ScheduledTaskID != ""
+	if taskHistory && (kind != "messages" || binding != nil || source != nil) {
+		return p, problem("invalid_argument", "source and scheduledTaskId filter Operator Trigger Message history")
+	}
+	hasOwnerFilter := q.OwnerType != "" || q.OwnerID != ""
+	if hasOwnerFilter && (kind != "scheduled-tasks" || q.OwnerType != "topic" || q.OwnerID == "") {
+		return p, problem("invalid_argument", "ScheduledTask owner filtering requires ownerType=topic and ownerId")
+	}
+	c := cursor{
+		Kind: kind, Thread: thread, Parent: parent, Scope: scopeID, Newest: q.newest,
+		Source: q.Source, ScheduledTaskID: q.ScheduledTaskID, OwnerType: q.OwnerType, OwnerID: q.OwnerID,
+	}
 	scope, scopeArgs, scopeErr := scopeSQL(kind, binding)
 	if scopeErr != nil {
 		return p, scopeErr
@@ -476,7 +504,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		table, timeCol, idCol = "(SELECT rowid AS seq,* FROM outbox) AS outbox", "printf('%020d',outbox.seq)", "id"
 	case "topics", "issues", "reports":
 		table, timeCol, idCol = kind, "created_at", "id"
-	case "timers":
+	case "scheduled-tasks":
 		table, timeCol, idCol = "scheduled_tasks", "created_at", "id"
 	case "pull-requests":
 		table, timeCol, idCol = "work_pull_requests", "created_at", "id"
@@ -543,11 +571,29 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 			projection = "json_set(" + projection + ",'$.topicTitle',(SELECT json_extract(t.body,'$.title') FROM topics t WHERE t.id=" + table + ".topic_id))"
 		}
 	}
+	if taskHistory {
+		projection = "json_patch(" + projection + ",json_object('scheduledTaskId',scheduled_task_id))"
+	}
 	if q.observerTrace && s.hasTraceAssociations && binding == nil && source == nil {
 		projection = observerTraceProjection(kind, idCol, projection)
 	}
 	query := "SELECT " + projection + "," + timeCol + "," + idCol + " FROM " + table + " WHERE seq<=?"
 	args := append(projectionArgs(kind, binding), c.Upper)
+	if kind == "scheduled-tasks" {
+		query += " AND deleted_at IS NULL"
+	}
+	if hasOwnerFilter {
+		query += " AND owner_type=? AND owner_id=?"
+		args = append(args, q.OwnerType, q.OwnerID)
+	}
+	if q.Source != "" {
+		query += " AND source=?"
+		args = append(args, q.Source)
+	}
+	if q.ScheduledTaskID != "" {
+		query += " AND scheduled_task_id=?"
+		args = append(args, q.ScheduledTaskID)
+	}
 	operator, order := ">", " ASC"
 	if q.newest {
 		operator, order = "<", " DESC"
@@ -657,8 +703,9 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Session
 	case "session-bindings":
 		table = "session_bindings"
 	case "threads", "topics", "issues", "reports", "outbox":
-	case "timers":
+	case "scheduled-tasks":
 		table = "scheduled_tasks"
+		scope += " AND deleted_at IS NULL"
 	case "pull-requests":
 		table = "work_pull_requests"
 	default:

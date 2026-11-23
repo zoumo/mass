@@ -127,10 +127,17 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
  WHERE state='ready'`); err != nil {
 			return nil, storageError()
 		}
-		life, cancel := context.WithCancel(context.Background())
-		s.executionCancel = cancel
-		s.executionDone = make(chan struct{})
+	}
+	life, cancel := context.WithCancel(context.Background())
+	s.executionCancel = cancel
+	s.executionDone = make(chan struct{})
+	if c.Sessions != nil {
 		go s.coordinate(life)
+	} else {
+		go func() {
+			defer close(s.executionDone)
+			store.scanScheduledTasks(life)
+		}()
 	}
 	s.observerLife, s.observerCancel = context.WithCancel(context.Background())
 	routes := s.newHTTPAPI()

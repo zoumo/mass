@@ -80,7 +80,7 @@ func TestCutoverInstallsStartupQueryIndexes(t *testing.T) {
 }
 
 func TestCutoverRejectsPriorSchemasWithoutWriting(t *testing.T) {
-	for _, version := range []int{24, 25, 26} {
+	for _, version := range []int{24, 25, 26, 27} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			f := fixtureAt(t)
 			require.NoError(t, os.MkdirAll(f.data, 0o700))
@@ -121,7 +121,7 @@ func TestCutoverRejectsUnsupportedWALVersion(t *testing.T) {
 	require.NoError(t, err)
 	header, err := os.ReadFile(filepath.Join(f.data, "core.sqlite"))
 	require.NoError(t, err)
-	require.EqualValues(t, 27, encodingbinary.BigEndian.Uint32(header[60:64]))
+	require.EqualValues(t, 28, encodingbinary.BigEndian.Uint32(header[60:64]))
 	f.fails("unsupported")
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
@@ -136,7 +136,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 27, version)
+	require.Equal(t, 28, version)
 	assertStartupQueryIndexes(t, db, 5)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
@@ -160,8 +160,8 @@ func assertCutoverSchema(t *testing.T, path string) {
 	check(`SELECT m.name||'.'||f."from"||' -> '||f."table"||'.'||f."to"
  FROM sqlite_schema m,pragma_foreign_key_list(m.name) f WHERE m.type='table' ORDER BY 1`,
 		[]string{
-			"issues.topic_id -> topics.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.topic_id -> topics.id",
-			"scheduled_tasks.trigger_message_id -> trigger_messages.id", "trigger_messages.thread_id -> threads.id",
+			"issues.topic_id -> topics.id", "outbox.message_id -> trigger_messages.id", "scheduled_tasks.owner_id -> topics.id",
+			"trigger_messages.scheduled_task_id -> scheduled_tasks.id", "trigger_messages.thread_id -> threads.id",
 		})
 	check(`SELECT "table" FROM pragma_foreign_key_check`, nil)
 	tx, err := db.BeginTx(t.Context(), nil)

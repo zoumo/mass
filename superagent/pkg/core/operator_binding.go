@@ -28,7 +28,7 @@ func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool 
 		return false
 	}
 	if s.config.operatorToken == "" {
-		s.fail(w, problem("not_found", "operator recovery is not configured"))
+		s.fail(w, problem("not_found", "operator access is not configured"))
 		return false
 	}
 	got := sha256.Sum256([]byte(r.Header.Get("Authorization")))

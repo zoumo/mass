@@ -126,12 +126,12 @@ func TestTopicIssueListAcrossIndexInstall(t *testing.T) {
 	p.stop(t, false)
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 27, version)
+	require.Equal(t, 28, version)
 
 	f.start()
 	assertIssueQueryIndexes(t, db, 2)
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 27, version)
+	require.Equal(t, 28, version)
 	topic = startRoleMCP(t, f, binding)
 	foreign = startRoleMCP(t, f, foreignBinding)
 	router = startRoleMCP(t, f, routerBinding)
