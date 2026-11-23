@@ -34,11 +34,11 @@ func TestSchema25TriggerMigrationPreservesReceiptsAndSendEvidence(t *testing.T) 
 	for i, req := range requests {
 		text := req.Message.Content[0].Text.Text
 		var msg map[string]any
-		require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"id":%q,"source":"dws","accountId":"account-1",
+		require.NoError(t, json.Unmarshal(fmt.Appendf(nil, `{"id":%q,"source":"dws","accountId":"account-1",
  "sourceMessageId":%q,"receivedAt":%q,"acceptance":"accepted","eventId":%q,"threadKey":%q,
  "threadRef":{"source":"dws","id":%q},"actor":"sender-1","addressed":"direct","text":%q,"at":%q,"url":%q,"channel":%s}`,
 			original[i].MessageID, req.Message.SourceMessageID, original[i].AcceptedAt, original[i].EventID, req.Message.ThreadKey,
-			fixtureConversation, text, oldAt, oldURL, req.ReplyTarget)), &msg))
+			fixtureConversation, text, oldAt, oldURL, req.ReplyTarget), &msg))
 		if i == 1 {
 			msg["quotedMessage"] = map[string]string{"message_id": "legacy-echo"}
 		}

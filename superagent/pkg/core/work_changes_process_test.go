@@ -177,7 +177,7 @@ func TestIssueBlockersAndRequirementsThroughNativeEvent(t *testing.T) {
 	require.Nil(t, materialsEvent.Content)
 	require.JSONEq(t, `{"materials":[{"messageId":"`+source.MessageID+`"}]}`, string(materialsEvent.Body))
 	require.Equal(t, []attachedMessage{{MessageID: source.MessageID, BlockCount: 1}}, materialsEvent.MessageContent)
-	require.Equal(t, []nativeSubmitBlock{{Type: "text", Text: call.text}, {Type: "text", Text: "Original input changes-main"}}, call.blocks)
+	require.Equal(t, []nativeSubmitBlock{{Type: "input_text", Text: call.text}, {Type: "input_text", Text: "Original input changes-main"}}, call.blocks)
 	call.accept()
 	require.Empty(t, waitInternalEvent(t, f, materialsReceipt.NotificationEventID, "sent").Content)
 	a = materialsReceipt.Issue

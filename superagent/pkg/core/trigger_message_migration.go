@@ -13,8 +13,10 @@ import (
 	"github.com/zoumo/mass/superagent/internal/triggercontent"
 )
 
-const migrationDirectory = "migration"
-const legacyDWSEvidenceFile = "v25-dws-sent-evidence.ndjson"
+const (
+	migrationDirectory    = "migration"
+	legacyDWSEvidenceFile = "v25-dws-sent-evidence.ndjson"
+)
 
 type legacyMessage struct {
 	Message
@@ -186,8 +188,9 @@ func legacyReplyReference(ctx context.Context, tx *sql.Tx, m legacyMessage) (str
 		ConversationID string `json:"conversation_id"`
 		MessageID      string `json:"message_id"`
 	}
-	if json.Unmarshal(m.QuotedMessage, &quote) != nil || !legacyNativeID(quote.MessageID) ||
-		(quote.ConversationID != "" && quote.ConversationID != m.ThreadRef.ID) {
+	validQuote := json.Unmarshal(m.QuotedMessage, &quote) == nil && legacyNativeID(quote.MessageID) &&
+		(quote.ConversationID == "" || quote.ConversationID == m.ThreadRef.ID)
+	if !validQuote {
 		return "", nil
 	}
 	var count int
