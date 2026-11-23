@@ -57,7 +57,7 @@ const statusLabels: Record<string, string> = {
  transport_unknown: '传输结果未确认', superseded: '已替代', reconciling: '核对中', sending: '发送中',
  not_started: '未启动', connecting: '正在连接', connected: '已连接', disconnected: '已断开', stale: '已过期',
  unavailable: '不可用', waiting: '等待接收', buffer_full: '缓冲区已满', admission_failed: '接收失败',
- scheduled: '已安排', fired: '已触发', revoked: '已撤销', open: '待执行',
+ scheduled: '已安排', revoked: '已撤销', open: '待执行',
  running: '运行中', busy: '忙碌', idle: '空闲', stopped: '已停止', preparing: '准备中',
  noActiveWork: '无活跃任务', never_dispatched: '从未投递', requested: '已请求', observed: '已观测',
  router: 'Router Session', topic: 'Topic Session', issue: 'Issue Session',
@@ -97,6 +97,6 @@ export function messageBody(row: WorkbenchRow) {
 
 export function sourceLabel(source?: string) {
  if (source === 'dws') return 'DWS'
- if (source === 'core:timer') return 'Core 定时任务'
+ if (source === 'core:scheduled-task') return 'Core 定时任务'
  return source || '未记录来源'
 }

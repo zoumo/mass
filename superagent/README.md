@@ -41,10 +41,10 @@ concrete numeric address to reach Core.
 
 ### Reuse an existing Core data directory
 
-Core uses schema 27 and rejects older schemas before opening the database.
+Core uses schema 28 and rejects older schemas before opening the database.
 Use a new, empty `dataDir` when switching from an earlier Core release. Keep
 its old data directory and binary to access the prior state. Reuse an existing
-schema 27 directory on restart. If two Core installations share `massd`, give
+schema 28 directory on restart. If two Core installations share `massd`, give
 them distinct `sessions.namespace` values.
 
 Configure each Trigger to use the new Core and set its allowed `threadIds`
@@ -53,6 +53,17 @@ or `threadIdPrefixes` in Core's source configuration.
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
 `unavailable` without an acceptance receipt.
+
+## Scheduled tasks
+
+Topic Sessions manage their own scheduled tasks through MCP. For independent
+tasks and triggering from a local script or CLI, configure `operatorTokenFile`
+and use a direct loopback connection to Core. Independent schedules also run
+in standalone Core without Session execution. Their Router events remain
+pending until a Router can handle them.
+
+See the [scheduled task API](API.md#scheduled-tasks) for schedule modes,
+Operator commands and history queries.
 
 ## Running MASS inside Core
 
@@ -120,8 +131,8 @@ See the [WebSocket binding](../harness/bindings/websocket.md#认证与部署).
    ```
 
 4. Read `endpoint` from the ready record and request `/status` at that origin.
-   The response lists Core, massd, GitHub, and DWS. Timer counts appear under
-   `core.timerStates`. A Trigger failure can make `/status` report `degraded`
+   The response lists Core, massd, GitHub, and DWS. Scheduled task counts appear under
+   `core.scheduledTaskStates`. A Trigger failure can make `/status` report `degraded`
    while `/readyz` continues to report Core admission. For adapter details,
    use the corresponding loopback address in `triggerEndpoints`.
 5. If you enabled embedded MASS exposure, use `massdEndpoint` with its
@@ -193,7 +204,7 @@ and `/readyz` and use `/status` to inspect the stack.
    replacing its binary. Verify that the old processes have exited and
    released their data directories before starting replacements.
 2. Update the binaries, Web build, gateway configuration, and caller
-   configuration together. Use a schema 27 Core directory and schema 3 Trigger
+   configuration together. Use a schema 28 Core directory and schema 3 Trigger
    databases. Preserve the massd data directory, credential paths, and Session
    MCP origin. See the Core [data directory requirements](#reuse-an-existing-core-data-directory)
    and [Trigger cutover steps](triggers/README.md#replace-deployed-triggers).

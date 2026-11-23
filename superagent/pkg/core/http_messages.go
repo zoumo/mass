@@ -77,6 +77,21 @@ func (s *Server) readTriggerMessages(w http.ResponseWriter, r *http.Request) {
 		s.readTriggerReceipt(w, r)
 		return
 	}
+	if hasOperatorMessageFilter(q) {
+		if !s.authorizeOperator(w, r) {
+			return
+		}
+		if q.Has("view") {
+			s.fail(w, problem("invalid_argument", "source and scheduledTaskId require the default Trigger Message view"))
+			return
+		}
+		for _, key := range []string{"source", "scheduledTaskId"} {
+			if values, ok := q[key]; ok && (len(values) != 1 || strings.TrimSpace(values[0]) == "") {
+				s.fail(w, problem("invalid_argument", key+" must be supplied as one nonblank value"))
+				return
+			}
+		}
+	}
 	switch q.Get("view") {
 	case "":
 		s.listMessageRecords(w, r, "messages", q)
@@ -87,9 +102,13 @@ func (s *Server) readTriggerMessages(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func hasOperatorMessageFilter(q url.Values) bool {
+	return q.Has("source") || q.Has("scheduledTaskId")
+}
+
 func (s *Server) readTriggerMessage(w http.ResponseWriter, r *http.Request) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || q.Has("sourceMessageId") || q.Has("view") {
+	if err != nil || q.Has("sourceMessageId") || q.Has("view") || hasOperatorMessageFilter(q) {
 		s.fail(w, problem("invalid_argument", "invalid Trigger Message detail query"))
 		return
 	}
@@ -146,7 +165,7 @@ func (s *Server) listMessageRecords(w http.ResponseWriter, r *http.Request, kind
 	}
 	query := QueryRequest{
 		Collection: kind, ThreadID: q.Get("threadId"), TopicID: q.Get("topicId"), IssueID: q.Get("issueId"),
-		MessageID: q.Get("messageId"), Cursor: q.Get("cursor"), Limit: limit,
+		MessageID: q.Get("messageId"), Source: q.Get("source"), ScheduledTaskID: q.Get("scheduledTaskId"), Cursor: q.Get("cursor"), Limit: limit,
 		preview: q.Get("preview") == "true", newest: q.Get("order") == "newest", observerTrace: q.Get("trace") == "true",
 	}
 	var page Page

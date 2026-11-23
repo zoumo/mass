@@ -199,7 +199,8 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 			expectedHost = local.String()
 		}
 		allowedReadHost := isTrustedResourceRead(r.URL.Path) && isReadMethod(r.Method) && slices.Contains(s.config.ReadAllowedHosts, r.Host)
-		if r.Host != expectedHost && !allowedReadHost {
+		operatorMessageList := r.URL.Path == triggerMessagesPath && hasOperatorMessageFilter(r.URL.Query())
+		if r.Host != expectedHost && (!allowedReadHost || operatorMessageList) {
 			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 			return
 		}

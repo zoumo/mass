@@ -6,16 +6,16 @@ import (
 )
 
 type CoreStatus struct {
-	Status        string         `json:"status" enum:"ready,unavailable"`
-	Ingress       string         `json:"ingress"`
-	SchemaVersion int            `json:"schemaVersion"`
-	Router        string         `json:"router"`
-	TopicStates   map[string]int `json:"topicStates"`
-	IssueStates   map[string]int `json:"issueStates"`
-	EventStates   map[string]int `json:"eventStates"`
-	OutboxStates  map[string]int `json:"outboxStates"`
-	TimerStates   map[string]int `json:"timerStates"`
-	UnknownStops  int            `json:"unknownStops"`
+	Status              string         `json:"status" enum:"ready,unavailable"`
+	Ingress             string         `json:"ingress"`
+	SchemaVersion       int            `json:"schemaVersion"`
+	Router              string         `json:"router"`
+	TopicStates         map[string]int `json:"topicStates"`
+	IssueStates         map[string]int `json:"issueStates"`
+	EventStates         map[string]int `json:"eventStates"`
+	OutboxStates        map[string]int `json:"outboxStates"`
+	ScheduledTaskStates map[string]int `json:"scheduledTaskStates"`
+	UnknownStops        int            `json:"unknownStops"`
 }
 
 func (s *Store) observerHealth(ctx context.Context) (CoreStatus, error) {
@@ -40,7 +40,7 @@ func (s *Store) observerHealth(ctx context.Context) (CoreStatus, error) {
 		{&health.IssueStates, `SELECT json_extract(body,'$.status') AS state,count(*) FROM issues GROUP BY state`},
 		{&health.EventStates, `SELECT status,count(*) FROM internal_events GROUP BY status`},
 		{&health.OutboxStates, `SELECT status AS state,count(*) FROM outbox GROUP BY status`},
-		{&health.TimerStates, `SELECT ` + timerStatus + ` AS state,count(*) FROM scheduled_tasks GROUP BY state`},
+		{&health.ScheduledTaskStates, `SELECT status,count(*) FROM scheduled_tasks WHERE deleted_at IS NULL GROUP BY status`},
 	} {
 		*group.counts, err = observerCounts(ctx, tx, group.query)
 		if err != nil {
@@ -86,8 +86,6 @@ func observerListProjection(kind, full string) string {
 		return `json_set(json_remove(` + full + `,'$.body','$.content'),'$.goalUpdate',json(CASE WHEN kind='issue_session_update' AND event_id GLOB 'goal-update_*' THEN 'true' ELSE 'false' END))`
 	case "reports":
 		return `json_remove(` + full + `,'$.details','$.evidence','$.questions')`
-	case "timers":
-		return `json_set(json_remove(` + full + `,'$.materials'),'$.content',substr(json_extract(body,'$.content'),1,240))`
 	default:
 		return full
 	}

@@ -6,7 +6,7 @@ import StructuredContent from '../StructuredContent'
 import { eventStatusLabel, messageBody, stateLabel } from '../../workbench'
 import SessionEvidence from './SessionEvidence'
 import ChannelEvidence from './ChannelEvidence'
-import { followupLabel, identity, replyLabel, type RecordProps, type Kind } from './records'
+import { identity, replyLabel, type RecordProps, type Kind } from './records'
 
 function TraceID({ traceId, phase, at }: { traceId: string; phase: string; at?: string }) {
   const [result, setResult] = useState('')
@@ -106,11 +106,6 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       {kind === 'topics' && (
         <button onClick={() => navigate('issues', identity(detail), 'topicId')} type="button">
           查看 Topic 下的 Issue
-        </button>
-      )}
-      {kind === 'topics' && (
-        <button onClick={() => navigate('timers', identity(detail))} type="button">
-          查看 Topic 定时器
         </button>
       )}
       {detail.issueId && (
@@ -216,45 +211,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           )}
         </>
       )}
-      {kind === 'timers' && (
-        <>
-          <h2>跟进内容</h2>
-          <pre className="body-text">{typeof detail.content === 'string' ? detail.content : undefined}</pre>
-          <dl>
-            <dt>定时器状态</dt>
-            <dd>{stateLabel(detail.status)}</dd>
-            <dt>版本</dt>
-            <dd>{detail.revision}</dd>
-            <dt>触发类型</dt>
-            <dd>{detail.type}</dd>
-            <dt>计划触发时间 (UTC)</dt>
-            <dd>{detail.dueAt}</dd>
-            {detail.firedAt && (
-              <>
-                <dt>实际触发时间 (UTC)</dt>
-                <dd>{detail.firedAt}</dd>
-              </>
-            )}
-            {detail.followup && (
-              <>
-                <dt>跟进通知事件</dt>
-                <dd>{followupLabel(detail.followup)}</dd>
-              </>
-            )}
-          </dl>
-          {detail.triggerMessageId && (
-            <button onClick={() => showRecord('messages', detail.triggerMessageId!)} type="button">
-              查看触发消息
-            </button>
-          )}
-          {detail.followup?.kind === 'routed_message' && detail.followup.event_id && (
-            <button onClick={() => showRecord('internal-events', detail.followup!.event_id!)} type="button">
-              查看跟进事件
-            </button>
-          )}
-        </>
-      )}
-      {!!((kind === 'issues' || kind === 'timers') && detail.materials?.length) && (
+      {!!(kind === 'issues' && detail.materials?.length) && (
         <>
           <h2>材料</h2>
           <ul>
