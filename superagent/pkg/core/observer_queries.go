@@ -5,8 +5,8 @@ import (
 	"database/sql"
 )
 
-type observerHealth struct {
-	Status        string         `json:"status"`
+type CoreStatus struct {
+	Status        string         `json:"status" enum:"ready,unavailable"`
 	Ingress       string         `json:"ingress"`
 	SchemaVersion int            `json:"schemaVersion"`
 	Router        string         `json:"router"`
@@ -14,11 +14,12 @@ type observerHealth struct {
 	IssueStates   map[string]int `json:"issueStates"`
 	EventStates   map[string]int `json:"eventStates"`
 	OutboxStates  map[string]int `json:"outboxStates"`
+	TimerStates   map[string]int `json:"timerStates"`
 	UnknownStops  int            `json:"unknownStops"`
 }
 
-func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
-	health := observerHealth{Status: "ready", Ingress: "ready", SchemaVersion: schemaVersion}
+func (s *Store) observerHealth(ctx context.Context) (CoreStatus, error) {
+	health := CoreStatus{Status: "ready", Ingress: "ready", SchemaVersion: schemaVersion}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return health, storageError()
@@ -39,6 +40,7 @@ func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
 		{&health.IssueStates, `SELECT json_extract(body,'$.status') AS state,count(*) FROM issues GROUP BY state`},
 		{&health.EventStates, `SELECT status,count(*) FROM internal_events GROUP BY status`},
 		{&health.OutboxStates, `SELECT status AS state,count(*) FROM outbox GROUP BY status`},
+		{&health.TimerStates, `SELECT ` + timerStatus + ` AS state,count(*) FROM scheduled_tasks GROUP BY state`},
 	} {
 		*group.counts, err = observerCounts(ctx, tx, group.query)
 		if err != nil {

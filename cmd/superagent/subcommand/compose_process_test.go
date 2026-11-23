@@ -175,11 +175,21 @@ func runComposeHTTPFixture(dir, name string) int {
 	}
 	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/observer/health":
+		case "/readyz", "/v1/observer/health":
 			w.WriteHeader(http.StatusOK)
 		case "/status":
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintln(w, `{"source":"github","notifications":{"state":"stale","lastError":"github_notifications_request_failed","nextAttemptAt":"2026-11-22T12:00:00Z"},"repositories":{}}`)
+			mode, _ := os.ReadFile(filepath.Join(dir, "github-status-mode"))
+			switch string(mode) {
+			case "wait":
+				<-r.Context().Done()
+			case "malformed":
+				fmt.Fprintln(w, `{"source":"github","private":"fixture-private-github-status"}`)
+			case "ready":
+				fmt.Fprintln(w, `{"source":"github","notifications":{"state":"ready"},"repositories":{}}`)
+			default:
+				fmt.Fprintln(w, `{"source":"github","notifications":{"state":"stale","lastError":"fixture-private-github-status","nextAttemptAt":"2026-11-22T12:00:00Z"},"repositories":{}}`)
+			}
 		case "/v1/channel/messages":
 			composeFixtureAdmission(dir, w, r)
 		default:
@@ -191,7 +201,7 @@ func runComposeHTTPFixture(dir, name string) int {
 	origin := "http://" + listener.Addr().String()
 	switch name {
 	case "github":
-		if os.Getenv("TEST_COMPOSE_HOLD_GITHUB_STARTUP") == "" {
+		if os.Getenv("TEST_COMPOSE_HOLD_GITHUB_STARTUP") == "" || awaitComposeFile(ctx, filepath.Join(dir, "github-startup-release")) {
 			fmt.Printf("{\"status\":\"starting\",\"statusEndpoint\":%q}\n", origin)
 		}
 	case "core":
@@ -426,6 +436,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		require.DirExists(t, filepath.Join(dir, "massd-data"))
 		require.NotContains(t, readComposeFile(t, first.stdout), "massdEndpoint")
 		require.NoDirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
+		checkStackStatus(t, startup.Endpoint, "ready", "ready", "disabled", "disabled")
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, startup.Endpoint+"/massd/readyz", http.NoBody)
 		require.NoError(t, err)
 		response, err := (&http.Client{Timeout: time.Second}).Do(req)
@@ -650,6 +661,10 @@ func TestComposeProcessTriggerFailureIsolated(t *testing.T) {
 	dir := t.TempDir()
 	p := startComposeFixture(t, dir, composeFixtureConfig(t, dir, "127.0.0.1:0", true, true))
 	startup := p.startup(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "consumer-ready"), nil, 0o600))
+	require.Eventually(t, func() bool {
+		return strings.Contains(composeHTTPBody(t, startup.TriggerEndpoints["dws"]+"/status"), `"connection":"ready"`)
+	}, 5*time.Second, 20*time.Millisecond)
 	github := awaitComposeEvent(t, dir, "github:start")
 	require.NoError(t, syscall.Kill(github.PID, syscall.SIGTERM))
 	require.Eventually(t, func() bool {
@@ -657,8 +672,8 @@ func TestComposeProcessTriggerFailureIsolated(t *testing.T) {
 		return strings.Contains(string(logs), `"component":"triggers.github"`)
 	}, 5*time.Second, 20*time.Millisecond)
 	require.NoError(t, p.cmd.Process.Signal(syscall.Signal(0)))
-	require.Contains(t, composeHTTPBody(t, startup.TriggerEndpoints["dws"]+"/status"), `"connection":"connecting"`)
-	composeHTTPBody(t, startup.Endpoint+"/v1/observer/health")
+	checkStackStatus(t, startup.Endpoint, "degraded", "ready", "unavailable", "ready")
+	require.JSONEq(t, `{"status":"ready"}`, composeHTTPBody(t, startup.Endpoint+"/readyz"))
 	require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, p.wait(t), readComposeFile(t, p.logs))
 }

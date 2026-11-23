@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -48,6 +49,8 @@ type Config struct {
 	// ObserverOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
 	ObserverOTLPEndpoint string               `mapstructure:"-"`
 	ObserverTrace        *ObserverTraceConfig `mapstructure:"observerTrace"`
+	// ComposeTriggerStatus reads Trigger observations from the local supervisor.
+	ComposeTriggerStatus func(context.Context) TriggerStatuses `mapstructure:"-"`
 }
 
 func LoadConfig(path string) (Config, error) {

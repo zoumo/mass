@@ -13,12 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zoumo/mass/massd"
 )
 
 type Server struct {
+	admitting                    atomic.Bool
 	bindingOperations            sync.Map
 	sessionInputs                sync.Map
 	internalEventDispatchRetries sync.Map
@@ -134,6 +136,7 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	s.observerLife, s.observerCancel = context.WithCancel(context.Background())
 	routes := s.newHTTPAPI()
 	s.http = &http.Server{Handler: s.guardHTTP(routes.router), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	s.admitting.Store(true)
 	return s, nil
 }
 func (s *Server) Endpoint() string { return "http://" + s.listener.Addr().String() }
@@ -146,6 +149,7 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) (result error) {
+	s.admitting.Store(false)
 	if s.embeddedMassd != nil {
 		// Stop admitting WebSocket work while Core drains its own calls.
 		s.embeddedMassd.Handler().CloseExternalAdmission()
@@ -204,7 +208,7 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 		}
 		if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, MassdMountPath+"/") {
 			// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
-			s.massdHTTP.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
