@@ -3,7 +3,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test'
 
 const audit = 'http://127.0.0.1:' + (process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795')
 const standard = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794')
-type Message = { id: string, sourceMessageId: string, echo?: { match: { outboxId: string } } }
+type Message = { id: string, sourceMessageId: string }
 type InternalEvent = {
   event_id: string, kind: string, status: string, topicId?: string, sender: { kind: string }, recipient: { kind: string },
   createdAt: string, sentAt?: string, body: string, returnedEventId?: string
@@ -118,16 +118,12 @@ test('direct, pending, ignored, echo and channel acknowledgements stop at their 
   const replies = graph.locator('.path-outbox')
   await expect(replies.getByRole('heading')).toContainText('渠道回执 · DWS')
   await replies.getByText('渠道已发送').click()
-  await expect(replies).toContainText('observer-actual-message')
+  await expect(replies).toContainText('observer-send-task')
 
   const ignored = await findMessage(request, standard, 'observer-routing')
   await page.goto(standard + '/observer/?perspective=message&id=' + ignored.id)
   await expect(graph.getByText('已忽略 · 原因未记录', { exact: true })).toBeVisible()
-  const echo = await findMessage(request, standard, 'observer-actual-message')
-  await page.goto(standard + '/observer/?perspective=message&id=' + echo.id)
-  await expect(graph.getByText('回声 · 自身回声')).toBeVisible()
-  await expect(graph.getByRole('link', { name: '查看匹配回执' })).toHaveAttribute('href', new RegExp(echo.echo!.match.outboxId))
-  await expect(graph.locator('[data-event-id], .path-router, .path-topic')).toHaveCount(0)
+
 })
 
 

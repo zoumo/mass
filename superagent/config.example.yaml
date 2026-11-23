@@ -1,4 +1,4 @@
-# Defaults to this directory beside the YAML file. Core upgrades schema 24 to 25 on startup.
+# Defaults to this directory beside the YAML file. Core upgrades schema 24 or 25 to 26 on startup.
 # Use an empty directory for a fresh install or when moving from schema 23 or earlier.
 dataDir: ./superagent-core-data
 # Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
@@ -15,6 +15,7 @@ sources:
     # instanceId: collector-1  # match the Trigger for channel replies
     # outboxConsumer: true  # select one sender when the account has multiple instances
     tokenFile: ./source.token
+    threadKeyPrefixes: ["dws:"]
 # Optional SQLite main-database page budget; zero means unlimited.
 storageMaxPages: 0
 

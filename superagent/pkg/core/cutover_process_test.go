@@ -46,7 +46,7 @@ func assertStartupQueryIndexes(t *testing.T, db *sql.DB, want int) {
 	require.Equal(t, want, count)
 }
 
-func TestCutoverSchema25InstallsStartupQueryIndexes(t *testing.T) {
+func TestCutoverInstallsStartupQueryIndexes(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
 	message := submit(t, p, f, input("retained-before-index-install"))
@@ -134,10 +134,10 @@ PRAGMA user_version=24;`, topic.ID, legacy.ID)
 
 	write(t, f.config, string(config))
 	// Keep a SQLite connection open until after restart so the main-file
-	// header can still be v24 when SQLite reads the committed v25 WAL.
+	// header can still be v24 when SQLite reads the committed v26 WAL.
 	p = f.start()
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&liveVersion))
-	require.Equal(t, 25, liveVersion)
+	require.Equal(t, 26, liveVersion)
 	assertStartupQueryIndexes(t, db, 5)
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&count))
 	require.Equal(t, 9, count)
@@ -187,7 +187,7 @@ func TestCutoverRejectsUnsupportedWALVersion(t *testing.T) {
 	require.NoError(t, err)
 	header, err := os.ReadFile(filepath.Join(f.data, "core.sqlite"))
 	require.NoError(t, err)
-	require.EqualValues(t, 25, encodingbinary.BigEndian.Uint32(header[60:64]))
+	require.EqualValues(t, 26, encodingbinary.BigEndian.Uint32(header[60:64]))
 	f.fails("unsupported")
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
@@ -202,7 +202,7 @@ func assertCutoverSchema(t *testing.T, path string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 25, version)
+	require.Equal(t, 26, version)
 	assertStartupQueryIndexes(t, db, 5)
 	check := func(query string, expected []string) {
 		rows, err := db.QueryContext(t.Context(), query)
@@ -259,9 +259,6 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	f.executable = coreExe
 	f.configure(0, "account")
 	configureOutboxSource(t, f)
-	cfg, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	write(t, f.config, strings.Replace(string(cfg), "    outboxConsumer: true", "    outboxConsumer: true\n    threadKeyPrefixes: ['dws:']", 1))
 	f.execution(&routeBoundary{url: massd})
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
@@ -364,8 +361,6 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 		`{"success":true,"openTaskId":%q,"result":{"sendStatus":"SUCCESS","openConversationId":%q,"openMessageId":%q}}`, task, conversation, questionNative))
 	require.Eventually(t, func() bool { return readOutbox(t, p, reply.ID).Status == "sent" }, 8*time.Second, 50*time.Millisecond)
 	sent := readOutbox(t, p, reply.ID)
-	require.Empty(t, sent.Receipt.MessageID)
-	require.Empty(t, sent.Receipt.ConversationID)
 	require.Equal(t, task, sent.Receipt.TaskID)
 	evidence, err := filepath.Glob(filepath.Join(f.dir, "dws.sqlite.dws-sends", "*.json"))
 	require.NoError(t, err)

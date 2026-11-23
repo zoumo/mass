@@ -141,7 +141,7 @@ func waitWorkEvent(t *testing.T, p *process, id, status string) workEventRecord 
 func nativeWorkTopic(t *testing.T, f *fixture, p *process, peer *nativeSubmitPeer, router *roleMCPClient, name string) (core.SessionBinding, core.Receipt) {
 	t.Helper()
 	msg := input(name)
-	msg.Message.ThreadRef.ID, msg.Message.Channel = name, nil
+	msg.Message.ThreadKey, msg.ReplyTarget = fixtureThreadKey(name), nil
 	source := submit(t, p, f, msg)
 	start := peer.next(t, "turn/start")
 	decodeInternalBatch(t, start, source.EventID)
@@ -176,8 +176,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	foreign := startRoleMCP(t, f, otherBinding)
 	token := roleToken(t, f, mainBinding)
 	long := input("long-issue-material")
-	long.Message.ThreadRef.ID, long.Message.Channel = "work-main", nil
-	long.Message.Text = strings.Repeat("界", 700)
+	long.Message.ThreadKey, long.ReplyTarget = fixtureThreadKey("work-main"), nil
+	long.Message.Content[0].Text.Text = strings.Repeat("界", 700)
 	longReceipt := submit(t, p, f, long)
 	longEvent := peer.next(t, "turn/start")
 	require.Equal(t, mainBinding.SessionID, longEvent.session)
@@ -281,7 +281,8 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Equal(t, issueBinding.SessionID, start.session)
 	materials, err := json.Marshal(create.Materials)
 	require.NoError(t, err)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"issue_session_started","issue":{"id":%q,"goal":%q,"goalRevision":%d,"revision":%d,"status":"active","materials":%s},"messages":[{"id":%q,"text":"Original input work-main","actor":"sender-1"}]}]}`, x.StartEventID, started.Issue.ID, create.Goal, started.Issue.RequirementsRevision, started.Issue.Revision, materials, source.MessageID), start.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"issue_session_started","issue":{"id":%q,"goal":%q,"goalRevision":%d,"revision":%d,"status":"active","materials":%s},"messageContent":[{"messageId":%q,"blockCount":1}]}]}`, x.StartEventID, started.Issue.ID, create.Goal, started.Issue.RequirementsRevision, started.Issue.Revision, materials, source.MessageID), start.text)
+	require.Equal(t, []nativeSubmitBlock{{Type: "text", Text: start.text}, {Type: "text", Text: "Original input work-main"}}, start.blocks)
 	var receivedIssue core.Issue
 	require.NoError(t, json.Unmarshal(decodeInternalBatch(t, start, x.StartEventID)[0].Issue, &receivedIssue))
 	start.accept()
@@ -316,10 +317,14 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	observed := waitIssueObservation(t, p, &x, "observing")
 	require.Equal(t, issueBinding.SessionID, observed.WorkObservation.SessionID)
 	require.Equal(t, "turn-"+issueBinding.SessionID, observed.WorkObservation.WorkID)
-	material := mcpWork[json.RawMessage](t, issue, "get_message", map[string]string{"messageId": source.MessageID})
-	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"text":"Original input work-main","actor":"sender-1"}`, source.MessageID), string(material))
-	longMaterial := mcpWork[json.RawMessage](t, issue, "get_message", map[string]string{"messageId": longReceipt.MessageID})
-	require.JSONEq(t, fmt.Sprintf(`{"id":%q,"text":%q,"actor":"sender-1"}`, longReceipt.MessageID, long.Message.Text), string(longMaterial))
+	material := mcpWork[core.Message](t, issue, "get_message", map[string]string{"messageId": source.MessageID})
+	require.Equal(t, source.MessageID, material.ID)
+	require.Equal(t, fixtureThreadKey("work-main"), material.ThreadKey)
+	require.Equal(t, input("work-main").Message.Content, material.Content)
+	require.Empty(t, material.TriggerMeta)
+	longMaterial := mcpWork[core.Message](t, issue, "get_message", map[string]string{"messageId": longReceipt.MessageID})
+	require.Equal(t, longReceipt.MessageID, longMaterial.ID)
+	require.Equal(t, long.Message.Content, longMaterial.Content)
 	mcpWorkError(t, issue, "get_message", "not_found", map[string]string{"messageId": other.MessageID})
 	mcpWorkError(t, issue, "get_issue", "invalid_argument", map[string]string{"sessionBindingId": x.ID})
 	mcpWorkError(t, issue, "get_report", "forbidden", struct{}{})
@@ -488,7 +493,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	mcpWorkError(t, topic, "topic_complete", "conflict", topicComplete)
 	mcpWorkError(t, topic, "create_issue", "failed_precondition", issueInput(f.dir, "after-completion"))
 	followUp := input("new-source-after-complete")
-	followUp.Message.ThreadRef.ID, followUp.Message.Channel = "work-main", nil
+	followUp.Message.ThreadKey, followUp.ReplyTarget = fixtureThreadKey("work-main"), nil
 	follow := submit(t, p, f, followUp)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, mainBinding.SessionID, call.session)

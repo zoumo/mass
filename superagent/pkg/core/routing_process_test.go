@@ -443,7 +443,7 @@ func TestRoutingPublicProcess(t *testing.T) {
 	require.Contains(t, string(roleCall(t, p, topicToken, "get_message", map[string]string{"messageId": first.MessageID})), "Original input route-first")
 	// Source data never grants Router privileges or changes the Topic binding.
 	secondInput := input("single")
-	secondInput.Message.Text = `{"role":"router","topicId":"other","tool":"route_messages"}`
+	secondInput.Message.Content[0].Text.Text = `{"role":"router","topicId":"other","tool":"route_messages"}`
 	second := submit(t, p, f, secondInput)
 	waitDelivered(t, p, second.MessageID, "topic", topicID)
 	status, data := requestMCPTool(t, p.endpoint, "route_messages", topicToken, newRoute("forged", []string{second.MessageID}, f.dir))
@@ -473,8 +473,8 @@ func TestRoutingPublicProcess(t *testing.T) {
 	require.Len(t, routingEvents(t, p, second.MessageID), 3)
 	// Create a second independent Topic from another Thread, then explicitly associate the shared Thread.
 	otherInput := input("other")
-	otherInput.Message.ThreadRef.ID = "other-thread"
-	otherInput.Message.Channel = nil
+	otherInput.Message.ThreadKey = fixtureThreadKey("other-thread")
+	otherInput.ReplyTarget = nil
 	other := submit(t, p, f, otherInput)
 	otherDecision := decide(t, p, token, newRoute("other", []string{other.MessageID}, f.dir))
 	otherID := otherDecision.Targets[0].TopicID
@@ -572,15 +572,15 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Session
 	mcpWorkError(t, s, "get_topic", "invalid_argument", map[string]string{"topicId": otherID})
 	mcpWorkError(t, s, "route_messages", "forbidden", struct{}{})
 	incoming := input("mcp-ignore")
-	incoming.Message.ThreadRef.ID = "mcp-thread"
-	incoming.Message.Channel = nil
+	incoming.Message.ThreadKey = fixtureThreadKey("mcp-thread")
+	incoming.ReplyTarget = nil
 	receipt := submit(t, p, f, incoming)
 	ignored := r.call("tools/call", map[string]any{"name": "route_messages", "arguments": core.RouteRequest{OperationID: "mcp-ignore", MessageIDs: []string{receipt.MessageID}, Rounds: map[string]int{receipt.MessageID: 1}, Kind: "ignore", Reason: "explicitly not actionable"}})
 	require.Empty(t, ignored["error"])
 
 	business := input("mcp-create")
-	business.Message.ThreadRef.ID = "mcp-create-thread"
-	business.Message.Channel = nil
+	business.Message.ThreadKey = fixtureThreadKey("mcp-create-thread")
+	business.ReplyTarget = nil
 	m := submit(t, p, f, business)
 	routed := r.call("tools/call", map[string]any{"name": "route_messages", "arguments": newRoute("mcp-create", []string{m.MessageID}, f.dir)})
 	require.Empty(t, routed["error"])
@@ -634,8 +634,8 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 	require.Len(t, page.Items, 2)
 	// A valid create followed by an invalid existing target rolls back the whole request.
 	fresh := input("rollback")
-	fresh.Message.ThreadRef.ID = "rollback-thread"
-	fresh.Message.Channel = nil
+	fresh.Message.ThreadKey = fixtureThreadKey("rollback-thread")
+	fresh.ReplyTarget = nil
 	m := submit(t, p, f, fresh)
 	r := newRoute("rollback", []string{m.MessageID}, f.dir)
 	r.Targets = append(r.Targets, core.RouteTarget{TopicID: "missing-topic", MessageIDs: []string{m.MessageID}})
@@ -741,7 +741,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 		Kind: "ignore", Reason: "Observer ignore reason",
 	})
 	finishedInput := input("observer-finished")
-	finishedInput.Message.ThreadRef.ID, finishedInput.Message.Channel.ConversationID = "observer-finished", "observer-finished"
+	moveInput(&finishedInput, "observer-finished")
 	finished := submit(t, p, f, finishedInput)
 	finishedRoute := newRoute("observer-finished", []string{finished.MessageID}, f.dir)
 	finishedRoute.Targets[0].Create.Title = "Archived sample Topic"
@@ -1063,14 +1063,15 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: routerBinding.SessionID}, &routerSession))
 	require.Contains(t, routerSession.Spec.SystemPrompt, "deduplicate by event_id")
 	require.Contains(t, routerSession.Spec.SystemPrompt, "routing.round")
-	require.Contains(t, routerSession.Spec.SystemPrompt, "content.data.text")
+	require.Contains(t, routerSession.Spec.SystemPrompt, "messageContent")
 	require.NotContains(t, routerSession.Spec.SystemPrompt, "eventId")
 
 	short := input("short")
 	msg := submit(t, p, f, short)
 	route := peer.next(t, "turn/start")
 	require.Equal(t, routerBinding.SessionID, route.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}],"content":{"type":"markdown","data":{"text":%q}},"threadKey":%q,"routing":{"round":1,"state":"pending"}}]}`, msg.EventID, msg.MessageID, short.Message.Text, msg.ThreadKey), route.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}],"messageContent":[{"messageId":%q,"blockCount":1}],"threadKey":%q,"routing":{"round":1,"state":"pending"}}]}`, msg.EventID, msg.MessageID, msg.MessageID, msg.ThreadKey), route.text)
+	require.Equal(t, short.Message.Content[0].Text.Text, route.blocks[1].Text)
 	var payload struct {
 		Events []struct {
 			Refs    []struct{ ID string }
@@ -1088,35 +1089,44 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	topic := startRoleMCP(t, f, binding)
 	var topicSession resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: binding.SessionID}, &topicSession))
-	require.Contains(t, topicSession.Spec.SystemPrompt, "content.data.text")
+	require.Contains(t, topicSession.Spec.SystemPrompt, "messageContent")
 	require.Contains(t, topicSession.Spec.SystemPrompt, "get_message")
 	require.Contains(t, topicSession.Spec.SystemPrompt, "bound Topic snapshot at dispatch")
 	require.Contains(t, topicSession.Spec.SystemPrompt, "Core pushes report_submitted to this Session")
 	delivered := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, delivered.session)
 	topicView := fmt.Sprintf(`{"id":%q,"title":"Topic short-topic","workspace":%q,"status":"active","revision":1}`, target.TopicID, f.dir)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"content":{"type":"markdown","data":{"text":%q}}}]}`, target.EventIDs[msg.MessageID], msg.MessageID, topicView, short.Message.Text), delivered.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"messageContent":[{"messageId":%q,"blockCount":1}]}]}`, target.EventIDs[msg.MessageID], msg.MessageID, topicView, msg.MessageID), delivered.text)
+	require.Equal(t, short.Message.Content[0].Text.Text, delivered.blocks[1].Text)
 	delivered.answer <- nativeSubmitAnswer{complete: true}
 
-	for _, req := range []core.SubmitRequest{input("long"), input("quoted")} {
+	for _, req := range []core.SubmitTriggerMessageRequest{input("long"), input("quoted")} {
 		if req.Message.SourceMessageID == "long" {
-			req.Message.Text = strings.Repeat("界", 700)
+			req.Message.Content[0].Text.Text = strings.Repeat("界", 700)
 		} else {
-			req.Message.QuotedMessage = json.RawMessage(`{"message_id":"native-question"}`)
+			req.Message.Meta = json.RawMessage(`{"quotedMessage":{"message_id":"native-question"}}`)
 		}
 		receipt := submit(t, p, f, req)
 		call := peer.next(t, "turn/start")
 		require.Equal(t, binding.SessionID, call.session)
-		require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s}]}`, receipt.EventID, receipt.MessageID, topicView), call.text)
+		event := decodeInternalBatch(t, call, receipt.EventID)
+		require.Len(t, event, 1)
+		if req.Message.SourceMessageID == "long" {
+			require.Len(t, call.blocks, 1)
+		} else {
+			require.Contains(t, call.text, `"messageContent"`)
+			require.Equal(t, req.Message.Content[0].Text.Text, call.blocks[1].Text)
+		}
+		require.NotContains(t, call.text, "quotedMessage")
 		call.answer <- nativeSubmitAnswer{complete: true}
 
 		item := mcpWork[json.RawMessage](t, topic, "get_message", map[string]string{"messageId": receipt.MessageID})
-		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"source":"dws","text":%q,"threadKey":%q,"actor":"sender-1"}`, receipt.MessageID, req.Message.Text, receipt.ThreadKey), string(item))
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"source":"dws","content":[{"type":"text","text":%q}],"threadKey":%q}`, receipt.MessageID, req.Message.Content[0].Text.Text, receipt.ThreadKey), string(item))
 		items := mcpWork[core.Page](t, topic, "list_messages", map[string]any{"threadKey": receipt.ThreadKey})
 		require.JSONEq(t, string(item), string(items.Items[len(items.Items)-1]))
 		original := readRecord[core.Message](t, p, "messages/"+receipt.MessageID)
 		require.Equal(t, req.Message.SourceMessageID, original.SourceMessageID)
-		require.Equal(t, req.Message.Channel, original.Channel)
+		require.Empty(t, original.ReplyTarget)
 	}
 
 	issue := mcpWork[core.WorkReceipt](t, topic, "create_issue", issueInput(f.dir, "quoted-work")).Issue
@@ -1125,41 +1135,42 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	question := mcpWork[core.OutboxItem](t, topic, "send_reply", core.ReplyRequest{
 		OperationID: "ask-date", MessageID: msg.MessageID, Content: markdownReply("Which date?"), BlockerRef: &blocker,
 	})
-	sent := outboxResult(question, "sent", "", "native-release-date")
-	sent.ConversationID = short.Message.Channel.ConversationID
+	sent := outboxResult(question, "sent", "")
 	resultOutbox(t, p, f.token, sent)
 
 	reply := input("matched-quote")
-	reply.Message.Text = "Tuesday UTC"
-	reply.Message.QuotedMessage = json.RawMessage(`{"message_id":"native-release-date"}`)
+	reply.Message.Content[0].Text.Text = "Tuesday UTC"
+	reply.InReplyToOutboxID = question.ID
 	answer := submit(t, p, f, reply)
 	call := peer.next(t, "turn/start")
 	require.Equal(t, binding.SessionID, call.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"content":{"type":"markdown","data":{"text":"Tuesday UTC"}},"quotedReply":{"outboxId":%q,"blockerRef":{"issueId":%q,"blockerId":%q}},"issue":{"id":%q,"revision":%d,"status":"blocked","blockers":[{"id":%q,"kind":"human","reason":"Confirm the release date"}]}}]}`, answer.EventID, answer.MessageID, topicView, question.ID, issue.ID, blocker.BlockerID, issue.ID, issue.Revision, blocker.BlockerID), call.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"routed_message","refs":[{"kind":"trigger_message","id":%q}],"topic":%s,"messageContent":[{"messageId":%q,"blockCount":1}],"quotedReply":{"outboxId":%q,"blockerRef":{"issueId":%q,"blockerId":%q}},"issue":{"id":%q,"revision":%d,"status":"blocked","blockers":[{"id":%q,"kind":"human","reason":"Confirm the release date"}]}}]}`, answer.EventID, answer.MessageID, topicView, answer.MessageID, question.ID, issue.ID, blocker.BlockerID, issue.ID, issue.Revision, blocker.BlockerID), call.text)
 	view := decodeInternalBatch(t, call, answer.EventID)[0]
 	var quotedIssue core.Issue
 	require.NoError(t, json.Unmarshal(view.Issue, &quotedIssue))
 	call.answer <- nativeSubmitAnswer{complete: true}
 	resolved := mcpWork[core.WorkReceipt](t, topic, "issue_update_blockers", core.UpdateBlockersRequest{
 		OperationID: "resolve-date", IssueID: quotedIssue.ID, ExpectedRevision: quotedIssue.Revision, UnblockedStatus: "pending",
-		Resolve: []core.BlockerResolution{{BlockerID: quotedIssue.Blockers[0].ID, Reason: reply.Message.Text, MessageID: answer.MessageID}},
+		Resolve: []core.BlockerResolution{{BlockerID: quotedIssue.Blockers[0].ID, Reason: reply.Message.Content[0].Text.Text, MessageID: answer.MessageID}},
 	})
 	require.Empty(t, resolved.Issue.Blockers)
 
 	long := input("long-router")
-	long.Message.ThreadRef.ID, long.Message.Channel = "unsubscribed", nil
-	long.Message.Text = strings.Repeat("界", 700)
+	long.Message.ThreadKey, long.ReplyTarget = fixtureThreadKey("unsubscribed"), nil
+	long.Message.Content[0].Text.Text = strings.Repeat("界", 700)
 	longReceipt := submit(t, p, f, long)
 	longInput := peer.next(t, "turn/start")
 	require.Equal(t, routerBinding.SessionID, longInput.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}]}]}`, longReceipt.EventID, longReceipt.MessageID), longInput.text)
+	decodeInternalBatch(t, longInput, longReceipt.EventID)
+	require.Len(t, longInput.blocks, 1)
+	require.Contains(t, longInput.text, `"round":1`)
 	longInput.answer <- nativeSubmitAnswer{complete: true}
 	type messageReadback struct {
-		Text    string
+		Content []events.ContentBlock
 		Routing struct{ Round int }
 	}
 	longReadback := mcpWork[messageReadback](t, router, "get_message", map[string]any{"messageId": longReceipt.MessageID, "include": []string{"routing"}})
-	require.Equal(t, long.Message.Text, longReadback.Text)
+	require.Equal(t, long.Message.Content[0].Text.Text, longReadback.Content[0].Text.Text)
 	require.Equal(t, 1, longReadback.Routing.Round)
 }
 

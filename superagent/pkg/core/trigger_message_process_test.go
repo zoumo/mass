@@ -20,7 +20,7 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	const thread = "opaque/Case%2f:入口"
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	config = append(config, "    threadKeyPrefixes: ['opaque/']\n"...)
+	config = []byte(strings.Replace(string(config), "['dws:']", "['opaque/']", 1))
 	tokens := map[string]string{"dws": f.token}
 	for _, source := range []string{"custom", "github", "antcode"} {
 		tokens[source] = strings.Repeat(source, 16)

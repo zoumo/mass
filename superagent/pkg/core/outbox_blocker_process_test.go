@@ -1,8 +1,6 @@
 package core_test
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"testing"
 
@@ -62,31 +60,28 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *t
 		core.ReplyRequest{OperationID: "router-blocker", MessageID: source.MessageID, Content: markdownReply("Ask"), BlockerRef: region.BlockerRef})
 	errorCode(t, code, raw, http.StatusForbidden, "forbidden")
 
-	conv := origin.Message.Channel.ConversationID
-	markSent := func(item core.OutboxItem, native string) {
-		cmd := outboxResult(item, "sent", "", native)
-		cmd.ConversationID = conv
-		resultOutbox(t, p, f.token, cmd)
+	markSent := func(item core.OutboxItem) {
+		resultOutbox(t, p, f.token, outboxResult(item, "sent", ""))
 	}
-	markSent(date, "native-date")
-	markSent(owner, "native-owner")
-	quote := func(id, quoteConversation, native, text string) core.SubmitRequest {
+	markSent(date)
+	markSent(owner)
+	quote := func(id, outboxID, text string) core.SubmitTriggerMessageRequest {
 		msg := input(id)
-		msg.Message.Text = text
-		if native != "" {
-			msg.Message.QuotedMessage = json.RawMessage(fmt.Sprintf(`{"conversation_id":%q,"message_id":%q}`, quoteConversation, native))
-		}
+		msg.Message.Content[0].Text.Text = text
+		msg.InReplyToOutboxID = outboxID
 		return msg
 	}
 	match := func(msg core.Receipt) quotedReplyRecord {
 		return roleWork[quotedReplyRecord](t, p, role, "get_message", map[string]string{"messageId": msg.MessageID})
 	}
 
-	ambiguous := submit(t, p, f, quote("ambiguous", "", "", "Yes"))
+	ambiguous := submit(t, p, f, quote("ambiguous", "", "Yes"))
 	require.Nil(t, match(ambiguous).QuotedReply)
-	partial := submit(t, p, f, quote("partial-region", conv, "native-region", "Use east region"))
-	require.Nil(t, match(partial).QuotedReply)
-	markSent(region, "native-region")
+	partialInput := quote("partial-region", region.ID, "Use east region")
+	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", f.token, partialInput)
+	errorCode(t, code, raw, http.StatusConflict, "failed_precondition")
+	markSent(region)
+	partial := submit(t, p, f, partialInput)
 	require.NotNil(t, match(partial).QuotedReply)
 	require.Equal(t, region.ID, match(partial).QuotedReply.OutboxID)
 	require.Equal(t, *region.BlockerRef, match(partial).QuotedReply.BlockerRef)
@@ -94,15 +89,13 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *t
 	require.Len(t, list.Items, 3)
 	require.Contains(t, string(list.Items[2]), region.ID)
 
-	wrongConversation := submit(t, p, f, quote("wrong-conversation", "elsewhere", "native-date", "Date"))
-	require.Nil(t, match(wrongConversation).QuotedReply)
-	foreign := quote("foreign-account", conv, "native-date", "Date")
-	foreign.Message.Source, foreign.Message.AccountID, foreign.Message.ThreadRef.Source = "other", "account-2", "other"
+	wrongThread := quote("wrong-thread", date.ID, "Date")
+	moveInput(&wrongThread, "elsewhere")
+	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", f.token, wrongThread)
+	errorCode(t, code, raw, http.StatusConflict, "failed_precondition")
+	foreign := quote("foreign-account", date.ID, "Date")
 	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", otherSource, foreign)
-	require.Equal(t, http.StatusOK, code, "%s", raw)
-	var foreignReceipt core.Receipt
-	require.NoError(t, json.Unmarshal(raw, &foreignReceipt))
-	require.Nil(t, readRecord[quotedReplyRecord](t, p, "messages/"+foreignReceipt.MessageID).QuotedReply)
+	errorCode(t, code, raw, http.StatusConflict, "failed_precondition")
 	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
 	require.Equal(t, b, readRecord[core.Issue](t, p, "issues/"+b.ID))
 	require.Empty(t, workEvents(t, p, "issue_session_update"))
@@ -127,7 +120,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *t
 	require.Empty(t, resolved.NotificationEventID)
 	a = resolved.Issue
 
-	final := submit(t, p, f, quote("date-answer", conv, "native-date", "Tuesday UTC"))
+	final := submit(t, p, f, quote("date-answer", date.ID, "Tuesday UTC"))
 	waitRouteStatus(t, p, final.EventID, "sent")
 	require.Equal(t, *date.BlockerRef, match(final).QuotedReply.BlockerRef)
 	continueWork := resolve("resolve-date-and-continue", a, a.Blockers[0].ID, final)
@@ -160,7 +153,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *t
 
 	reblocked := add(continued.Issue, "new-region-blocker", human("Confirm the region"))
 	require.Equal(t, "mass-t1-i1-b3", reblocked.Blockers[0].ID)
-	late := submit(t, p, f, quote("late-region", conv, "native-region", "The region is still east"))
+	late := submit(t, p, f, quote("late-region", region.ID, "The region is still east"))
 	require.Equal(t, *region.BlockerRef, match(late).QuotedReply.BlockerRef)
 	code, raw = requestMCPTool(t, p.endpoint, "issue_update_blockers", role,
 		resolve("late-is-old", reblocked, reblocked.Blockers[0].ID, late))

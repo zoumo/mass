@@ -15,7 +15,6 @@ type observerHealth struct {
 	EventStates   map[string]int `json:"eventStates"`
 	OutboxStates  map[string]int `json:"outboxStates"`
 	UnknownStops  int            `json:"unknownStops"`
-	UnknownEchoes int            `json:"unknownEchoes"`
 }
 
 func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
@@ -27,9 +26,8 @@ func (s *Store) observerHealth(ctx context.Context) (observerHealth, error) {
 	defer func() { _ = tx.Rollback() }()
 	err = tx.QueryRowContext(ctx, `SELECT
  COALESCE((SELECT state FROM session_bindings WHERE role='router' AND state<>'revoked'),'not_started'),
- (SELECT count(*) FROM session_bindings WHERE json_extract(body,'$.stop.workState')='unknown'),
- (SELECT count(*) FROM trigger_messages WHERE json_extract(body,'$.echo.status')='echo_unknown')`).
-		Scan(&health.Router, &health.UnknownStops, &health.UnknownEchoes)
+ (SELECT count(*) FROM session_bindings WHERE json_extract(body,'$.stop.workState')='unknown')`).
+		Scan(&health.Router, &health.UnknownStops)
 	if err != nil {
 		return health, storageError()
 	}
@@ -72,8 +70,8 @@ func observerCounts(ctx context.Context, tx *sql.Tx, query string) (map[string]i
 func observerListProjection(kind, full string) string {
 	switch kind {
 	case "messages":
-		return `json_set(json_remove(body,'$.content','$._meta','$.meta','$.quotedMessage','$.channel',
- '$.replyTarget','$.inReplyToOutboxId'),
+		return `json_set(json_remove(body,'$.content','$._meta',
+ '$.replyTarget','$.inReplyToOutboxId','$.legacyEchoStatus'),
  '$.text', substr(` + observerMessagePreview + `,1,240))`
 	case "outbox":
 		return `json_set(json_remove(` + full + `,'$.content'), '$.preview',
@@ -97,7 +95,6 @@ const observerMessagePreview = `coalesce(
  (SELECT value->>'$.text' FROM json_each(trigger_messages.body,'$.content')
   WHERE value->>'$.type'='text' AND trim(value->>'$.text',char(9,10,13,32))<>''
   ORDER BY key LIMIT 1),
- trigger_messages.body->>'$.text',
  (SELECT '['||group_concat(DISTINCT value->>'$.type')||']'
   FROM json_each(trigger_messages.body,'$.content')))`
 

@@ -30,13 +30,12 @@ type outboxState struct {
 
 type outboxItem struct {
 	outboxState
-	ID           string            `json:"id"`
-	Source       string            `json:"source"`
-	AccountID    string            `json:"accountId"`
-	Text         string            `json:"text"`
-	Content      outboxContent     `json:"content"`
-	ReplyTarget  json.RawMessage   `json:"replyTarget"`
-	LegacyTarget nativeReplyTarget `json:"channel"`
+	ID          string          `json:"id"`
+	Source      string          `json:"source"`
+	AccountID   string          `json:"accountId"`
+	Text        string          `json:"text"`
+	Content     outboxContent   `json:"content"`
+	ReplyTarget json.RawMessage `json:"replyTarget"`
 }
 
 type outboxContent struct {
@@ -139,8 +138,8 @@ func (e egress) scan(admit, drain context.Context) bool {
 }
 
 func (e egress) handle(admit, drain context.Context, item outboxItem) {
-	channel := item.LegacyTarget
-	if len(item.ReplyTarget) > 0 && json.Unmarshal(item.ReplyTarget, &channel) != nil {
+	var channel nativeReplyTarget
+	if json.Unmarshal(item.ReplyTarget, &channel) != nil {
 		channel = nativeReplyTarget{}
 	}
 	var taskID, retryAt string

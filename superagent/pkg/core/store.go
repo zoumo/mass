@@ -146,6 +146,7 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, storageError()
 	}
 	var evidence []legacyDWSSend
+	var migrated bool
 	switch {
 	case !hasHeader && version == 0 && app == 0:
 		// Put the schema identity in the main file before enabling WAL. Startup
@@ -164,6 +165,7 @@ DROP TABLE mcp_tool_calls;`); err != nil {
 			}
 		}
 		if version < schemaVersion {
+			migrated = true
 			evidence, err = migrateTriggerMessages(txCtx, tx)
 			if err != nil {
 				return nil, err
@@ -223,7 +225,7 @@ DROP TABLE mcp_tool_calls;`); err != nil {
 	if ctx.Err() != nil {
 		return nil, storageError()
 	}
-	if len(evidence) != 0 {
+	if migrated {
 		if err := exportLegacyDWSSends(c.DataDir, evidence); err != nil {
 			return nil, problem("unavailable", "cannot durably export migrated DWS send evidence: "+err.Error())
 		}
@@ -298,25 +300,7 @@ func (s *Store) Close() error {
 	return err
 }
 
-func (s *Store) Submit(ctx context.Context, source Source, r SubmitRequest) (Receipt, error) {
-	if strings.TrimSpace(r.OperationID) == "" {
-		return Receipt{}, problem("invalid_argument", "operationId is required")
-	}
-	if err := r.Message.validate(source); err != nil {
-		return Receipt{}, err
-	}
-	canonical, err := r.Message.canonical()
-	if err != nil {
-		return Receipt{}, problem("invalid_argument", "message cannot be encoded")
-	}
-	key := ThreadKey(r.Message.ThreadRef)
-	if (len(source.ThreadKeys) != 0 || len(source.ThreadKeyPrefixes) != 0) && !source.allowsThreadKey(key) {
-		return Receipt{}, problem("forbidden", "threadKey is outside the authenticated write scope")
-	}
-	return s.submitMessage(ctx, source, Message{MessageInput: r.Message, ThreadKey: key}, canonical, r.SelfSent && source.InstanceID != "")
-}
-
-func (s *Store) submitMessage(ctx context.Context, source Source, message Message, canonical []byte, selfSent bool) (result Receipt, retErr error) {
+func (s *Store) submitMessage(ctx context.Context, source Source, message Message, canonical []byte) (result Receipt, retErr error) {
 	ctx, finish := s.telemetry.startOperation(ctx, "message.admit", "")
 	defer func() {
 		outcome := "accepted"
@@ -332,7 +316,7 @@ func (s *Store) submitMessage(ctx context.Context, source Source, message Messag
 		return result, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err = admitTriggerMessage(ctx, tx, source, message, canonical, selfSent)
+	result, err = admitTriggerMessage(ctx, tx, source, message, canonical)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -350,7 +334,7 @@ func (s *Store) submitMessage(ctx context.Context, source Source, message Messag
 // admitTriggerMessage takes a validated input and its canonical form. Keeping
 // this inside the caller's transaction lets scheduled intake commit its firing
 // state with the same Message, Thread and delivery facts as channel intake.
-func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Message, canonical []byte, selfSent bool) (Receipt, error) {
+func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Message, canonical []byte) (Receipt, error) {
 	var result Receipt
 	var fingerprint, saved []byte
 	var stored Message
@@ -376,16 +360,8 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Messa
 
 	at := now()
 	m.ReceivedAt, m.Acceptance = at, "accepted"
-	if len(m.Content) == 0 {
-		m.Echo, err = classifyEcho(ctx, tx, m, selfSent)
-		if err != nil {
-			return result, err
-		}
-	}
-	if m.Echo == nil {
-		m.EventID = newID("evt")
-	}
-	if err := upsertThread(ctx, tx, m.ThreadKey, m.ThreadRef, at, at); err != nil {
+	m.EventID = newID("evt")
+	if err := upsertThread(ctx, tx, m.ThreadKey, at, at); err != nil {
 		return Receipt{}, err
 	}
 	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_key,accepted_at,canonical,body)
@@ -398,21 +374,14 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Messa
 	if err := messageAdmission.save(ctx, tx, m.ID, 0); err != nil {
 		return Receipt{}, err
 	}
-	if m.Echo == nil {
-		err = acceptRoute(ctx, tx, m, m.EventID, at)
-	}
-	return messageReceipt(m, false), err
+	return messageReceipt(m, false), acceptRoute(ctx, tx, m, m.EventID, at)
 }
 
 func messageReceipt(m Message, duplicate bool) Receipt {
-	result := Receipt{Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID, ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID}
-	if m.Echo != nil {
-		result.EchoStatus = m.Echo.Status
-		if m.Echo.Match != nil {
-			result.EchoStatus = "outbound_echo"
-		}
+	return Receipt{
+		Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID,
+		ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID, EchoStatus: m.LegacyEchoStatus,
 	}
-	return result
 }
 
 func (s *Store) channelMessageReceipt(ctx context.Context, source Source, nativeID string) (Receipt, error) {
@@ -429,15 +398,10 @@ func (s *Store) channelMessageReceipt(ctx context.Context, source Source, native
 	return messageReceipt(m, false), nil
 }
 
-func upsertThread(ctx context.Context, tx *sql.Tx, key string, ref ThreadRef, createdAt, lastMessageAt string) error {
-	if ref == (ThreadRef{}) {
-		// The existing columns require a pair, even for opaque Threads.
-		// An empty source cannot be a configured legacy source.
-		ref.ID = key
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO threads(key,source,native_id,created_at,last_message_at) VALUES(?,?,?,?,?)
+func upsertThread(ctx context.Context, tx *sql.Tx, key, createdAt, lastMessageAt string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO threads(key,source,native_id,created_at,last_message_at) VALUES(?,'',?,?,?)
  ON CONFLICT(key) DO UPDATE SET last_message_at=excluded.last_message_at WHERE excluded.last_message_at<>''`,
-		key, ref.Source, ref.ID, createdAt, lastMessageAt)
+		key, key, createdAt, lastMessageAt)
 	if err != nil {
 		return storageError()
 	}
@@ -487,7 +451,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		scopeID = binding.ID
 	}
 	if source != nil {
-		scopeID = ThreadKey(ThreadRef{Source: source.Source, ID: source.InstanceID})
+		scopeID = strings.ReplaceAll(url.PathEscape(source.Source), ":", "%3A") + ":" + strings.ReplaceAll(url.PathEscape(source.InstanceID), ":", "%3A")
 	}
 	var parentColumn, parent string
 	var relatedFilter string

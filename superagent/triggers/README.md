@@ -160,20 +160,11 @@ notification to resume tracking. See the [PR routing contract](../API.md#pull-re
 
 ## Replace deployed Triggers
 
-1. Record each Trigger's source, account, instance, and persistent paths.
-   Check status, pending Messages, permanent failures, and DWS Outbox tasks.
-2. Stop old Triggers gracefully. Verify the old DWS sender has exited before
-   starting a replacement for the account.
-3. Back up the stopped databases, DWS feedback state if enabled, and the old
-   configuration. Keep the identities and use state compatible with the new
-   release. Import legacy GitHub v2 JSON state into SQLite before switching.
-4. Run each standalone `check`, or start Compose to run its preflight. Query
-   each Trigger's status, verify a new receipt in Core, and check that pending
-   Messages resume delivery.
-
-For rollback, stop the replacement and verify the DWS sender exited. Reconcile
-queued Messages and DWS send results produced during the cutover. Restart the
-previous version with compatible state that preserves the reconciled progress.
+Follow the [coordinated Core and Trigger upgrade](../README.md#reuse-an-existing-core-data-directory)
+when moving an existing installation to schema 26. Keep all Trigger queue
+paths. Each adapter upgrades its historical queued Messages on replay and
+uses the original operation and source Message IDs. Import legacy GitHub v2
+JSON state into SQLite before switching.
 
 Run `make test-superagent` to exercise Core and the Triggers with local channel
 fixtures. Use `bin/superagent triggers --help` to discover the command groups.

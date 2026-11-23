@@ -27,7 +27,6 @@ type Health = {
   eventStates: Counts
   outboxStates: Counts
   unknownStops: number
-  unknownEchoes: number
 }
 const statusCounts = (counts: Counts) =>
   Object.entries(counts)
@@ -129,8 +128,6 @@ function Overview({ health }: { health: Health }) {
       <dl>
         <dt>原生停止未知</dt>
         <dd>{health.unknownStops}</dd>
-        <dt>回声未知</dt>
-        <dd>{health.unknownEchoes}</dd>
       </dl>
     </section>
   )

@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -237,7 +238,7 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	require.NoError(t, tx.Rollback())
 	batch, err := reopened.selectInternalBatch(t.Context(), binding)
 	require.NoError(t, err)
-	wire := `{"events":[{"event_id":"saved-event","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}]}]}`
+	wire := fmt.Sprintf(`{"events":[{"event_id":"saved-event","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}]}],"triggerMessageInstructions":%q}`, triggerMessageInstructions)
 	require.Len(t, batch.input.Content, 1)
 	require.JSONEq(t, wire, batch.input.Content[0].Text.Text)
 }

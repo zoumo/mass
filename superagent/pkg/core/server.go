@@ -27,8 +27,7 @@ type Server struct {
 	issueWatchGroup              sync.WaitGroup
 	executionCancel              context.CancelFunc
 	executionDone                chan struct{}
-	outboxCancel                 context.CancelFunc
-	outboxDone                   chan struct{}
+	observerCancel               context.CancelFunc
 	observerLife                 context.Context
 	observerTelemetry            *observerTelemetryGateway
 	observerTraces               *observerTraceReader
@@ -132,13 +131,7 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 		s.executionDone = make(chan struct{})
 		go s.coordinate(life)
 	}
-	outboxLife, cancel := context.WithCancel(context.Background())
-	s.outboxCancel, s.outboxDone = cancel, make(chan struct{})
-	s.observerLife = outboxLife
-	go func() {
-		defer close(s.outboxDone)
-		store.outboxMaintenance(outboxLife)
-	}()
+	s.observerLife, s.observerCancel = context.WithCancel(context.Background())
 	s.http = &http.Server{Handler: http.HandlerFunc(s.serve), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	return s, nil
 }
@@ -172,7 +165,7 @@ func (s *Server) Shutdown(ctx context.Context) (result error) {
 	if s.executionCancel != nil {
 		s.executionCancel()
 	}
-	s.outboxCancel()
+	s.observerCancel()
 	err := s.http.Shutdown(ctx)
 	if err != nil {
 		_ = s.http.Close()
@@ -184,11 +177,6 @@ func (s *Server) Shutdown(ctx context.Context) (result error) {
 		case <-ctx.Done():
 			return errors.Join(err, ctx.Err())
 		}
-	}
-	select {
-	case <-s.outboxDone:
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 	if s.embeddedMassd == nil {
 		return s.store.Close()
@@ -278,8 +266,6 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.channelOutbox(w, r)
 	case r.URL.Path == "/v1/operator/input-recovery":
 		s.recoverInput(w, r)
-	case r.URL.Path == "/v1/operator/echo-release":
-		s.releaseEcho(w, r)
 	case strings.HasPrefix(r.URL.Path, "/v1/operator/session-bindings/"):
 		s.inspectBinding(w, r)
 	case observerAPI:

@@ -16,6 +16,33 @@ import (
 const migrationDirectory = "migration"
 const legacyDWSEvidenceFile = "v25-dws-sent-evidence.ndjson"
 
+type legacyMessage struct {
+	Message
+	ThreadRef struct {
+		ID string `json:"id"`
+	} `json:"threadRef"`
+	Actor             string          `json:"actor"`
+	Text              string          `json:"text"`
+	At                string          `json:"at"`
+	Human             *bool           `json:"human"`
+	Addressed         string          `json:"addressed"`
+	Channel           *legacyChannel  `json:"channel"`
+	URL               string          `json:"url"`
+	Meta              map[string]any  `json:"meta"`
+	QuotedMessage     json.RawMessage `json:"quotedMessage"`
+	SourceEventID     string          `json:"sourceEventId"`
+	CollectedAt       string          `json:"collectedAt"`
+	CollectorInstance string          `json:"collectorInstance"`
+}
+
+type legacyChannel struct {
+	Type           string         `json:"type"`
+	ConversationID string         `json:"conversationId"`
+	MessageID      string         `json:"messageId"`
+	ActorID        string         `json:"actorId,omitempty"`
+	Address        map[string]any `json:"address,omitempty"`
+}
+
 type legacyDWSSend struct {
 	Source         string `json:"source"`
 	AccountID      string `json:"accountId"`
@@ -47,9 +74,9 @@ func migrateTriggerMessages(ctx context.Context, tx *sql.Tx) ([]legacyDWSSend, e
 		if err != nil {
 			return nil, storageError()
 		}
-		var messages []Message
+		var messages []legacyMessage
 		for rows.Next() {
-			var message Message
+			var message legacyMessage
 			var raw []byte
 			if err := rows.Scan(&after, &raw); err != nil || json.Unmarshal(raw, &message) != nil {
 				_ = rows.Close()
@@ -79,7 +106,7 @@ func migrateTriggerMessages(ctx context.Context, tx *sql.Tx) ([]legacyDWSSend, e
 	return evidence, nil
 }
 
-func migrateTriggerMessage(ctx context.Context, tx *sql.Tx, old Message) error {
+func migrateTriggerMessage(ctx context.Context, tx *sql.Tx, old legacyMessage) error {
 	content, err := triggercontent.FromLegacyText(old.Text, old.Actor, old.At, old.URL)
 	if err != nil {
 		return legacyMessageError(old.ID, "invalid source time")
@@ -117,17 +144,18 @@ func migrateTriggerMessage(ctx context.Context, tx *sql.Tx, old Message) error {
 		if err != nil {
 			return legacyMessageError(old.ID, "invalid reply target")
 		}
-		req.InReplyToOutboxID, err = legacyReplyReference(ctx, tx, old)
-		if err != nil {
-			return err
-		}
+	}
+	req.InReplyToOutboxID, err = legacyReplyReference(ctx, tx, old)
+	if err != nil {
+		return err
 	}
 	message, canonical, err := req.prepare(Source{Source: old.Source, AccountID: old.AccountID})
 	if err != nil {
 		return legacyMessageError(old.ID, err.Error())
 	}
 	message.ID, message.ReceivedAt, message.Acceptance, message.EventID = old.ID, old.ReceivedAt, old.Acceptance, old.EventID
-	message.Echo = old.Echo
+	message.LegacyEcho = old.LegacyEcho
+	message.LegacyEchoStatus = legacyEchoStatus(old.LegacyEcho)
 	return putJSON(ctx, tx, `UPDATE trigger_messages SET canonical=?2, body=?3 WHERE id=?1`, message, old.ID, canonical)
 }
 
@@ -135,7 +163,7 @@ func legacyMessageError(id, explanation string) *Error {
 	return problem("failed_precondition", "cannot migrate legacy Message "+id+": "+explanation)
 }
 
-func legacyReplyTarget(ch *Channel) ([]byte, error) {
+func legacyReplyTarget(ch *legacyChannel) ([]byte, error) {
 	if ch.Type != "dws" {
 		return json.Marshal(ch)
 	}
@@ -150,8 +178,8 @@ func legacyReplyTarget(ch *Channel) ([]byte, error) {
 	}{ch.Type, ch.ConversationID, ch.MessageID, ch.ActorID, ch.Address})
 }
 
-func legacyReplyReference(ctx context.Context, tx *sql.Tx, m Message) (string, error) {
-	if m.Channel.Type != "dws" || len(m.QuotedMessage) == 0 {
+func legacyReplyReference(ctx context.Context, tx *sql.Tx, m legacyMessage) (string, error) {
+	if len(m.QuotedMessage) == 0 {
 		return "", nil
 	}
 	var quote struct {
@@ -159,22 +187,29 @@ func legacyReplyReference(ctx context.Context, tx *sql.Tx, m Message) (string, e
 		MessageID      string `json:"message_id"`
 	}
 	if json.Unmarshal(m.QuotedMessage, &quote) != nil || !legacyNativeID(quote.MessageID) ||
-		(quote.ConversationID != "" && quote.ConversationID != m.Channel.ConversationID) {
+		(quote.ConversationID != "" && quote.ConversationID != m.ThreadRef.ID) {
 		return "", nil
 	}
 	var count int
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(min(o.id),'') FROM outbox o
- JOIN trigger_messages origin ON origin.id=o.message_id
- WHERE o.status='sent' AND origin.source=? AND origin.account_id=? AND origin.thread_key=?
+	var pending bool
+	err := tx.QueryRowContext(ctx, `SELECT
+ count(CASE WHEN o.status='sent' AND o.receipt->>'$.conversationId'=?4 AND o.receipt->>'$.messageId'=?5 THEN 1 END),
+ coalesce(min(CASE WHEN o.status='sent' AND o.receipt->>'$.conversationId'=?4 AND o.receipt->>'$.messageId'=?5 THEN o.id END),''),
+ coalesce(max(o.status='pending' AND coalesce(o.receipt->>'$.taskId','')<>''),0)
+ FROM outbox o JOIN trigger_messages origin ON origin.id=o.message_id
+ WHERE origin.source=?1 AND origin.account_id=?2 AND origin.thread_key=?3
  AND coalesce(origin.body->>'$.channel.type',origin.body->>'$.replyTarget.type')='dws'
- AND o.receipt->>'$.conversationId'=? AND o.receipt->>'$.messageId'=?`,
-		m.Source, m.AccountID, m.ThreadKey, m.Channel.ConversationID, quote.MessageID).Scan(&count, &id)
+ AND coalesce(origin.body->>'$.channel.conversationId',origin.body->>'$.replyTarget.conversationId')=?4`,
+		m.Source, m.AccountID, m.ThreadKey, m.ThreadRef.ID, quote.MessageID).Scan(&count, &id, &pending)
 	if err != nil {
 		return "", storageError()
 	}
 	if count > 1 {
 		return "", legacyMessageError(m.ID, "quoted message matches multiple sent Outbox items")
+	}
+	if count == 0 && pending {
+		return "", legacyMessageError(m.ID, "settle the pending DWS Outbox task in the quoted Message's Thread before cutover")
 	}
 	return id, nil
 }
@@ -201,7 +236,11 @@ func collectLegacyDWSSends(ctx context.Context, tx *sql.Tx) ([]legacyDWSSend, er
 		if err := rows.Scan(&row.Source, &row.AccountID, &row.OutboxID, &status, &raw, &originConversation); err != nil {
 			return nil, storageError()
 		}
-		var receipt OutboxReceipt
+		var receipt struct {
+			TaskID         string `json:"taskId"`
+			ConversationID string `json:"conversationId"`
+			MessageID      string `json:"messageId"`
+		}
 		if json.Unmarshal(raw, &receipt) != nil || status != "sent" ||
 			!legacyNativeID(receipt.ConversationID) || receipt.ConversationID != originConversation || !legacyNativeID(receipt.MessageID) {
 			return nil, problem("failed_precondition", "reconcile legacy DWS send evidence for Outbox "+row.OutboxID+" before cutover")
@@ -224,6 +263,15 @@ func collectLegacyDWSSends(ctx context.Context, tx *sql.Tx) ([]legacyDWSSend, er
 // between the rename and SQL commit, the old rows remain the source on retry.
 func exportLegacyDWSSends(dataDir string, rows []legacyDWSSend) error {
 	path := filepath.Join(dataDir, migrationDirectory)
+	if len(rows) == 0 {
+		// Keep a fresh data directory free of an empty handoff. A previous
+		// interrupted migration may have left a file to replace.
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
 	if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
@@ -262,4 +310,20 @@ func exportLegacyDWSSends(dataDir string, rows []legacyDWSSend) error {
 	}
 	defer parent.Close()
 	return parent.Sync()
+}
+
+// A historical echo kept its original admission receipt even if a later
+// resolution created a routing event. Keep that receipt on an exact replay.
+func legacyEchoStatus(raw json.RawMessage) string {
+	var echo struct {
+		Status string          `json:"status"`
+		Match  json.RawMessage `json:"match"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &echo) != nil {
+		return ""
+	}
+	if len(echo.Match) != 0 && string(echo.Match) != "null" {
+		return "outbound_echo"
+	}
+	return echo.Status
 }

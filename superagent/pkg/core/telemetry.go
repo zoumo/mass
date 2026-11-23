@@ -203,7 +203,7 @@ func boundedHTTPMethod(method string) string {
 func telemetryRoute(path string) string {
 	switch path {
 	case "/v1/channel/messages", "/v1/channel/outbox", "/v1/channel/outbox/result",
-		"/v1/operator/input-recovery", "/v1/operator/echo-release", "/v1/observer/health",
+		"/v1/operator/input-recovery", "/v1/observer/health",
 		"/v1/observer/topic-activity", observerPerformancePath,
 		"/observer", "/observer/", mcpPath:
 		return path

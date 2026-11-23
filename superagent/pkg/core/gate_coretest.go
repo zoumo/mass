@@ -42,8 +42,13 @@ func (s *Server) enqueueTestEvents(r *http.Request, items []internalEvent) error
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	createdAt := now()
 	for _, d := range items {
 		if err := enqueueInternalEvent(ctx, tx, d); err != nil {
+			return err
+		}
+		// Model a single producer batch even under a heavily loaded runner.
+		if _, err := tx.ExecContext(ctx, "UPDATE internal_events SET created_at=? WHERE event_id=?", createdAt, d.ID); err != nil {
 			return err
 		}
 	}

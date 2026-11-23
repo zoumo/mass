@@ -176,7 +176,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	routerToken := roleToken(t, f, router)
 	incoming := input("http-mcp")
-	incoming.Message.Text = "Original input with protected source text " + f.token
+	incoming.Message.Content[0].Text.Text = "Original input with protected source text " + f.token
 	message := submit(t, p, f, incoming)
 	decision := decide(t, p, routerToken, newRoute("http-mcp", []string{message.MessageID}, f.dir))
 	topicID := decision.Targets[0].TopicID

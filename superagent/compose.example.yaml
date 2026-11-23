@@ -15,10 +15,12 @@ core:
       accountId: github-local
       instanceId: github-trigger-1
       tokenFile: ./secrets/github-core.token
+      threadKeyPrefixes: ["github:", "https://github.com/"]
     - source: dws
       accountId: ACCOUNT_ID
       instanceId: dws-trigger-1
       tokenFile: ./secrets/dws-core.token
+      threadKeyPrefixes: ["dws:"]
       outboxConsumer: true
 
 triggers:

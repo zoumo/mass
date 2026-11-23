@@ -4,18 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 )
 
 // This Thread namespace cannot be used as a configured collector source.
 const pullRequestSource = "pr:url"
-
-var (
-	githubPullPath = regexp.MustCompile(`^/([a-zA-Z0-9-]+)/([a-zA-Z0-9_.-]+)/pull/(\d+)/?$`)
-	githubComment  = regexp.MustCompile(`^(issuecomment-|discussion_r|pullrequestreview-)\d+$`)
-)
 
 func parsePullRequestURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
@@ -27,39 +21,6 @@ func parsePullRequestURL(raw string) (*url.URL, error) {
 		return nil, problem("invalid_argument", "PR URL has invalid query escaping")
 	}
 	return u, nil
-}
-
-// canonicalPullRequestURL is used only by the legacy ThreadRef contract.
-func canonicalPullRequestURL(raw string) (string, error) {
-	u, err := parsePullRequestURL(raw)
-	if err != nil {
-		return "", err
-	}
-	// Keep unknown platforms' explicitly supplied identity byte for byte.
-	if !strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), "github.com") {
-		return raw, nil
-	}
-	path := githubPullPath.FindStringSubmatch(u.EscapedPath())
-	defaultPort := (u.Scheme == "https" && u.Port() == "443") || (u.Scheme == "http" && u.Port() == "80")
-	if len(path) == 0 || path[2] == "." || path[2] == ".." || (u.Port() != "" && !defaultPort) {
-		return "", problem("invalid_argument", "GitHub PR URL must identify github.com/owner/repo/pull/number")
-	}
-	number := strings.TrimLeft(path[3], "0")
-	if number == "" || (u.Fragment != "" && !githubComment.MatchString(u.Fragment)) {
-		return "", problem("invalid_argument", "GitHub PR URL has an invalid number or unsupported fragment")
-	}
-	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return "", problem("invalid_argument", "GitHub PR URL has an invalid query")
-	}
-	for field := range query {
-		switch field {
-		case "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id", "gclid", "fbclid":
-		default:
-			return "", problem("invalid_argument", "remove unsupported query fields from the GitHub PR URL")
-		}
-	}
-	return "https://github.com/" + strings.ToLower(path[1]+"/"+path[2]) + "/pull/" + number, nil
 }
 
 type PullRequest struct {
@@ -91,7 +52,7 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 	link := pullRequestLink{PullRequest: PullRequest{
 		CanonicalURL: key, TopicID: topic.ID, ThreadKey: key, CreatedAt: now(),
 	}}
-	if err := upsertThread(ctx, tx, link.ThreadKey, ThreadRef{}, link.CreatedAt, ""); err != nil {
+	if err := upsertThread(ctx, tx, link.ThreadKey, link.CreatedAt, ""); err != nil {
 		return err
 	}
 	subID, err := ensureSubscription(ctx, tx, Subscription{

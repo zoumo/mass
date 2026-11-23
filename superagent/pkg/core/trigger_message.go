@@ -59,7 +59,9 @@ func (r SubmitTriggerMessageRequest) prepare(source Source) (Message, []byte, er
 		return Message{}, nil, problem("invalid_argument", "inReplyToOutboxId must be a valid identifier")
 	}
 	message := Message{
-		MessageInput:      MessageInput{Source: source.Source, AccountID: source.AccountID, SourceMessageID: m.SourceMessageID},
+		Source:            source.Source,
+		AccountID:         source.AccountID,
+		SourceMessageID:   m.SourceMessageID,
 		ThreadKey:         m.ThreadKey,
 		Content:           m.Content,
 		TriggerMeta:       m.Meta,
@@ -111,7 +113,7 @@ func (s *Store) SubmitTriggerMessage(ctx context.Context, source Source, request
 	if !source.allowsThreadKey(message.ThreadKey) {
 		return Receipt{}, problem("forbidden", "threadKey is outside the authenticated write scope")
 	}
-	return s.submitMessage(ctx, source, message, canonical, false)
+	return s.submitMessage(ctx, source, message, canonical)
 }
 
 func (s *Store) submitChannelMessage(ctx context.Context, source Source, body io.Reader) (Receipt, error) {
@@ -122,20 +124,6 @@ func (s *Store) submitChannelMessage(ctx context.Context, source Source, body io
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return Receipt{}, problem("invalid_argument", "exactly one JSON value is required")
-	}
-	// Keep strict legacy intake during the coordinated adapter cutover.
-	var envelope struct {
-		Message map[string]json.RawMessage `json:"message"`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return Receipt{}, problem("invalid_argument", "invalid submitMessage JSON")
-	}
-	if _, legacy := envelope.Message["threadRef"]; legacy {
-		var request SubmitRequest
-		if err := decodeStrict(raw, &request); err != nil {
-			return Receipt{}, err
-		}
-		return s.Submit(ctx, source, request)
 	}
 	var request SubmitTriggerMessageRequest
 	if err := decodeStrict(raw, &request); err != nil {

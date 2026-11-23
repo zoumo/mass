@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 )
 
 type followupRevision struct {
@@ -66,23 +65,3 @@ func (s *Store) followupCommand(ctx context.Context, b SessionBinding, tool stri
 
 // Keep older stored Message metadata readable while exposing the MCP followup
 // identifier and revision on the agent-facing event and Message view.
-func agentFollowupMeta(meta json.RawMessage) json.RawMessage {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(meta, &fields) != nil || string(fields["type"]) != `"timer.followup"` {
-		return meta
-	}
-	fields["type"] = json.RawMessage(`"followup"`)
-	if id := fields["taskId"]; len(id) != 0 {
-		fields["followupId"] = id
-		delete(fields, "taskId")
-	}
-	if revision := fields["taskRevision"]; len(revision) != 0 {
-		fields["revision"] = revision
-		delete(fields, "taskRevision")
-	}
-	raw, err := json.Marshal(fields)
-	if err != nil {
-		return meta
-	}
-	return raw
-}

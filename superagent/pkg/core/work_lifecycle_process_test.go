@@ -363,7 +363,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 
 	// Cancel the Topic while it, and a Issue Session, have active native work.
 	incoming := input("before-topic-cancel")
-	incoming.Message.ThreadRef.ID, incoming.Message.Channel = "lifecycle-topic", nil
+	incoming.Message.ThreadKey, incoming.ReplyTarget = fixtureThreadKey("lifecycle-topic"), nil
 	activity := submit(t, p, f, incoming)
 	activityInput := peer.next(t, "turn/start")
 	decodeInternalBatch(t, activityInput, activity.EventID)
@@ -381,7 +381,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	require.Equal(t, "unknown", waitObservedStop(t, p, "topics", oldTopic.ID).WorkState)
 	require.Equal(t, "unknown", waitObservedStop(t, p, "session-bindings", next.SessionBinding.ID).WorkState)
 	follow := input("after-topic-cancel")
-	follow.Message.ThreadRef.ID, follow.Message.Channel = "lifecycle-topic", nil
+	follow.Message.ThreadKey, follow.ReplyTarget = fixtureThreadKey("lifecycle-topic"), nil
 	queued := submit(t, p, f, follow)
 	require.Equal(t, "pending", readRecord[observedRoutingEvent](t, p, "routing-events/"+queued.EventID).Status)
 	require.Equal(t, "pending", readRecord[observedRoutingEvent](t, p, "routing-events/"+queued.EventID).Status)

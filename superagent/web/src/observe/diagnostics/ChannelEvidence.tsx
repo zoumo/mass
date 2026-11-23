@@ -9,8 +9,6 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
         <dl>
           <dt>渠道消息</dt>
           <dd>{detail.sourceMessageId}</dd>
-          <dt>渠道时间</dt>
-          <dd>{detail.at || '未记录'}</dd>
           <dt>线程键</dt>
           <dd>{detail.threadKey}</dd>
           <dt>路由状态</dt>
@@ -104,10 +102,8 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
       {kind === 'threads' && (
         <>
           <dl>
-            <dt>来源</dt>
-            <dd>{detail.ref?.source}</dd>
-            <dt>来源标识</dt>
-            <dd>{detail.ref?.id}</dd>
+            <dt>线程键</dt>
+            <dd>{detail.key}</dd>
             <dt>最近一条来源消息</dt>
             <dd>{detail.lastMessageAt || '暂未收到来源消息'}</dd>
           </dl>
@@ -137,18 +133,6 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
                 <>
                   <dt>渠道任务</dt>
                   <dd>{detail.receipt.taskId}</dd>
-                </>
-              )}
-              {detail.receipt?.conversationId && (
-                <>
-                  <dt>发送到的会话</dt>
-                  <dd>{detail.receipt.conversationId}</dd>
-                </>
-              )}
-              {detail.receipt?.messageId && (
-                <>
-                  <dt>渠道消息</dt>
-                  <dd>{detail.receipt.messageId}</dd>
                 </>
               )}
               {detail.receipt?.errorCode && (
