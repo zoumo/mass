@@ -179,16 +179,18 @@ const reportCurrentSQL = `EXISTS (
   AND json_extract(issues.body,'$.goalRevision')=json_extract(reports.body,'$.goalRevision')
 )`
 
+const routingEventProjection = `json_patch(json_object('event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
+ 'messageId',message_id,'topicId',topic_id,'returnedEventId',returned_event_id,'sender',json(sender),
+ 'recipient',json(recipient),'refs',json(refs),'returned',json(CASE WHEN EXISTS(
+ SELECT 1 FROM internal_events r WHERE r.kind='route_request' AND ` + returnedEventID + `=routing_events.event_id
+ ) THEN 'true' ELSE 'false' END)),json_object('content',json(content),'body',json(body)))`
+
 func projection(kind string, b *SessionBinding) string {
 	switch kind {
 	case "internal-events":
 		return internalEventProjection
 	case "routing-events":
-		return `json_patch(json_object('event_id',event_id,'kind',kind,'createdAt',created_at,'status',status,'sentAt',sent_at,
- 'messageId',message_id,'topicId',topic_id,'returnedEventId',returned_event_id,'sender',json(sender),
- 'recipient',json(recipient),'refs',json(refs),'returned',json(CASE WHEN EXISTS(
- SELECT 1 FROM internal_events r WHERE r.kind='route_request' AND ` + returnedEventID + `=routing_events.event_id
- ) THEN 'true' ELSE 'false' END)),json_object('content',json(content),'body',json(body)))`
+		return routingEventProjection
 	case "threads":
 		if b != nil && b.Role == "topic" {
 			// The Topic can see its subscription through the Thread scope. Peer subscriptions are visible to Router and Observer.

@@ -488,12 +488,17 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 	}
 	if q.MessageID != "" {
 		materialFilter := kind == "issues" && binding == nil && source == nil
-		if parent != "" || (!materialFilter && kind != "outbox" && kind != "relations" && kind != "routing-events") {
+		internalEventFilter := kind == "internal-events" && binding == nil && source == nil
+		if parent != "" || (!materialFilter && !internalEventFilter && kind != "outbox" && kind != "relations" && kind != "routing-events") {
 			return p, problem("invalid_argument", "unsupported messageId filter; use only one parent")
 		}
 		parentColumn, parent, c.Parent = "message_id", q.MessageID, q.MessageID
 		if materialFilter {
 			relatedFilter = `EXISTS (SELECT 1 FROM json_each(issues.body,'$.materials') AS m WHERE json_extract(m.value,'$.messageId')=?)`
+		}
+		if internalEventFilter {
+			// The indexed first reference is the Trigger Message for routing events.
+			table = "routing_events"
 		}
 	}
 	c.Filter = parentColumn
@@ -522,12 +527,19 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		return p, storageError()
 	}
 	projection := projection(kind, binding)
+	if kind == "internal-events" && q.MessageID != "" {
+		projection = routingEventProjection
+	}
 	if source != nil {
 		projection = channelOutboxProjection
 	}
 	if q.preview {
-		projection = observerListProjection(kind, projection)
-		if q.MessageID != "" && (kind == "issues" || kind == "routing-events") {
+		previewKind := kind
+		if kind == "internal-events" && table == "routing_events" {
+			previewKind = "routing-events"
+		}
+		projection = observerListProjection(previewKind, projection)
+		if q.MessageID != "" && (kind == "issues" || table == "routing_events") {
 			projection = "json_set(" + projection + ",'$.topicTitle',(SELECT json_extract(t.body,'$.title') FROM topics t WHERE t.id=" + table + ".topic_id))"
 		}
 	}
@@ -667,6 +679,9 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Session
 	var body []byte
 	args = append(append(projectionArgs(kind, binding), id), args...)
 	project := projection(kind, binding)
+	if kind == "internal-events" {
+		project = "COALESCE((SELECT " + routingEventProjection + " FROM routing_events WHERE event_id=internal_events.event_id)," + project + ")"
+	}
 	if source != nil {
 		project = channelOutboxProjection
 		scope += channelOutboxScope

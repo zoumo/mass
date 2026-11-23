@@ -84,6 +84,8 @@ func TestObserverAllowedHostsHTTP(t *testing.T) {
 	}{
 		{name: "allowed GET", method: http.MethodGet, path: health, host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
 		{name: "allowed HEAD", method: http.MethodHead, path: health, host: allowed, want: http.StatusOK},
+		{name: "allowed Core read", method: http.MethodGet, path: "/v1/core/topics", host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
+		{name: "operator evidence requires the direct Core host", method: http.MethodGet, path: "/v1/core/session-bindings/example/runtime-evidence", host: allowed, want: http.StatusForbidden},
 		{name: "numeric GET", method: http.MethodGet, path: health, want: http.StatusOK},
 		{name: "numeric POST", method: http.MethodPost, path: health, want: http.StatusMethodNotAllowed},
 		{name: "allowed host POST", method: http.MethodPost, path: health, host: allowed, want: http.StatusForbidden},
