@@ -10,6 +10,9 @@ sources:
   - id: acp-schema
     resource: https://agentclientprotocol.com/protocol/v1/schema
     title: ACP Schema
+  - id: mcp-schema
+    resource: https://modelcontextprotocol.io/specification/2026-07-28/schema
+    title: MCP Schema
   - id: direction
     resource: 项目负责人在 2026-10-20 确认按 ACP 五种类型，不增加 json，并简化公共结构
     title: 本轮 ContentBlock 设计
@@ -27,13 +30,15 @@ sources:
 | image | data、mimeType | uri、annotations |
 | audio | data、mimeType | annotations |
 | resource | resource | annotations |
-| resource_link | uri、name | mimeType、title、description、size、annotations |
+| resource_link | uri、name | mimeType、title、description、size、icons、annotations |
 
 字段形状采用 ACP 的五种标准内容块。text 是原样文本，可含 Markdown。image/audio 的 data 是必填 Base64 字符串，不含 data URI 前缀；图片的可选 uri 仅标识来源，不替代 data。resource 内嵌完整内容，resource_link 仅保留引用。[^acp-content]
 
 resource 必须包含 uri，并在 text 与 blob 中选择一个；mimeType 可选。text 是文本正文，blob 是 Base64 二进制正文，二者不能同时提供。JSON 作为 mimeType=application/json 的文本资源承载，不增加独立 json 类型，也不把 JSON 对象直接填入 text。[^acp-schema]
 
 annotations 描述内容的展示与使用提示：audience 是 user/assistant 数组，priority 在 0 到 1 之间，lastModified 表示内容的修改时间。它们均可省略；size 是非负字节数。[^acp-schema]
+
+`resource_link.icons` 用于展示资源引用。每个图标包含绝对 URI `src`，可以附带 `mimeType`、`sizes` 和 `theme`。`theme` 可取 `light` 或 `dark`。[^mcp-schema]
 
 ## 与事件和存储的关系
 
@@ -53,4 +58,5 @@ message 与 thinking 共用消息模型、itemId/messageId 定位和内容块处
 
 [^acp-content]: ACP Content 定义 text、image、audio、resource 与 resource_link 的主要字段和内嵌媒体规则。
 [^acp-schema]: ACP Schema 定义文本/二进制内嵌资源与 annotations；本包采用当前明确字段，不引入所有层级的 ACP 扩展字段。
+[^mcp-schema]: MCP Schema 定义 ResourceLink 的 `icons` 及 Icon 字段。
 [^direction]: 本轮确认统一 ContentBlock[]、采用 ACP 五种类型，不额外加入 json；为简化结构省去公共 Base。

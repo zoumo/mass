@@ -336,6 +336,14 @@ namespace MASS.Design.Examples;
       title: "项目说明",
       description: "仅引用资源，不内嵌正文。",
       size: 1024,
+      icons: #[
+        #{
+          src: "https://example.test/icons/readme.png",
+          mimeType: "image/png",
+          sizes: #["48x48"],
+          theme: "light",
+        }
+      ],
     }
   ],
 })

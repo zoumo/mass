@@ -9,7 +9,13 @@ import (
 )
 
 func TestCopyInputSnapshotsEverySDKUnionBranch(t *testing.T) {
-	raw := `{"content":[{"type":"text","text":"hello","annotations":{"audience":["user"]}},{"type":"image","data":"aA==","mimeType":"image/png"},{"type":"audio","data":"aA==","mimeType":"audio/wav"},{"type":"resource_link","uri":"file:///link","name":"link"},{"type":"resource","resource":{"uri":"file:///embedded","text":"embedded"}}]}`
+	raw := `{"content":[
+		{"type":"text","text":"hello","annotations":{"audience":["user"]}},
+		{"type":"image","data":"aA==","mimeType":"image/png"},
+		{"type":"audio","data":"aA==","mimeType":"audio/wav"},
+		{"type":"resource_link","uri":"file:///link","name":"link","icons":[{"src":"https://example.test/icon.png","sizes":["48x48"]}]},
+		{"type":"resource","resource":{"uri":"file:///embedded","text":"embedded"}}
+	]}`
 	var input Input
 	require.NoError(t, json.Unmarshal([]byte(raw), &input))
 	copied, err := CopyInput(input)
@@ -19,7 +25,8 @@ func TestCopyInputSnapshotsEverySDKUnionBranch(t *testing.T) {
 	input.Content[1].Image.Data = "Yg=="
 	input.Content[2].Audio.MIMEType = "audio/mpeg"
 	input.Content[3].ResourceLink.URI = "file:///changed"
-	*input.Content[4].Resource.Resource.Text = "changed"
+	input.Content[3].ResourceLink.Icons[0].Sizes[0] = "96x96"
+	*input.Content[4].EmbeddedResource.Resource.Text = "changed"
 	encoded, err := json.Marshal(copied)
 	require.NoError(t, err)
 	require.JSONEq(t, raw, string(encoded), "async input owns all nested union values")

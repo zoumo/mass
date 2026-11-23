@@ -74,7 +74,19 @@ model ResourceLink {
   @minValue(0)
   size?: integer;
 
+  /** 客户端可用的资源图标。 */
+  icons?: ResourceIcon[];
+
   annotations?: ContentAnnotations;
+}
+
+model ResourceIcon {
+  /** 图标的绝对 URI，包括 data URI。 */
+  src: string;
+
+  mimeType?: string;
+  sizes?: string[];
+  theme?: "light" | "dark";
 }
 
 /** 内容的展示和使用提示，不承载事件完成状态。 */
