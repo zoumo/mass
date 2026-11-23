@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.3.5
+interface_version: v0.3.6
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论
@@ -11,6 +11,8 @@ sources:
 ---
 
 # TypeSpec 合同入口
+
+v0.3.6 为 `resource_link` 增加可选的 `icons`。详见[内容块](../shared/content-blocks.md)。
 
 v0.3.5 在 RuntimeSpec 顶层增加 `permissionPreset`。新建 Session 省略权限预设时，Service 使用当前 Runtime 的值并写入 Session 初始配置。恢复和历史加载沿用各自的初始配置输入。详见[配置合同](../modules/runtime/session-config.md)。
 

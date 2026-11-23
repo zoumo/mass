@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-23
+
+- **v0.3.6** 为 [资源引用](shared/content-blocks.md) 增加可选的 `icons`，同步 TypeSpec 和事件示例。
+
 ## 2026-11-22
 
 - 更新 [Go 应用目录规范](principles/golang/application-directory-structure.md)，统一模块根 `cmd/`，按组件组织业务包，并明确进程内装配与共用私有代码的归属。
