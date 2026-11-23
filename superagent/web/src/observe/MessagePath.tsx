@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { ArrowDownRight, ArrowRight, CheckCheck, CircuitBoard, CornerDownRight, FileCheck2, GitBranch, Inbox, Layers, Mail, Route, X } from 'lucide-react'
-import { eventStatusLabel, sourceLabel, stateLabel, type WorkbenchRow } from '../workbench'
+import { eventStatusLabel, messageBody, sourceLabel, stateLabel, type WorkbenchRow } from '../workbench'
 import { usePages, useRecord, viewHref, type MessageRecord } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './message-path.css'
@@ -150,7 +150,7 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
         <button onClick={close} aria-label="收起路径详情"><X size={17}/></button></div>
       {selected.kind === 'event' && <InternalEventDetail id={selected.id}/>}
       {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadKey], ['Trace', <TraceLinks associations={message.traceAssociations} at={message.receivedAt}/>]]}/>}
-      {selected.kind === 'channel' && <Fields fields={[['渠道', source], ['发送者', message.actor], ['渠道消息 ID', message.sourceMessageId], ['原文', message.text]]}/>}
+      {selected.kind === 'channel' && <Fields fields={[['渠道', source], ['发送者', message.actor], ['渠道消息 ID', message.sourceMessageId], ['原文', messageBody(message)]]}/>}
       {selected.kind === 'router' && <><Fields fields={[['本消息路由状态', result === 'pending' ? '待决策' : result === 'ignored' ? '已忽略 · 原因未记录' : stateLabel(result)], ['当前轮次', message.routing?.round]]}/>
         <a className="path-link" href={viewHref('router', message.id)}>查看 Router<ArrowRight size={14}/></a></>}
       {(selected.kind === 'topic' || selected.kind === 'issue') && <ObjectDetail kind={selected.kind} id={selected.id} messageID={message.id} references={issuesByTopic.get(selected.id)} incomplete={Boolean(issues.next || !issues.data || issues.error)}/>}

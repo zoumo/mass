@@ -130,6 +130,9 @@ type Message struct {
 var _ AgentPromptView = Message{}
 
 func (m Message) MarshalAgentPromptJSON() ([]byte, error) {
+	if len(m.Content) != 0 {
+		return json.Marshal(map[string]any{"id": m.ID, "source": m.Source, "threadKey": m.ThreadKey, "content": m.Content})
+	}
 	view := map[string]string{"id": m.ID, "text": m.Text, "actor": m.Actor}
 	if m.At != "" {
 		view["at"] = m.At

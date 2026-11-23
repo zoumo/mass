@@ -81,6 +81,11 @@ type internalEvent struct {
 	messageContent []eventMessageContent
 }
 
+type messageContentReference struct {
+	MessageID  string `json:"messageId"`
+	BlockCount int    `json:"blockCount"`
+}
+
 // AgentPromptView encodes the fields an agent needs to act on the source record.
 type AgentPromptView interface {
 	MarshalAgentPromptJSON() ([]byte, error)
@@ -134,13 +139,9 @@ func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 		event["routing"] = d.routing
 	}
 	if len(d.messageContent) != 0 {
-		type attachment struct {
-			MessageID  string `json:"messageId"`
-			BlockCount int    `json:"blockCount"`
-		}
-		list := make([]attachment, 0, len(d.messageContent))
+		list := make([]messageContentReference, 0, len(d.messageContent))
 		for _, content := range d.messageContent {
-			list = append(list, attachment{MessageID: content.ID, BlockCount: len(content.Blocks)})
+			list = append(list, content.reference())
 		}
 		event["messageContent"] = list
 	}

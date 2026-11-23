@@ -156,7 +156,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 					boundIssue = &issue
 				}
 				err = view.loadInlineIssueContext(ctx, tx, boundIssue, maxViewBytes)
-				issueContext = view.issue != nil || len(view.messages) != 0
+				issueContext = view.issue != nil || len(view.messages) != 0 || len(view.messageContent) != 0
 			}
 		}
 		var contents []eventMessageContent
@@ -280,6 +280,10 @@ func (d *internalEvent) attachMessageContent(id string, raw json.RawMessage) err
 		d.messageContent = append(d.messageContent, eventMessageContent{ID: id, Blocks: blocks, size: len(raw) - 1})
 	}
 	return nil
+}
+
+func (c eventMessageContent) reference() messageContentReference {
+	return messageContentReference{MessageID: c.ID, BlockCount: len(c.Blocks)}
 }
 
 // loadInlineTriggerMessage uses the same scope as get_trigger_message. A matched Topic
@@ -413,22 +417,28 @@ func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, 
 	if err != nil {
 		return err
 	}
-	remaining := maxBytes - len(raw) - len(`,"messages":[]`)
+	remaining := maxBytes - len(raw)
 	if remaining <= 0 {
 		return nil
 	}
-	var ids []string
+	materials := make(map[string]struct{}, len(issue.Materials))
+	ids := make([]string, 0, len(issue.Materials))
 	for _, material := range issue.Materials {
 		if material.MessageID == "" {
 			continue
 		}
-		if d.Kind == contextSupplement && !slices.ContainsFunc(d.Refs, func(ref eventReference) bool {
-			return ref.Kind == messageRefKind && ref.ID == material.MessageID
-		}) {
-			continue
-		}
-		if !slices.Contains(ids, material.MessageID) {
+		if _, exists := materials[material.MessageID]; !exists {
+			materials[material.MessageID] = struct{}{}
 			ids = append(ids, material.MessageID)
+		}
+	}
+	if d.Kind == contextSupplement {
+		ids = ids[:0]
+		for _, ref := range d.Refs {
+			if _, authorized := materials[ref.ID]; ref.Kind == messageRefKind && authorized {
+				ids = append(ids, ref.ID)
+				delete(materials, ref.ID)
+			}
 		}
 	}
 	if len(ids) == 0 {
@@ -438,10 +448,11 @@ func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, 
 	if err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.body->>'$.text',m.body->>'$.actor',
+	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.body->'$.content',
+ COALESCE(m.body->>'$.text',''),COALESCE(m.body->>'$.actor',''),
  COALESCE(m.body->>'$.at',''),COALESCE(m.body->>'$.url','')
  FROM json_each(?) ref JOIN trigger_messages m ON m.id=ref.value
- WHERE length(CAST(m.body->>'$.text' AS BLOB))<=?
+ WHERE length(CAST(COALESCE(m.body->'$.content',m.body->>'$.text') AS BLOB))<=?
  ORDER BY ref.key`, string(payload), inlineMessageBytes)
 	if err != nil {
 		return err
@@ -449,21 +460,47 @@ func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, 
 	defer rows.Close()
 	for rows.Next() {
 		var message Message
-		if err := rows.Scan(&message.ID, &message.Text, &message.Actor, &message.At, &message.URL); err != nil {
+		var blocks []byte
+		if err := rows.Scan(&message.ID, &blocks, &message.Text, &message.Actor, &message.At, &message.URL); err != nil {
 			return err
 		}
-		raw, err := message.MarshalAgentPromptJSON()
+		if len(blocks) != 0 {
+			before := len(d.messageContent)
+			if err := d.attachMessageContent(message.ID, blocks); err != nil {
+				return err
+			}
+			if len(d.messageContent) == before {
+				continue
+			}
+			content := d.messageContent[before]
+			ref, err := json.Marshal(content.reference())
+			if err != nil {
+				return err
+			}
+			required := content.size + len(ref) + 1
+			if before == 0 {
+				required += len(`,"messageContent":[]`) - 1
+			}
+			if required > remaining {
+				d.messageContent = d.messageContent[:before]
+			} else {
+				remaining -= required
+			}
+			continue
+		}
+		legacy, err := message.MarshalAgentPromptJSON()
 		if err != nil {
 			return err
 		}
-		if len(raw) > inlineMessageBytes || len(raw) > remaining {
+		required := len(legacy) + 1
+		if len(d.messages) == 0 {
+			required += len(`,"messages":[]`) - 1
+		}
+		if len(legacy) > inlineMessageBytes || required > remaining {
 			continue
 		}
-		d.messages = append(d.messages, raw)
-		remaining -= len(raw) + 1 // Space for the comma before a subsequent item.
-		if remaining <= 0 {
-			break
-		}
+		d.messages = append(d.messages, legacy)
+		remaining -= required
 	}
 	return rows.Err()
 }

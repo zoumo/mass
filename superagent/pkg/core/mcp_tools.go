@@ -29,7 +29,7 @@ func roleTools(role string) []mcpTool {
 	if role == "issue" {
 		return append(tools,
 			tool("get_issue", "Read your bound Issue, goal revision, materials, and blockers.", nil),
-			tool("get_message", "Read a Message referenced in your Issue materials.", map[string]any{"messageId": text}, "messageId"),
+			tool("get_message", "Read the full content blocks of a Message in your Issue materials.", map[string]any{"messageId": text}, "messageId"),
 			tool("update_issue", "Update the title, append materials, or register PR URLs for your bound Issue. Use its current revision. Supply at least one change.", issueUpdate, "operationId", "expectedRevision"),
 			tool("submit_report", "Report the result of your Issue work against the goalRevision you used. A retired SessionBinding can submit a historical Report.", map[string]any{"operationId": text, "kind": enum("progress", "ready", "blocked", "failed"), "summary": text, "goalRevision": revision, "details": text, "evidence": array(text), "questions": array(text)}, "operationId", "kind", "summary", "goalRevision"),
 		)

@@ -26,9 +26,9 @@ type topicActivityCursor struct {
 
 const topicMessageEvents = `
  SELECT d.kind, d.created_at, d.event_id, NULL, json_extract(d.sender,'$.kind'),
- json_object('messageId',d.message_id,'title',substr(json_extract(m.body,'$.text'),1,120),
+ json_object('messageId',d.message_id,'title',substr(` + observerMessagePreview + `,1,120),
   'status',d.status,'eventId',d.event_id,'returnedEventId',d.returned_event_id)
- FROM routing_events d LEFT JOIN trigger_messages m ON m.id=d.message_id
+ FROM routing_events d LEFT JOIN trigger_messages ON trigger_messages.id=d.message_id
  WHERE d.topic_id=:topic AND d.seq<=:internalEvents`
 
 const topicIssueEvents = `
