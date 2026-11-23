@@ -48,8 +48,10 @@ func (s *Server) newHTTPAPI() *httpAPI {
 		roleBearer:     {Type: "http", Scheme: "bearer", Description: "MCP role capability"},
 		massdBearer:    {Type: "http", Scheme: "bearer", Description: "massd instance credential"},
 	}
-	api := &httpAPI{router: router, huma: humachi.New(router, config)}
+	api := &httpAPI{router: router, huma: humachi.New(router.With(s.observeResourceHTTP), config)}
 	s.registerMCP(api)
+	s.registerCoreReadResources(api)
+	s.registerTelemetryResources(api)
 	return api
 }
 

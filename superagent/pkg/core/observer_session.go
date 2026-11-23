@@ -30,6 +30,13 @@ type sessionPreviewFrame struct {
 	Event *sessionPreviewEvent `json:"event,omitempty"`
 }
 
+type sessionPreviewHistory struct {
+	Events        []sessionPreviewEvent `json:"events"`
+	NextCursor    string                `json:"nextCursor"`
+	SyncedEventID *string               `json:"syncedEventId" nullable:"true"`
+	ObservedAt    string                `json:"observedAt"`
+}
+
 // Only Core-owned bindings can be inspected. The browser never chooses a
 // massd target or sees its connection configuration.
 func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path string) {
@@ -38,6 +45,10 @@ func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path str
 		s.fail(w, problem("not_found", "unknown Session preview"))
 		return
 	}
+	s.previewSessionBinding(w, r, id, view)
+}
+
+func (s *Server) previewSessionBinding(w http.ResponseWriter, r *http.Request, id, view string) {
 	raw, err := s.store.Get(r.Context(), "session-bindings", id)
 	if err != nil {
 		s.fail(w, err)
@@ -46,15 +57,6 @@ func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path str
 	var binding SessionBinding
 	if json.Unmarshal(raw, &binding) != nil || s.config.Sessions == nil || binding.SessionID == "" || binding.SessionUID == "" {
 		s.fail(w, problem("unavailable", "Session identity has not been recorded"))
-		return
-	}
-	if r.Method == http.MethodHead {
-		if view == "live" {
-			w.Header().Set("Content-Type", "application/x-ndjson")
-		} else {
-			w.Header().Set("Content-Type", "application/json")
-		}
-		w.WriteHeader(http.StatusOK)
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -81,6 +83,11 @@ func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path str
 			return
 		}
 		finish()
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		s.streamSessionPreview(ctx, w, sub, binding)
 		return
 	}
@@ -103,7 +110,7 @@ func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path str
 		}
 		rows = append(rows, projectPreviewEvent(event))
 	}
-	s.write(w, http.StatusOK, map[string]any{"events": rows, "nextCursor": page.Next, "syncedEventId": page.SyncedEventID, "observedAt": now()})
+	s.write(w, http.StatusOK, sessionPreviewHistory{Events: rows, NextCursor: page.Next, SyncedEventID: page.SyncedEventID, ObservedAt: now()})
 }
 
 func matchesPreviewSession(ctx context.Context, c *client.Client, b SessionBinding, ref resource.SessionRef) bool {

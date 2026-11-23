@@ -284,8 +284,23 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 
 	opToken, err := os.ReadFile(operatorFile)
 	require.NoError(t, err)
-	plain := recoveryFor("unsafe-detach", "settle", issueBinding.ID)
-	status, data := request(t, http.MethodPost, p.endpoint, "/v1/operator/input-recovery", string(opToken), plain)
+	operatorPath := "/v1/core/session-bindings/" + issueBinding.ID
+	for _, token := range []string{"", f.token, issueToken} {
+		status, data := request(t, http.MethodGet, p.endpoint, operatorPath+"/runtime-evidence", token, nil)
+		errorCode(t, status, data, http.StatusUnauthorized, "unauthorized")
+		status, data = request(t, http.MethodPost, p.endpoint, operatorPath+"/recoveries", token, nil)
+		errorCode(t, status, data, http.StatusUnauthorized, "unauthorized")
+	}
+	status, evidence := request(t, http.MethodGet, p.endpoint, operatorPath+"/runtime-evidence", string(opToken), nil)
+	require.Equal(t, http.StatusOK, status, "%s", evidence)
+	var viaResource core.SessionBindingInspection
+	require.NoError(t, json.Unmarshal(evidence, &viaResource))
+	require.Equal(t, examination.SessionBinding, viaResource.SessionBinding)
+	plain := map[string]any{
+		"operationId": "unsafe-detach", "mode": "settle", "acceptPossibleDuplicate": true,
+		"reconciliation": "Inspected the original binding and native ownership",
+	}
+	status, data := request(t, http.MethodPost, p.endpoint, operatorPath+"/recoveries", string(opToken), plain)
 	errorCode(t, status, data, http.StatusConflict, "failed_precondition")
 	require.Equal(t, "blocked", inspectRoleBinding(t, p, operatorFile, issueBinding.ID).SessionBinding.Recovery.Status)
 	old := recoveryFor("close-first-runtime", "replace", issueBinding.ID)
@@ -293,7 +308,15 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	release := recoverRoleBinding(t, p, operatorFile, old)
 	require.Equal(t, "runtime_stopped", release.Close.Method)
 	require.False(t, release.Close.Reusable)
-	require.Equal(t, release, recoverRoleBinding(t, p, operatorFile, old))
+	plain["operationId"], plain["mode"], plain["stopRuntime"] = old.OperationID, old.Mode, true
+	status, data = request(t, http.MethodPost, p.endpoint, operatorPath+"/recoveries", string(opToken), plain)
+	require.Equal(t, http.StatusOK, status, "%s", data)
+	var replay core.Recovery
+	require.NoError(t, json.Unmarshal(data, &replay))
+	require.Equal(t, release, replay)
+	plain["sessionBindingId"] = topicBinding.ID
+	status, data = request(t, http.MethodPost, p.endpoint, operatorPath+"/recoveries", string(opToken), plain)
+	errorCode(t, status, data, http.StatusBadRequest, "invalid_argument")
 	select {
 	case <-peer.released:
 	case <-time.After(4 * time.Second):

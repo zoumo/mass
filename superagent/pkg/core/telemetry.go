@@ -163,7 +163,10 @@ func (t *coreTelemetry) startHTTPWithParent(w http.ResponseWriter, r *http.Reque
 		ctx = context.WithValue(ctx, traceAssociationContextKey{}, true)
 	}
 	method := boundedHTTPMethod(r.Method)
-	route := telemetryRoute(r.URL.Path)
+	route := r.Pattern
+	if route == "" {
+		route = telemetryRoute(r.URL.Path)
+	}
 	spanName := method
 	if method == "_OTHER" {
 		spanName = "HTTP"

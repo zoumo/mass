@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,14 @@ type topicEvent struct {
 
 func topicEvents(t *testing.T, p *process, query string) ([]topicEvent, string) {
 	t.Helper()
-	got := page(t, p, "topic-activity?"+query)
+	params, err := url.ParseQuery(query)
+	require.NoError(t, err)
+	path := "/v1/core/topics/" + url.PathEscape(params.Get("topicId")) + "/activity"
+	params.Del("topicId")
+	status, body := request(t, http.MethodGet, p.endpoint, path+"?"+params.Encode(), "", nil)
+	require.Equal(t, http.StatusOK, status, "%s", body)
+	var got core.Page
+	require.NoError(t, json.Unmarshal(body, &got))
 	var rows []topicEvent
 	for _, raw := range got.Items {
 		var item topicEvent

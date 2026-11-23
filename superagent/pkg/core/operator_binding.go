@@ -45,7 +45,10 @@ func (s *Server) inspectBinding(w http.ResponseWriter, r *http.Request) {
 	if !readOnly(w, r) || !s.authorizeOperator(w, r) {
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/v1/operator/session-bindings/")
+	s.bindingEvidence(w, r, strings.TrimPrefix(r.URL.Path, "/v1/operator/session-bindings/"))
+}
+
+func (s *Server) bindingEvidence(w http.ResponseWriter, r *http.Request, id string) {
 	tx, err := s.store.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		s.fail(w, storageError())

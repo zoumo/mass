@@ -3,6 +3,7 @@ package core_test
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -34,8 +35,16 @@ type conversationRow struct {
 
 func conversationPage(t *testing.T, p *process, query url.Values) ([]conversationRow, string) {
 	t.Helper()
-	query.Set("mode", "conversation")
-	result := page(t, p, "topic-activity?"+query.Encode())
+	path := "/v1/core/topics"
+	if id := query.Get("topicId"); id != "" {
+		path += "/" + url.PathEscape(id) + "/activity"
+		query.Del("topicId")
+	}
+	query.Set("view", "conversation")
+	status, body := request(t, http.MethodGet, p.endpoint, path+"?"+query.Encode(), "", nil)
+	require.Equal(t, http.StatusOK, status, "%s", body)
+	var result core.Page
+	require.NoError(t, json.Unmarshal(body, &result))
 	rows := make([]conversationRow, 0, len(result.Items))
 	for _, raw := range result.Items {
 		var row conversationRow

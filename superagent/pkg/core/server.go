@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -197,7 +196,7 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 		}
 		observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
 		observerUI := r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/")
-		allowedObserverHost := (observerAPI || observerUI) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
+		allowedObserverHost := (observerAPI || observerUI || isTrustedResourceRead(r.URL.Path)) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
 		if r.Host != expectedHost && !allowedObserverHost {
 			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 			return
@@ -366,53 +365,71 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, id, detail := strings.Cut(path, "/")
-	var result any
-	var err error
 	if detail {
-		var raw json.RawMessage
-		raw, err = s.store.getRecord(r.Context(), kind, id, nil, nil, r.URL.Query().Get("trace") == "true")
-		result = raw
-		if err == nil && kind == "issues" && r.Method == http.MethodGet {
-			result = s.observeIssue(r.Context(), raw)
+		s.readCoreRecord(w, r, kind, id)
+		return
+	}
+	s.readCoreCollection(w, r, kind)
+}
+
+func (s *Server) readCoreRecord(w http.ResponseWriter, r *http.Request, kind, id string) {
+	raw, err := s.coreRecord(r.Context(), kind, id, r.URL.Query().Get("trace") == "true", r.Method == http.MethodGet)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.write(w, http.StatusOK, raw)
+}
+
+func (s *Server) coreRecord(ctx context.Context, kind, id string, trace, observe bool) (json.RawMessage, error) {
+	raw, err := s.store.getRecord(ctx, kind, id, nil, nil, trace)
+	if err == nil && kind == "issues" && observe {
+		raw = s.observeIssue(ctx, raw)
+	}
+	return raw, err
+}
+
+func (s *Server) readCoreCollection(w http.ResponseWriter, r *http.Request, kind string) {
+	q := r.URL.Query()
+	limit := 50
+	if kind == "router-messages" {
+		limit = 20
+	}
+	limit, err := coreListLimit(q.Get("limit"), limit)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	query := QueryRequest{
+		Collection: kind, ThreadKey: q.Get("threadKey"),
+		TopicID: q.Get("topicId"), IssueID: q.Get("issueId"), MessageID: q.Get("messageId"), Cursor: q.Get("cursor"), Limit: limit,
+		preview:       q.Get("preview") == "true",
+		newest:        q.Get("order") == "newest",
+		observerTrace: q.Get("trace") == "true",
+	}
+	var page Page
+	if kind == "router-messages" {
+		if q.Get("order") != "" && !query.newest {
+			s.fail(w, problem("invalid_argument", "router-messages uses newest order"))
+			return
 		}
+		page, err = s.store.observerRouterMessages(r.Context(), query)
 	} else {
-		limit := 50
-		if kind == "router-messages" {
-			limit = 20
-		}
-		if value := r.URL.Query().Get("limit"); value != "" {
-			limit, err = strconv.Atoi(value)
-			if err != nil {
-				s.fail(w, problem("invalid_argument", "limit must be an integer"))
-				return
-			}
-		}
-		q := r.URL.Query()
-		query := QueryRequest{
-			Collection: kind, ThreadKey: q.Get("threadKey"),
-			TopicID: q.Get("topicId"), IssueID: q.Get("issueId"), MessageID: q.Get("messageId"), Cursor: q.Get("cursor"), Limit: limit,
-			preview:       q.Get("preview") == "true",
-			newest:        q.Get("order") == "newest",
-			observerTrace: q.Get("trace") == "true",
-		}
-		if kind == "router-messages" {
-			if q.Get("order") != "" && !query.newest {
-				s.fail(w, problem("invalid_argument", "router-messages uses newest order"))
-				return
-			}
-			result, err = s.store.observerRouterMessages(r.Context(), query)
-		} else {
-			result, err = s.store.listScoped(r.Context(), query, nil, nil)
-		}
+		page, err = s.store.listScoped(r.Context(), query, nil, nil)
 	}
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	s.write(w, 200, result)
+	s.write(w, http.StatusOK, page)
 }
 
 func (s *Server) fail(w http.ResponseWriter, err error) {
+	status, body := coreFailure(err)
+	s.write(w, status, body)
+}
+
+func coreFailure(err error) (int, coreHTTPError) {
 	var e *Error
 	if !errors.As(err, &e) {
 		e = problem("unavailable", "operation failed")
@@ -430,7 +447,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case "unavailable":
 		status = 503
 	}
-	s.write(w, status, map[string]any{"error": e})
+	return status, coreHTTPError{Error: e}
 }
 
 func (s *Server) write(w http.ResponseWriter, status int, v any) {
