@@ -62,7 +62,7 @@ func (a *observerBrowserAudit) pollOutbox(ctx context.Context, endpoint, token, 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+channelOutbox+"?limit=200", http.NoBody)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+channelOutbox+"?view=delivery&limit=200", http.NoBody)
 			if err != nil {
 				return
 			}

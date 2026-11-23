@@ -50,6 +50,7 @@ func (s *Server) newHTTPAPI() *httpAPI {
 	}
 	api := &httpAPI{router: router, huma: humachi.New(router, config)}
 	s.registerMCP(api)
+	s.registerMessageResources(api)
 	s.registerStatus(api)
 	s.registerMassd(api)
 	return api

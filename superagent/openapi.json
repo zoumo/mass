@@ -1,6 +1,22 @@
 {
   "components": {
     "schemas": {
+      "BlockerRef": {
+        "additionalProperties": false,
+        "properties": {
+          "blockerId": {
+            "type": "string"
+          },
+          "issueId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issueId",
+          "blockerId"
+        ],
+        "type": "object"
+      },
       "ComponentStatus": {
         "additionalProperties": false,
         "properties": {
@@ -195,6 +211,106 @@
         ],
         "type": "object"
       },
+      "MessagePageOutboxDeliveryRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OutboxDeliveryRecord"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "MessagePageOutboxHistoryRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OutboxHistoryRecord"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "MessagePageRouterMessageRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RouterMessageRecord"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "MessagePageTriggerMessageRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TriggerMessageRecord"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "MessageTrace": {
+        "additionalProperties": false,
+        "properties": {
+          "phase": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase",
+          "traceId"
+        ],
+        "type": "object"
+      },
       "OperationError": {
         "additionalProperties": false,
         "properties": {
@@ -215,6 +331,167 @@
         ],
         "type": "object"
       },
+      "OutboxDeliveryRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "blockerRef": {
+            "$ref": "#/components/schemas/BlockerRef"
+          },
+          "content": {
+            "$ref": "#/components/schemas/StructuredContent"
+          },
+          "id": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/OutboxReceipt"
+          },
+          "replyTarget": {},
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "accountId",
+          "id",
+          "messageId",
+          "content",
+          "status"
+        ],
+        "type": "object"
+      },
+      "OutboxHistoryRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "blockerRef": {
+            "$ref": "#/components/schemas/BlockerRef"
+          },
+          "content": {
+            "$ref": "#/components/schemas/StructuredContent"
+          },
+          "id": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/OutboxReceipt"
+          },
+          "status": {
+            "type": "string"
+          },
+          "traceAssociations": {
+            "items": {
+              "$ref": "#/components/schemas/MessageTrace"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "messageId",
+          "status"
+        ],
+        "type": "object"
+      },
+      "OutboxPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "errorCode": {
+            "type": "string"
+          },
+          "expected": {
+            "$ref": "#/components/schemas/OutboxState"
+          },
+          "outcome": {
+            "enum": [
+              "pending",
+              "sent",
+              "retryable_failure",
+              "permanent_failure",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "OutboxReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "errorCode": {
+            "type": "string"
+          },
+          "retryAt": {
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          },
+          "uncertain": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "OutboxState": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/OutboxReceipt"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "OutboxWriteReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/OutboxReceipt"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "type": "object"
+      },
       "ProbeState": {
         "additionalProperties": false,
         "properties": {
@@ -229,6 +506,235 @@
         },
         "required": [
           "status"
+        ],
+        "type": "object"
+      },
+      "QuotedReplyRecordHTTP": {
+        "additionalProperties": false,
+        "properties": {
+          "blockerRef": {
+            "$ref": "#/components/schemas/BlockerRef"
+          },
+          "outboxId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "outboxId"
+        ],
+        "type": "object"
+      },
+      "Receipt": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptedAt": {
+            "type": "string"
+          },
+          "duplicate": {
+            "type": "boolean"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "threadKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "duplicate",
+          "messageId",
+          "threadKey",
+          "acceptedAt"
+        ],
+        "type": "object"
+      },
+      "Relation": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "decisionId": {
+            "type": "string"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "returned": {
+            "type": "boolean"
+          },
+          "round": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "topicId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "messageId",
+          "topicId",
+          "action",
+          "round",
+          "reason",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ResourceIcon": {
+        "additionalProperties": false,
+        "properties": {
+          "mimeType": {
+            "type": "string"
+          },
+          "sizes": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "src": {
+            "type": "string"
+          },
+          "theme": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "src"
+        ],
+        "type": "object"
+      },
+      "RouterMessageRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "activityAt": {
+            "type": "string"
+          },
+          "activityId": {
+            "type": "string"
+          },
+          "activityKind": {
+            "type": "string"
+          },
+          "activityReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activityTopicId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activityTopicTitle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "returnedEventId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/RouterMessageTarget"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "source",
+          "state",
+          "activityAt",
+          "activityId",
+          "activityKind",
+          "activityReason",
+          "returnedEventId",
+          "activityTopicId",
+          "activityTopicTitle",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "RouterMessageTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "topicId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topicId",
+          "title",
+          "reason"
         ],
         "type": "object"
       },
@@ -257,6 +763,623 @@
           "core",
           "massd",
           "triggers"
+        ],
+        "type": "object"
+      },
+      "StructuredContent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {},
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "data"
+        ],
+        "type": "object"
+      },
+      "SubmitTriggerMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "inReplyToOutboxId": {
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/TriggerMessage"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "replyTarget": {}
+        },
+        "required": [
+          "operationId",
+          "message"
+        ],
+        "type": "object"
+      },
+      "TriggerMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "_meta": {},
+          "content": {
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "text",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "image",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "audio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "resource": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blob": {
+                          "type": "string"
+                        },
+                        "mimeType": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "uri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "uri"
+                      ],
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "resource"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icons": {
+                      "items": {
+                        "$ref": "#/components/schemas/ResourceIcon"
+                      },
+                      "type": "array"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "resource_link",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "uri",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "sourceMessageId": {
+            "type": "string"
+          },
+          "threadKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceMessageId",
+          "threadKey",
+          "content"
+        ],
+        "type": "object"
+      },
+      "TriggerMessageRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "_meta": {},
+          "acceptance": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "content": {
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "text",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "image",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "audio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "resource": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blob": {
+                          "type": "string"
+                        },
+                        "mimeType": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "uri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "uri"
+                      ],
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "resource"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icons": {
+                      "items": {
+                        "$ref": "#/components/schemas/ResourceIcon"
+                      },
+                      "type": "array"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "resource_link",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "uri",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "quotedReply": {
+            "$ref": "#/components/schemas/QuotedReplyRecordHTTP"
+          },
+          "receivedAt": {
+            "type": "string"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/Relation"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "routing": {
+            "additionalProperties": false,
+            "properties": {
+              "round": {
+                "type": "integer"
+              },
+              "state": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "round",
+              "state"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceMessageId": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "threadKey": {
+            "type": "string"
+          },
+          "traceAssociations": {
+            "items": {
+              "$ref": "#/components/schemas/MessageTrace"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "sourceMessageId",
+          "threadKey",
+          "id",
+          "source",
+          "accountId",
+          "receivedAt",
+          "acceptance"
         ],
         "type": "object"
       },
@@ -571,6 +1694,1113 @@
         "summary": "Read Core, massd and built-in Trigger status",
         "tags": [
           "Status"
+        ]
+      }
+    },
+    "/v1/core/outbox-messages": {
+      "get": {
+        "description": "The history view uses the trusted-read boundary. The delivery view requires the configured Account consumer and returns pending or retry-eligible records using limit and cursor.",
+        "operationId": "listOutboxMessages",
+        "parameters": [
+          {
+            "description": "Page size. Defaults to 50, or 20 for the Router view",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same view and filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest-first ordering in the default view",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "enum": [
+                "newest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Read compact rows where supported",
+            "in": "query",
+            "name": "preview",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "delivery"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Trigger Message ID in the history view",
+            "in": "query",
+            "name": "messageId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Topic routing history filter in the history view",
+            "in": "query",
+            "name": "topicId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Thread key in the history view",
+            "in": "query",
+            "name": "threadKey",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/MessagePageOutboxHistoryRecord"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MessagePageOutboxDeliveryRecord"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Source credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          },
+          {}
+        ],
+        "summary": "List Outbox Message history or eligible deliveries",
+        "tags": [
+          "Core"
+        ],
+        "x-conditional-security": {
+          "view=delivery": [
+            {
+              "sourceBearer": []
+            }
+          ]
+        }
+      },
+      "head": {
+        "description": "The history view uses the trusted-read boundary. The delivery view requires the configured Account consumer and returns pending or retry-eligible records using limit and cursor.",
+        "operationId": "listOutboxMessagesHead",
+        "parameters": [
+          {
+            "description": "Page size. Defaults to 50, or 20 for the Router view",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same view and filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest-first ordering in the default view",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "enum": [
+                "newest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Read compact rows where supported",
+            "in": "query",
+            "name": "preview",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "delivery"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Trigger Message ID in the history view",
+            "in": "query",
+            "name": "messageId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Topic routing history filter in the history view",
+            "in": "query",
+            "name": "topicId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Thread key in the history view",
+            "in": "query",
+            "name": "threadKey",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Source credential required"
+          },
+          "403": {
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          },
+          {}
+        ],
+        "summary": "List Outbox Message history or eligible deliveries",
+        "tags": [
+          "Core"
+        ],
+        "x-conditional-security": {
+          "view=delivery": [
+            {
+              "sourceBearer": []
+            }
+          ]
+        }
+      }
+    },
+    "/v1/core/outbox-messages/{outboxId}": {
+      "get": {
+        "description": "History uses the trusted-read boundary. Delivery requires the configured Account consumer and includes the reply target when present. Terminal states are readable.",
+        "operationId": "getOutboxMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "outboxId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "delivery"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OutboxHistoryRecord"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OutboxDeliveryRecord"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Source credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          },
+          {}
+        ],
+        "summary": "Read an Outbox Message in history or delivery view",
+        "tags": [
+          "Core"
+        ],
+        "x-conditional-security": {
+          "view=delivery": [
+            {
+              "sourceBearer": []
+            }
+          ]
+        }
+      },
+      "head": {
+        "description": "History uses the trusted-read boundary. Delivery requires the configured Account consumer and includes the reply target when present. Terminal states are readable.",
+        "operationId": "getOutboxMessageHead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "outboxId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "delivery"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Source credential required"
+          },
+          "403": {
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          },
+          {}
+        ],
+        "summary": "Read an Outbox Message in history or delivery view",
+        "tags": [
+          "Core"
+        ],
+        "x-conditional-security": {
+          "view=delivery": [
+            {
+              "sourceBearer": []
+            }
+          ]
+        }
+      },
+      "patch": {
+        "operationId": "patchOutboxMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "outboxId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboxPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboxWriteReceipt"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Source credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Expected state conflicts or record is ineligible for the requested update"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          }
+        ],
+        "summary": "Record an Outbox delivery outcome using the expected state",
+        "tags": [
+          "Core"
+        ]
+      }
+    },
+    "/v1/core/trigger-messages": {
+      "get": {
+        "description": "The default view and the Router view use the trusted-read boundary. A sourceMessageId lookup requires a valid Source bearer and returns only the acceptance receipt.",
+        "operationId": "listTriggerMessages",
+        "parameters": [
+          {
+            "description": "Page size. Defaults to 50, or 20 for the Router view",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same view and filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest-first ordering in the default view",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "enum": [
+                "newest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Read compact rows where supported",
+            "in": "query",
+            "name": "preview",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Router projection sorted by latest Router activity",
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "router"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return the receipt in the authenticated Source and Account. Supply this parameter alone",
+            "in": "query",
+            "name": "sourceMessageId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Thread key in the default view",
+            "in": "query",
+            "name": "threadKey",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Trigger Message ID in the Router view",
+            "in": "query",
+            "name": "messageId",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/MessagePageTriggerMessageRecord"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MessagePageRouterMessageRecord"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Receipt"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Source credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          },
+          {}
+        ],
+        "summary": "List Trigger Messages, query the Router view or read a Source receipt",
+        "tags": [
+          "Core"
+        ],
+        "x-conditional-security": {
+          "sourceMessageId": [
+            {
+              "sourceBearer": []
+            }
+          ]
+        }
+      },
+      "head": {
+        "description": "The default view and the Router view use the trusted-read boundary. A sourceMessageId lookup requires a valid Source bearer and returns only the acceptance receipt.",
+        "operationId": "listTriggerMessagesHead",
+        "parameters": [
+          {
+            "description": "Page size. Defaults to 50, or 20 for the Router view",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same view and filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest-first ordering in the default view",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "enum": [
+                "newest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Read compact rows where supported",
+            "in": "query",
+            "name": "preview",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Router projection sorted by latest Router activity",
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "enum": [
+                "router"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return the receipt in the authenticated Source and Account. Supply this parameter alone",
+            "in": "query",
+            "name": "sourceMessageId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Thread key in the default view",
+            "in": "query",
+            "name": "threadKey",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact Trigger Message ID in the Router view",
+            "in": "query",
+            "name": "messageId",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Source credential required"
+          },
+          "403": {
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          },
+          {}
+        ],
+        "summary": "List Trigger Messages, query the Router view or read a Source receipt",
+        "tags": [
+          "Core"
+        ],
+        "x-conditional-security": {
+          "sourceMessageId": [
+            {
+              "sourceBearer": []
+            }
+          ]
+        }
+      },
+      "post": {
+        "operationId": "submitTriggerMessage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitTriggerMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Source credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Message identity or quoted reply conflicts with persisted state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "sourceBearer": []
+          }
+        ],
+        "summary": "Submit a Trigger Message and return the durable receipt",
+        "tags": [
+          "Core"
+        ]
+      }
+    },
+    "/v1/core/trigger-messages/{messageId}": {
+      "get": {
+        "operationId": "getTriggerMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerMessageRecord"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "summary": "Read Trigger Message details",
+        "tags": [
+          "Core"
+        ]
+      },
+      "head": {
+        "operationId": "getTriggerMessageHead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Core unavailable"
+          }
+        },
+        "summary": "Read Trigger Message details",
+        "tags": [
+          "Core"
         ]
       }
     },

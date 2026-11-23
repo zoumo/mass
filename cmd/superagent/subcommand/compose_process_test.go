@@ -190,7 +190,7 @@ func runComposeHTTPFixture(dir, name string) int {
 			default:
 				fmt.Fprintln(w, `{"source":"github","notifications":{"state":"stale","lastError":"fixture-private-github-status","nextAttemptAt":"2026-11-22T12:00:00Z"},"repositories":{}}`)
 			}
-		case "/v1/channel/messages":
+		case "/v1/core/trigger-messages":
 			composeFixtureAdmission(dir, w, r)
 		default:
 			w.WriteHeader(http.StatusNotFound)

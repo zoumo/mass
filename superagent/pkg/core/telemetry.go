@@ -202,6 +202,8 @@ func boundedHTTPMethod(method string) string {
 // collection. Object ids, unknown paths, and query strings never become labels.
 func telemetryRoute(path string) string {
 	switch path {
+	case triggerMessagesPath, outboxMessagesPath:
+		return path
 	case "/v1/channel/messages", "/v1/channel/outbox", "/v1/channel/outbox/result",
 		"/v1/operator/input-recovery", "/v1/observer/health",
 		"/v1/observer/topic-activity", observerPerformancePath,
@@ -209,6 +211,10 @@ func telemetryRoute(path string) string {
 		return path
 	}
 	switch {
+	case strings.HasPrefix(path, triggerMessagesPath+"/"):
+		return triggerMessagesPath + "/{messageId}"
+	case strings.HasPrefix(path, outboxMessagesPath+"/"):
+		return outboxMessagesPath + "/{outboxId}"
 	case strings.HasPrefix(path, "/v1/channel/outbox/items/"):
 		return "/v1/channel/outbox/items/{id}"
 	case strings.HasPrefix(path, "/v1/operator/session-bindings/"):
