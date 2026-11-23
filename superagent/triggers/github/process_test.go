@@ -304,7 +304,7 @@ func TestGitHubLegacyQueueRecoversOriginalReceipt(t *testing.T) {
 	f := newGitHubCoreFixture(t)
 	const repo = "demo/sdk"
 	prURL := githubObjectURL(repo, "pull", 42)
-	commentURL := prURL + "#discussion_r123"
+	commentURL := prURL + "?diff=a%2fb#discussion_r123"
 	c := githubTestConfig(f)
 	c.Repositories = []githubRepository{{Repository: repo}}
 	store, closeStore, err := openGitHubStore(c)
@@ -328,7 +328,7 @@ func TestGitHubLegacyQueueRecoversOriginalReceipt(t *testing.T) {
 		SourceMessageID: legacy.Message.SourceMessageID, ThreadKey: prURL,
 		Content: []events.ContentBlock{
 			events.Text("Original comment body\n\nAuthor: reviewer\n\nSource time: 2026-11-23T00:03:04.123456789Z"),
-			{ResourceLink: &events.ContentBlockResourceLink{URI: commentURL, Name: commentURL}},
+			{ResourceLink: &events.ContentBlockResourceLink{URI: commentURL, Name: "URL"}},
 		},
 	}}
 	var original coreclient.Receipt

@@ -41,5 +41,5 @@ func sourceText(text, actor string, at time.Time, hasTime bool) events.ContentBl
 
 // WebLink keeps the original URI and leaves the MIME type unset.
 func WebLink(uri string) events.ContentBlock {
-	return events.ContentBlock{ResourceLink: &events.ContentBlockResourceLink{URI: uri, Name: uri}}
+	return events.ContentBlock{ResourceLink: &events.ContentBlockResourceLink{URI: uri, Name: "URL"}}
 }

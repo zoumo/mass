@@ -26,8 +26,8 @@ source/account; body fields cannot select another identity.
     "threadKey": "https://github.example/org/repo/pull/42",
     "content": [
       {"type": "text", "text": "Review requested."},
-      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42", "name": "Pull request"},
-      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42#comment", "name": "Review comment"},
+      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42", "name": "URL"},
+      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42#comment", "name": "URL"},
       {"type": "resource_link", "uri": "file:///logs/checks.log", "name": "checks.log"}
     ],
     "_meta": {"observationId": "obs-17"}

@@ -233,7 +233,7 @@ func githubAssertMessageLinks(t *testing.T, msg map[string]any, uris ...string) 
 	require.True(t, ok)
 	require.Len(t, blocks, 1+len(uris))
 	for i, uri := range uris {
-		require.Equal(t, map[string]any{"type": "resource_link", "uri": uri, "name": uri}, blocks[i+1])
+		require.Equal(t, map[string]any{"type": "resource_link", "uri": uri, "name": "URL"}, blocks[i+1])
 	}
 }
 
