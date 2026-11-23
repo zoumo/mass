@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import Markdown from 'react-markdown'
 import {
-  Activity, ArrowRight, Bot, Brain, CircleAlert, CircleCheck, Clock3, Gauge, History, Info, ListTree,
+  Activity, ArrowRight, Bot, Brain, ChevronRight, CircleAlert, CircleCheck, Clock3, Gauge, History, Info, ListTree,
   MessageSquareDashed, Radio, ShieldQuestion, SlidersHorizontal, SquareTerminal, Terminal, UserRound, Workflow, type LucideIcon,
 } from 'lucide-react'
 import { Button } from '../../components/ui/button'
@@ -48,9 +49,21 @@ function safeURL(value: unknown) {
   }
 }
 
-function Content({ value }: { value: unknown }) {
-  return list(value).map((block, index) => {
+function Content({ value, markdown = false, appendText = false }: { value: unknown; markdown?: boolean; appendText?: boolean }) {
+  const blocks: Record<string, unknown>[] = []
+  for (const block of list(value)) {
+    const previous = blocks.at(-1)
+    if (appendText && previous?.type === 'text' && block.type === 'text') {
+      previous.text = text(previous.text) + text(block.text)
+    } else {
+      blocks.push({ ...block })
+    }
+  }
+  return blocks.map((block, index) => {
     const mimeType = text(block.mimeType)
+    if (block.type === 'text' && markdown) return <div className="sc-markdown" key={index}>
+      <Markdown skipHtml disallowedElements={['img']} unwrapDisallowed>{text(block.text)}</Markdown>
+    </div>
     if (block.type === 'text') return <span className="sc-text" key={index}>{text(block.text)}</span>
     if (block.type === 'image' && imageTypes.includes(mimeType)) return <img key={index} alt="消息图片" src={`data:${mimeType};base64,${text(block.data)}`} />
     if (block.type === 'audio' && audioTypes.includes(mimeType)) return <audio key={index} controls preload="none" src={`data:${mimeType};base64,${text(block.data)}`} />
@@ -68,7 +81,9 @@ function Content({ value }: { value: unknown }) {
   })
 }
 
-function Interaction({ event, enabled, answered, answer }: { event: SessionEvent; enabled: boolean; answered: boolean; answer: (value: unknown) => void }) {
+function Interaction({ event, enabled, answered, outcome, answer }: {
+  event: SessionEvent; enabled: boolean; answered: boolean; outcome?: string; answer: (value: unknown) => void
+}) {
   const request = record(event.payload.request)
   const [form, setForm] = useState('{}')
   const [error, setError] = useState('')
@@ -77,7 +92,8 @@ function Interaction({ event, enabled, answered, answer }: { event: SessionEvent
   return <div className="sc-interaction">
     <div className="sc-event-inline">
       <span className="sc-event-chip">{label({ permission: '权限', form: '表单', url: '外部流程' }, request.kind)}</span>
-      {event.payload.blocking !== false && <small>等待处理时暂停工作</small>}
+      {outcome ? <small>{label(outcomeLabels, outcome)}</small>
+        : event.payload.blocking !== false && <small>等待处理时暂停工作</small>}
     </div>
     <p className="sc-event-title">{text(request.title || request.message) || '等待交互'}</p>
     <Content value={request.content}/>
@@ -108,58 +124,66 @@ function Interaction({ event, enabled, answered, answer }: { event: SessionEvent
   </div>
 }
 
-type InteractionState = { answered: boolean; closed: boolean }
-
-export function EventRows({ events, raw, allowAnswer, answers, answer }: {
-  events: SessionEvent[]
-  raw: boolean
+type InteractionState = { answered: boolean; closed: boolean; outcome?: string }
+type ReplyProps = {
   allowAnswer: boolean
   answers: Record<string, InteractionState>
   answer: (interaction: string, value: unknown) => void
-}) {
-  const rows = raw ? events.map(event => [event]) : conversationRows(events)
-  return <ol className="sc-events" data-mode={raw ? 'stream' : 'chat'}>
-    {rows.map(group => {
-      const first = group[0]
-      const item = group.filter(event => !event.type.endsWith('_chunk')).at(-1) || first
+}
+
+function InteractionEvent({ event, allowAnswer, answers, answer }: ReplyProps & { event: SessionEvent }) {
+  const interaction = text(event.payload.interaction)
+  const state = answers[interaction]
+  return <Interaction event={event} answered={!!state?.answered && !state.closed}
+    enabled={allowAnswer && !state?.closed && !event.replay} outcome={state?.outcome}
+    answer={value => answer(interaction, value)}/>
+}
+
+function toolActivity(group: SessionEvent[]) {
+  const call = group.find(event => event.type === 'agent.tool_call')
+  const result = group.filter(event => event.type === 'agent.tool_result').at(-1)
+  const chunks = group.filter(event => event.type === 'agent.tool_call_chunk')
+  const tool = result?.payload || call?.payload || group[0].payload
+  const status = text(tool.status)
+  const title = text(call?.payload.title || tool.title || tool.toolName || tool.id)
+  const input = call?.payload.rawInput ?? tool.rawInput
+  const details = <>
+    {input !== undefined && <div className="sc-tool-section"><small>输入</small><pre>{json(input)}</pre></div>}
+    {call && <Content value={call.payload.content}/>}
+    {chunks.length > 0 && <div className="sc-tool-section"><small>工具增量</small>
+      <div className="sc-tool-log"><Content appendText value={chunks.flatMap(row => list(row.payload.content))}/></div>
+    </div>}
+    {result && <div className="sc-tool-section"><small>结果</small><Content value={tool.content}/><pre>{json(tool.rawOutput)}</pre>
+      {tool.exitCode != null && <span className="sc-event-chip">退出码 {String(tool.exitCode)}</span>}
+      {!!tool.output && <details><summary>输出保留情况</summary><pre>{json(tool.output)}</pre></details>}
+    </div>}
+  </>
+  return { tool, title, status, details }
+}
+
+export function EventRows({ events, ...reply }: ReplyProps & { events: SessionEvent[] }) {
+  return <ol className="sc-events" data-mode="stream">
+    {events.map(item => {
       const { type, payload } = item
       const { icon: Icon, tone } = eventStyles[type] || { icon: Info, tone: 'info' }
       let body
       let status = ''
       if (type === 'user.message' || type.startsWith('agent.message') || type.startsWith('agent.thinking')) {
-        const content = type.endsWith('_chunk') ? group.flatMap(event => list(event.payload.content)) : payload.content
-        body = type === 'agent.thinking' && !raw ? <details><summary>查看思考内容</summary><Content value={content}/></details> : <Content value={content}/>
+        body = <Content value={payload.content}/>
       } else if (type.startsWith('agent.tool_')) {
-        const call = group.find(event => event.type === 'agent.tool_call')
-        const result = group.filter(event => event.type === 'agent.tool_result').at(-1)
-        const chunks = group.filter(event => event.type === 'agent.tool_call_chunk')
-        const tool = result?.payload || call?.payload || payload
-        status = text(tool.status)
-        const input = call?.payload.rawInput ?? tool.rawInput
-        const details = <>
-          {input !== undefined && <div className="sc-tool-section"><small>输入</small><pre>{json(input)}</pre></div>}
-          {call && <Content value={call.payload.content}/>}
-          {chunks.length > 0 && <div className="sc-tool-section"><small>工具增量</small>
-            <div className="sc-tool-log"><Content value={chunks.flatMap(row => list(row.payload.content))}/></div>
-          </div>}
-          {result && <div className="sc-tool-section"><small>结果</small><Content value={tool.content}/><pre>{json(tool.rawOutput)}</pre>
-            {tool.exitCode != null && <span className="sc-event-chip">退出码 {String(tool.exitCode)}</span>}
-            {!!tool.output && <details><summary>输出保留情况</summary><pre>{json(tool.output)}</pre></details>}
-          </div>}
-        </>
+        const activity = toolActivity([item])
+        const { tool, title, details } = activity
+        status = activity.status
         body = <>
           <div className="sc-event-inline">
-            <strong>{text(call?.payload.title || tool.title || tool.toolName || tool.id)}</strong>
+            <strong>{title}</strong>
             {!!tool.provider && <code>{text(tool.provider)} · {text(tool.toolName)}</code>}
             {status && <span className="sc-event-chip">{label(toolLabels, status)}</span>}
           </div>
-          {raw || type === 'agent.tool_call_chunk' ? details : <details><summary>查看工具详情</summary>{details}</details>}
+          {details}
         </>
       } else if (type === 'session.interaction_requested') {
-        const interaction = text(payload.interaction)
-        const state = answers[interaction]
-        body = <Interaction event={item} answered={!!state?.answered && !state.closed} enabled={allowAnswer && !state?.closed && !item.replay}
-          answer={value => answer(interaction, value)}/>
+        body = <InteractionEvent event={item} {...reply}/>
       } else {
         switch (type) {
           case 'session.interaction_closed':
@@ -228,7 +252,7 @@ export function EventRows({ events, raw, allowAnswer, answers, answer }: {
             body = <pre>{json(payload)}</pre>
         }
       }
-      return <li key={first.eventId} className="sc-event-card" data-tone={tone} data-status={status || undefined} data-event-type={type}>
+      return <li key={item.eventId} className="sc-event-card" data-tone={tone} data-status={status || undefined} data-event-type={type}>
         <div className="sc-row-heading">
           <span className="sc-event-icon"><Icon size={15} aria-hidden="true"/></span>
           <strong>{eventLabels[type] || type}</strong>
@@ -237,8 +261,109 @@ export function EventRows({ events, raw, allowAnswer, answers, answer }: {
           <time dateTime={item.time}>{clock.format(new Date(item.time))}</time>
         </div>
         <div className="sc-event-body">{body}</div>
-        {raw && <details className="sc-event-json"><summary>原始字段 <code>{type}</code></summary><pre>{json(item)}</pre></details>}
+        <details className="sc-event-json"><summary>原始字段 <code>{type}</code></summary><pre>{json(item)}</pre></details>
       </li>
     })}
   </ol>
+}
+
+type TranscriptPart =
+  | { kind: 'activity'; groups: SessionEvent[][] }
+  | { kind: 'message' | 'interaction' | 'notice'; group: SessionEvent[] }
+type Turn = { key: string; prompt?: SessionEvent; parts: TranscriptPart[] }
+
+function transcript(events: SessionEvent[]) {
+  const turns: Turn[] = []
+  for (const group of conversationRows(events)) {
+    const first = group[0]
+    const { type, payload } = first
+    if (type === 'user.message') {
+      turns.push({ key: first.eventId, prompt: first, parts: [] })
+      continue
+    }
+    let part: TranscriptPart
+    if (type.startsWith('agent.thinking') || type.startsWith('agent.tool_')) part = { kind: 'activity', groups: [group] }
+    else if (type.startsWith('agent.message')) part = { kind: 'message', group }
+    else if (type === 'session.interaction_requested') part = { kind: 'interaction', group }
+    else if (type === 'session.error' || (type === 'session.state_update' &&
+      (payload.error || ['cancelled', 'interrupted'].includes(text(payload.stopReason))))) part = { kind: 'notice', group }
+    else continue
+
+    let turn = turns.at(-1)
+    if (!turn) {
+      turn = { key: first.eventId, parts: [] }
+      turns.push(turn)
+    }
+    const previous = turn.parts.at(-1)
+    if (part.kind === 'activity' && previous?.kind === 'activity') previous.groups.push(group)
+    else turn.parts.push(part)
+  }
+  return turns
+}
+
+function MessageContent({ group }: { group: SessionEvent[] }) {
+  const complete = group.filter(event => !event.type.endsWith('_chunk')).at(-1)
+  const content = complete ? complete.payload.content : group.flatMap(event => list(event.payload.content))
+  return <Content value={content} appendText={!complete} markdown/>
+}
+
+function ActivitySteps({ groups }: { groups: SessionEvent[][] }) {
+  const tools = groups.filter(group => group[0].type.startsWith('agent.tool_')).length
+  const summary = [tools < groups.length && '思考', tools > 0 && `${tools} 次工具调用`].filter(Boolean).join(' · ')
+  return <details className="sc-activity">
+    <summary><ChevronRight size={14} className="sc-chevron"/><Activity size={15}/><span>{summary}</span></summary>
+    <div className="sc-steps">
+      {groups.map(group => {
+        const first = group[0]
+        if (first.type.startsWith('agent.thinking')) return <details key={first.eventId} className="sc-step">
+          <summary><ChevronRight size={13} className="sc-chevron"/><Brain size={15}/>思考过程</summary>
+          <div className="sc-step-body"><MessageContent group={group}/></div>
+        </details>
+        const { tool, title, status, details } = toolActivity(group)
+        return <details key={first.eventId} className="sc-step">
+          <summary><ChevronRight size={13} className="sc-chevron"/><SquareTerminal size={15}/>
+            <span className="sc-tool-title">{title || '工具调用'}</span>
+            {status && <span className="sc-tool-status" data-status={status}>{label(toolLabels, status)}</span>}
+          </summary>
+          <div className="sc-step-body">
+            {!!tool.provider && <small>{text(tool.provider)} · {text(tool.toolName)}</small>}
+            {details}
+          </div>
+        </details>
+      })}
+    </div>
+  </details>
+}
+
+export function Conversation({ events, running, ...reply }: ReplyProps & { events: SessionEvent[]; running: boolean }) {
+  const turns = transcript(events)
+  return <>
+    <ol className="sc-transcript">
+      {turns.map(turn => <li className="sc-turn" key={turn.key}>
+        {turn.prompt && <div className="sc-prompt">
+          <span className="sr-only">用户</span>
+          <Content value={turn.prompt.payload.content}/>
+        </div>}
+        {turn.parts.length > 0 && <div className="sc-reply">
+          <div className="sc-speaker"><span><Bot size={15}/></span> Agent</div>
+          {turn.parts.map(part => {
+            if (part.kind === 'activity') return <ActivitySteps key={part.groups[0][0].eventId} groups={part.groups}/>
+            const event = part.group[0]
+            if (part.kind === 'message') return <div className="sc-response" key={event.eventId}>
+              <MessageContent group={part.group}/>
+            </div>
+            if (part.kind === 'interaction') return <div className="sc-interaction-card" key={event.eventId}>
+              <InteractionEvent event={event} {...reply}/>
+            </div>
+            const error = event.type === 'session.error' ? text(event.payload.message) : text(record(event.payload.error).message)
+            return <p className={error ? 'sc-error' : 'sc-subtle'} key={event.eventId}>
+              {error || label(stopLabels, event.payload.stopReason)}
+            </p>
+          })}
+        </div>}
+      </li>)}
+    </ol>
+    {running && <div className="sc-running" role="status"><span aria-hidden="true"/>Agent 正在工作</div>}
+    {!turns.length && !running && events.length > 0 && <p className="sc-subtle sc-event-only">暂无消息。可从顶部查看事件流。</p>}
+  </>
 }

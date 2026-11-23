@@ -16,6 +16,20 @@ export function demoSession(binding: Binding, emit: (event: SessionEvent) => voi
     type, payload, itemId, eventId: crypto.randomUUID(), time: new Date().toISOString(),
     sessionId: binding.sessionId!, sessionName: binding.name, namespace: binding.namespace,
   })
+  const content = (text: string) => [{ type: 'text', text }]
+  const topic = binding.role === 'topic'
+  const tool = { id: 'demo-read', kind: 'read', provider: 'agent', toolName: 'read', title: '读取 README.md' }
+  const history = [
+    event('user.message', { messageId: 'demo-prompt', content: content(topic
+      ? '帮我看下这次发布还有什么需要确认。' : '检查一下 README，新同事能照着跑起来吗？') }, 'demo-prompt'),
+    event('agent.thinking', { messageId: 'demo-thinking', content: content(topic
+      ? '先核对 README 的启动步骤，再整理发布前需要确认的事项。' : '按新同事第一次启动的路径检查依赖、命令和预期输出。') }, 'demo-thinking'),
+    event('agent.tool_call', { ...tool, rawInput: { path: 'README.md' }, status: 'in_progress' }, tool.id),
+    event('agent.tool_result', { ...tool, content: content('## 本地开发\nnpm install\nnpm run dev'), status: 'completed' }, tool.id),
+    event('agent.message', { messageId: 'demo-reply', content: content(topic
+      ? '发布前还需要确认两项：\n\n1. **环境配置**。README 有启动命令，需要补上必填环境变量和示例值。\n2. **回滚路径**。确认上一版产物可用，以及回滚后如何检查服务状态。'
+      : 'README 已经列出 `npm install` 和 `npm run dev`。新同事还需要两条信息：\n\n- **运行环境**。写明 Node.js 版本和必填环境变量。\n- **启动结果**。给出默认地址和启动成功时的输出，方便确认服务可用。') }, 'demo-reply'),
+  ]
   function finish(cancelled = false) {
     active = false
     clearTimeout(timer)
@@ -50,7 +64,7 @@ export function demoSession(binding: Binding, emit: (event: SessionEvent) => voi
   }
   return {
     async connect() { return 'idle' },
-    async history() { return { events: [] as SessionEvent[], next: undefined } },
+    async history() { return { events: history, next: undefined } },
     async prompt(value: string) {
       if (active) return { result: 'not_applied', acceptance: {} }
       active = true

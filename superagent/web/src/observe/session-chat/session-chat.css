@@ -1,24 +1,78 @@
-.sc-main { max-width: 1250px; padding-bottom: 32px }
-.sc-page-title { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin: 32px 0 22px }
-.sc-page-title h1 { font-size: 34px; font-weight: 650; line-height: 1.2; letter-spacing: -.04em; margin-top: 4px }
-.sc-subtle, .sc-composer small, .sc-toolbar small { color: var(--muted); font-size: 12px }
-.sc-selector { display: flex; padding: 4px; gap: 4px; border: 1px solid var(--line); background: var(--panel); border-radius: 9px }
-.sc-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 286px; gap: 16px; align-items: start }
-.sc-chat { display: grid; grid-template-rows: auto auto minmax(270px, 1fr) auto; height: max(530px, calc(100dvh - 196px)); overflow: hidden }
-.sc-chat-header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line) }
-.sc-avatar { display: grid; flex: none; place-items: center; width: 40px; height: 40px; background: #102c33; border-radius: 10px; color: #75e7db }
+/* Session chat shares the observer palette and gives the transcript its own reading width. */
+.sc-observer { background: #0a101a }
+.sc-observer .topbar { background: #0b121d; border-color: #202e42 }
+.sc-selector { display: flex; gap: 2px; padding: 3px; background: #101b2b; border: 1px solid #202e42; border-radius: 9px }
+.sc-selector button { color: var(--muted) }
+.sc-selector button[aria-pressed=true] { background: #203047; color: var(--text) }
+.sc-main { width: 100%; padding: 0 }
+.sc-width { width: min(100% - 48px, 740px); margin-inline: auto; min-width: 0 }
+.sc-chat { display: grid; grid-template-rows: auto minmax(180px, 1fr) auto; height: max(470px, calc(100dvh - 63px)); overflow-wrap: anywhere }
+.sc-chat-header { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; padding-block: 18px 14px; border-bottom: 1px solid #233146 }
+.sc-avatar { display: grid; flex: none; place-items: center; width: 36px; height: 36px; background: #162c34; border: 1px solid #24454d; border-radius: 10px; color: #8ddbd1 }
 .sc-chat-title { flex: 1; min-width: 0 }
-.sc-chat-title h2 { font-size: 17px; font-weight: 650 }
-.sc-chat-title p { font-size: 12px; color: var(--muted) }
-.sc-chat-title code { margin-left: 7px }
-.sc-status { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--muted); white-space: nowrap }
-.sc-status[data-ready=true] { color: #85e3b3 }
-.sc-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 5px 14px 5px 20px; border-bottom: 1px solid var(--line) }
-.sc-toolbar small { margin-left: 5px }
-.sc-viewport { min-height: 0; overflow: auto; padding: 12px 20px; scrollbar-color: #324a60 transparent; scrollbar-width: thin }
-.sc-empty { height: 100%; min-height: 180px; display: grid; align-content: center; justify-items: center; gap: 9px; color: var(--muted); text-align: center }
+.sc-chat-title h1 { font-size: 17px; font-weight: 650; line-height: 1.35 }
+.sc-chat-title p, .sc-subtle, .sc-stream-title span, .sc-popover { color: var(--muted); font-size: 12px }
+.sc-header-actions, .sc-actions { display: flex; align-items: center; gap: 7px }
+.sc-header-actions { flex: none; color: var(--muted); gap: 3px }
+.sc-header-actions button[aria-pressed=true] { background: #1c293b; color: var(--text) }
+.sc-menu > summary { display: grid; place-items: center; list-style: none; border-radius: 6px; width: 32px; height: 32px }
+.sc-menu > summary::-webkit-details-marker, .sc-activity > summary::-webkit-details-marker, .sc-step > summary::-webkit-details-marker { display: none }
+.sc-menu > summary:hover, .sc-menu[open] > summary { background: #1c293b; color: var(--text) }
+.sc-popover { position: absolute; inset: calc(100% + 8px) 0 auto auto; width: min(100%, 310px); max-height: 60vh; overflow: auto; background: #111c2c; border: 1px solid #2a3b52; border-radius: 12px; padding: 14px; box-shadow: 0 12px 32px #0007 }
+.sc-popover h2 { font-size: 14px; font-weight: 650; color: var(--text); margin-block-end: 10px }
+.sc-popover dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; border-top: 1px solid #26364b; padding: 7px 0 }
+.sc-popover dt { flex-shrink: 0 }
+.sc-popover dd { color: var(--text); text-align: right }
+.sc-popover p { margin-block: 5px }
+.sc-scenarios { display: flex; flex-wrap: wrap; gap: 7px }
+.sc-scenarios button:first-child { width: 100% }
+.sc-scenarios small { color: var(--muted) }
+.sc-viewport { min-height: 0; overflow: auto; scrollbar-color: #33445c transparent; scrollbar-width: thin; overscroll-behavior: contain; scrollbar-gutter: stable both-edges }
+.sc-viewport:focus-visible { outline-offset: -2px }
+.sc-scroll-body { min-height: 100%; padding-block: 28px 22px }
+.sc-stream-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 15px }
+.sc-stream-title h2 { font-size: 16px; font-weight: 650 }
+.sc-empty { min-height: 150px; display: grid; align-content: center; justify-items: center; gap: 8px; color: var(--muted); text-align: center }
 .sc-empty strong { font-size: 16px; color: var(--text) }
-.sc-empty svg { color: var(--teal); margin-bottom: 3px }
+.sc-empty svg { color: #8ddbd1 }
+.sc-history-more { display: flex; justify-content: center; margin-block-start: 14px }
+.sc-transcript, .sc-turn { display: grid; gap: 22px; min-width: 0 }
+.sc-transcript { gap: 36px }
+.sc-prompt { justify-self: end; width: fit-content; max-width: 85%; padding: 11px 16px; border-radius: 17px 17px 5px 17px; background: #1e3543; color: #f1f9fd; font-size: 15px }
+.sc-reply { display: grid; gap: 12px; min-width: 0 }
+.sc-speaker { display: flex; align-items: center; gap: 8px; color: #c0cedd; font-size: 12px; font-weight: 630 }
+.sc-speaker > span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 7px; background: #132a31; color: #8ddbd1 }
+.sc-response { font-size: 15px; line-height: 1.8; color: #e8eff9 }
+.sc-markdown > * + *, .sc-markdown + .sc-markdown { margin-block-start: .8em }
+.sc-markdown :is(h1, h2, h3, h4, h5, h6) { font-weight: 650; line-height: 1.35 }
+.sc-markdown :is(h1, h2) { font-size: 1.18em }
+.sc-markdown ul, .sc-markdown ol { padding-inline-start: 1.6em }
+.sc-markdown ul { list-style: disc }
+.sc-markdown ol { list-style: decimal }
+.sc-markdown li + li { margin-block-start: .3em }
+.sc-markdown :not(pre) > code { background: #192638; color: #c1e8e2; border-radius: 4px; padding: .13em .35em; font-size: .86em }
+.sc-markdown blockquote { border-inline-start: 2px solid #34465e; padding-inline-start: 12px; color: var(--muted) }
+.sc-activity { width: fit-content; max-width: 100%; color: var(--muted); font-size: 12px }
+.sc-activity[open] { width: 100% }
+.sc-activity > summary, .sc-step > summary { display: flex; align-items: center; gap: 7px; list-style: none; width: fit-content; max-width: 100%; color: inherit; min-height: 28px; border-radius: 6px }
+.sc-activity > summary { padding-inline: 6px 9px; background: #131e2d; border: 1px solid #233146 }
+.sc-activity > summary:hover, .sc-step > summary:hover { color: var(--text) }
+.sc-activity svg, .sc-step svg { flex-shrink: 0 }
+.sc-chevron { transition: transform .15s ease }
+.sc-activity[open] > summary .sc-chevron, .sc-step[open] > summary .sc-chevron { transform: rotate(90deg) }
+.sc-steps { margin: 6px 0 0 12px; padding-inline-start: 10px; border-inline-start: 1px solid #2a3b51 }
+.sc-step-body { padding: 4px 0 8px 20px }
+.sc-tool-title { color: #d2deeb }
+.sc-tool-status { color: var(--muted); font-size: 11px; white-space: nowrap }
+.sc-tool-status[data-status=in_progress] { color: #e3bf81 }
+.sc-tool-status:is([data-status=failed], [data-status=declined]) { color: #fda4af }
+.sc-running { display: flex; align-items: center; gap: 8px; margin-block-start: 16px; color: #b7c8da; font-size: 12px }
+.sc-running span, .sc-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none }
+.sc-running span { color: #71dace; animation: sc-pulse 1.5s ease-in-out infinite }
+@keyframes sc-pulse { 50% { opacity: .4 } }
+@media (prefers-reduced-motion: reduce) { .sc-running span { animation: none } }
+.sc-interaction-card { --event-accent: #edc98e; padding: 12px 15px; background: #171f29; border: 1px solid #413a32; border-radius: 10px }
+.sc-event-only { text-align: center; padding: 24px 0 }
 .sc-events { display: grid; gap: 12px; padding-bottom: 10px }
 .sc-event-card {
   --event-accent: #b2c5dc;
@@ -49,9 +103,6 @@
 .sc-event-card[data-tone=interaction] { --event-accent: #ffcd78; border-inline-start-color: var(--event-accent) }
 .sc-event-card[data-tone=settled] { --event-accent: #91d9b4; border-inline-start-style: double }
 .sc-event-card:is([data-status=failed], [data-status=declined], [data-status=cancelled], [data-status=expired], [data-status=canceled]) { --event-accent: #f6a4ae }
-.sc-events[data-mode=chat] > .sc-event-card:is([data-tone=user], [data-tone=reply], [data-tone=reply-stream]) { max-width: min(100%, 640px); min-width: min(100%, 174px) }
-.sc-events[data-mode=chat] > .sc-event-card[data-tone=user] { justify-self: end; border-inline-start-width: 1px }
-.sc-events[data-mode=chat] > .sc-event-card:is([data-tone=reply], [data-tone=reply-stream]) { justify-self: start }
 .sc-row-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--event-accent); font-size: 12px }
 .sc-row-heading time { margin-inline-start: auto }
 .sc-row-heading time, .sc-event-body time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums }
@@ -66,6 +117,7 @@
 .sc-event-json { margin-block-start: 8px; border-top: 1px solid var(--event-border); padding-block-start: 6px; font-size: 11px }
 .sc-event-json code { margin-inline-start: 4px; color: var(--muted) }
 .sc-tool-section { margin-block: 7px }
+.sc-tool-section > small { display: block; margin-block-end: 3px }
 .sc-tool-log { padding: 6px 9px; border-radius: 5px; background: #050c16; color: var(--event-accent); font: 12px/1.55 ui-monospace, monospace }
 .sc-config-list, .sc-command-list { display: grid; gap: 4px }
 .sc-config-list > div, .sc-command-list > li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; padding: 5px 8px; border-radius: 5px; background: color-mix(in srgb, var(--event-accent) 6%, transparent); font-size: 12px }
@@ -80,26 +132,38 @@
 .sc-main pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #aec5dc; background: #050c16; padding: 7px 9px; border-radius: 6px; margin-top: 4px; font-size: 12px; max-height: 240px; overflow: auto }
 .sc-main pre:empty { display: none }
 .sc-main summary { color: #a9c0da }
-.sc-interaction textarea, .sc-composer textarea { display: block; width: 100%; padding: 10px; background: #06101c; border: 1px solid var(--line); border-radius: 8px; resize: vertical; max-height: 18vh }
+.sc-dock { padding-block: 7px 15px }
+.sc-composer { padding: 10px 11px 9px; background: #141f2f; border: 1px solid #2b3b52; border-radius: 16px; box-shadow: 0 8px 22px #03071166 }
+.sc-composer:focus-within { border-color: #587a8e }
+.sc-composer textarea { display: block; width: 100%; min-height: 45px; max-height: 22vh; padding: 4px 5px; border: 0; background: transparent; resize: vertical; font-size: 15px; outline: none }
+.sc-composer textarea::placeholder { color: #92a4b9 }
+.sc-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-block-start: 4px }
+.sc-status { display: inline-flex; align-items: center; gap: 7px; padding-inline-start: 5px; font-size: 12px; color: var(--muted) }
+.sc-status[data-state=running] { color: #8ddbd1 }
+.sc-status[data-state=requires_action] { color: #edc98e }
+.sc-status[data-state=ended] { color: #fda4af }
+.sc-composer .sc-cancel { background: #c63a50; color: #fff7f8 }
+.sc-composer .sc-cancel:hover:not(:disabled) { background: #ae2c42 }
+.sc-composer .sc-cancel:disabled { background: #673041; color: #ecd5dc }
+.sc-composer .sc-send { border-radius: 50%; background: #86ddd1; color: #09322f }
+.sc-composer .sc-send:hover:not(:disabled) { background: #a7eee4 }
+.sc-composer-hint { display: flex; justify-content: space-between; gap: 10px; padding: 6px 4px 0; font-size: 11px; color: var(--muted) }
+.sc-composer-hint span:last-child { margin-inline-start: auto }
+.sc-feedback { display: flex; align-items: center; justify-content: space-between; gap: 7px }
+.sc-dock > p { margin-block-end: 5px }
+.sc-interaction textarea { display: block; width: 100%; padding: 10px; background: #0a101a; border: 1px solid #2b3b52; border-radius: 8px; resize: vertical; max-height: 18vh }
 .sc-interaction textarea, .sc-interaction .sc-actions { margin-top: 8px }
-.sc-composer { border-top: 1px solid var(--line); padding: 12px 16px }
-.sc-composer-footer, .sc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
-.sc-composer-footer { justify-content: space-between; margin-top: 8px }
-.sc-composer .sc-cancel { background: #ba3049; color: #fff5f6 }
-.sc-composer .sc-cancel:hover:not(:disabled) { background: #a5263d }
-.sc-sidebar { display: grid; gap: 12px }
-.sc-aside, .sc-unavailable { padding: 14px 16px }
-.sc-aside h2 { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 650; margin-bottom: 10px }
-.sc-aside h2 svg { color: var(--teal) }
-.sc-aside dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12px; border-top: 1px solid var(--line); padding: 7px 0 }
-.sc-aside dt { color: var(--muted); flex-shrink: 0 }
-.sc-aside dd { text-align: right }
-.sc-scenarios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px }
-.sc-scenarios button:first-child, .sc-scenarios button:last-child { grid-column: 1 / -1 }
-.sc-scenarios small { color: var(--muted); font-size: 11px }
+.sc-interaction .sc-actions { flex-wrap: wrap }
+.sc-interaction small { color: var(--muted) }
+.sc-unavailable { width: min(100% - 48px, 740px); margin: 22px auto; padding: 14px 16px }
 .sc-error { color: #fda4af; margin-block: 4px; font-size: 12px }
-@media (max-width: 800px) {
-  .sc-workspace { grid-template-columns: minmax(0, 1fr) }
-  .sc-chat { height: max(510px, calc(100dvh - 155px)) }
-  .sc-page-title { margin-block: 20px 16px }
+@media (max-width: 560px) {
+  .sc-width { width: calc(100% - 26px) }
+  .sc-observer .top-inner { padding-inline: 13px }
+  .sc-observer .brand { gap: 7px }
+  .sc-chat-header { padding-block: 11px }
+  .sc-header-actions button { width: 32px; padding-inline: 0 }
+  .sc-header-actions button > span { display: none }
+  .sc-scroll-body { padding-block-start: 19px }
+  .sc-dock { padding-block-end: max(9px, env(safe-area-inset-bottom)) }
 }

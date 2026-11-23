@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, ArrowUp, Cable, Hash, List, Radio, Square, Terminal } from 'lucide-react'
+import { ArrowLeft, ArrowUp, ChevronDown, FlaskConical, Hash, Info, List, MessageSquare, Square, Terminal } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { sessionChatDemoHref, useRecord, viewHref, type ViewProps } from '../observer'
 import { demoBindings, demoSession } from './demo'
-import { EventRows, json } from './EventRows'
+import { Conversation, EventRows, json } from './EventRows'
 import { eventLabels, liveSession, mergeEvents, record, text, workLabels, type Binding, type SessionEvent } from './protocol'
 import './session-chat.css'
 
@@ -18,24 +18,18 @@ export default function SessionChatPrototype({ query }: ViewProps) {
   const target = id ? binding.data : demoBindings[demoIndex]
   const back = id && target ? viewHref(role === 'topic' ? 'topic-conversation' : 'issue', target.ownerId) : viewHref('topic-conversation')
   const title = id ? owner.data?.title || target?.name : demoIndex === 0 ? '发布评审' : '检查 README'
-  return <div className="observer">
+  return <div className="observer sc-observer">
     <header className="topbar">
       <div className="shell top-inner">
         <a href={back} className="brand"><ArrowLeft size={17}/> <strong>Superagent</strong><span className="brand-divider"/>Web</a>
-        <div className="secondary"><a href={sessionChatDemoHref}><Terminal size={14}/> 交互演示</a><span>开发原型</span></div>
+        {!id ? <nav className="sc-selector" aria-label="演示目标">
+          {demoBindings.map((entry, index) => <Button key={entry.id} size="sm" variant="ghost"
+            aria-label={targetLabel(entry.role)} aria-pressed={demoIndex === index}
+            onClick={() => setDemoIndex(index)}>{entry.role === 'topic' ? 'Topic' : 'Worker'}</Button>)}
+        </nav> : <div className="secondary"><a href={sessionChatDemoHref}><FlaskConical size={14}/> 交互演示</a></div>}
       </div>
     </header>
     <main className="shell sc-main">
-      <div className="sc-page-title">
-        <div>
-          <p className="sc-subtle">{id ? 'massd · 实时连接' : 'massd · 示例事件'}</p>
-          <h1>Session 对话</h1>
-        </div>
-        {!id && <nav className="sc-selector" aria-label="演示目标">
-          {demoBindings.map((entry, index) => <Button key={entry.id} size="sm" variant={demoIndex === index ? 'secondary' : 'ghost'}
-            aria-pressed={demoIndex === index} onClick={() => setDemoIndex(index)}>{targetLabel(entry.role)}</Button>)}
-        </nav>}
-      </div>
       {!target && <p className="panel sc-unavailable" role="status">{binding.error || '正在读取 Session 绑定…'}</p>}
       {target && (!target.sessionId || !target.sessionUid || !['topic', 'issue'].includes(target.role) || target.state !== 'ready') &&
         <p className="panel sc-unavailable" role="status">此绑定当前无法发起对话 · {target.state}</p>}
@@ -78,6 +72,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
   const [cancelAcknowledgedAt, setCancelAcknowledgedAt] = useState<string>()
   const client = useRef<Client | Demo | null>(null)
   const viewport = useRef<HTMLDivElement>(null)
+  const demoMenu = useRef<HTMLDetailsElement>(null)
   const follow = useRef(true)
   const locks = useRef(new Set<string>())
   const events = mergeEvents(history, live)
@@ -86,10 +81,12 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
   const ready = connection === 'ready'
   const workStateKey = stateUpdate?.eventId || `connection-${attempt}`
   const canCancel = ready && work === 'running' && !pending.cancel && cancelAcknowledgedAt !== workStateKey
-  const answers = Object.fromEntries(live.filter(event => event.type === 'session.interaction_closed').map(event =>
-    [text(event.payload.interaction), { closed: true, answered: false }]))
+  const answers = Object.fromEntries(events.filter(event => event.type === 'session.interaction_closed').map(event =>
+    [text(event.payload.interaction), { closed: true, answered: false, outcome: text(event.payload.outcome) }]))
   for (const interaction of Object.keys({ ...answered, ...pending })) {
-    if (!answers[interaction] && (answered[interaction] || pending[interaction])) answers[interaction] = { answered: true, closed: false }
+    if (!answers[interaction] && (answered[interaction] || pending[interaction])) {
+      answers[interaction] = { answered: true, closed: false, outcome: '' }
+    }
   }
 
   async function readHistory(current: Client | Demo, cursor?: string) {
@@ -182,77 +179,101 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
 
   const demoClient = demo ? client.current as Demo | null : null
   const result = text(record(receipt?.value).result)
-  return <div className="sc-workspace">
-    <section className="panel sc-chat" aria-label="Session 对话">
-      <header className="sc-chat-header">
-        <div className="sc-avatar">{binding.role === 'topic' ? <Hash size={22}/> : <Terminal size={20}/>}</div>
-        <div className="sc-chat-title"><h2>{title}</h2><p>{targetLabel(binding.role)} <code>{binding.name}</code></p></div>
-        <span className="sc-status" data-ready={ready}><Radio size={14}/>{ready ? '已订阅' : connection === 'connecting' ? '正在连接' : '已断开'}</span>
+  const workLabel = ready ? workLabels[work] || work || '工作状态未知' : connection === 'connecting' ? '正在连接' : '已断开'
+  const receiptText = receipt && (receipt.failed ? text(receipt.value) : receiptLabels[result] || result || '已收到回执')
+  const showReceipt = receipt && (receipt.failed || result === 'not_applied' || result === 'noActiveWork' ||
+    (result === 'controlAcknowledged' && ready && work === 'running' && cancelAcknowledgedAt === workStateKey))
+  const reply = { answers, allowAnswer: ready, answer: (interaction: string, value: unknown) => void act('answer', value, interaction) }
+
+  return <section className="sc-chat" aria-label="Session 对话">
+      <header className="sc-chat-header sc-width">
+        <div className="sc-avatar">{binding.role === 'topic' ? <Hash size={19}/> : <Terminal size={18}/>}</div>
+        <div className="sc-chat-title"><h1>{title}</h1><p>{targetLabel(binding.role)}</p></div>
+        <div className="sc-header-actions">
+          <Button size="sm" variant="ghost" aria-pressed={raw} aria-label={raw ? '返回对话' : '查看事件流'} onClick={() => showStream(!raw)}>
+            {raw ? <MessageSquare size={15}/> : <List size={15}/>}<span>{raw ? '返回对话' : '事件流'}</span>
+          </Button>
+          {demo && <details className="sc-menu" name="session-chat-menu" ref={demoMenu}>
+            <summary aria-label="演示场景" title="演示场景"><FlaskConical size={16}/></summary>
+            <div className="sc-popover">
+              <h2>演示场景</h2>
+              <div className="sc-scenarios">
+                <Button size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => {
+                  if (demoMenu.current) demoMenu.current.open = false
+                  showStream(true)
+                  demoClient?.publish()
+                }}>查看全部事件 <small>{Object.keys(eventLabels).length} 类</small></Button>
+                {Object.entries({ permission: '工具权限', form: 'Agent 提问', url: '外部流程' }).map(([kind, label]) =>
+                  <Button key={kind} size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => {
+                    if (demoMenu.current) demoMenu.current.open = false
+                    showStream(false)
+                    demoClient?.request(kind)
+                  }}>{label}</Button>)}
+                <Button size="sm" variant="ghost" disabled={!ready} onClick={() => {
+                  if (demoMenu.current) demoMenu.current.open = false
+                  demoClient?.disconnect()
+                }}>模拟断开连接</Button>
+              </div>
+            </div>
+          </details>}
+          <details className="sc-menu" name="session-chat-menu">
+            <summary aria-label="Session 详情" title="Session 详情"><Info size={16}/></summary>
+            <div className="sc-popover">
+              <h2>Session 详情</h2>
+              <dl>
+                <div><dt>名称</dt><dd><code>{binding.name}</code></dd></div>
+                <div><dt>Session ID</dt><dd><code>{binding.sessionId}</code></dd></div>
+                <div><dt>连接</dt><dd>{demo ? '演示' : 'massd'} · {ready ? '已订阅' : connection === 'connecting' ? '正在连接' : '已断开'}</dd></div>
+                <div><dt>工作状态</dt><dd>{workLabel}</dd></div>
+                {!demo && <div><dt>历史</dt><dd>{historyError ? '读取失败' : loading ? '读取中' : next ? '还有下一页' : historyLoaded ? '已读取' : '未读取'}</dd></div>}
+              </dl>
+              {receipt && <details><summary>最近回执 · {actionLabels[receipt.action]}</summary>
+                <p>{receiptText}</p>
+                {!receipt.failed && <>{receipt.draft && <pre>{receipt.draft}</pre>}<pre>{json(receipt.value)}</pre></>}
+              </details>}
+            </div>
+          </details>
+        </div>
       </header>
-      <div className="sc-toolbar">
-        <span>{raw ? '事件流' : '对话'} <small>{events.length} 条事件</small></span>
-        <Button size="sm" variant="ghost" aria-pressed={raw} onClick={() => showStream(!raw)}><List size={15}/>{raw ? '显示对话' : '查看事件流'}</Button>
-      </div>
       <div className="sc-viewport" ref={viewport} aria-label={raw ? '事件流' : '对话记录'} tabIndex={0} onScroll={event => {
         const node = event.currentTarget
         follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40
       }}>
-        {next && <div className="sc-actions"><Button size="sm" variant="outline" disabled={loading || !ready}
-          onClick={() => { if (client.current) void readHistory(client.current, next) }}>继续读取历史</Button></div>}
-        {historyError && <p className="sc-error" role="alert">历史读取失败 · {historyError}</p>}
-        {events.length === 0 && <div className="sc-empty">
-          <Terminal size={28}/><strong>{loading ? '正在读取历史' : '暂无对话事件'}</strong>
-          <p>{demo ? '发送一条消息，或从右侧运行一个事件场景。' : '连接就绪后发送消息，实时回复会显示在这里。'}</p>
-        </div>}
-        <EventRows events={events} raw={raw} answers={answers} allowAnswer={ready}
-          answer={(interaction, value) => void act('answer', value, interaction)}/>
+        <div className="sc-width sc-scroll-body">
+          {raw && <div className="sc-stream-title"><h2>事件流</h2><span>{events.length} 条事件</span></div>}
+          {historyError && <p className="sc-error" role="alert">历史读取失败 · {historyError}</p>}
+          {events.length === 0 && <div className="sc-empty">
+            <MessageSquare size={24}/><strong>{loading ? '正在读取历史' : raw ? '暂无事件' : '开始对话'}</strong>
+            {!loading && !raw && <p>发一条消息给 {targetLabel(binding.role)}。</p>}
+          </div>}
+          {raw ? <EventRows events={events} {...reply}/> : <Conversation events={events} running={ready && work === 'running'} {...reply}/>}
+          {next && <div className="sc-history-more"><Button size="sm" variant="ghost" disabled={loading || !ready}
+            onClick={() => { if (client.current) void readHistory(client.current, next) }}><ChevronDown size={14}/> 继续读取历史</Button></div>}
+        </div>
       </div>
-      <form className="sc-composer" onSubmit={submit}>
-        <textarea rows={2} aria-label="消息" placeholder={`发给 ${targetLabel(binding.role)}…`} value={draft} onChange={event => setDraft(event.target.value)}
-          onKeyDown={event => {
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
-          }}/>
-        <div className="sc-composer-footer">
-          <small>⌘ / Ctrl + Enter 发送</small>
-          <div className="sc-actions">
-            <Button type="button" className="sc-cancel" variant="destructive" size="sm" disabled={!canCancel} onClick={() => void act('cancel')}><Square size={13}/> 取消工作</Button>
-            <Button type="submit" size="sm" disabled={!ready || pending.prompt || !draft.trim()}><ArrowUp size={16}/> 发送</Button>
+      <div className="sc-width sc-dock">
+        {reason && <div className="sc-feedback" role="status"><span className="sc-error">{reason}</span>
+          {connection === 'ended' && <Button size="sm" variant="ghost" onClick={() => setAttempt(previous => previous + 1)}>重新连接</Button>}
+        </div>}
+        {showReceipt &&
+          <p className={receipt.failed || result === 'not_applied' ? 'sc-error' : 'sc-subtle'} role="status">{receiptText}</p>}
+        <form className="sc-composer" onSubmit={submit}>
+          <textarea rows={2} aria-label="消息" placeholder={`发给 ${targetLabel(binding.role)}…`} value={draft} onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                event.currentTarget.form?.requestSubmit()
+              }
+            }}/>
+          <div className="sc-composer-footer">
+            <span className="sc-status" data-state={ready ? work : connection}><i/>{workLabel}</span>
+            <div className="sc-actions">
+              <Button type="button" className="sc-cancel" variant="destructive" size="sm" disabled={!canCancel} onClick={() => void act('cancel')}><Square size={13}/> 取消工作</Button>
+              <Button type="submit" className="sc-send" size="icon-sm" aria-label="发送" title="发送" disabled={!ready || pending.prompt || !draft.trim()}><ArrowUp size={17}/></Button>
+            </div>
           </div>
-        </div>
-      </form>
-    </section>
-    <aside className="sc-sidebar" aria-label="Session 状态">
-      <section className="panel sc-aside">
-        <h2><Cable size={16}/> Session 状态</h2>
-        <dl>
-          <div><dt>目标</dt><dd>{targetLabel(binding.role)}</dd></div>
-          <div><dt>Session ID</dt><dd><code>{binding.sessionId}</code></dd></div>
-          <div><dt>工作状态</dt><dd>{ready ? workLabels[work] || work || '未知' : '未知'}</dd></div>
-          {!demo && <div><dt>历史</dt><dd>{historyError ? '读取失败' : loading ? '读取中' : next ? '还有下一页' : historyLoaded ? '已读取' : '未读取'}</dd></div>}
-        </dl>
-        {reason && <p className="sc-error" role="status">{reason}。期间的实时事件可能缺失。</p>}
-        {connection === 'ended' && <Button size="sm" variant="outline" onClick={() => setAttempt(previous => previous + 1)}>重新连接</Button>}
-      </section>
-      <section className="panel sc-aside" aria-label="最近回执">
-        <h2>最近回执</h2>
-        <div role="status">
-          {receipt ? <>
-            <p className={receipt.failed ? 'sc-error' : undefined}>{actionLabels[receipt.action]} · {receipt.failed ? text(receipt.value) : receiptLabels[result] || result || '已收到回执'}</p>
-            {!receipt.failed && <details><summary>回执详情</summary>{receipt.draft && <pre>{receipt.draft}</pre>}<pre>{json(receipt.value)}</pre></details>}
-          </> : <p className="sc-subtle">等待操作</p>}
-        </div>
-      </section>
-      {demo && <section className="panel sc-aside" aria-label="演示场景">
-        <h2>演示场景</h2>
-        <div className="sc-scenarios">
-          <Button size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => { showStream(true); demoClient?.publish() }}>
-            查看全部事件 <small>{Object.keys(eventLabels).length} 类</small>
-          </Button>
-          {Object.entries({ permission: '工具权限', form: 'Agent 提问', url: '外部流程' }).map(([kind, label]) =>
-            <Button key={kind} size="sm" variant="outline" disabled={!ready || work !== 'idle'} onClick={() => { showStream(false); demoClient?.request(kind) }}>{label}</Button>)}
-          <Button size="sm" variant="ghost" disabled={!ready} onClick={() => demoClient?.disconnect()}>模拟断开连接</Button>
-        </div>
-      </section>}
-    </aside>
-  </div>
+        </form>
+        <div className="sc-composer-hint">{demo && <span>原型演示</span>}<span>Enter 发送 · Shift + Enter 换行</span></div>
+      </div>
+  </section>
 }
