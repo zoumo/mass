@@ -200,6 +200,17 @@ func (s *sendEvidenceStore) byTask(id, taskID string) (sendEvidence, bool) {
 	return sendEvidence{}, false
 }
 
+func (s *sendEvidenceStore) successfulAttempt(id string) (sendEvidence, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.byOutbox[id] {
+		if a.Result.Outcome == "sent" {
+			return a, true
+		}
+	}
+	return sendEvidence{}, false
+}
+
 func (s *sendEvidenceStore) match(ref nativeMessageRef, observedAt time.Time) (exact sendEvidence, unresolved bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
