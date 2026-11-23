@@ -35,7 +35,7 @@ type Detail = WorkbenchRow & {
 const actors: Record<string, string> = { core: 'Core', topic: 'Topic', router: 'Router', issue: 'Issue Session' }
 const categories = { all: '全部', message: '消息', issue: 'Issue' } as const
 const recordHref = (view: string, filters: Record<string, string>) =>
-  '/observer/?' + new URLSearchParams({ view, ...filters })
+  '/superagent/?' + new URLSearchParams({ view, ...filters })
 
 function ReadError({ message, stale }: { message: string; stale?: boolean }) {
   return <p role="alert" className="read-error">{message}{stale && ' · 快照已过时'} · 可点「刷新」重试</p>
@@ -46,7 +46,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function MessageFacts({ row }: { row: Event }) {
-  const internalEvent = useRecord<Detail>('routing-events/' + encodeURIComponent(row.eventId!))
+  const internalEvent = useRecord<Detail>('internal-events/' + encodeURIComponent(row.eventId!))
   const message = useRecord<Detail>(row.messageId ? 'messages/' + encodeURIComponent(row.messageId) : '')
   const reason = internalEvent.data?.body
   return <>
@@ -63,8 +63,8 @@ function MessageFacts({ row }: { row: Event }) {
     {(internalEvent.loading && !internalEvent.data || row.messageId && message.loading && !message.data) && <p>正在读取详情…</p>}
     <div className="topic-links">
       {row.messageId && <a href={viewHref('message',row.messageId, {threadKey: message.data?.threadKey || ''})}>查看此消息 →</a>}
-      {row.returnedEventId && <a href={recordHref('routing-events',{ id: row.returnedEventId })}>查看原事件 →</a>}
-      <a href={recordHref('routing-events',{ id: row.eventId! })}>事件记录 →</a>
+      {row.returnedEventId && <a href={recordHref('internal-events',{ id: row.returnedEventId })}>查看原事件 →</a>}
+      <a href={recordHref('internal-events',{ id: row.eventId! })}>事件记录 →</a>
     </div>
   </>
 }
@@ -115,7 +115,7 @@ function IssueFacts({ row }: { row: Event }) {
 type Category = keyof typeof categories
 type ActivityRead = { data?: Event[]; error?: string }
 const activityPath = (id: string, filter: Category) =>
-  'topic-activity?' + new URLSearchParams({ topicId: id, filter, limit: '10' })
+  'topics/' + encodeURIComponent(id) + '/activity?' + new URLSearchParams({ filter, limit: '10' })
 
 function topicLane(row: Event, topic: FlowNode): FlowLane {
   const isMessage = row.kind === 'routed_message' || row.kind === 'route_request'
@@ -224,12 +224,10 @@ function TopicDetail({ id, filter }: {id: string; filter: keyof typeof categorie
       <nav className="topic-links" aria-label="Topic 关联记录">
         <a href={viewHref('issue','',{ topicId:id })}>所属 Issue →</a>
         {t.sessionBindingId && <a href={recordHref('session-bindings',{id:t.sessionBindingId})}>查看 Session →</a>}
-        <a href={recordHref('subscriptions',{topicId:id})}>来源订阅 →</a>
-        <a href={recordHref('pull-requests',{topicId:id})}>关联 PR →</a>
         <a href={recordHref('outbox',{topicId:id})}>渠道回执 →</a>
       </nav>
       {!!t.pullRequests?.length && <details className="topic-acceptance"><summary>关注的拉取请求（{t.pullRequests.length}）</summary>
-        <ul>{t.pullRequests.map(pr => <li className="topic-links" key={pr.id}><a href={recordHref('pull-requests',{id:pr.id})}>{pr.canonicalUrl}</a><a href={recordHref('subscriptions',{id:pr.subscriptionId})}>查看订阅</a></li>)}</ul></details>}
+        <ul>{t.pullRequests.map(pr => <li className="topic-links" key={pr.id}><a href={pr.canonicalUrl}>{pr.canonicalUrl}</a></li>)}</ul></details>}
     </section> : !topic.error && <p className="panel empty">正在读取 Topic…</p>}
     <TopicFlow id={id} title={t?.title || id} filter={filter} activity={activity}/>
     <section className="panel" aria-label="活动流">

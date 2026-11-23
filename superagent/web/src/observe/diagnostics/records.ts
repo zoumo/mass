@@ -85,16 +85,13 @@ export type DiagnosticRow = WorkbenchRow & {
   event_id?: string
   ownerId?: string
 }
-const workKinds = ['issues', 'reports', 'timers', 'pull-requests'] as const
+const workKinds = ['issues', 'reports', 'timers'] as const
 export const kinds = [
   'messages',
   'threads',
   'outbox',
   'topics',
   ...workKinds,
-  'routing-events',
-  'subscriptions',
-  'relations',
   'session-bindings',
   'internal-events',
 ] as const
@@ -107,10 +104,6 @@ const collectionLabels: Record<Kind, string> = {
   issues: 'Issue',
   reports: '报告',
   timers: '定时器',
-  'pull-requests': '拉取请求',
-  'routing-events': '路由事件',
-  subscriptions: '订阅',
-  relations: '路由关系',
   'session-bindings': '会话绑定',
   'internal-events': '内部事件',
 }

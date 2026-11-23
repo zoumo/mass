@@ -6,23 +6,28 @@ import { resourceFromAttributes } from '@opentelemetry/resources'
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 import { BatchSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace'
 
-const apiPrefix = '/v1/observer/'
 const apiCollections = new Set([
   'session-bindings',
   'internal-events',
   'issues',
   'messages',
   'outbox',
-  'pull-requests',
-  'relations',
   'reports',
-  'router-messages',
-  'routing-events',
-  'subscriptions',
   'threads',
   'timers',
   'topics',
 ])
+
+function resourceRequest(path: string) {
+  const [collection, id, action] = path.split('?', 1)[0].split('/')
+  if (path === 'status') return { endpoint: '/status', api: 'status' }
+  if (collection === 'performance' || collection === 'traces') {
+    return { endpoint: '/v1/telemetry/' + path, api: collection }
+  }
+  const resource = collection === 'messages' ? 'trigger-messages' : collection === 'outbox' ? 'outbox-messages' : collection
+  const api = !apiCollections.has(collection) ? undefined : action && id ? `${resource}/${action}` : resource
+  return { endpoint: '/v1/core/' + resource + path.slice(collection.length), api }
+}
 
 type Outcome = 'ok' | 'error' | 'canceled'
 const viewAttribute = 'superagent.observer.view'
@@ -36,7 +41,7 @@ function instanceId() {
 function createTelemetry() {
   const url = (signal: 'metrics' | 'traces') => new URL(`/v1/telemetry/${signal}`, location.origin).href
   const resource = resourceFromAttributes({
-    'service.name': 'superagent-observer',
+    'service.name': 'superagent-web',
     'service.instance.id': instanceId(),
   })
   const traces = new TracerProvider({
@@ -83,7 +88,7 @@ function createTelemetry() {
 let sdk: ReturnType<typeof createTelemetry> | undefined
 
 export function startObserverTelemetry() {
-  if (document.querySelector('meta[name="observer-telemetry"]')?.getAttribute('content') !== 'on') return
+  if (import.meta.env.VITE_SUPERAGENT_WEB_TELEMETRY !== 'on') return
   try {
     sdk = createTelemetry()
   } catch {
@@ -129,25 +134,15 @@ export async function measureView<T>(
   }
 }
 
-function allowedAPI(url: URL) {
-  if (url.origin !== location.origin || !url.pathname.startsWith(apiPrefix)) return
-  const [collection, id, action, ...remaining] = url.pathname.slice(apiPrefix.length).split('/')
-  if (remaining.length) return
-  if (collection === 'session-preview' && id && (action === 'history' || action === 'live')) return `session-preview/${action}`
-  if (action === undefined && apiCollections.has(collection) && id !== '') return collection
-  if (id === undefined && (collection === 'health' || collection === 'topic-activity' || collection === 'performance')) return collection
-}
-
 export async function observerRequest<T>(
   path: string,
   signal: AbortSignal,
   consume: (response: Response) => T | Promise<T>,
   parent = ROOT_CONTEXT,
 ): Promise<T> {
-  const endpoint = apiPrefix + path
-  const options: RequestInit = { method: 'GET', credentials: 'omit', signal }
+  const { endpoint, api } = resourceRequest(path)
+  const options: RequestInit = { method: 'GET', credentials: 'omit', signal, mode: 'same-origin', redirect: 'error' }
   const telemetry = sdk
-  const api = telemetry && allowedAPI(new URL(endpoint, location.origin))
   if (!telemetry || !api) return consume(await fetch(endpoint, options))
 
   const start = performance.now()
@@ -161,7 +156,7 @@ export async function observerRequest<T>(
   let outcome: Outcome = 'error'
   let status: number | undefined
   try {
-    const response = await fetch(endpoint, { ...options, headers, mode: 'same-origin', redirect: 'error' })
+    const response = await fetch(endpoint, { ...options, headers })
     status = response.status
     span.setAttribute('http.response.status_code', status)
     const result = await consume(response)

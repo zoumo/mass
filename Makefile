@@ -9,8 +9,8 @@ superagent_packages := ./superagent/... ./cmd/superagent/...
 
 fmt: fmt-go fmt-superagent
 lint: lint-go lint-superagent
-test: test-go test-superagent observer-check
-build: build-go build-superagent
+test: test-go test-superagent check-superagent-web
+build: build-go build-superagent build-superagent-web
 check: check-go check-superagent
 
 # MASS session service and CLI.
@@ -71,13 +71,13 @@ prototype-go:
 acceptance-sdk-go:
 	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./massd/tests/integration -run '^TestTicket08'
 
-# Superagent and the read-only Observer are part of the root offline gates.
-.PHONY: fmt-superagent lint-superagent test-superagent vet-superagent build-superagent check-superagent observer-build observer-check openapi-superagent check-superagent-openapi
+# Superagent Core and Superagent Web are part of the root offline gates.
+.PHONY: fmt-superagent lint-superagent test-superagent vet-superagent build-superagent check-superagent build-superagent-web check-superagent-web openapi-superagent check-superagent-openapi
 fmt-superagent:
 	golangci-lint fmt $(superagent_packages)
-lint-superagent: observer-build
+lint-superagent:
 	golangci-lint run $(superagent_packages)
-	golangci-lint run --build-tags observerweb,coretest $(superagent_packages)
+	golangci-lint run --build-tags coretest $(superagent_packages)
 test-superagent:
 	set -eu; \
 		export GOWORK=off GOPROXY=off GOSUMDB=off; \
@@ -90,14 +90,14 @@ test-superagent:
 			SUPERAGENT_TRIGGER_BINARY= TRIGGER_TEST_RACE=1 go test -race -count=1 -v -timeout=600s $(superagent_packages)
 vet-superagent:
 	GOWORK=off GOPROXY=off GOSUMDB=off go vet $(superagent_packages)
-	GOWORK=off GOPROXY=off GOSUMDB=off go vet -tags observerweb,coretest $(superagent_packages)
-observer-build:
+	GOWORK=off GOPROXY=off GOSUMDB=off go vet -tags coretest $(superagent_packages)
+build-superagent-web:
 	cd superagent/web && npm ci --offline --no-audit --no-fund
 	cd superagent/web && npm run build
-build-superagent: observer-build
+build-superagent:
 	mkdir -p bin
-	GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -tags observerweb -o bin/superagent ./cmd/superagent
-observer-check: observer-build
+	GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -o bin/superagent ./cmd/superagent
+check-superagent-web: build-superagent-web
 	cd superagent/web && npm run test:e2e
 openapi-superagent:
 	@GOWORK=off GOPROXY=off GOSUMDB=off go run ./cmd/superagent openapi
@@ -107,5 +107,5 @@ check-superagent-openapi:
 		trap 'rm -f "$$spec"' EXIT; \
 		$(MAKE) --no-print-directory openapi-superagent > "$$spec"; \
 		diff -u superagent/openapi.json "$$spec"
-check-superagent: lint-superagent test-superagent vet-superagent build-superagent observer-check check-superagent-openapi
+check-superagent: lint-superagent test-superagent vet-superagent build-superagent check-superagent-web check-superagent-openapi
 	golangci-lint fmt --diff $(superagent_packages)

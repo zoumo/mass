@@ -39,11 +39,7 @@ var (
 func build(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
-		tags := "coretest"
-		if os.Getenv("SUPERAGENT_BROWSER_TEST") == "1" {
-			tags += ",observerweb"
-		}
-		cmd := exec.CommandContext(context.Background(), "go", "build", "-race", "-tags", tags, "-o", binary, "../../../cmd/superagent")
+		cmd := exec.CommandContext(context.Background(), "go", "build", "-race", "-tags", "coretest", "-o", binary, "../../../cmd/superagent")
 		cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build: %w: %s", err, b)
@@ -67,6 +63,41 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(filepath.Dir(binary))
 	}
 	os.Exit(code)
+}
+
+func TestObserveCoreResourceCLI(t *testing.T) {
+	f := fixtureAt(t)
+	p := f.start()
+	message := input("cli-resource")
+	submit(t, p, f, message)
+
+	run := func(args ...string) []byte {
+		t.Helper()
+		args = append([]string{"observe", "--endpoint", p.endpoint}, args...)
+		out, err := exec.CommandContext(t.Context(), build(t), args...).CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return out
+	}
+	var status struct {
+		Core     core.CoreStatus      `json:"core"`
+		Massd    core.ComponentStatus `json:"massd"`
+		Triggers core.TriggerStatuses `json:"triggers"`
+	}
+	require.NoError(t, json.Unmarshal(run("status"), &status))
+	require.Equal(t, "ready", status.Core.Status)
+	require.Equal(t, "disabled", status.Massd.Status)
+	require.Equal(t, "not_managed", status.Triggers.GitHub.Status)
+	var messages core.Page
+	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-key", message.Message.ThreadKey, "--limit", "1"), &messages))
+	require.Len(t, messages.Items, 1)
+	require.Contains(t, string(messages.Items[0]), "cli-resource")
+	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-key", "dws:unrelated"), &messages))
+	require.Empty(t, messages.Items)
+
+	help := string(run("--help"))
+	for _, removed := range []string{"pull-requests", "subscriptions", "relations", "routing-events"} {
+		require.NotContains(t, help, removed)
+	}
 }
 
 type process struct {
@@ -413,7 +444,7 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	unauthorizedThread.Message.ThreadKey = "other:opaque"
 	status, b = request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, unauthorizedThread)
 	errorCode(t, status, b, 403, "forbidden")
-	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/routing-events", "/v1/observer/health", "/observer/"} {
+	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/routing-events", "/v1/observer/health"} {
 		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 			gotStatus, _ := request(t, method, p.endpoint, path, f.token, map[string]string{"write": "no"})
 			if gotStatus != 405 {

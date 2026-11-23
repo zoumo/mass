@@ -123,7 +123,6 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 
 	addresses := composeStartup{
 		Endpoint:         coreEndpoint,
-		ObserverEndpoint: coreEndpoint + "/observer/",
 		TriggerEndpoints: make(map[string]string, len(triggers)),
 		Status:           "ready",
 	}
@@ -184,7 +183,6 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 
 type composeStartup struct {
 	Endpoint         string            `json:"endpoint"`
-	ObserverEndpoint string            `json:"observerEndpoint"`
 	MassdEndpoint    string            `json:"massdEndpoint,omitempty"`
 	Status           string            `json:"status"`
 	TriggerEndpoints map[string]string `json:"triggerEndpoints,omitempty"`

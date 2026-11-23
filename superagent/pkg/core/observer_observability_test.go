@@ -34,7 +34,7 @@ func TestObserverTraceReadProjectsKnownFields(t *testing.T) {
  ]}`, id, spanID, id, childID, spanID, childID)
 	}))
 	t.Cleanup(server.Close)
-	reader, err := newObserverTraceReader(&ObserverTraceConfig{Endpoint: server.URL})
+	reader, err := newObserverTraceReader(&TelemetryQueryConfig{Endpoint: server.URL})
 	require.NoError(t, err)
 	t.Cleanup(reader.client.CloseIdleConnections)
 	s, httpServer := startCoreResourceFixture(t)

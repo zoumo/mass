@@ -20,15 +20,15 @@ agent 只有在当前人类请求明确要求修改 harness 中的相关内容�
 |---|---|
 | make fmt / make fmt-go | 格式化 Go 代码 |
 | make lint / make lint-go | Go lint |
-| make test | MASS 与 Superagent 的离线 race 测试，以及 Observer 浏览器测试 |
+| make test | MASS 与 Superagent 的离线 race 测试，以及 Superagent Web 浏览器测试 |
 | make test-go | MASS 单元、集成、仿真三层离线 race 测试 |
 | make test-unit-go | 仅包内单元测试 |
 | make test-integration-go | 构造数据多模块集成测试与 SDK 协议探针 |
 | make test-simulation-go | 录制数据经 agent-sdk-testify 回放 |
 | make test-e2e-go | 显式启动真实 Agent 的 E2E，不包含在 test/check 中 |
-| make build | 构建 `bin/massctl`、`bin/massd` 和带 Observer 的 `bin/superagent` |
+| make build | 构建 `bin/massctl`、`bin/massd`、`bin/superagent` 与独立的 `superagent/web/dist` |
 | make build-go | 构建 `bin/massctl` 与 `bin/massd` |
-| make check | 验证 MASS、Superagent 和 Observer |
+| make check | 验证 MASS、Superagent 和 Superagent Web |
 | make check-go | MASS lint、三层离线测试、构建和格式检查 |
 | make prototype-go | 隔离的合成产品入口端到端验收 |
 

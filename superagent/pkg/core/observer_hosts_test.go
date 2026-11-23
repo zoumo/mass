@@ -12,14 +12,14 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-func TestObserverAllowedHostsConfig(t *testing.T) {
+func TestReadAllowedHostsConfig(t *testing.T) {
 	f := fixtureAt(t)
 	base, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(base)+"observerAllowedHosts: [observer.example.com:5970, other.example.com]\n")
+	write(t, f.config, string(base)+"readAllowedHosts: [observer.example.com:5970, other.example.com]\n")
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	require.Equal(t, []string{"observer.example.com:5970", "other.example.com"}, config.ObserverAllowedHosts)
+	require.Equal(t, []string{"observer.example.com:5970", "other.example.com"}, config.ReadAllowedHosts)
 
 	for _, invalid := range []string{
 		"observer.example.com",
@@ -40,14 +40,14 @@ func TestObserverAllowedHostsConfig(t *testing.T) {
 		"[127.0.0.1:5970]",
 	} {
 		t.Run(invalid, func(t *testing.T) {
-			write(t, f.config, string(base)+"observerAllowedHosts: "+invalid+"\n")
+			write(t, f.config, string(base)+"readAllowedHosts: "+invalid+"\n")
 			_, err := core.LoadConfig(f.config)
-			require.ErrorContains(t, err, "observerAllowedHosts")
+			require.ErrorContains(t, err, "readAllowedHosts")
 		})
 	}
 }
 
-func TestObserverAllowedHostsHTTP(t *testing.T) {
+func TestReadAllowedHostsHTTP(t *testing.T) {
 	const allowed = "observer.example.com:5970"
 	const health = "/v1/observer/health"
 	f := fixtureAt(t)
@@ -76,7 +76,7 @@ func TestObserverAllowedHostsHTTP(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, requestStatus(t, defaultServer, http.MethodGet, health, allowed, "", ""))
 	defaultServer.stop(t, false)
 
-	write(t, f.config, string(base)+"observerAllowedHosts: ["+allowed+"]\n")
+	write(t, f.config, string(base)+"readAllowedHosts: ["+allowed+"]\n")
 	p := f.start()
 	for _, tc := range []struct {
 		name, method, path, host, origin, fetchSite string
@@ -104,7 +104,7 @@ func TestObserverAllowedHostsHTTP(t *testing.T) {
 	}
 	for _, path := range []string{"/observer", "/observer/", "/observer/assets/missing.js"} {
 		numericStatus := requestStatus(t, p, http.MethodGet, path, "", "", "")
-		require.NotEqual(t, http.StatusForbidden, numericStatus)
-		require.Equal(t, numericStatus, requestStatus(t, p, http.MethodGet, path, allowed, "", ""))
+		require.Equal(t, http.StatusNotFound, numericStatus)
+		require.Equal(t, http.StatusForbidden, requestStatus(t, p, http.MethodGet, path, allowed, "", ""))
 	}
 }

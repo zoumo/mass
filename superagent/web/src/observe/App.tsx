@@ -69,7 +69,7 @@ export default function App() {
     )
       return
     const url = new URL(link.href)
-    if (url.origin !== location.origin || url.pathname !== '/observer/') return
+    if (url.origin !== location.origin || url.pathname !== '/superagent/') return
     event.preventDefault()
     navigate(url.pathname + url.search)
   }
@@ -78,20 +78,20 @@ export default function App() {
       <div className="observer" onClick={follow}>
         <header className="topbar">
           <div className="shell top-inner">
-            <a className="brand" href="/observer/" aria-label="Superagent 观察台首页">
+            <a className="brand" href="/superagent/" aria-label="Superagent Web 首页">
               <span className="brand-icon">
                 <Activity />
               </span>
               <strong>Superagent</strong>
               <span className="brand-divider" />
-              <span>观察台</span>
+              <span>Web</span>
             </a>
             <div className="secondary">
               <span className="readonly">
                 <ScanLine size={14} />
                 只读
               </span>
-              <a href="/observer/?view=internal-events">
+              <a href="/superagent/?view=internal-events">
                 <Activity size={16} />
                 诊断
               </a>

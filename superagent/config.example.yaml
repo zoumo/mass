@@ -5,10 +5,10 @@ dataDir: ./superagent-core-data
 listen: 127.0.0.1:24370
 # Optional Core URL for Session clients, including through a reverse proxy.
 # externalURL: https://core.example.com
-# Optional HTTP Host values for Observer reads. Include the port when clients send it.
-# Use network access controls to limit Observer access to trusted readers.
-# observerAllowedHosts:
-#   - observer.example.com:24370
+# Optional additional HTTP Host values for direct Core resource reads.
+# Include the port when clients send it. The same-origin gateway sets the upstream Host.
+# readAllowedHosts:
+#   - core.example.com:24370
 sources:
   - source: dws
     accountId: example-account
@@ -19,9 +19,9 @@ sources:
 # Optional SQLite main-database page budget; zero means unlimited.
 storageMaxPages: 0
 
-# Optional OpenObserve trace and process metric queries from the Observer.
+# Optional OpenObserve queries for Core trace and process metric reads.
 # The private credential file contains a username and password on separate lines.
-# observerTrace:
+# telemetryQuery:
 #   endpoint: http://127.0.0.1:5080
 #   organization: default
 #   stream: default

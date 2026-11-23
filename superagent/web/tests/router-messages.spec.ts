@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
+import { fixtureOrigins } from './endpoints.mjs'
 
-const audit = 'http://127.0.0.1:' + (process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795')
-const routing = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794')
+const routing = 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894')
 
 type Message = { id: string; sourceMessageId: string; eventId: string }
 type InternalEvent = { event_id: string; createdAt: string; kind: string; topicId?: string; returnedEventId?: string; body?: string }
@@ -13,12 +13,12 @@ async function list<T>(request: APIRequestContext, url: string): Promise<T[]> {
 }
 
 test('Router lists distinct Messages with a stable cursor while a new Message arrives', async ({ page, request }) => {
-  const before = await list<RouterRow>(request, '/v1/observer/router-messages?limit=100')
+  const before = await list<RouterRow>(request, '/v1/core/trigger-messages?view=router&limit=100')
   expect(before.length).toBeGreaterThan(50)
   const tiedAt = before.find((row, i) => i > 0 && row.activityAt === before[i - 1].activityAt)!.activityAt
   const tiedIDs = before.filter(row => row.activityAt === tiedAt).map(row => row.id)
   expect(tiedIDs).toEqual([...tiedIDs].sort().reverse())
-  await page.goto('/observer/?perspective=router')
+  await page.goto('/superagent/?perspective=router')
   await page.getByRole('button', { name: '暂停自动刷新' }).click()
   const rows = page.locator('[data-message-id]')
   await expect(rows).toHaveCount(20)
@@ -26,7 +26,7 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
   const flow = page.getByRole('region', { name: 'Router 处理流程' })
   await expect(flow.locator('.flow-state').first()).toHaveText(/待决策/)
   await expect(flow.locator('.flow-topic')).toHaveCount(0)
-  const insert = await request.post('/v1/channel/messages', {
+  const insert = await request.post('/v1/core/trigger-messages', {
     headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
     data: { operationId: 'router-browser-insert', message: {
       sourceMessageId: 'router-browser-insert', threadKey: 'dws:observer-router-new-message',
@@ -50,19 +50,19 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
 })
 
 test('Router connects each target and return reason to its source event', async ({ page, request }, testInfo) => {
-  const { endpoint } = await (await request.get(audit + '/message-path-fixture')).json()
-  const api = endpoint + '/v1/observer/'
-  const messages = await list<Message>(request, api + 'messages?preview=true')
+  const endpoint = fixtureOrigins['message-path-fixture']
+  const api = endpoint + '/v1/core/'
+  const messages = await list<Message>(request, api + 'trigger-messages?preview=true')
   const bySource = (id: string) => messages.find(m => m.sourceMessageId === id)!
   const direct = bySource('observer-path-direct')
   const rerouted = bySource('observer-path-rerouted')
   const partial = bySource('observer-path-partial-return')
-  const result = await list<RouterRow>(request, api + 'router-messages')
+  const result = await list<RouterRow>(request, api + 'trigger-messages?view=router')
   const summary = result.find(row => row.id === partial.id)!
   expect(result.some(row => row.id === direct.id)).toBe(false)
   expect(result.filter(row => row.id === rerouted.id)).toHaveLength(1)
   expect(result.filter(row => row.id === partial.id)).toHaveLength(1)
-  const internalEvents = await list<InternalEvent>(request, api + 'routing-events?messageId=' + partial.id)
+  const internalEvents = await list<InternalEvent>(request, api + 'internal-events?messageId=' + partial.id)
   const returned = internalEvents.find(d => d.returnedEventId)!
   const original = internalEvents.find(d => d.event_id === returned.returnedEventId)!
   const requests: string[] = []
@@ -74,7 +74,7 @@ test('Router connects each target and return reason to its source event', async 
     }
   })
   await page.setViewportSize({ width: 1360, height: 900 })
-  await page.goto(endpoint + '/observer/?perspective=router')
+  await page.goto(endpoint + '/superagent/?perspective=router')
   const row = page.locator(`[data-message-id="${partial.id}"]`)
   await expect(row).toContainText('已分发')
   await expect(row.locator('.router-brief')).toHaveCount(2)
@@ -129,11 +129,11 @@ test('Router connects each target and return reason to its source event', async 
 })
 
 test('ignored Message displays the recorded return time and identifies the missing ignore reason', async ({ page, request }) => {
-  const messages = await list<Message>(request, routing + '/v1/observer/messages?preview=true')
+  const messages = await list<Message>(request, routing + '/v1/core/trigger-messages?preview=true')
   const ignored = messages.find(m => m.sourceMessageId === 'observer-routing')!
-  const internalEvents = await list<InternalEvent>(request, routing + '/v1/observer/routing-events?messageId=' + ignored.id)
+  const internalEvents = await list<InternalEvent>(request, routing + '/v1/core/internal-events?messageId=' + ignored.id)
   const returned = internalEvents.find(d => d.returnedEventId)!
-  await page.goto(routing + '/observer/?perspective=router&id=' + ignored.id)
+  await page.goto(routing + '/superagent/?perspective=router&id=' + ignored.id)
   const row = page.locator(`[data-message-id="${ignored.id}"]`)
   await expect(row.locator('.router-grid')).toContainText('已忽略')
   await expect(row.locator('.router-grid')).toContainText('原因未记录')
@@ -150,14 +150,14 @@ test('ignored Message displays the recorded return time and identifies the missi
 
 for (const [size, width, height] of [['desktop', 1360, 900], ['narrow', 390, 844]] as const) {
   test(`Router navigation opens a populated flow diagram before the list (${size})`, async ({ page, request }, testInfo) => {
-    const { endpoint } = await (await request.get(audit + '/message-path-fixture')).json()
-    const api = endpoint + '/v1/observer/'
-    const messages = await list<Message>(request, api + 'messages?preview=true')
+    const endpoint = fixtureOrigins['message-path-fixture']
+    const api = endpoint + '/v1/core/'
+    const messages = await list<Message>(request, api + 'trigger-messages?preview=true')
     const partial = messages.find(m => m.sourceMessageId === 'observer-path-partial-return')!
-    const result = await list<RouterRow>(request, api + 'router-messages')
+    const result = await list<RouterRow>(request, api + 'trigger-messages?view=router')
     const record = result.find(row => row.id === partial.id)!
     await page.setViewportSize({ width, height })
-    await page.goto(endpoint + '/observer/')
+    await page.goto(endpoint + '/superagent/')
     await page.getByRole('navigation', { name: '观察视角' }).getByRole('link', { name: 'Router' }).click()
     const flow = page.getByRole('region', { name: 'Router 处理流程' })
     await expect(flow.getByRole('heading')).toBeInViewport()

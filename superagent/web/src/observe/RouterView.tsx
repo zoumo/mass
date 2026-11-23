@@ -45,7 +45,7 @@ function EventFacts({ row }: { row: InternalEvent }) {
 
 function OriginalRoutingEvent({ id }: { id: string }) {
   const [open, setOpen] = useState(false)
-  const record = useRecord<InternalEvent>(open ? 'routing-events/' + encodeURIComponent(id) + '?trace=true' : '')
+  const record = useRecord<InternalEvent>(open ? 'internal-events/' + encodeURIComponent(id) + '?trace=true' : '')
   return <div className="router-original">
     <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}><Undo2 size={13}/>原事件 {id}{open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>
     {open && <div>{record.error && <p role="alert" className="read-error">{record.error}{record.data && ' · 快照已过时'}</p>}
@@ -54,7 +54,7 @@ function OriginalRoutingEvent({ id }: { id: string }) {
 }
 
 function RouterHistory({ message }: { message: RouterMessage }) {
-  const list = usePages<InternalEvent>('routing-events?' + new URLSearchParams({ messageId: message.id, limit: '20', trace: 'true' }))
+  const list = usePages<InternalEvent>('internal-events?' + new URLSearchParams({ messageId: message.id, limit: '20', trace: 'true' }))
   return <section className="router-history" aria-label="路由事件记录">
     <div className="router-history-heading"><h3>路由事件记录</h3><a href={viewHref('metrics', '', { metric: 'mcp_rate', role: 'router' })}>Router 指标</a><CopyLink href={location.pathname+location.search}/><a href={viewHref('message', message.id)}>查看消息路径<ArrowUpRight size={14}/></a></div>
     {list.error && <p role="alert" className="read-error">{list.error}{list.data && ' · 快照已过时'}</p>}
@@ -83,7 +83,7 @@ function routerLanes(row: RouterMessage, limit: string): FlowLane[] {
   function evidence(id: string, reason?: string) {
     return <div className="router-flow-evidence">
       {reason && <p>{reason}</p>}
-      <a href={'/observer/?' + new URLSearchParams({ view: 'routing-events', id })}>事件记录 · {id}<ArrowUpRight size={13}/></a>
+      <a href={'/superagent/?' + new URLSearchParams({ view: 'internal-events', id })}>事件记录 · {id}<ArrowUpRight size={13}/></a>
     </div>
   }
   function edge(action: string, reason?: string) {
@@ -147,10 +147,10 @@ export default function RouterView({ query }: ViewProps) {
   const value = query.get('limit') || ''
   const limit = ['50', '100'].includes(value) ? value : '20'
   const selected = query.get('id') || ''
-  const path = 'router-messages?limit=' + limit
+  const path = 'messages?view=router&limit=' + limit
   const list = usePages<RouterMessage>(path)
   const onPage = list.data?.find(row => row.id === selected)
-  const selectedRecord = useRecord<Page<RouterMessage>>(selected && (list.data || list.error) && !onPage ? 'router-messages?messageId=' + encodeURIComponent(selected) : '')
+  const selectedRecord = useRecord<Page<RouterMessage>>(selected && (list.data || list.error) && !onPage ? 'messages?view=router&messageId=' + encodeURIComponent(selected) : '')
   const scroll = useRef<HTMLDivElement>(null)
   const restored = useRef('')
   useLayoutEffect(() => {

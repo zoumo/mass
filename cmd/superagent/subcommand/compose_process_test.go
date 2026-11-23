@@ -542,7 +542,6 @@ func TestComposeProcessCombinations(t *testing.T) {
 			startup := p.startup(t)
 			require.True(t, strings.HasPrefix(startup.Endpoint, tc.origin), startup.Endpoint)
 			require.False(t, strings.HasSuffix(startup.Endpoint, ":0"), startup.Endpoint)
-			require.Equal(t, startup.Endpoint+"/observer/", startup.ObserverEndpoint)
 			require.Empty(t, startup.MassdEndpoint)
 			require.DirExists(t, filepath.Join(dir, "massd-data"))
 			server := awaitComposeEvent(t, dir, "core:start")

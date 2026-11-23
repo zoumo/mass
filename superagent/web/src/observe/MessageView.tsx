@@ -103,8 +103,8 @@ function MessageDetail({ row, threadKey }: { row: MessageRecord, threadKey: stri
         <h2 ref={heading} tabIndex={-1}>{messageTitle(row)}</h2>
         <div className="message-meta"><span><Clock3/><time dateTime={row.receivedAt}>{formatTime(row.receivedAt)}</time></span></div>
         <details className="original-text"><summary><Text size={16}/><span>查看全文</span><ChevronDown size={15}/></summary><pre data-testid="message-body" tabIndex={0}>{messageBody(row) || '渠道未提供正文。'}</pre></details>
-        <div className="topic-links"><a href={'/observer/?' + new URLSearchParams({view:'messages',mode:'records',id:row.id})}>完整记录</a>
-          {row.threadKey && <a href={'/observer/?' + new URLSearchParams({view:'threads',id:row.threadKey})}>查看线程</a>}</div>
+        <div className="topic-links"><a href={'/superagent/?' + new URLSearchParams({view:'messages',mode:'records',id:row.id})}>完整记录</a>
+          {row.threadKey && <a href={'/superagent/?' + new URLSearchParams({view:'threads',id:row.threadKey})}>查看线程</a>}</div>
       </div>
     </div>
     <MessagePath message={row}/>
