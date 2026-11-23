@@ -10,38 +10,70 @@ func TestScheduledTaskRules(t *testing.T) {
 	cases := []struct {
 		name, rule, anchor, after, expected string
 	}{
-		{"once retains its absolute past time", `{"type":"once","runAt":"2026-11-25T09:00:00.123+08:00"}`,
-			"2026-11-26T01:00:00Z", "2026-11-26T01:00:00Z", "2026-11-25T01:00:00.123Z"},
-		{"interval stays on anchor phase", `{"type":"interval","every":"30m"}`,
-			"2026-11-25T09:13:14Z", "2026-11-27T09:14:03Z", "2026-11-27T09:43:14Z"},
-		{"interval beyond duration subtraction range", `{"type":"interval","every":"100ms"}`,
-			"1700-01-01T09:00:00.033Z", "2026-11-25T09:00:00.930Z", "2026-11-25T09:00:00.933Z"},
-		{"daily same day with unordered duplicates", `{"type":"daily","times":["18:00","09:00","18:00"],"timezone":"Asia/Shanghai"}`,
-			"2026-11-25T01:00:00Z", "2026-11-25T01:00:00Z", "2026-11-25T10:00:00Z"},
-		{"every other week stays on the Monday-based anchor", `{"type":"weekly","every":2,"weekdays":["mon","fri"],"times":["09:00"],"timezone":"UTC"}`,
-			"2026-11-25T10:00:00Z", "2026-11-28T09:00:00Z", "2026-12-07T09:00:00Z"},
-		{"monthly end of leap February", `{"type":"monthly","days":[1,-1],"times":["09:00"],"timezone":"UTC"}`,
-			"2028-02-01T09:00:00Z", "2028-02-01T09:00:00Z", "2028-02-29T09:00:00Z"},
-		{"monthly short and inactive months skipped", `{"type":"monthly","every":2,"days":[31],"times":["09:00"],"timezone":"UTC"}`,
-			"2026-02-27T09:00:00Z", "2026-02-27T09:00:00Z", "2026-08-31T09:00:00Z"},
-		{"daily DST spring gap", `{"type":"daily","times":["02:30"],"timezone":"America/New_York"}`,
-			"2026-03-01T00:00:00Z", "2026-03-07T08:00:00Z", "2026-03-09T06:30:00Z"},
-		{"daily DST repeated minute takes first", `{"type":"daily","times":["01:30"],"timezone":"America/New_York"}`,
-			"2026-10-31T00:00:00Z", "2026-11-01T04:00:00Z", "2026-11-01T05:30:00Z"},
-		{"daily DST second occurrence skipped", `{"type":"daily","times":["01:30"],"timezone":"America/New_York"}`,
-			"2026-10-31T00:00:00Z", "2026-11-01T05:30:00Z", "2026-11-02T06:30:00Z"},
-		{"daily whole date skipped in Samoa", `{"type":"daily","times":["09:00"],"timezone":"Pacific/Apia"}`,
-			"2011-12-25T00:00:00Z", "2011-12-29T21:00:00Z", "2011-12-30T19:00:00Z"},
-		{"cron uses DOM or DOW when both restricted", `{"type":"cron","expression":"0 9 1 * 1","timezone":"UTC"}`,
-			"2026-11-25T09:00:00Z", "2026-11-30T09:00:00Z", "2026-12-01T09:00:00Z"},
-		{"cron stepped wildcard restricts day of month", `{"type":"cron","expression":"0 9 */2 * 1","timezone":"UTC"}`,
-			"2026-11-25T09:00:00Z", "2026-11-25T09:00:00Z", "2026-11-27T09:00:00Z"},
-		{"cron skips DST gap", `{"type":"cron","expression":"30 2 * * *","timezone":"America/New_York"}`,
-			"2026-03-01T00:00:00Z", "2026-03-07T08:00:00Z", "2026-03-09T06:30:00Z"},
-		{"cron skips second occurrence after fractional-hour rollback", `{"type":"cron","expression":"45 1 * * *","timezone":"Australia/Lord_Howe"}`,
-			"2026-04-01T00:00:00Z", "2026-04-04T15:00:00Z", "2026-04-05T15:15:00Z"},
-		{"cron spans the century leap-year exception", `{"type":"cron","expression":"0 9 29 2 *","timezone":"UTC"}`,
-			"2096-02-29T09:00:00Z", "2096-02-29T09:00:00Z", "2104-02-29T09:00:00Z"},
+		{
+			"once retains its absolute past time", `{"type":"once","runAt":"2026-11-25T09:00:00.123+08:00"}`,
+			"2026-11-26T01:00:00Z", "2026-11-26T01:00:00Z", "2026-11-25T01:00:00.123Z",
+		},
+		{
+			"interval stays on anchor phase", `{"type":"interval","every":"30m"}`,
+			"2026-11-25T09:13:14Z", "2026-11-27T09:14:03Z", "2026-11-27T09:43:14Z",
+		},
+		{
+			"interval beyond duration subtraction range", `{"type":"interval","every":"100ms"}`,
+			"1700-01-01T09:00:00.033Z", "2026-11-25T09:00:00.930Z", "2026-11-25T09:00:00.933Z",
+		},
+		{
+			"daily same day with unordered duplicates", `{"type":"daily","times":["18:00","09:00","18:00"],"timezone":"Asia/Shanghai"}`,
+			"2026-11-25T01:00:00Z", "2026-11-25T01:00:00Z", "2026-11-25T10:00:00Z",
+		},
+		{
+			"every other week stays on the Monday-based anchor", `{"type":"weekly","every":2,"weekdays":["mon","fri"],"times":["09:00"],"timezone":"UTC"}`,
+			"2026-11-25T10:00:00Z", "2026-11-28T09:00:00Z", "2026-12-07T09:00:00Z",
+		},
+		{
+			"monthly end of leap February", `{"type":"monthly","days":[1,-1],"times":["09:00"],"timezone":"UTC"}`,
+			"2028-02-01T09:00:00Z", "2028-02-01T09:00:00Z", "2028-02-29T09:00:00Z",
+		},
+		{
+			"monthly short and inactive months skipped", `{"type":"monthly","every":2,"days":[31],"times":["09:00"],"timezone":"UTC"}`,
+			"2026-02-27T09:00:00Z", "2026-02-27T09:00:00Z", "2026-08-31T09:00:00Z",
+		},
+		{
+			"daily DST spring gap", `{"type":"daily","times":["02:30"],"timezone":"America/New_York"}`,
+			"2026-03-01T00:00:00Z", "2026-03-07T08:00:00Z", "2026-03-09T06:30:00Z",
+		},
+		{
+			"daily DST repeated minute takes first", `{"type":"daily","times":["01:30"],"timezone":"America/New_York"}`,
+			"2026-10-31T00:00:00Z", "2026-11-01T04:00:00Z", "2026-11-01T05:30:00Z",
+		},
+		{
+			"daily DST second occurrence skipped", `{"type":"daily","times":["01:30"],"timezone":"America/New_York"}`,
+			"2026-10-31T00:00:00Z", "2026-11-01T05:30:00Z", "2026-11-02T06:30:00Z",
+		},
+		{
+			"daily whole date skipped in Samoa", `{"type":"daily","times":["09:00"],"timezone":"Pacific/Apia"}`,
+			"2011-12-25T00:00:00Z", "2011-12-29T21:00:00Z", "2011-12-30T19:00:00Z",
+		},
+		{
+			"cron uses DOM or DOW when both restricted", `{"type":"cron","expression":"0 9 1 * 1","timezone":"UTC"}`,
+			"2026-11-25T09:00:00Z", "2026-11-30T09:00:00Z", "2026-12-01T09:00:00Z",
+		},
+		{
+			"cron stepped wildcard restricts day of month", `{"type":"cron","expression":"0 9 */2 * 1","timezone":"UTC"}`,
+			"2026-11-25T09:00:00Z", "2026-11-25T09:00:00Z", "2026-11-27T09:00:00Z",
+		},
+		{
+			"cron skips DST gap", `{"type":"cron","expression":"30 2 * * *","timezone":"America/New_York"}`,
+			"2026-03-01T00:00:00Z", "2026-03-07T08:00:00Z", "2026-03-09T06:30:00Z",
+		},
+		{
+			"cron skips second occurrence after fractional-hour rollback", `{"type":"cron","expression":"45 1 * * *","timezone":"Australia/Lord_Howe"}`,
+			"2026-04-01T00:00:00Z", "2026-04-04T15:00:00Z", "2026-04-05T15:15:00Z",
+		},
+		{
+			"cron spans the century leap-year exception", `{"type":"cron","expression":"0 9 29 2 *","timezone":"UTC"}`,
+			"2096-02-29T09:00:00Z", "2096-02-29T09:00:00Z", "2104-02-29T09:00:00Z",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -112,4 +144,12 @@ func parseScheduleTestTime(t *testing.T, value string) time.Time {
 		t.Fatal(err)
 	}
 	return parsed
+}
+
+func TestScheduledTaskRuleSchema(t *testing.T) {
+	schema := scheduledTaskScheduleSchema()
+	variants, ok := schema["oneOf"].([]any)
+	if !ok || len(variants) != 6 {
+		t.Fatalf("expected six schedule variants: %v", schema)
+	}
 }

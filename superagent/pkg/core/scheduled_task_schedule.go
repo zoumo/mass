@@ -21,7 +21,7 @@ const (
 
 var (
 	scheduledRunAtPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
-	scheduledTimePattern  = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
+	scheduledTimePattern  = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 	scheduledCronField    = regexp.MustCompile(`^[0-9*/,\-]+$`)
 	scheduledCronParser   = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	scheduledWeekdays     = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
@@ -72,7 +72,7 @@ func (s *ScheduledTaskSchedule) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (ScheduledTaskSchedule) Schema(huma.Registry) *huma.Schema {
+func (*ScheduledTaskSchedule) Schema(huma.Registry) *huma.Schema {
 	var variants []*huma.Schema
 	for _, kind := range []string{"once", "interval", "daily", "weekly", "monthly", "cron"} {
 		variants = append(variants, scheduledScheduleVariant(kind))
@@ -82,7 +82,7 @@ func (ScheduledTaskSchedule) Schema(huma.Registry) *huma.Schema {
 
 func scheduledTaskScheduleSchema() map[string]any {
 	// Expose the same discriminated union in MCP and OpenAPI.
-	data, err := json.Marshal(ScheduledTaskSchedule{}.Schema(nil))
+	data, err := json.Marshal((&ScheduledTaskSchedule{}).Schema(nil))
 	if err != nil {
 		panic(err)
 	}
@@ -126,7 +126,7 @@ func scheduledScheduleVariant(kind string) *huma.Schema {
 			}})
 		}
 	case "cron":
-		add("expression", &huma.Schema{Type: huma.TypeString, MinLength: &nonempty, Description: "Five fields: minute, hour, day of month, month, and weekday (0 is Sunday)."})
+		add("expression", &huma.Schema{Type: huma.TypeString, MinLength: &nonempty, Description: "Five fields in order: minute, hour, day of month, calendar month, and weekday (0 is Sunday)."})
 		add("timezone", &huma.Schema{Type: huma.TypeString, MinLength: &nonempty, Description: "IANA time zone, e.g. Asia/Shanghai."})
 	default:
 		return nil
@@ -136,7 +136,7 @@ func scheduledScheduleVariant(kind string) *huma.Schema {
 
 // next returns the absolute once time or the first recurring instant strictly
 // after both the activation anchor and the evaluation time.
-func (s ScheduledTaskSchedule) next(anchor, after time.Time) (time.Time, error) {
+func (s *ScheduledTaskSchedule) next(anchor, after time.Time) (time.Time, error) {
 	if s.Type == "once" {
 		due, err := time.Parse(time.RFC3339Nano, s.RunAt)
 		if err != nil || !scheduledRunAtPattern.MatchString(s.RunAt) || due.UTC().Year() < 0 || due.UTC().Year() > maxScheduleYear {
@@ -175,7 +175,7 @@ func (s ScheduledTaskSchedule) next(anchor, after time.Time) (time.Time, error) 
 	return candidate.UTC(), nil
 }
 
-func (s ScheduledTaskSchedule) nextInterval(anchor, after time.Time) (time.Time, error) {
+func (s *ScheduledTaskSchedule) nextInterval(anchor, after time.Time) (time.Time, error) {
 	var every string
 	if err := json.Unmarshal(s.Every, &every); err != nil {
 		return time.Time{}, problem("invalid_argument", "schedule.every must be a positive duration string")
@@ -217,7 +217,7 @@ func calendarPeriod(kind string, date time.Time) int64 {
 	}
 }
 
-func (s ScheduledTaskSchedule) nextCalendar(anchor, after time.Time) (time.Time, error) {
+func (s *ScheduledTaskSchedule) nextCalendar(anchor, after time.Time) (time.Time, error) {
 	every := int64(1)
 	if len(s.Every) != 0 && (json.Unmarshal(s.Every, &every) != nil || every < 1) {
 		return time.Time{}, problem("invalid_argument", "schedule.every must be a positive integer")
@@ -307,7 +307,7 @@ func periodDays(kind string, period int64) (time.Time, int) {
 	}
 }
 
-func (s ScheduledTaskSchedule) nextCron(after time.Time) (time.Time, error) {
+func (s *ScheduledTaskSchedule) nextCron(after time.Time) (time.Time, error) {
 	fields := strings.Fields(s.Expression)
 	if len(fields) != 5 {
 		return time.Time{}, problem("invalid_argument", "schedule.expression must contain five cron fields")
