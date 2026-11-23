@@ -489,8 +489,14 @@ func (s *Store) finishInternalBatch(ctx context.Context, batch internalEventBatc
 	}
 	if status != "dispatching" {
 		for _, item := range batch.items {
-			if _, err := tx.ExecContext(ctx, `UPDATE internal_events SET status=?,sent_at=?
- WHERE event_id=? AND status='dispatching'`, status, at, item.ID); err != nil {
+			// The Topic may end while MASS is accepting an owned task's input.
+			// Keep the acceptance receipt even if termination superseded the event.
+			if _, err := tx.ExecContext(ctx, `UPDATE internal_events SET status=?1,sent_at=?2
+ WHERE event_id=?3 AND (status='dispatching' OR (
+ status='superseded' AND ?1='sent' AND kind='routed_message' AND EXISTS (
+ SELECT 1 FROM trigger_messages m JOIN scheduled_tasks t ON t.id=m.scheduled_task_id
+ WHERE m.id=`+routingMessageID+` AND t.owner_type='topic' AND m.body->>'$.eventId'=internal_events.event_id
+ )))`, status, at, item.ID); err != nil {
 				return err
 			}
 		}

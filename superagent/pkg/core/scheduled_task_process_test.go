@@ -374,3 +374,26 @@ func TestScheduledTaskTopicLifecycleFence(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduledTaskNativeReceiptSurvivesTopicCompletion(t *testing.T) {
+	t.Parallel()
+	boundary := newRouteBoundary(t)
+	f, operatorFile := eventFixture(t, boundary.url)
+	p := f.start()
+	_, token := workBoundaryTopic(t, f, p)
+	p.stop(t, false)
+
+	stage := "internal_event_before_settlement"
+	gate := t.TempDir()
+	p = f.start("SUPERAGENT_TEST_GATE_STAGE="+stage, "SUPERAGENT_TEST_GATE_DIR="+gate)
+	t.Cleanup(func() { write(t, filepath.Join(gate, "release"), "release") })
+	task := roleWork[core.ScheduledTask](t, p, token, "create_scheduled_task", scheduledTaskInput("accepted-before-completion", scheduledTaskPast))
+	message := waitScheduledTaskHistory(t, p, operatorFile, task.ID, 1)[0]
+	waitWorkGate(t, gate, stage)
+	require.Equal(t, "dispatching", readRecord[workEventRecord](t, p, "internal-events/"+message.EventID).Status)
+
+	roleWork[core.Topic](t, p, token, "topic_complete", acceptance("complete-topic", 1, "notes/verified.txt"))
+	waitWorkEvent(t, p, message.EventID, "superseded")
+	write(t, filepath.Join(gate, "release"), "release")
+	require.NotEmpty(t, waitWorkEvent(t, p, message.EventID, "sent").SentAt)
+}
