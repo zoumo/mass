@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button'
 import { formatTime, eventStatusLabel, messageBody, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
-import { usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './topic.css'
@@ -224,6 +224,7 @@ function TopicDetail({ id, filter }: {id: string; filter: keyof typeof categorie
       <nav className="topic-links" aria-label="Topic 关联记录">
         <a href={viewHref('issue','',{ topicId:id })}>所属 Issue →</a>
         {t.sessionBindingId && <a href={recordHref('session-bindings',{id:t.sessionBindingId})}>查看 Session →</a>}
+        {import.meta.env.DEV && t.sessionBindingId && <a href={sessionChatHref(t.sessionBindingId)}>与 Topic Session 对话 →</a>}
         <a href={recordHref('outbox',{topicId:id})}>渠道回执 →</a>
       </nav>
       {!!t.pullRequests?.length && <details className="topic-acceptance"><summary>关注的拉取请求（{t.pullRequests.length}）</summary>

@@ -6,7 +6,7 @@ import { formatTime, eventStatusLabel, stateLabel, type WorkbenchRow } from '../
 import ExecutionProfileFields from './ExecutionProfileFields'
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
-import { usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './issue.css'
@@ -141,6 +141,7 @@ function IssueDetail({ id, scope }: { id: string; scope: string }) {
       <h2>{issue.title}</h2><p className="issue-goal">{issue.goal || '目标未记录'}</p>
       {issue.currentSessionBindingId && <div className="issue-links">
         <a href={recordLink('session-bindings', issue.currentSessionBindingId)}>查看当前会话 →</a>
+        {import.meta.env.DEV && <a href={sessionChatHref(issue.currentSessionBindingId)}>与当前 Worker Session 对话 →</a>}
         {issue.issueSession && <span>{stateLabel(issue.issueSession.state)}</span>}
       </div>}
       <div className="issue-latest"><Clock3 size={15}/><span>最近进展</span>

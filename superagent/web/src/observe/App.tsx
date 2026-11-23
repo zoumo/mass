@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react'
+import { lazy, Suspense, useEffect, useState, type MouseEvent } from 'react'
 import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { RefreshContext, defaultPerspective, navigate, useQuery, viewHref, type Perspective } from './observer'
@@ -12,6 +12,7 @@ import TraceView from './TraceView'
 import MetricsView from './MetricsView'
 
 const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
+const SessionChatPrototype = import.meta.env.DEV ? lazy(() => import('./session-chat/SessionChatPrototype')) : null
 
 const views = {
   'topic-conversation': { title: 'Topic 会话', subtitle: '', icon: MessagesSquare, component: TopicConversation },
@@ -25,6 +26,13 @@ const views = {
 
 export default function App() {
   const query = useQuery()
+  if (SessionChatPrototype && query.get('prototype') === 'session-chat') {
+    return <Suspense fallback={null}><SessionChatPrototype query={query}/></Suspense>
+  }
+  return <ObserverApp query={query}/>
+}
+
+function ObserverApp({ query }: { query: URLSearchParams }) {
   const collection = query.get('view') || ''
   const diagnostics =
     query.get('mode') === 'records' || (Boolean(collection) && !Object.hasOwn(previousViews, collection))

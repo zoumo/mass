@@ -13,6 +13,9 @@ export type MessageRecord = WorkbenchRow & {
   eventId?: string
 }
 
+export const sessionChatDemoHref = '/superagent/?prototype=session-chat'
+export const sessionChatHref = (bindingId: string) => sessionChatDemoHref + '&' + new URLSearchParams({ binding: bindingId })
+
 export function viewHref(view: Perspective, id = '', filters: Record<string, string> = {}) {
   const query = new URLSearchParams({ perspective: view })
   if (id) query.set('id', id)

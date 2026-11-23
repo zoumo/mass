@@ -5,7 +5,7 @@ import { formatTime, eventStatusLabel, messageBody, sourceLabel, stateLabel, typ
 import CopyLink from './CopyLink'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { ObjectAvatar, ConversationCard, type Participant } from './ConversationCard'
-import { navigate, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
+import { navigate, sessionChatHref, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './conversation.css'
 
@@ -19,7 +19,7 @@ const labels = {
 } as const
 type Filter = keyof typeof labels
 
-type Topic = { id: string; title: string; status: string; createdAt: string; lastMessageAt?: string }
+type Topic = { id: string; title: string; status: string; createdAt: string; lastMessageAt?: string; sessionBindingId?: string }
 type EventIdentity = { id: string; topicId: string; at: string; traceAssociations?: TraceAssociation[] }
 type IngressEvent = EventIdentity & {
   kind: 'router_routed' | 'thread_direct'; actor: 'router' | 'core'; summary?: string; status: string
@@ -138,6 +138,9 @@ function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
       <header className="conversation-group">
         <ObjectAvatar {...topicParticipant(topicId)}/>
         <div><h2>{topic.data?.title || topicId}</h2><code>{topicId}</code></div>
+        {import.meta.env.DEV && topic.data?.sessionBindingId && <Button asChild size="sm" variant="outline">
+          <a href={sessionChatHref(topic.data.sessionBindingId)}>直接对话</a>
+        </Button>}
         {topic.data?.status && <span className="conversation-status">{stateLabel(topic.data.status)}</span>}
       </header>
       <nav className="conversation-filters" aria-label="按消息类型筛选">

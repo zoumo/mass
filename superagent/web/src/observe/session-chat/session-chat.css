@@ -1,0 +1,61 @@
+.sc-main { max-width: 1250px; padding-bottom: 32px }
+.sc-page-title { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin: 32px 0 22px }
+.sc-page-title h1 { font-size: 34px; font-weight: 650; line-height: 1.2; letter-spacing: -.04em; margin-top: 4px }
+.sc-subtle, .sc-composer small, .sc-toolbar small { color: var(--muted); font-size: 12px }
+.sc-selector { display: flex; padding: 4px; gap: 4px; border: 1px solid var(--line); background: var(--panel); border-radius: 9px }
+.sc-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 286px; gap: 16px; align-items: start }
+.sc-chat { display: grid; grid-template-rows: auto auto minmax(270px, 1fr) auto; height: max(530px, calc(100dvh - 196px)); overflow: hidden }
+.sc-chat-header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line) }
+.sc-avatar { display: grid; flex: none; place-items: center; width: 40px; height: 40px; background: #102c33; border-radius: 10px; color: #75e7db }
+.sc-chat-title { flex: 1; min-width: 0 }
+.sc-chat-title h2 { font-size: 17px; font-weight: 650 }
+.sc-chat-title p { font-size: 12px; color: var(--muted) }
+.sc-chat-title code { margin-left: 7px }
+.sc-status { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--muted); white-space: nowrap }
+.sc-status[data-ready=true] { color: #85e3b3 }
+.sc-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 5px 14px 5px 20px; border-bottom: 1px solid var(--line) }
+.sc-toolbar small { margin-left: 5px }
+.sc-viewport { min-height: 0; overflow: auto; padding: 12px 20px; scrollbar-color: #324a60 transparent; scrollbar-width: thin }
+.sc-empty { height: 100%; min-height: 180px; display: grid; align-content: center; justify-items: center; gap: 9px; color: var(--muted); text-align: center }
+.sc-empty strong { font-size: 16px; color: var(--text) }
+.sc-empty svg { color: var(--teal); margin-bottom: 3px }
+.sc-events { display: grid; gap: 12px; padding-bottom: 10px }
+.sc-events > li { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; max-width: min(100%, 680px) }
+.sc-events > li[data-kind=user] { justify-self: end; min-width: min(100%, 130px); background: #0b2a32; border-color: #1c5257 }
+.sc-events > li[data-kind=agent] { justify-self: start; background: #0d1e32; min-width: min(100%, 130px) }
+.sc-events > li[data-kind=system] { padding: 6px 10px; font-size: 12px; color: var(--muted); border-style: dashed }
+.sc-events > li[data-kind=thinking], .sc-events > li[data-kind=tool] { color: #bdcde1 }
+.sc-events > li[data-kind=interaction] { border-color: #5a4930; background: #161a20 }
+.sc-events > li[data-kind=error] { border-color: #6e3c4b; color: #fda4af }
+.sc-row-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; margin-bottom: 3px; font-size: 12px }
+.sc-row-heading time, .sc-row-heading small, .sc-raw time { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums }
+.sc-text { white-space: pre-wrap }
+.sc-viewport img { max-width: min(100%, 440px); max-height: 350px; object-fit: contain; border-radius: 6px }
+.sc-viewport audio { max-width: 100%; display: block; margin-top: 5px }
+.sc-viewport a { color: var(--teal); text-decoration: underline }
+.sc-main pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #aec5dc; background: #050c16; padding: 7px 9px; border-radius: 6px; margin-top: 4px; font-size: 12px; max-height: 240px; overflow: auto }
+.sc-main pre:empty { display: none }
+.sc-main summary { color: #a9c0da }
+.sc-raw > li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px }
+.sc-raw time { margin-right: 5px }
+.sc-interaction textarea, .sc-composer textarea { display: block; width: 100%; padding: 10px; background: #06101c; border: 1px solid var(--line); border-radius: 8px; resize: vertical; max-height: 18vh }
+.sc-interaction textarea, .sc-interaction .sc-actions { margin-top: 8px }
+.sc-composer { border-top: 1px solid var(--line); padding: 12px 16px }
+.sc-composer-footer, .sc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
+.sc-composer-footer { justify-content: space-between; margin-top: 8px }
+.sc-sidebar { display: grid; gap: 12px }
+.sc-aside, .sc-unavailable { padding: 14px 16px }
+.sc-aside h2 { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 650; margin-bottom: 10px }
+.sc-aside h2 svg { color: var(--teal) }
+.sc-aside dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12px; border-top: 1px solid var(--line); padding: 7px 0 }
+.sc-aside dt { color: var(--muted); flex-shrink: 0 }
+.sc-aside dd { text-align: right }
+.sc-scenarios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px }
+.sc-scenarios button:first-child, .sc-scenarios button:last-child { grid-column: 1 / -1 }
+.sc-scenarios small { color: var(--muted); font-size: 11px }
+.sc-error { color: #fda4af; margin-block: 4px; font-size: 12px }
+@media (max-width: 800px) {
+  .sc-workspace { grid-template-columns: minmax(0, 1fr) }
+  .sc-chat { height: max(510px, calc(100dvh - 155px)) }
+  .sc-page-title { margin-block: 20px 16px }
+}
