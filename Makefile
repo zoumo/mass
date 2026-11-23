@@ -72,7 +72,7 @@ acceptance-sdk-go:
 	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./massd/tests/integration -run '^TestTicket08'
 
 # Superagent and the read-only Observer are part of the root offline gates.
-.PHONY: fmt-superagent lint-superagent test-superagent vet-superagent build-superagent check-superagent observer-build observer-check
+.PHONY: fmt-superagent lint-superagent test-superagent vet-superagent build-superagent check-superagent observer-build observer-check openapi-superagent check-superagent-openapi
 fmt-superagent:
 	golangci-lint fmt $(superagent_packages)
 lint-superagent: observer-build
@@ -99,5 +99,13 @@ build-superagent: observer-build
 	GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -tags observerweb -o bin/superagent ./cmd/superagent
 observer-check: observer-build
 	cd superagent/web && npm run test:e2e
-check-superagent: lint-superagent test-superagent vet-superagent build-superagent observer-check
+openapi-superagent:
+	@GOWORK=off GOPROXY=off GOSUMDB=off go run ./cmd/superagent openapi
+check-superagent-openapi:
+	@set -eu; \
+		spec=$$(mktemp); \
+		trap 'rm -f "$$spec"' EXIT; \
+		$(MAKE) --no-print-directory openapi-superagent > "$$spec"; \
+		diff -u superagent/openapi.json "$$spec"
+check-superagent: lint-superagent test-superagent vet-superagent build-superagent observer-check check-superagent-openapi
 	golangci-lint fmt --diff $(superagent_packages)

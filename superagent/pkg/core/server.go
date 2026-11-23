@@ -132,7 +132,8 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 		go s.coordinate(life)
 	}
 	s.observerLife, s.observerCancel = context.WithCancel(context.Background())
-	s.http = &http.Server{Handler: http.HandlerFunc(s.serve), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	routes := s.newHTTPAPI()
+	s.http = &http.Server{Handler: s.guardHTTP(routes.router), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	return s, nil
 }
 func (s *Server) Endpoint() string { return "http://" + s.listener.Addr().String() }
@@ -184,43 +185,48 @@ func (s *Server) Shutdown(ctx context.Context) (result error) {
 	return errors.Join(s.embeddedMassd.Shutdown(ctx), s.store.Close())
 }
 
-func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
-	expectedHost := s.listener.Addr().String()
-	if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
-		expectedHost = local.String()
-	}
-	observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
-	observerUI := r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/")
-	allowedObserverHost := (observerAPI || observerUI) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
-	if r.Host != expectedHost && !allowedObserverHost {
-		s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
-		return
-	}
-	if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, MassdMountPath+"/") {
-		// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
-		s.massdHTTP.ServeHTTP(w, r)
-		return
-	}
-	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
-		s.fail(w, problem("forbidden", "foreign Origin is not allowed"))
-		return
-	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-		s.fail(w, problem("forbidden", "cross-site requests are not allowed"))
-		return
-	}
+func (s *Server) guardHTTP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		expectedHost := s.listener.Addr().String()
+		if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+			expectedHost = local.String()
+		}
+		observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
+		observerUI := r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/")
+		allowedObserverHost := (observerAPI || observerUI) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
+		if r.Host != expectedHost && !allowedObserverHost {
+			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
+			return
+		}
+		if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, MassdMountPath+"/") {
+			// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
+			s.massdHTTP.ServeHTTP(w, r)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
+			s.fail(w, problem("forbidden", "foreign Origin is not allowed"))
+			return
+		}
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+			s.fail(w, problem("forbidden", "cross-site requests are not allowed"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// serveLegacy serves callers that have yet to switch to the resource routes.
+func (s *Server) serveLegacy(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/v1/telemetry/") {
 		s.observerTelemetry.serve(w, r)
 		return
 	}
-	if r.URL.Path == mcpPath {
-		s.serveMCP(w, r)
-		return
-	}
+	observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
+	observerUI := r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/")
 	if s.store.telemetry.enabled {
 		observed, request := s.store.telemetry.startHTTP(w, r)
 		defer observed.finishRequest()

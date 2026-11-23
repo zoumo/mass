@@ -1,0 +1,238 @@
+{
+  "components": {
+    "schemas": {
+      "CoreHTTPError": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "currentRevision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "type": "object"
+      },
+      "JSONRPCError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "data": {},
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "McpHTTPRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {},
+          "jsonrpc": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "params": {}
+        },
+        "required": [
+          "jsonrpc",
+          "method"
+        ],
+        "type": "object"
+      },
+      "McpHTTPResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/JSONRPCError"
+          },
+          "id": {},
+          "jsonrpc": {
+            "type": "string"
+          },
+          "result": {}
+        },
+        "required": [
+          "jsonrpc"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "massdBearer": {
+        "description": "massd instance credential",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "operatorBearer": {
+        "description": "Core operator credential",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "roleBearer": {
+        "description": "MCP role capability",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "sourceBearer": {
+        "description": "Source account credential",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Superagent HTTP API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/mcp": {
+      "post": {
+        "operationId": "callRoleMcp",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "MCP-Protocol-Version",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpHTTPRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpHTTPResponse"
+                }
+              }
+            },
+            "description": "JSON-RPC reply"
+          },
+          "202": {
+            "description": "Notification accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/McpHTTPResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CoreHTTPError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Invalid request or protocol version"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Role credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Role request forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Role binding is stale"
+          },
+          "413": {
+            "description": "Request too large"
+          },
+          "415": {
+            "description": "Content-Type must be application/json"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "roleBearer": []
+          }
+        ],
+        "summary": "Exchange role MCP JSON-RPC messages",
+        "tags": [
+          "MCP"
+        ]
+      }
+    }
+  }
+}

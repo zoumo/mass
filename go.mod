@@ -3,6 +3,8 @@ module github.com/zoumo/mass
 go 1.26.9
 
 require (
+	github.com/danielgtaylor/huma/v2 v2.39.1
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-logr/logr v1.4.4
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/go-viper/mapstructure/v2 v2.5.0
