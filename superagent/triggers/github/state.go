@@ -66,6 +66,13 @@ func (o githubObservation) submission(c githubConfig, repo githubRepository, str
 	meta["repository"] = repo.Repository
 	meta["observation"] = o.Kind
 	meta["observationVersion"] = version
+	meta["human"] = o.Human
+	if o.SourceEventID != "" {
+		meta["sourceEventId"] = o.SourceEventID
+	}
+	if c.InstanceID != "" {
+		meta["collectorInstance"] = c.InstanceID
+	}
 	content := []events.ContentBlock{triggercontent.SourceText(githubMessageText(o.Title, o.Body, repo.Prompt), o.Actor, o.At)}
 	prURL := ""
 	if strings.HasPrefix(o.ThreadKey, "https://") {
@@ -75,29 +82,13 @@ func (o githubObservation) submission(c githubConfig, repo githubRepository, str
 	if o.URL != "" && o.URL != prURL {
 		content = append(content, triggercontent.WebLink(o.URL))
 	}
-	diagnostics, err := githubDiagnostics(meta, &o.Human, o.SourceEventID, c.InstanceID)
+	diagnostics, err := json.Marshal(meta)
 	if err != nil {
 		return coreclient.TriggerSubmission{}, err
 	}
 	return coreclient.TriggerSubmission{OperationID: id, Message: coreclient.TriggerMessage{
 		SourceMessageID: id, ThreadKey: o.ThreadKey, Content: content, Meta: diagnostics,
 	}}, nil
-}
-
-func githubDiagnostics(meta map[string]any, human *bool, sourceEventID, collectorInstance string) (json.RawMessage, error) {
-	if meta == nil {
-		meta = make(map[string]any)
-	}
-	if human != nil {
-		meta["human"] = *human
-	}
-	if sourceEventID != "" {
-		meta["sourceEventId"] = sourceEventID
-	}
-	if collectorInstance != "" {
-		meta["collectorInstance"] = collectorInstance
-	}
-	return json.Marshal(meta)
 }
 
 var githubTextEscaper = strings.NewReplacer(

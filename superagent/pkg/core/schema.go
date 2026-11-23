@@ -1,7 +1,6 @@
 package core
 
-// The current schema is initialized in a new directory. Earlier databases remain in
-// their original format and are never opened for writing by this version.
+// The current schema is used to initialize fresh Core stores.
 const schema = `
 CREATE TABLE threads (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE,
@@ -18,8 +17,6 @@ CREATE TABLE trigger_messages (
  UNIQUE(source,account_id,native_id)
 );
 CREATE INDEX trigger_messages_thread ON trigger_messages(thread_key,accepted_at,id);
-CREATE INDEX trigger_messages_echo_hold ON trigger_messages(json_extract(body,'$.echo.deadline'))
- WHERE json_extract(body,'$.echo.status')='held';
 CREATE TABLE topics (
  seq INTEGER PRIMARY KEY AUTOINCREMENT,
  id TEXT GENERATED ALWAYS AS ('mass-t' || seq) STORED NOT NULL UNIQUE,
@@ -59,8 +56,6 @@ CREATE TABLE outbox (
  blocker_ref TEXT
 );
 CREATE INDEX outbox_message ON outbox(message_id);
-CREATE INDEX outbox_native_receipt ON outbox(json_extract(receipt,'$.conversationId'),json_extract(receipt,'$.messageId'))
- WHERE status='sent';
 CREATE VIEW reports AS
  SELECT CAST(json_extract(r.value,'$.sequence') AS INTEGER) AS seq, json_extract(r.value,'$.id') AS id,
  json_extract(r.value,'$.sessionBindingId') AS session_binding_id, issues.id AS issue_id,

@@ -128,7 +128,7 @@ Reuse operationId and arguments when retrying an uncertain write. route_messages
 const routerPrompt = `You own routing decisions for the global Router Session. Subagents can advise within an explicit source scope.
 
 Route requests
-- On route_request, the trigger_message entry in refs gives the Message ID. Use messageContent for attached blocks. Legacy events can carry Message text in content.data.text. routing.round is the round for that Message ID.
+- On route_request, the trigger_message entry in refs gives the Message ID. Use messageContent for attached blocks. routing.round is the round for that Message ID.
 - get_message with include=["routing"] returns Message content, current routing state, and reasons a Topic declined the Message. Refresh routing state after a stale round or binding_recovered. Router can select the same Topic again based on new facts or a new judgment.
 - list_topics finds candidate Topics. list_messages with threadKey reads source history when it matters to routing.
 
@@ -140,7 +140,7 @@ Routing and replies
 const topicPrompt = `You manage the Topic bound to this Session and its Issues.
 
 Messages
-- In routed_message, topic is the bound Topic snapshot at dispatch: id, title, workspace, status, and revision. The trigger_message entry in refs gives the Message ID. Use messageContent for attached blocks. Legacy events can carry Message text in content.data.text. get_message reads a reference-only Message or missing quotedReply details.
+- In routed_message, topic is the bound Topic snapshot at dispatch: id, title, workspace, status, and revision. The trigger_message entry in refs gives the Message ID. Use messageContent for attached blocks. get_message reads a reference-only Message or missing quotedReply details.
 - send_reply answers a Message directly. Example arguments are {"operationId":"reply-release","messageId":"mass-m1","content":{"type":"markdown","data":{"text":"The release checks passed."}}}. For a question about an open human blocker, include blockerRef with issueId and blockerId. get_message with include=["replies"] shows reply state.
 - decline_message sends a Message back to Router for reconsideration. It takes the routed_message event_id and a reason.
 

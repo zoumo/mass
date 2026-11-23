@@ -123,7 +123,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	require.Equal(t, "account-test", pulled.AccountID)
 	require.JSONEq(t, string(target), string(pulled.ReplyTarget))
 	require.Contains(t, string(pulled.ReplyTarget), "18446744073709551615")
-	record := outboxResult(item, "pending", "", "")
+	record := outboxResult(item, "pending", "")
 	record.TaskID = "adapter:opaque:send:01"
 	detail := channelOutbox + "/items/" + item.ID
 	for _, test := range []struct {
@@ -148,10 +148,10 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	task := resultOutbox(t, p, consumer, record)
 	require.Equal(t, record.TaskID, task.Receipt.TaskID)
 	require.Equal(t, task, resultOutbox(t, p, consumer, record))
-	native := outboxResult(task, "sent", "", "legacy-id")
+	native := map[string]any{"outboxId": task.ID, "expected": task.OutboxState, "outcome": "sent", "taskId": task.Receipt.TaskID, "messageId": "legacy-id", "conversationId": "legacy-room"}
 	status, raw = request(t, http.MethodPost, p.endpoint, channelOutbox+"/result", consumer, native)
 	errorCode(t, status, raw, http.StatusBadRequest, "invalid_argument")
-	uncertain := outboxResult(task, "unknown", "result_missing", "")
+	uncertain := outboxResult(task, "unknown", "result_missing")
 	failed := resultOutbox(t, p, consumer, uncertain)
 	require.True(t, failed.Receipt.Uncertain)
 	require.NotEmpty(t, failed.Receipt.RetryAt)
@@ -160,7 +160,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	advance(61 * time.Second)
 	require.Equal(t, failed, resultOutbox(t, p, consumer, uncertain))
 	require.Len(t, listOutbox(t, p.endpoint, consumer, "").Items, 1)
-	command := outboxResult(failed, "sent", "", "")
+	command := outboxResult(failed, "sent", "")
 	sent := resultOutbox(t, p, consumer, command)
 	require.Equal(t, "sent", sent.Status)
 	require.True(t, sent.Receipt.Uncertain)
@@ -239,7 +239,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 
 	reply.OperationID, reply.BlockerRef = "ordinary-reply", nil
 	ordinary := roleWork[core.OutboxItem](t, p, role, "send_reply", reply)
-	sent = resultOutbox(t, p, consumer, outboxResult(ordinary, "sent", "", ""))
+	sent = resultOutbox(t, p, consumer, outboxResult(ordinary, "sent", ""))
 	require.Nil(t, sent.Receipt)
 	quoted := newInput("ordinary-quote", strings.Repeat("Long answer. ", 200))
 	quoted.InReplyToOutboxID = ordinary.ID
@@ -252,7 +252,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 
 	reply.OperationID, reply.BlockerRef = "undeliverable", nil
 	permanent := roleWork[core.OutboxItem](t, p, role, "send_reply", reply)
-	rejected := outboxResult(permanent, "permanent_failure", "recipient_missing", "")
+	rejected := outboxResult(permanent, "permanent_failure", "recipient_missing")
 	require.Equal(t, "failed", resultOutbox(t, p, consumer, rejected).Status)
 	require.Equal(t, "failed", resultOutbox(t, p, consumer, rejected).Status)
 	notices := workEvents(t, p, "outbox_failed")

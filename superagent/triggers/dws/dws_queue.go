@@ -39,11 +39,15 @@ type dwsQueue struct {
 	accountID string
 }
 
-func openDWSQueue(c dwsConfig) (dwsQueue, func(), error) {
-	db, closeDB, err := triggerdb.Open(c.DatabasePath, triggerdb.Identity{
-		ApplicationID: dwsDatabaseApplicationID, Version: 1,
+func dwsDatabaseIdentity(c dwsConfig) triggerdb.Identity {
+	return triggerdb.Identity{
+		ApplicationID: dwsDatabaseApplicationID, Version: 2,
 		Source: c.Source, AccountID: c.AccountID, InstanceID: c.InstanceID,
-	}, dwsQueueSchema)
+	}
+}
+
+func openDWSQueue(c dwsConfig) (dwsQueue, func(), error) {
+	db, closeDB, err := triggerdb.Open(c.DatabasePath, dwsDatabaseIdentity(c), dwsQueueSchema)
 	return dwsQueue{db: db, accountID: c.AccountID}, closeDB, err
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"mime"
 	"net/http"
 	"strconv"
@@ -94,13 +93,11 @@ func (s *Server) outboxResult(w http.ResponseWriter, r *http.Request, source Sou
 }
 
 type OutboxCommand struct {
-	OutboxID       string      `json:"outboxId"`
-	Expected       OutboxState `json:"expected"`
-	Outcome        string      `json:"outcome"`
-	TaskID         string      `json:"taskId,omitempty"`
-	ErrorCode      string      `json:"errorCode,omitempty"`
-	ConversationID string      `json:"conversationId,omitempty"`
-	MessageID      string      `json:"messageId,omitempty"`
+	OutboxID  string      `json:"outboxId"`
+	Expected  OutboxState `json:"expected"`
+	Outcome   string      `json:"outcome"`
+	TaskID    string      `json:"taskId,omitempty"`
+	ErrorCode string      `json:"errorCode,omitempty"`
 }
 
 const outboxRetryDelay = time.Minute
@@ -109,23 +106,21 @@ func (r OutboxCommand) validate() error {
 	if r.OutboxID == "" || (r.Expected.Status != "pending" && r.Expected.Status != "failed") {
 		return problem("invalid_argument", "outboxId and expected pending or failed state are required")
 	}
-	for _, id := range []string{r.TaskID, r.ConversationID, r.MessageID} {
-		if id != "" && strings.TrimSpace(id) == "" {
-			return problem("invalid_argument", "channel identities cannot be blank")
-		}
+	if r.TaskID != "" && strings.TrimSpace(r.TaskID) == "" {
+		return problem("invalid_argument", "taskId cannot be blank")
 	}
 	switch r.Outcome {
 	case "pending":
-		if r.TaskID == "" || r.ErrorCode != "" || r.ConversationID != "" || r.MessageID != "" {
+		if r.TaskID == "" || r.ErrorCode != "" {
 			return problem("invalid_argument", "pending requires a taskId alone")
 		}
 	case "sent":
-		if r.ErrorCode != "" || (r.MessageID != "" && r.ConversationID == "") {
-			return problem("invalid_argument", "sent requires a conversationId with any messageId and omits errorCode")
+		if r.ErrorCode != "" {
+			return problem("invalid_argument", "sent omits errorCode")
 		}
 	case "retryable_failure", "permanent_failure", "unknown":
-		if !instanceIDFormat.MatchString(r.ErrorCode) || r.MessageID != "" || r.ConversationID != "" {
-			return problem("invalid_argument", "unsuccessful outcomes require a safe errorCode and omit native message references")
+		if !instanceIDFormat.MatchString(r.ErrorCode) {
+			return problem("invalid_argument", "unsuccessful outcomes require a safe errorCode")
 		}
 	default:
 		return problem("invalid_argument", "invalid Outbox outcome")
@@ -136,7 +131,7 @@ func (r OutboxCommand) validate() error {
 func (r OutboxCommand) result(at time.Time) OutboxState {
 	state := OutboxState{Status: r.Outcome}
 	receipt := OutboxReceipt{
-		TaskID: r.TaskID, ErrorCode: r.ErrorCode, ConversationID: r.ConversationID, MessageID: r.MessageID,
+		TaskID: r.TaskID, ErrorCode: r.ErrorCode,
 		Uncertain: receiptValue(r.Expected).Uncertain || r.Outcome == "unknown",
 	}
 	switch r.Outcome {
@@ -168,21 +163,9 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 		return item, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	var scoped struct {
-		OutboxItem
-		LegacyChannel bool
-	}
-	// The native result fields belong only to replies enqueued from old intake.
-	const settlementProjection = `json_set(` + outboxProjection + `,'$.legacyChannel',json(CASE WHEN EXISTS(
- SELECT 1 FROM trigger_messages WHERE id=outbox.message_id AND body->'$.channel' IS NOT NULL
- ) THEN 'true' ELSE 'false' END))`
-	if err := readJSON(ctx, tx, "SELECT "+settlementProjection+" FROM outbox WHERE id=?"+channelOutboxScope,
-		&scoped, req.OutboxID, source.Source, source.AccountID); err != nil {
+	if err := readJSON(ctx, tx, "SELECT "+outboxProjection+" FROM outbox WHERE id=?"+channelOutboxScope,
+		&item, req.OutboxID, source.Source, source.AccountID); err != nil {
 		return item, err
-	}
-	item = scoped.OutboxItem
-	if !scoped.LegacyChannel && (req.ConversationID != "" || req.MessageID != "") {
-		return item, problem("invalid_argument", "native references belong in adapter state")
 	}
 	if s.telemetry.tracesEnabled {
 		addTraceLinks(ctx, outboxEnqueue.links(ctx, tx, nil, item.ID, 0))
@@ -226,11 +209,6 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 	if _, err := tx.ExecContext(ctx, "UPDATE outbox SET status=?,receipt=? WHERE id=?", item.Status, rawReceipt, item.ID); err != nil {
 		return item, storageError()
 	}
-	if scoped.LegacyChannel {
-		if err := reconcileEchoResult(ctx, tx, item, source, at); err != nil {
-			return item, err
-		}
-	}
 	if req.Outcome == "permanent_failure" {
 		if err := enqueueOutboxFailure(ctx, tx, item); err != nil {
 			return item, err
@@ -264,19 +242,4 @@ func enqueueOutboxFailure(ctx context.Context, tx *sql.Tx, item OutboxItem) erro
 			{Kind: "outbox", ID: item.ID}, {Kind: messageRefKind, ID: item.MessageID},
 		},
 	})
-}
-
-func (s *Store) outboxMaintenance(ctx context.Context) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		if err := s.expireEchoHolds(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("Echo hold reconciliation failed", "error", err)
-		}
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			return
-		}
-	}
 }

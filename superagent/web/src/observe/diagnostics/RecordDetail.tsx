@@ -46,7 +46,6 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       {detail.title && <h2>{detail.title}</h2>}
       {detail.reason && <p>{detail.reason}</p>}
       {detail.lastError && <p role="status">{detail.lastError}</p>}
-      {detail.actor && <h2>{detail.actor}</h2>}
       {(kind === 'outbox' || kind === 'internal-events') && detail.content && typeof detail.content !== 'string' && <StructuredContent content={detail.content} />}
       {body && (
         <pre className="body-text" data-testid="message-body">

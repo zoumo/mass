@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -138,11 +137,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 		}
 		if err == nil && !view.truncated && view.Content == nil && len(view.Refs) != 0 &&
 			view.Refs[0].Kind == messageRefKind && (inlineTopic || inlineRouter) {
-			var structured bool
-			structured, err = view.loadStructuredTriggerMessage(ctx, tx, b)
-			if err == nil && !structured && len(view.Refs) == 1 {
-				err = view.loadInlineTriggerMessage(ctx, tx, b)
-			}
+			err = view.loadStructuredTriggerMessage(ctx, tx, b)
 		} else if err == nil && !view.truncated {
 			switch {
 			case b.Role == "topic" && view.Kind == reportSubmittedKind:
@@ -156,12 +151,12 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 					boundIssue = &issue
 				}
 				err = view.loadInlineIssueContext(ctx, tx, boundIssue, maxViewBytes)
-				issueContext = view.issue != nil || len(view.messages) != 0 || len(view.messageContent) != 0
+				issueContext = view.issue != nil || len(view.messageContent) != 0
 			}
 		}
 		var contents []eventMessageContent
 		var contentSize int
-		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0 || len(view.routing) != 0 || len(view.quotedReply) != 0 || len(view.messageContent) != 0) {
+		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.followup) != 0 || len(view.routing) != 0 || len(view.quotedReply) != 0 || len(view.messageContent) != 0) {
 			var enriched json.RawMessage
 			enriched, err = view.MarshalAgentPromptJSON()
 			for _, content := range view.messageContent {
@@ -224,10 +219,10 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 
 // loadStructuredTriggerMessage uses the same role scope as get_message. It
 // loads complete block groups that fit and leaves larger Messages as references.
-func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sql.Tx, b SessionBinding) (bool, error) {
+func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
 	scope, args, err := scopeSQL("messages", &b)
 	if err != nil {
-		return false, err
+		return err
 	}
 	columns := `CASE WHEN length(CAST(body->'$.content' AS BLOB))<=? THEN body->'$.content' END, thread_key`
 	params := []any{inlineMessageBytes}
@@ -246,25 +241,25 @@ func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sq
 	params = append(params, id)
 	params = append(params, args...)
 	err = tx.QueryRowContext(ctx, `SELECT `+columns+` FROM trigger_messages
- WHERE id=? AND json_type(body,'$.content')='array'`+scope, params...).Scan(targets...)
+ WHERE id=?`+scope, params...).Scan(targets...)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return nil
 	}
 	if err != nil {
-		return false, err
+		return err
 	}
 	d.routing, d.followup = routing, followup
 	if len(quote) != 0 {
 		if _, err := d.attachQuotedReply(ctx, tx, b, quote); err != nil {
-			return false, err
+			return err
 		}
 	}
 	if len(content) != 0 {
 		if err := d.attachMessageContent(id, content); err != nil {
-			return false, err
+			return err
 		}
 	}
-	return true, nil
+	return nil
 }
 
 func (d *internalEvent) attachMessageContent(id string, raw json.RawMessage) error {
@@ -284,76 +279,6 @@ func (d *internalEvent) attachMessageContent(id string, raw json.RawMessage) err
 
 func (c eventMessageContent) reference() messageContentReference {
 	return messageContentReference{MessageID: c.ID, BlockCount: len(c.Blocks)}
-}
-
-// loadInlineTriggerMessage uses the same scope as get_trigger_message. A matched Topic
-// quote carries the open blocker snapshot from the same transaction.
-func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
-	scope, args, err := scopeSQL("messages", &b)
-	if err != nil {
-		return err
-	}
-	var text, threadKey string
-	var routing []byte
-	var followup []byte
-	var hasQuote bool
-	var quotedReply []byte
-	columns := "body->>'$.text'"
-	var projectionArgs []any
-	filter := " AND body->>'$.quotedMessage' IS NULL"
-	dest := []any{&text}
-	if b.Role == "router" {
-		columns += ",thread_key,json_object('round'," + routingRound + ",'state'," + routingState + ")"
-		filter += " AND " + routingState + "='pending' AND " + routingRound + "=1"
-		dest = append(dest, &threadKey, &routing)
-	} else {
-		columns += ",body->>'$.quotedMessage' IS NOT NULL,CASE WHEN body->>'$.quotedMessage' IS NOT NULL THEN " + quotedReplyForTopic + " END"
-		projectionArgs = append(projectionArgs, b.OwnerID)
-		dest = append(dest, &hasQuote, &quotedReply)
-		filter = ""
-	}
-	sourceFilter := " AND source<>? AND (body->>'$.meta' IS NULL OR body->>'$.meta'='{}')"
-	if b.Role == "topic" {
-		columns += ",CASE WHEN source=? THEN body->'$.meta' END"
-		projectionArgs = append(projectionArgs, timerSource)
-		dest = append(dest, &followup)
-		sourceFilter = " AND (source=? OR body->>'$.meta' IS NULL OR body->>'$.meta'='{}')"
-	}
-	projectionArgs = append(projectionArgs, d.Refs[0].ID, timerSource, pullRequestSource, pullRequestSource, inlineMessageBytes)
-	err = tx.QueryRowContext(ctx, `SELECT `+columns+` FROM trigger_messages
- WHERE id=?`+sourceFilter+` AND source<>'github' AND source<>? AND body->>'$.threadRef.source'<>?
- AND length(CAST(body->>'$.text' AS BLOB))<=?`+filter+scope, append(projectionArgs, args...)...).Scan(dest...)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(text) == "" || hasQuote && len(quotedReply) == 0 {
-		return nil
-	}
-	data, err := json.Marshal(markdownContentData{Text: text})
-	if err != nil {
-		return err
-	}
-	content := StructuredContent{Type: "markdown", Data: data}
-	contentJSON, err := json.Marshal(content)
-	if err != nil {
-		return err
-	}
-	if len(contentJSON) > inlineMessageBytes {
-		return nil
-	}
-	if hasQuote {
-		if attached, err := d.attachQuotedReply(ctx, tx, b, quotedReply); !attached || err != nil {
-			return err
-		}
-	}
-	if len(followup) != 0 && string(followup) != "null" {
-		d.followup = agentFollowupMeta(followup)
-	}
-	d.Content, d.threadKey, d.routing = &content, threadKey, routing
-	return nil
 }
 
 func (d *internalEvent) attachQuotedReply(ctx context.Context, tx *sql.Tx, b SessionBinding, raw []byte) (bool, error) {
@@ -448,59 +373,41 @@ func (d *internalEvent) loadInlineIssueContext(ctx context.Context, tx *sql.Tx, 
 	if err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.body->'$.content',
- COALESCE(m.body->>'$.text',''),COALESCE(m.body->>'$.actor',''),
- COALESCE(m.body->>'$.at',''),COALESCE(m.body->>'$.url','')
+	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.body->'$.content'
  FROM json_each(?) ref JOIN trigger_messages m ON m.id=ref.value
- WHERE length(CAST(COALESCE(m.body->'$.content',m.body->>'$.text') AS BLOB))<=?
+ WHERE length(CAST(m.body->'$.content' AS BLOB))<=?
  ORDER BY ref.key`, string(payload), inlineMessageBytes)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var message Message
+		var id string
 		var blocks []byte
-		if err := rows.Scan(&message.ID, &blocks, &message.Text, &message.Actor, &message.At, &message.URL); err != nil {
+		if err := rows.Scan(&id, &blocks); err != nil {
 			return err
 		}
-		if len(blocks) != 0 {
-			before := len(d.messageContent)
-			if err := d.attachMessageContent(message.ID, blocks); err != nil {
-				return err
-			}
-			if len(d.messageContent) == before {
-				continue
-			}
-			content := d.messageContent[before]
-			ref, err := json.Marshal(content.reference())
-			if err != nil {
-				return err
-			}
-			required := content.size + len(ref) + 1
-			if before == 0 {
-				required += len(`,"messageContent":[]`) - 1
-			}
-			if required > remaining {
-				d.messageContent = d.messageContent[:before]
-			} else {
-				remaining -= required
-			}
+		before := len(d.messageContent)
+		if err := d.attachMessageContent(id, blocks); err != nil {
+			return err
+		}
+		if len(d.messageContent) == before {
 			continue
 		}
-		legacy, err := message.MarshalAgentPromptJSON()
+		content := d.messageContent[before]
+		ref, err := json.Marshal(content.reference())
 		if err != nil {
 			return err
 		}
-		required := len(legacy) + 1
-		if len(d.messages) == 0 {
-			required += len(`,"messages":[]`) - 1
+		required := content.size + len(ref) + 1
+		if before == 0 {
+			required += len(`,"messageContent":[]`) - 1
 		}
-		if len(legacy) > inlineMessageBytes || required > remaining {
-			continue
+		if required > remaining {
+			d.messageContent = d.messageContent[:before]
+		} else {
+			remaining -= required
 		}
-		d.messages = append(d.messages, legacy)
-		remaining -= required
 	}
 	return rows.Err()
 }

@@ -192,9 +192,9 @@ func projection(kind string, b *SessionBinding) string {
 	case "threads":
 		if b != nil && b.Role == "topic" {
 			// The Topic can see its subscription through the Thread scope. Peer subscriptions are visible to Router and Observer.
-			return "json_object('key',key,'ref',json_object('source',source,'id',native_id),'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''))"
+			return "json_object('key',key,'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''))"
 		}
-		return "json_object('key',key,'ref',json_object('source',source,'id',native_id),'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''),'subscriptions',json(subscriptions))"
+		return "json_object('key',key,'createdAt',created_at,'lastMessageAt',NULLIF(last_message_at,''),'subscriptions',json(subscriptions))"
 	case "outbox":
 		return outboxProjection
 	case "messages":
@@ -213,7 +213,7 @@ func projection(kind string, b *SessionBinding) string {
 		}
 		base := "json_set(json_remove(body,'$.replyTarget','$.inReplyToOutboxId'),'$.routing',json(CASE WHEN " + routingState + " IS NOT NULL THEN json_object('round'," + routingRound + ",'state'," + routingState + ") END))"
 		base = "json_set(" + base + ",'$.relations',json((SELECT json_group_array(json(body)) FROM (SELECT body FROM routing_relations WHERE message_id=trigger_messages.id ORDER BY seq))))"
-		return "json_patch(" + base + ",json_object('quotedReply',json(" + quotedReplyProjection + ")))"
+		return "json_patch(" + base + ",json_object('quotedReply',json(" + recordedReplyProjection + ")))"
 	case "topics":
 		if b != nil && b.Role == "router" {
 			return "json_object('id',id,'title',json_extract(body,'$.title'),'description',json_extract(body,'$.description'),'goal',json_extract(body,'$.goal'),'status',json_extract(body,'$.status'),'revision',json_extract(body,'$.revision'),'createdAt',created_at,'updatedAt',json_extract(body,'$.updatedAt'))"
@@ -250,19 +250,8 @@ func projection(kind string, b *SessionBinding) string {
 	return "body"
 }
 
-// Preserve the native JSON of selected source fields, including arrays and booleans.
-const agentSourceMessageProjection = `(SELECT json_group_object(field,json(value)) FROM (
- SELECT key AS field,trigger_messages.body->fullkey AS value FROM json_each(trigger_messages.body)
- WHERE key IN ('id','source','text','content','threadKey','actor','at','url')
- UNION ALL
- SELECT 'meta',json_group_object(key,json(trigger_messages.body->fullkey)) FROM json_each(trigger_messages.body,'$.meta')
- WHERE (trigger_messages.source='` + timerSource + `' AND key IN ('type','taskId','topicId','taskRevision','dueAt','materials'))
- OR ((trigger_messages.source='` + pullRequestSource + `' OR trigger_messages.body->>'$.threadRef.source'='` + pullRequestSource + `') AND key IN (
- 'repository','observation','objectType','objectId','number','state','changes','draft','baseSha','baseRef','headSha',
- 'headRepository','ci','path','line','commitSha','submittedAt','inReplyToId','inReplyToURL','reviewId'))
- OR (trigger_messages.body->>'$.channel.type'='dws' AND key='forwardMessages')
- HAVING count(*)>0
- ))`
+const agentSourceMessageProjection = `json_object('id',id,'source',source,'threadKey',thread_key,
+ 'content',json(body->'$.content'))`
 
 // Projection placeholders precede filter placeholders in both list and detail queries.
 func projectionArgs(kind string, b *SessionBinding) []any {

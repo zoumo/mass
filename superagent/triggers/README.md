@@ -94,20 +94,6 @@ bin/superagent triggers dws release-input <native-id> --reason "<reason>" --conf
 bin/superagent triggers dws dismiss-send <attempt-id> --reason "<reason>" --config /absolute/run/dws.yaml
 ```
 
-To migrate old send evidence, export one JSON object per line for each `sent`
-Outbox item with an exact native conversation and message ID. Each object has
-`source`, `accountId`, `outboxId`, `conversationId`, and `messageId`. `taskId`
-is optional. Verify the account and Outbox origin before exporting. Feed the
-matching account's export into the stopped adapter.
-
-```sh
-bin/superagent triggers dws import-sent-evidence --config /absolute/run/dws.yaml < sent-evidence.ndjson
-```
-
-Repeat the import to resume after interruption. The importer rejects conflicting
-evidence and preserves matching records. For an old pending Outbox task, keep its
-generic `taskId` in Core so the adapter can resume native task queries.
-
 For optional message reactions, configure two reusable text emotion templates
 for the same DWS profile. Keep `feedback.statePath` on persistent storage,
 separate from the queue. Feedback adds `thinking` on admission and replaces it
@@ -160,20 +146,13 @@ notification to resume tracking. See the [PR routing contract](../API.md#pull-re
 
 ## Replace deployed Triggers
 
-1. Record each Trigger's source, account, instance, and persistent paths.
-   Check status, pending Messages, permanent failures, and DWS Outbox tasks.
-2. Stop old Triggers gracefully. Verify the old DWS sender has exited before
-   starting a replacement for the account.
-3. Back up the stopped databases, DWS feedback state if enabled, and the old
-   configuration. Keep the identities and use state compatible with the new
-   release. Import legacy GitHub v2 JSON state into SQLite before switching.
-4. Run each standalone `check`, or start Compose to run its preflight. Query
-   each Trigger's status, verify a new receipt in Core, and check that pending
-   Messages resume delivery.
-
-For rollback, stop the replacement and verify the DWS sender exited. Reconcile
-queued Messages and DWS send results produced during the cutover. Restart the
-previous version with compatible state that preserves the reconciled progress.
+When switching an existing installation to structured Trigger Messages, stop the
+old Triggers and configure a fresh `databasePath` for each adapter. For DWS,
+choose a path with a fresh adjacent `.dws-sends` directory and use a fresh
+`feedback.statePath` if reactions are enabled. Keep the former state paths for
+reference. Trigger SQLite databases at the previous schema version are
+rejected. On subsequent restarts, use the same paths to recover queued Messages,
+GitHub checkpoints, and DWS send evidence.
 
 Run `make test-superagent` to exercise Core and the Triggers with local channel
 fixtures. Use `bin/superagent triggers --help` to discover the command groups.

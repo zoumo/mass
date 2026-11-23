@@ -6,29 +6,11 @@ import (
 	"encoding/json"
 )
 
-// Legacy intake may have arrived before the adapter recorded the send receipt.
-const legacyQuotedReplyProjection = `(SELECT CASE WHEN count(*)=1 THEN json_object(
- 'outboxId',o.id,'blockerRef',json(o.blocker_ref)) END
- FROM outbox o JOIN trigger_messages origin ON origin.id=o.message_id
- WHERE o.status='sent' AND o.blocker_ref IS NOT NULL
- AND origin.source=trigger_messages.source
- AND json_extract(origin.body,'$.accountId')=json_extract(trigger_messages.body,'$.accountId')
- AND json_extract(trigger_messages.body,'$.channel.type')='dws'
- AND json_extract(origin.body,'$.channel.type')='dws'
- AND json_extract(o.receipt,'$.conversationId')=json_extract(trigger_messages.body,'$.channel.conversationId')
- AND COALESCE(NULLIF(json_extract(trigger_messages.body,'$.quotedMessage.conversation_id'),''),
-    json_extract(trigger_messages.body,'$.channel.conversationId'))=json_extract(o.receipt,'$.conversationId')
- AND json_extract(o.receipt,'$.messageId')=json_extract(trigger_messages.body,'$.quotedMessage.message_id'))`
-
 const recordedReplyProjection = `(SELECT json_patch(json_object('outboxId',o.id),
  json_object('blockerRef',json(o.blocker_ref))) FROM outbox o
  WHERE o.id=trigger_messages.body->>'$.inReplyToOutboxId')`
 
-const quotedReplyProjection = `(CASE WHEN trigger_messages.body->>'$.inReplyToOutboxId' IS NOT NULL
- THEN ` + recordedReplyProjection + ` WHEN trigger_messages.body->>'$.quotedMessage' IS NOT NULL
- THEN ` + legacyQuotedReplyProjection + ` END)`
-
-const quotedReplyForTopic = `(SELECT candidate FROM (SELECT ` + quotedReplyProjection + ` AS candidate)
+const quotedReplyForTopic = `(SELECT candidate FROM (SELECT ` + recordedReplyProjection + ` AS candidate)
  WHERE json_extract(candidate,'$.blockerRef') IS NULL
  OR EXISTS(SELECT 1 FROM issues WHERE issues.id=json_extract(candidate,'$.blockerRef.issueId') AND issues.topic_id=?))`
 
@@ -53,7 +35,7 @@ func validateReplyReference(ctx context.Context, tx *sql.Tx, m Message) error {
 
 func checkQuotedBlocker(ctx context.Context, tx *sql.Tx, messageID, issueID, blockerID string) error {
 	var raw sql.NullString
-	if err := tx.QueryRowContext(ctx, "SELECT "+quotedReplyProjection+" FROM trigger_messages WHERE id=?", messageID).Scan(&raw); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT "+recordedReplyProjection+" FROM trigger_messages WHERE id=?", messageID).Scan(&raw); err != nil {
 		return storageError()
 	}
 	if !raw.Valid {

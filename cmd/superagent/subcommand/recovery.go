@@ -54,27 +54,6 @@ func newInspectBinding() *cobra.Command {
 	return cmd
 }
 
-func newReleaseEcho() *cobra.Command {
-	var req core.EchoReleaseRequest
-	var endpoint, tokenFile string
-	cmd := &cobra.Command{
-		Use: "release-echo MESSAGE_ID", Short: "Route an echo_unknown Message after local reconciliation",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			req.MessageID = args[0]
-			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodPost, "/v1/operator/echo-release", req)
-		},
-	}
-	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Local Core HTTP endpoint")
-	cmd.Flags().StringVar(&tokenFile, "operator-token-file", "", "Private Core operator token file")
-	cmd.Flags().StringVar(&req.OperationID, "operation-id", "", "Stable ID for this release")
-	cmd.Flags().StringVar(&req.Reason, "reason", "", "Facts checked and reason for routing this Message")
-	for _, required := range []string{"operator-token-file", "operation-id", "reason"} {
-		_ = cmd.MarkFlagRequired(required)
-	}
-	return cmd
-}
-
 func operatorRequest(ctx context.Context, out io.Writer, endpoint, tokenFile, method, path string, input any) error {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "http" || !net.ParseIP(u.Hostname()).IsLoopback() || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {

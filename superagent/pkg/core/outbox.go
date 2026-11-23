@@ -16,7 +16,7 @@ const outboxProjection = `json_patch(json_object('id',outbox.id,'messageId',outb
 const channelOutboxProjection = `(SELECT CASE WHEN target IS NOT NULL
  THEN json_set(item,'$.replyTarget',json(target)) ELSE item END FROM (
  SELECT json_patch(` + outboxProjection + `,json_object(
-  'source',source,'accountId',account_id,'channel',json_extract(body,'$.channel'))) AS item,
+  'source',source,'accountId',account_id)) AS item,
   body->'$.replyTarget' AS target FROM trigger_messages WHERE id=outbox.message_id))`
 
 const channelOutboxScope = ` AND EXISTS(SELECT 1 FROM trigger_messages
@@ -56,12 +56,10 @@ type OutboxState struct {
 }
 
 type OutboxReceipt struct {
-	TaskID         string `json:"taskId,omitempty"`
-	ConversationID string `json:"conversationId,omitempty"`
-	MessageID      string `json:"messageId,omitempty"`
-	ErrorCode      string `json:"errorCode,omitempty"`
-	RetryAt        string `json:"retryAt,omitempty"`
-	Uncertain      bool   `json:"uncertain,omitempty"`
+	TaskID    string `json:"taskId,omitempty"`
+	ErrorCode string `json:"errorCode,omitempty"`
+	RetryAt   string `json:"retryAt,omitempty"`
+	Uncertain bool   `json:"uncertain,omitempty"`
 }
 
 func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (_ json.RawMessage, retErr error) {
@@ -121,7 +119,7 @@ func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if len(message.ReplyTarget) == 0 && !replyAddressPresent(message.Channel) {
+	if len(message.ReplyTarget) == 0 {
 		return nil, problem("failed_precondition", "selected Message has no reply target")
 	}
 	if !s.config.hasOutboxConsumer(message.Source, message.AccountID) {
@@ -157,16 +155,6 @@ func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (
 		return nil, storageError()
 	}
 	return json.Marshal(item)
-}
-
-func replyAddressPresent(channel *Channel) bool {
-	if channel == nil {
-		return false
-	}
-	if strings.TrimSpace(channel.ConversationID) != "" && strings.TrimSpace(channel.MessageID) != "" {
-		return true
-	}
-	return channel.Type != "dws" && len(channel.Address) > 0
 }
 
 func replyTarget(ctx context.Context, tx *sql.Tx, b SessionBinding, req ReplyRequest) (Message, error) {

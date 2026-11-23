@@ -247,7 +247,7 @@ func (s *Store) fireTimer(ctx context.Context, id string, revision int, cutoff s
 	ctx, finish := s.telemetry.startOperation(ctx, "timer.fire", "", trace.WithLinks(links...))
 	defer func() { finish(operationOutcome(retErr, "fired")) }()
 	t.Status, t.FiredAt, t.UpdatedAt = "fired", at, at
-	t.ThreadKey = ThreadKey(ThreadRef{Source: timerSource, ID: t.ID})
+	t.ThreadKey = "core%3Atimer:" + t.ID
 	receipt, err := admitTimerMessage(ctx, tx, t)
 	if err != nil {
 		return err
@@ -283,11 +283,11 @@ func admitTimerMessage(ctx context.Context, tx *sql.Tx, t Timer) (Receipt, error
 		return Receipt{}, err
 	}
 	at := now()
-	if err := upsertThread(ctx, tx, t.ThreadKey, ThreadRef{Source: timerSource, ID: t.ID}, at, ""); err != nil {
+	if err := upsertThread(ctx, tx, t.ThreadKey, at, ""); err != nil {
 		return Receipt{}, err
 	}
 	if _, err := ensureSubscription(ctx, tx, Subscription{TopicID: t.TopicID, ThreadKey: t.ThreadKey, CreatedAt: at}); err != nil {
 		return Receipt{}, err
 	}
-	return admitTriggerMessage(ctx, tx, source, message, canonical, false)
+	return admitTriggerMessage(ctx, tx, source, message, canonical)
 }

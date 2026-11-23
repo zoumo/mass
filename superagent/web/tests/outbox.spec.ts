@@ -5,17 +5,6 @@ test.use({
  viewport: { width: 1280, height: 1060 },
 })
 
-test('Outbound echo links to its Outbox receipt in read-only reply history', async ({ page }) => {
- await page.goto('/observer/?view=messages&mode=records')
- await page.getByRole('button', { name: 'Original input observer-actual-message', exact: true }).click()
- const dialog = page.getByRole('dialog')
- await expect(dialog.getByRole('heading', { name: '自身回声', exact: true })).toBeVisible()
- await expect(dialog.getByRole('button', { name: /^(放行|回声放行后的路由事件)$/ })).toHaveCount(0)
- await dialog.getByRole('button', { name: /^outbox_/ }).click()
- await expect(dialog.getByText('observer-actual-message', { exact: true })).toBeVisible()
- await expect(dialog.getByText('actual:conversation', { exact: true })).toBeVisible()
-})
-
 test('Outbox detail renders Markdown and ordered options', async ({ page }) => {
  const imageRequests: string[] = []
  page.on('request', request => {
@@ -69,8 +58,7 @@ test('Message and Thread link to read-only reply history and channel evidence', 
  await dialog.getByRole('button', { name: '关闭' }).click()
  await page.getByRole('navigation').getByRole('button', { name: '回执', exact: true }).click()
  await table.getByRole('button', { name: 'Observer reply sent', exact: true }).click()
- await expect(dialog.getByText('observer-actual-message', { exact: true })).toBeVisible()
- await expect(dialog.getByText('actual:conversation', { exact: true })).toBeVisible()
+ await expect(dialog.getByText('observer-send-task', { exact: true })).toBeVisible()
  await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
  await page.screenshot({ path: testInfo.outputPath('outbox-sent.png'), fullPage: true, animations: 'disabled' })
  expect(methods).toEqual(new Set(['GET']))

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -91,7 +93,7 @@ func fixtureAt(t *testing.T) *fixture {
 
 func (f *fixture) configure(pages int, account string) {
 	f.t.Helper()
-	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\nsources:\n  - source: dws\n    accountId: %s\n    tokenFile: %s\n", f.data, pages, account, filepath.Join(f.dir, "source.token")))
+	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\nsources:\n  - source: dws\n    accountId: %s\n    tokenFile: %s\n    threadKeyPrefixes: ['dws:']\n", f.data, pages, account, filepath.Join(f.dir, "source.token")))
 }
 
 func write(t *testing.T, p, s string) {
@@ -200,8 +202,23 @@ func (p *process) waitStopped(t *testing.T, kill bool) {
 	t.Logf("process released pid=%d forced=%t endpoint=%s", p.cmd.Process.Pid, kill, p.endpoint)
 }
 
-func input(id string) core.SubmitRequest {
-	return core.SubmitRequest{OperationID: "op-" + id, Message: core.MessageInput{Source: "dws", AccountID: "account-1", SourceMessageID: id, ThreadRef: core.ThreadRef{Source: "dws", ID: "conversation:Case/%原文"}, Actor: "sender-1", Text: "Original input " + id, Addressed: "direct", Channel: &core.Channel{Type: "dws", ConversationID: "conversation:Case/%原文", MessageID: id, ActorID: "sender-1"}}}
+const fixtureConversation = "conversation:Case/%原文"
+
+func fixtureThreadKey(conversation string) string {
+	return "dws:" + strings.ReplaceAll(url.PathEscape(conversation), ":", "%3A")
+}
+
+func moveInput(req *core.SubmitTriggerMessageRequest, conversation string) {
+	req.Message.ThreadKey = fixtureThreadKey(conversation)
+	req.ReplyTarget = json.RawMessage(fmt.Sprintf(`{"type":"dws","conversationId":%q,"messageId":%q,"actorId":"sender-1"}`, conversation, req.Message.SourceMessageID))
+}
+
+func input(id string) core.SubmitTriggerMessageRequest {
+	req := core.SubmitTriggerMessageRequest{OperationID: "op-" + id, Message: core.TriggerMessage{
+		SourceMessageID: id, Content: []events.ContentBlock{events.Text("Original input " + id)},
+	}}
+	moveInput(&req, fixtureConversation)
+	return req
 }
 
 func request(t *testing.T, method, endpoint, path, token string, body any) (int, []byte) {
@@ -237,7 +254,7 @@ func request(t *testing.T, method, endpoint, path, token string, body any) (int,
 	return r.StatusCode, b
 }
 
-func submit(t *testing.T, p *process, f *fixture, r core.SubmitRequest) core.Receipt {
+func submit(t *testing.T, p *process, f *fixture, r core.SubmitTriggerMessageRequest) core.Receipt {
 	t.Helper()
 	status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
 	if status != 200 {
@@ -288,8 +305,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
 	r := input("message-1")
-	r.Message.Meta = map[string]any{"a": 1, "b": "reference"}
-	r.Message.QuotedMessage = json.RawMessage(`{"text":"quote"}`)
+	r.Message.Meta = json.RawMessage(`{"a":1,"b":"reference","quotedMessage":{"text":"quote"}}`)
 	accepted := submit(t, p, f, r)
 	if accepted.Status != "accepted" || accepted.Duplicate || accepted.MessageID != "mass-m1" || accepted.EventID == "" {
 		t.Fatalf("bad receipt %+v", accepted)
@@ -299,32 +315,22 @@ func TestPublicIngressDurability(t *testing.T) {
 		t.Fatalf("operation replay changed receipt: %+v %+v", accepted, same)
 	}
 	r.OperationID = "replayed-by-other-instance"
-	r.Message.CollectedAt = "later"
-	r.Message.CollectorInstance = "another-process"
-	r.Message.SourceEventID = "new-event-envelope"
+	r.Message.Meta = json.RawMessage(`{"collectorInstance":"another-process"}`)
 	duplicate := submit(t, p, f, r)
 	if !duplicate.Duplicate || duplicate.MessageID != accepted.MessageID || duplicate.AcceptedAt != accepted.AcceptedAt || duplicate.EventID != accepted.EventID {
 		t.Fatalf("bad dedup %+v", duplicate)
 	}
-	for _, change := range []string{"text", "actor", "thread", "reply", "meta"} {
+	for _, change := range []string{"content", "thread", "reply"} {
 		t.Run(change, func(t *testing.T) {
 			conflict := input("message-1")
-			conflict.Message.Meta = map[string]any{"a": 1, "b": "reference"}
-			conflict.Message.QuotedMessage = json.RawMessage(`{"text":"quote"}`)
 			conflict.OperationID = "conflict-" + change
 			switch change {
-			case "text":
-				conflict.Message.Text = "changed"
-			case "actor":
-				conflict.Message.Actor = "other"
-				conflict.Message.Channel.ActorID = "other"
+			case "content":
+				conflict.Message.Content[0].Text.Text = "changed"
 			case "thread":
-				conflict.Message.ThreadRef.ID = "other"
-				conflict.Message.Channel.ConversationID = "other"
+				conflict.Message.ThreadKey = fixtureThreadKey("other")
 			case "reply":
-				conflict.Message.Channel.Type = "other"
-			case "meta":
-				conflict.Message.Meta["a"] = 2
+				conflict.ReplyTarget = json.RawMessage(`{"anotherAddress":"opaque"}`)
 			}
 			status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, conflict)
 			errorCode(t, status, b, 409, "conflict")
@@ -345,13 +351,12 @@ func TestPublicIngressDurability(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatal(err)
 	}
-	if m.At != "" || m.Human != nil || m.URL != "" || m.ReceivedAt != accepted.AcceptedAt || m.Text != r.Message.Text || m.ID != accepted.MessageID || m.SourceMessageID != r.Message.SourceMessageID {
-		t.Fatalf("unknown values fabricated: %+v", m)
-	}
-	ref, err := core.ParseThreadKey(accepted.ThreadKey)
-	if err != nil || ref != r.Message.ThreadRef || !strings.HasPrefix(accepted.ThreadKey, "dws:conversation") {
-		t.Fatalf("thread identity not reversible: %s %v", accepted.ThreadKey, err)
-	}
+	require.Equal(t, accepted.AcceptedAt, m.ReceivedAt)
+	require.Equal(t, accepted.MessageID, m.ID)
+	require.Equal(t, r.Message.SourceMessageID, m.SourceMessageID)
+	require.Equal(t, r.Message.Content, m.Content)
+	require.JSONEq(t, `{"a":1,"b":"reference","quotedMessage":{"text":"quote"}}`, string(m.TriggerMeta))
+	require.Equal(t, r.Message.ThreadKey, accepted.ThreadKey)
 	// Queries through the shipped CLI require no source credential.
 	cmd := exec.CommandContext(context.Background(), build(t), "observe", "messages", accepted.MessageID, "--endpoint", p.endpoint)
 	cmd.Env = []string{"HOME=" + f.dir, "PATH=" + f.dir}
@@ -374,41 +379,19 @@ func TestPublicIngressDurability(t *testing.T) {
 	t.Logf("durable receipt message=%s event=%s thread=%s", accepted.MessageID, accepted.EventID, accepted.ThreadKey)
 }
 
-func TestPublicDWSGroupAdmission(t *testing.T) {
+func TestPublicAdmissionKeepsTriggerMetadataOpaque(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
 	r := input("group-message-1")
-	r.Message.Addressed = "group"
-	r.Message.Channel = nil
-	r.Message.Text = "Original group message\n\n<group_prompt>Group instructions</group_prompt>"
-
-	invalid := r
-	invalid.Message.Addressed = "broadcast"
-	status, body := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, invalid)
-	errorCode(t, status, body, 400, "invalid_argument")
-
+	r.ReplyTarget = nil
+	r.Message.Meta = json.RawMessage(`{"addressed":"broadcast","sender":"source-specific"}`)
+	r.Message.Content[0].Text.Text = "Original group message\n\nGroup instructions"
 	accepted := submit(t, p, f, r)
-	replay := submit(t, p, f, r)
-	require.Equal(t, accepted.MessageID, replay.MessageID)
-	require.Equal(t, accepted.EventID, replay.EventID)
-	ref, err := core.ParseThreadKey(accepted.ThreadKey)
-	require.NoError(t, err)
-	require.Equal(t, r.Message.ThreadRef, ref)
-
-	status, body = request(t, "GET", p.endpoint, "/v1/observer/messages/"+accepted.MessageID, "", nil)
-	require.Equal(t, http.StatusOK, status)
-	var message core.Message
-	require.NoError(t, json.Unmarshal(body, &message))
+	message := readRecord[core.Message](t, p, "messages/"+accepted.MessageID)
 	require.Equal(t, r.Message.SourceMessageID, message.SourceMessageID)
-	require.Equal(t, r.Message.Actor, message.Actor)
-	require.Equal(t, r.Message.Text, message.Text)
-	require.Equal(t, "group", message.Addressed)
-	require.Nil(t, message.Channel)
-	require.Len(t, page(t, p, "messages").Items, 1)
-	events := page(t, p, "routing-events").Items
-	require.Len(t, events, 1)
-	require.Contains(t, string(events[0]), `"kind":"route_request"`)
-	require.Contains(t, string(events[0]), `"status":"pending"`)
+	require.Equal(t, r.Message.Content, message.Content)
+	require.JSONEq(t, string(r.Message.Meta), string(message.TriggerMeta))
+	require.Empty(t, message.ReplyTarget)
 }
 
 func TestPublicAuthenticationAndReadOnly(t *testing.T) {
@@ -417,37 +400,19 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	r := input("one")
 	status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", "", r)
 	errorCode(t, status, b, 401, "unauthorized")
-	for _, field := range []string{"source", "account", "threadSource", "id", "conversation", "actor", "direct", "time", "url"} {
+	for _, field := range []string{"source", "accountId", "threadRef", "text", "actor", "addressed", "channel", "quotedMessage"} {
 		t.Run(field, func(t *testing.T) {
-			bad := input(field)
-			wantStatus, code := 400, "invalid_argument"
-			switch field {
-			case "source":
-				bad.Message.Source = "other"
-				wantStatus, code = 403, "forbidden"
-			case "account":
-				bad.Message.AccountID = "other"
-				wantStatus, code = 403, "forbidden"
-			case "threadSource":
-				bad.Message.ThreadRef.Source = "other"
-				wantStatus, code = 403, "forbidden"
-			case "id":
-				bad.Message.SourceMessageID = ""
-			case "conversation":
-				bad.Message.ThreadRef.ID = ""
-			case "actor":
-				bad.Message.Actor = ""
-			case "direct":
-				bad.Message.Addressed = "group"
-			case "time":
-				bad.Message.At = "yesterday"
-			case "url":
-				bad.Message.URL = "https://user:secret@example.com"
-			}
+			bad := map[string]any{"operationId": "legacy-" + field, "message": map[string]any{
+				"sourceMessageId": field, "threadKey": r.Message.ThreadKey, "content": r.Message.Content, field: "legacy",
+			}}
 			gotStatus, gotBody := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, bad)
-			errorCode(t, gotStatus, gotBody, wantStatus, code)
+			errorCode(t, gotStatus, gotBody, 400, "invalid_argument")
 		})
 	}
+	unauthorizedThread := r
+	unauthorizedThread.Message.ThreadKey = "other:opaque"
+	status, b = request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, unauthorizedThread)
+	errorCode(t, status, b, 403, "forbidden")
 	for _, path := range []string{"/v1/observer/messages", "/v1/observer/threads", "/v1/observer/routing-events", "/v1/observer/health", "/observer/"} {
 		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 			gotStatus, _ := request(t, method, p.endpoint, path, f.token, map[string]string{"write": "no"})
@@ -481,7 +446,7 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	if len(page(t, p, "messages").Items) != 0 {
 		t.Fatal("rejected requests wrote state")
 	}
-	r.Message.Text = "Untrusted content: " + f.token + " <script>window.attack=true</script>"
+	r.Message.Content[0].Text.Text = "Untrusted content: " + f.token + " <script>window.attack=true</script>"
 	submit(t, p, f, r)
 	_, b = request(t, "GET", p.endpoint, "/v1/observer/messages", "", nil)
 	if bytes.Contains(b, []byte(f.token)) || !bytes.Contains(b, []byte("[redacted]")) {
@@ -660,7 +625,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		f.configure(112, "account-1")
 		p := f.start()
 		r := input("oversize")
-		r.Message.Text = strings.Repeat("x", 512*1024)
+		r.Message.Content[0].Text.Text = strings.Repeat("x", 512*1024)
 		status, b := request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
 		errorCode(t, status, b, 503, "unavailable")
 		for _, kind := range []string{"messages", "threads", "routing-events"} {
@@ -733,11 +698,11 @@ func TestObserverBrowserFixture(t *testing.T) {
 	receiver, _ := coreOTLPReceiver(t, "")
 	p := f.start(traceTestEnv(receiver.URL)...)
 	r := input("browser-one")
-	r.Message.Text = "Browser original body <script>window.attack=true</script>\n" + strings.Repeat("Long original text ", 1500)
+	r.Message.Content[0].Text.Text = "Browser original body <script>window.attack=true</script>\n" + strings.Repeat("Long original text ", 1500)
 	receipt := submit(t, p, f, r)
 	for i := range 55 {
 		r := input("browser-" + strconv.Itoa(i))
-		r.Message.Text = "Browser row " + strconv.Itoa(i)
+		r.Message.Content[0].Text.Text = "Browser row " + strconv.Itoa(i)
 		submit(t, p, f, r)
 	}
 	tieBrowserRouterRegistrations(t, f)
@@ -752,11 +717,11 @@ func TestPublicOptionalReplyAddress(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
 	r := input("no-reply-address")
-	r.Message.Channel = nil
+	r.ReplyTarget = nil
 	receipt := submit(t, p, f, r)
 	status, b := request(t, "GET", p.endpoint, "/v1/observer/messages/"+receipt.MessageID, "", nil)
 	var m core.Message
-	if status != 200 || json.Unmarshal(b, &m) != nil || m.Channel != nil {
+	if status != 200 || json.Unmarshal(b, &m) != nil || len(m.ReplyTarget) != 0 {
 		t.Fatalf("reply address was required or fabricated: %s", b)
 	}
 	duplicate := r
@@ -765,11 +730,11 @@ func TestPublicOptionalReplyAddress(t *testing.T) {
 		t.Fatal("addressless replay changed identity")
 	}
 	r.OperationID = "conflicting-address"
-	r.Message.Channel = &core.Channel{Type: "custom", Address: map[string]any{"resource": "https://example.com/review/3", "replyTokenRef": "external-adapter-reference"}}
+	r.ReplyTarget = json.RawMessage(`{"resource":"https://example.com/review/3","replyTokenRef":"external-adapter-reference"}`)
 	status, b = request(t, "POST", p.endpoint, "/v1/channel/messages", f.token, r)
 	errorCode(t, status, b, 409, "conflict")
 	r = input("generic-reply-address")
-	r.Message.Channel = &core.Channel{Type: "custom", Address: map[string]any{"resource": "https://example.com/review/3"}}
+	r.ReplyTarget = json.RawMessage(`{"resource":"https://example.com/review/3"}`)
 	submit(t, p, f, r)
 }
 

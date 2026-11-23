@@ -3,12 +3,11 @@ import { test, expect, type APIRequestContext } from '@playwright/test'
 const subject = '发布前检查：请确认本次发布涉及的配置变更。'
 const body = subject + '\n' + '服务配置已更新，请核对本次发布的配置项和回归结果。'.repeat(120) + '\n<script>window.injected = true</script>'
 async function seed(request: APIRequestContext) {
-  const { items: [source] } = await (await request.get('/v1/observer/messages?limit=1')).json()
   const response = await request.post('/v1/channel/messages', {
     headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
     data: { operationId: 'observer-entry-chinese', message: {
-      source: source.source, accountId: source.accountId, addressed: source.addressed, actor: '发布值班',
-      threadRef: { ...source.threadRef, id: 'observer-entry' }, sourceMessageId: 'observer-entry-chinese', text: body,
+      sourceMessageId: 'observer-entry-chinese', threadKey: 'dws:observer-entry',
+      content: [{ type: 'text', text: body }],
     } },
   })
   expect(response.ok()).toBeTruthy()

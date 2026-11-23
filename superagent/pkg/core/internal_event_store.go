@@ -77,7 +77,6 @@ type internalEvent struct {
 	issue          *Issue
 	report         *Report
 	followup       json.RawMessage
-	messages       []json.RawMessage
 	messageContent []eventMessageContent
 }
 
@@ -172,9 +171,6 @@ func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 			return nil, err
 		}
 		event["report"] = json.RawMessage(raw)
-	}
-	if len(d.messages) != 0 {
-		event["messages"] = d.messages
 	}
 	if len(bodyKeys) != 0 && len(d.Body) != 0 {
 		var body map[string]json.RawMessage

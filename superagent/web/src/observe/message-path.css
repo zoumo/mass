@@ -1,15 +1,15 @@
 .path-panel { container-type: inline-size; }
 .path-result { color: var(--muted); font-size: 12px; }
-.path-result.state-pending, .path-echo { color: var(--amber); }
+.path-result.state-pending { color: var(--amber); }
 .path-canvas { padding: clamp(14px, 3cqw, 25px); background: radial-gradient(circle, #203348 .8px, transparent 1px) 0 0 / 16px 16px; }
-.path-trunk, .path-leg, .path-return, .path-references li, .path-echo, .path-outbox h3, .path-link, .path-tools button, .reference-edge { display: flex; align-items: center; gap: 8px; }
+.path-trunk, .path-leg, .path-return, .path-references li, .path-outbox h3, .path-link, .path-tools button, .reference-edge { display: flex; align-items: center; gap: 8px; }
 .path-trunk, .path-leg { min-width: 0; }
 .path-trunk { gap: 3px; }
 .path-batch { display: flex; align-items: flex-start; }
 .path-batch + .path-batch { padding-top: 12px; margin-top: 12px; border-top: 1px dashed var(--line); }
 .path-sender { padding-top: 6px; flex: 0 1 auto; }
 .path-node { display: inline-flex; align-items: center; gap: 8px; background: #0a1a27; border: 1px solid var(--node-color); border-radius: 7px; padding: 8px 11px; min-height: 39px; text-align: left; min-width: 0; font-weight: 600; }
-.path-node svg, .path-echo svg { flex-shrink: 0; color: var(--node-color); }
+.path-node svg { flex-shrink: 0; color: var(--node-color); }
 .path-node small { display: block; font-weight: 500; font-size: 10px; letter-spacing: .05em; color: var(--node-color); }
 .path-channel { --node-color: #62cdbf; }
 .path-core { --node-color: #8da6c5; }
@@ -41,8 +41,8 @@
 .path-muted, .path-error, .path-more, .path-materials { margin-top: 13px; font-size: 12px; }
 .path-muted { color: var(--muted); }
 .path-error { color: #fda4af; }
-.path-more, .path-link, .path-fields a, .path-echo a { color: #73e7d8; }
-.path-more:hover, .path-link:hover, .path-fields a:hover, .path-echo a:hover { text-decoration: underline; }
+.path-more, .path-link, .path-fields a { color: #73e7d8; }
+.path-more:hover, .path-link:hover, .path-fields a:hover { text-decoration: underline; }
 .path-tools, .path-selection, .path-outbox { padding: 12px clamp(14px, 3cqw, 25px); border-top: 1px solid var(--line); }
 .path-tools button, .path-outbox h3 { color: #c7d8e8; font-weight: 550; }
 .path-detail-title { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
@@ -54,7 +54,6 @@
 .path-fields dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 .path-selection { border-left: 3px solid var(--teal); }
 .path-selection:focus-visible { outline-offset: -3px; }
-.path-echo { margin-top: 12px; flex-wrap: wrap; font-size: 13px; }
 .path-link { width: fit-content; margin-top: 12px; font-size: 13px; }
 .path-materials { border-top: 1px solid var(--line); padding-top: 14px; }
 .path-materials h3 { margin-bottom: 9px; color: var(--muted); }

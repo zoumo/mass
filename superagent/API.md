@@ -10,7 +10,7 @@ configuration. MASS Runtime and Session operations follow the
 One Core process owns `dataDir` at a time. A successful start returns
 `status: ready`, `endpoint`, and `observerEndpoint`. Accepted records survive
 process exit. For a lost intake response, use the Message's original identity.
-See [data directory upgrades](README.md#reuse-an-existing-core-data-directory).
+See [data directory requirements](README.md#reuse-an-existing-core-data-directory).
 
 ## Submit Message
 
@@ -58,10 +58,6 @@ and is visible to the account's configured Outbox consumer. To link an answer
 to a prior reply, supply the `inReplyToOutboxId` of a sent item whose original
 Message has the same source, account and Thread.
 
-The legacy `threadRef` request remains accepted during the adapter cutover.
-When a credential configures write scopes, they also restrict legacy intake.
-Legacy source fields, addressing, and echo behavior apply to that request shape.
-
 Success HTTP 200:
 
 ```json
@@ -69,10 +65,8 @@ Success HTTP 200:
 ```
 
 Message, Thread update and the initial internal event commit together.
-The receipt identifies the accepted Message and Thread. Its optional
-`eventId` is the initial event ID for routable input and can be read
-through `/v1/observer/routing-events/{event_id}`. Echo handling may admit a
-Message without an event ID.
+The receipt identifies the accepted Message and Thread. Its `eventId` is the initial event ID. Read it through
+`/v1/observer/routing-events/{event_id}`.
 
 Zero or multiple Thread subscriptions enqueue a `route_request` to Router.
 Exactly one queues a `routed_message` to that Topic. Both reference the
@@ -92,9 +86,7 @@ request and does not participate in Message deduplication.
 source credential and returns the stored acceptance receipt with `duplicate=false`.
 The lookup scopes the native ID to the authenticated source and account and
 returns `not_found` when the scoped Message is absent. It returns no Message
-body. POST and GET receipts include `echoStatus` when Core has classified the
-Message. A duplicate POST returns the current echo classification with the
-original acceptance facts.
+body.
 
 ## Errors and uncertain responses
 
@@ -197,7 +189,7 @@ Router is `not_started` when execution is
 omitted, or its persisted `pending/ready/blocked` preparation state. Messages
 include current `routing: {round,state}`. Observer/Router projections also include
 source reception/return relations. Topic-role Message queries omit other Topics'
-relations. Thread details expose key, ref and timestamps. SessionBindings expose fixed
+relations. Thread details expose the key and timestamps. SessionBindings expose fixed
 role, owner, generation, workspace, namespace/name, `runtimeRef`, `model`,
 optional `effort`, actual Session IDs,
 preparation state and any error, and the next attempt time. Credentials and MCP capability files stay private.
@@ -586,7 +578,7 @@ An event's `messageContent` lists the `messageId` and `blockCount` for each
 attached Message. The blocks after the header follow event order and then
 `messageContent` order. Each block retains its Prompt content type. A Message
 that exceeds the budget keeps its reference. `get_message` returns its full
-`content` array. Legacy records can still use inline `content.data.text`.
+`content` array.
 
 For a Router `route_request`, use the Message ID from `refs`. Pass the current
 round in `route_messages.rounds`. After a stale round error or when the event
@@ -797,18 +789,10 @@ in its own Issue. Router replies cannot set this field.
 
 ### Quoted answers
 
-For structured intake, `inReplyToOutboxId` records the adapter's match at
+`inReplyToOutboxId` records the adapter's match at
 admission. Topic `get_message` on an associated Message can return
 `quotedReply: {outboxId, blockerRef?}`. The Topic Session receives the related
 blocker context while the blocker remains open and belongs to that Topic.
-
-For legacy DWS intake, Core matches the inbound `quotedMessage.message_id` against the
-native `receipt.messageId` of a sent question. Source, account and the inbound
-native conversation must match. If `quotedMessage.conversation_id` is provided,
-it must also match. Topic `get_message` on an associated Message returns
-`quotedReply: {outboxId, blockerRef}` for a unique match within its Topic.
-The lookup takes effect as soon as the send receipt is saved, including for
-answers already admitted.
 
 A match identifies the original blocker. The Topic reads the current Issue
 and decides whether the answer is sufficient. With no match, the Topic
@@ -838,7 +822,7 @@ account's item IDs return `not_found`.
 | POST `/v1/channel/outbox/result` | Update one reply and return its committed {id, status, receipt?}. |
 
 Channel reads include `source`, `accountId` and the original Message's
-`replyTarget`. During the transition, reads for legacy items carry `channel`.
+`replyTarget`.
 Query results include pending replies with and without known tasks.
 Failed replies with an elapsed `receipt.retryAt` are eligible for retry.
 
@@ -862,9 +846,6 @@ retries when a previous send could have succeeded. After process loss before
 any task or success was saved, a replacement can send the same Outbox row
 again using the same channel idempotency key.
 
-Results for legacy items can include the native `conversationId` and `messageId`
-on `sent`. When present, `messageId` requires `conversationId`.
-
 ### Reply history
 
 Observer shows pending, failed and sent replies by `messageId` or `threadKey`.
@@ -873,39 +854,7 @@ the original Message, any blocker reference and available channel receipt.
 
 ## DWS outbound echoes
 
-On `POST /v1/channel/messages`, an instance-bound DWS adapter can set
-`selfSent: true` beside `operationId` and `message` when the original sender's
-openDingTalk ID matches its configured native identity.
-
-Core checks sent Outbox receipts for the same source, account and actual
-native conversation/message pair. An exact match records
-`echo.status: "outbound_echo"` and the matching Outbox ID. It stays out of
-role delivery. A self-sent Message without an exact match may wait up to 60
-seconds when its conversation has a pending reply or an uncertain send in its
-retry window. Held Messages are durably admitted. When all candidate replies
-settle with known nonmatching results, Core clears the hold and routes once.
-An unresolved hold becomes `echo_unknown`. An exact result arriving later can
-still settle it as `outbound_echo`.
-
-Channel consumers can use the receipt's `echoStatus` to defer feedback while
-it is `held` or `echo_unknown`. An omitted value, `cleared` or `released`
-allows feedback on a routable Message. `outbound_echo` suppresses feedback.
-An exact late match takes precedence in the receipt even if Observer retains
-the earlier `cleared` or `released` routing history.
-
-Use `GET /v1/observer/messages/{id}` for `echo.status`, the deadline, candidate
-links, the precise match and any routing event ID. The original acceptance
-event is retained for auditing. A locally authenticated operator can route
-an `echo_unknown` Message once after reconciliation:
-
-```sh
-bin/superagent release-echo MESSAGE_ID --endpoint http://127.0.0.1:24370 \
-  --operator-token-file /absolute/private/operator.token --operation-id OPERATION_ID \
-  --reason "Verified as user input"
-```
-
-The CLI uses `POST /v1/operator/echo-release` with `messageId`, `operationId`
-and `reason`, authenticated with `operatorTokenFile` on the
-loopback listener. A replay of that release returns its recorded routing
-event. A later match on an already routed Message is recorded for inspection
-without another delivery.
+The DWS adapter records native send evidence and matches native echoes and
+quotes before admission. Inspect and reconcile that evidence with the
+[DWS Trigger commands](triggers/README.md#recover-dws-intake-and-replies). Core records
+the adapter's `inReplyToOutboxId` for an admitted quoted answer.

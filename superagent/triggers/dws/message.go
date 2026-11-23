@@ -176,35 +176,15 @@ func newQueuedSubmission(message coreclient.TriggerMessage, reply *nativeReplyTa
 }
 
 func decodeQueuedSubmission(raw []byte) (queuedSubmission, error) {
-	var current queuedSubmission
-	if err := json.Unmarshal(raw, &current); err != nil || current.Message.ThreadKey != "" {
-		return current, err
+	var submission queuedSubmission
+	if err := json.Unmarshal(raw, &submission); err != nil {
+		return submission, err
 	}
-	var legacy coreclient.Submission
-	if err := json.Unmarshal(raw, &legacy); err != nil {
-		return current, err
+	if submission.OperationID == "" || submission.Message.ThreadKey == "" || len(submission.Message.Content) == 0 ||
+		!validNativeID(submission.Message.SourceMessageID) || !validNativeID(submission.ConversationID) {
+		return queuedSubmission{}, errors.New("invalid DWS queue record")
 	}
-	m := legacy.Message
-	if legacy.OperationID == "" || m.ThreadRef.ID == "" || m.ThreadRef.Source == "" || m.SourceMessageID == "" {
-		return current, errors.New("invalid legacy DWS queue record")
-	}
-	content, err := triggercontent.FromLegacyText(m.Text, m.Actor, m.At, m.URL)
-	if err != nil {
-		return current, err
-	}
-	meta := m.Meta
-	if meta == nil {
-		meta = make(map[string]any)
-	}
-	meta["chatType"] = m.Addressed
-	meta["senderOpenDingtalkId"] = m.Actor
-	meta["eventId"] = m.SourceEventID
-	if len(m.Quoted) > 0 {
-		meta["quotedMessage"] = m.Quoted
-	}
-	return newQueuedSubmission(coreclient.TriggerMessage{
-		SourceMessageID: m.SourceMessageID, ThreadKey: dwsThreadKey(m.ThreadRef.Source, m.ThreadRef.ID), Content: content,
-	}, legacyReplyTarget(m.Channel), meta, legacy.OperationID, m.ThreadRef.ID, legacy.SelfSent, m.Quoted)
+	return submission, nil
 }
 
 func (s queuedSubmission) nativeReply() *nativeReplyTarget {
@@ -213,11 +193,4 @@ func (s queuedSubmission) nativeReply() *nativeReplyTarget {
 		return nil
 	}
 	return &target
-}
-
-func legacyReplyTarget(ch *coreclient.Channel) *nativeReplyTarget {
-	if ch == nil {
-		return nil
-	}
-	return &nativeReplyTarget{Type: ch.Type, ConversationID: ch.ConversationID, MessageID: ch.MessageID, ActorID: ch.ActorID, Address: ch.Address}
 }

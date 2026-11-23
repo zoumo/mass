@@ -71,7 +71,7 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 		t.Helper()
 		require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&schemaVersion))
 		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables))
-		require.Equal(t, 25, schemaVersion)
+		require.Equal(t, 26, schemaVersion)
 		require.Equal(t, expectedTables, tables)
 	}
 	checkSchema(8)
@@ -120,7 +120,7 @@ func TestTraceAssociationsRestartEvent(t *testing.T) {
 
 	f := fixtureAt(t)
 	p := f.start(env...)
-	inputs := []core.SubmitRequest{input("durable-first"), input("durable-second")}
+	inputs := []core.SubmitTriggerMessageRequest{input("durable-first"), input("durable-second")}
 	var receipts []core.Receipt
 	for _, record := range inputs {
 		receipts = append(receipts, submit(t, p, f, record))

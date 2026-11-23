@@ -83,6 +83,11 @@ func runComposeFixture(dir string, args []string) int {
 			return runComposeHTTPFixture(dir, "github")
 		}
 		recordComposeEvent(dir, role)
+		if role == "dws:serve" && os.Getenv("TEST_COMPOSE_INVALID_DWS_DATABASE_ON_SERVE") != "" {
+			if err := os.WriteFile(filepath.Join(dir, "dws.sqlite"), []byte("invalid SQLite fixture"), 0o600); err != nil {
+				panic(err)
+			}
+		}
 		if role == "github:check" {
 			// The Trigger process tests exercise the actual HTTP preflight.
 			// This fixture verifies Compose's isolated configuration and wiring.
@@ -633,8 +638,8 @@ func TestComposeProcessPreflight(t *testing.T) {
 
 func TestComposeProcessSecondTriggerStartupFailure(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dws.sqlite"), []byte("invalid SQLite fixture"), 0o600))
-	p := startComposeFixture(t, dir, composeFixtureConfig(t, dir, "127.0.0.1:0", true, true))
+	p := startComposeFixture(t, dir, composeFixtureConfig(t, dir, "127.0.0.1:0", true, true),
+		"TEST_COMPOSE_INVALID_DWS_DATABASE_ON_SERVE=1")
 	require.Error(t, p.wait(t))
 	require.Empty(t, readComposeFile(t, p.stdout))
 	require.Contains(t, readComposeFile(t, p.logs), "triggers.dws")

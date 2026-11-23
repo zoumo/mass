@@ -31,7 +31,7 @@ func TestTopicIssueListAcrossIndexInstall(t *testing.T) {
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
 	other := input("issue-list-other-topic")
-	other.Message.ThreadRef.ID, other.Message.Channel = "issue-list-other", nil
+	other.Message.ThreadKey, other.ReplyTarget = fixtureThreadKey("issue-list-other"), nil
 	message := submit(t, p, f, other)
 	decision := decide(t, p, router.token, newRoute("issue-list-other", []string{message.MessageID}, f.dir))
 	foreignBinding := waitBinding(t, p, "topic", decision.Targets[0].TopicID, "ready")
@@ -126,12 +126,12 @@ func TestTopicIssueListAcrossIndexInstall(t *testing.T) {
 	p.stop(t, false)
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 25, version)
+	require.Equal(t, 26, version)
 
 	f.start()
 	assertIssueQueryIndexes(t, db, 2)
 	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 25, version)
+	require.Equal(t, 26, version)
 	topic = startRoleMCP(t, f, binding)
 	foreign = startRoleMCP(t, f, foreignBinding)
 	router = startRoleMCP(t, f, routerBinding)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -98,6 +97,11 @@ func openSendEvidence(databasePath string) (*sendEvidenceStore, error) {
 		if err != nil || json.Unmarshal(raw, &attempt) != nil || attempt.OutboxID == "" ||
 			!validNativeID(attempt.ConversationID) || attempt.StartedAt.IsZero() || entry.Name() != attempt.sendKey()+".json" {
 			return nil, errors.New("invalid DWS send evidence record")
+		}
+		if attempt.RetryAt != "" {
+			if _, err := time.Parse(time.RFC3339Nano, attempt.RetryAt); err != nil {
+				return nil, errors.New("invalid DWS send evidence retry deadline")
+			}
 		}
 		if err := s.checkRef(attempt); err != nil {
 			return nil, err
@@ -244,52 +248,4 @@ func (s *sendEvidenceStore) recoverable() []sendEvidence {
 		attempts = append(attempts, a)
 	}
 	return attempts
-}
-
-// ImportSentEvidence imports a JSON stream of settled native references while
-// the adapter is offline. Core migration must have verified account/Thread
-// ownership and sent status before exporting these records.
-func (c Component) ImportSentEvidence(input io.Reader) error {
-	_, closeQueue, err := openDWSQueue(c.config)
-	if err != nil {
-		return err
-	}
-	defer closeQueue()
-	store, err := openSendEvidence(c.config.DatabasePath)
-	if err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(input)
-	decoder.DisallowUnknownFields()
-	for {
-		var row struct {
-			Source         string `json:"source"`
-			AccountID      string `json:"accountId"`
-			OutboxID       string `json:"outboxId"`
-			ConversationID string `json:"conversationId"`
-			MessageID      string `json:"messageId"`
-			TaskID         string `json:"taskId,omitempty"`
-		}
-		if err := decoder.Decode(&row); err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		}
-		if row.Source != c.config.Source || row.AccountID != c.config.AccountID || row.OutboxID == "" ||
-			!validNativeID(row.ConversationID) || !validNativeID(row.MessageID) {
-			return errors.New("invalid or mismatched DWS send evidence import record")
-		}
-		a := sendEvidence{
-			OutboxID: row.OutboxID, RetryAt: "legacy", ConversationID: row.ConversationID,
-			StartedAt: time.Unix(0, 0).UTC(), Settled: true,
-			Result: channelOutcome{Outcome: "sent", TaskID: row.TaskID, ConversationID: row.ConversationID, MessageID: row.MessageID},
-		}
-		if previous, exists := store.get(a); exists && previous != a {
-			return errors.New("conflicting DWS send evidence import record")
-		}
-		if err := store.put(a); err != nil {
-			return err
-		}
-	}
 }

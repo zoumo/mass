@@ -42,9 +42,9 @@ func addOutboxPeerSources(t *testing.T, f *fixture) (sameSource, otherSource, in
 		write(t, filepath.Join(f.dir, name+".token"), token)
 	}
 	write(t, f.config, string(cfg)+
-		"  - source: dws\n    accountId: account-1\n    instanceId: collector-2\n    tokenFile: ./same.token\n"+
-		"  - source: other\n    accountId: account-2\n    instanceId: collector-1\n    tokenFile: ./other.token\n"+
-		"  - source: dws\n    accountId: account-1\n    tokenFile: ./ingress.token\n")
+		"  - source: dws\n    accountId: account-1\n    instanceId: collector-2\n    tokenFile: ./same.token\n    threadKeyPrefixes: ['dws:']\n"+
+		"  - source: other\n    accountId: account-2\n    instanceId: collector-1\n    tokenFile: ./other.token\n    threadKeyPrefixes: ['dws:']\n"+
+		"  - source: dws\n    accountId: account-1\n    tokenFile: ./ingress.token\n    threadKeyPrefixes: ['dws:']\n")
 	return sameSource, otherSource, ingressOnly
 }
 
@@ -79,11 +79,8 @@ func resultOutbox(t *testing.T, p *process, token string, req core.OutboxCommand
 	return stored
 }
 
-func outboxResult(item core.OutboxItem, outcome, code, native string) core.OutboxCommand {
-	r := core.OutboxCommand{OutboxID: item.ID, Expected: item.OutboxState, Outcome: outcome, ErrorCode: code, MessageID: native}
-	if native != "" {
-		r.ConversationID = "actual:conversation"
-	}
+func outboxResult(item core.OutboxItem, outcome, code string) core.OutboxCommand {
+	r := core.OutboxCommand{OutboxID: item.ID, Expected: item.OutboxState, Outcome: outcome, ErrorCode: code}
 	if item.Receipt != nil && item.Status == "pending" {
 		r.TaskID = item.Receipt.TaskID
 	}
@@ -123,12 +120,11 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	require.Contains(t, string(routerMCP.call("tools/list", map[string]any{})["result"]), "send_reply")
 
 	addressless := input("addressless")
-	addressless.Message.Channel = nil
-	addressless.Message.At = "2098-01-02T08:00:00Z"
+	addressless.ReplyTarget = nil
+	addressless.Message.Meta = json.RawMessage(`{"sourceTime":"2098-01-02T08:00:00Z"}`)
 	first := submit(t, p, f, addressless)
 	addressed := input("verified-instance")
-	addressed.Message.At = "2000-01-01T12:00:00Z"
-	addressed.Message.CollectorInstance = "collector-2"
+	addressed.Message.Meta = json.RawMessage(`{"sourceTime":"2000-01-01T12:00:00Z","collectorInstance":"collector-2"}`)
 	second := submit(t, p, f, addressed)
 	code, raw := request(t, "POST", p.endpoint, "/v1/channel/messages", peer, addressed)
 	require.Equal(t, 200, code, "%s", raw)
@@ -136,7 +132,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	topic := waitBinding(t, p, "topic", route.Targets[0].TopicID, "ready")
 	topicToken := roleToken(t, f, topic)
 	unrelatedInput := input("unrelated")
-	unrelatedInput.Message.ThreadRef.ID, unrelatedInput.Message.Channel.ConversationID = "another-conversation", "another-conversation"
+	moveInput(&unrelatedInput, "another-conversation")
 	unrelated := submit(t, p, f, unrelatedInput)
 	otherDecision := decide(t, p, routerToken, newRoute("other-topic", []string{unrelated.MessageID}, f.dir))
 	otherTopic := waitBinding(t, p, "topic", otherDecision.Targets[0].TopicID, "ready")
@@ -202,16 +198,16 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	require.Empty(t, listOutbox(t, p.endpoint, other, "").Items)
 	var address struct {
 		AccountID, Source string
-		Channel           core.Channel
+		ReplyTarget       json.RawMessage
 	}
 	code, raw = request(t, "GET", p.endpoint, channelOutbox+"/items/"+reply.ID, f.token, nil)
 	require.Equal(t, 200, code, "%s", raw)
 	require.NoError(t, json.Unmarshal(raw, &address))
 	require.Equal(t, "account-1", address.AccountID)
 	require.Equal(t, "dws", address.Source)
-	require.Equal(t, *addressed.Message.Channel, address.Channel)
+	require.JSONEq(t, string(addressed.ReplyTarget), string(address.ReplyTarget))
 
-	result := outboxResult(reply, "sent", "", "forbidden-write")
+	result := outboxResult(reply, "sent", "")
 	for _, tc := range []struct {
 		token   string
 		code    int
@@ -258,7 +254,7 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	enqueued := observedTraces(t, p, "outbox", item.ID)
 	require.Len(t, enqueued, 1)
 	require.Equal(t, "enqueue", enqueued[0].Phase)
-	record := outboxResult(item, "pending", "", "")
+	record := outboxResult(item, "pending", "")
 	record.TaskID = "durable-task"
 	saved := resultOutbox(t, p, f.token, record)
 	require.Equal(t, "pending", saved.Status)
@@ -270,11 +266,11 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	require.Equal(t, saved, resultOutbox(t, p, f.token, record))
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 1)
 
-	wrongTask := outboxResult(saved, "sent", "", "actual-native")
+	wrongTask := outboxResult(saved, "sent", "")
 	wrongTask.TaskID = "different-task"
 	code, body := request(t, "POST", p.endpoint, channelOutbox+"/result", f.token, wrongTask)
 	errorCode(t, code, body, 409, "conflict")
-	retry := outboxResult(saved, "retryable_failure", "confirmed_failure", "")
+	retry := outboxResult(saved, "retryable_failure", "confirmed_failure")
 	failed := resultOutbox(t, p, f.token, retry)
 	require.Equal(t, "failed", failed.Status)
 	require.NotEmpty(t, failed.Receipt.RetryAt)
@@ -284,9 +280,10 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	require.Empty(t, listOutbox(t, p.endpoint, f.token, "").Items)
 	advance(61 * time.Second)
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 1)
-	settle := outboxResult(failed, "sent", "", "actual-native")
+	settle := outboxResult(failed, "sent", "")
 	sent := resultOutbox(t, p, f.token, settle)
-	require.Equal(t, settle.MessageID, sent.Receipt.MessageID)
+	require.Equal(t, "sent", sent.Status)
+	require.Nil(t, sent.Receipt)
 	require.Equal(t, sent, resultOutbox(t, p, f.token, settle))
 	require.Empty(t, listOutbox(t, p.endpoint, f.token, "").Items)
 	code, body = request(t, "POST", p.endpoint, channelOutbox+"/result", f.token, retry)
@@ -407,7 +404,7 @@ func TestOutboxPermanentFailureEvent(t *testing.T) {
 	item := roleWork[core.OutboxItem](t, p, token, "send_reply", core.ReplyRequest{
 		OperationID: "reply", MessageID: target.MessageID, Content: markdownReply("Cannot reach this peer"),
 	})
-	cmd := outboxResult(item, "permanent_failure", "permission_denied", "")
+	cmd := outboxResult(item, "permanent_failure", "permission_denied")
 	failed := resultOutbox(t, p, f.token, cmd)
 	require.Equal(t, "failed", failed.Status)
 	require.Empty(t, failed.Receipt.RetryAt)
@@ -424,7 +421,7 @@ func TestOutboxPermanentFailureEvent(t *testing.T) {
 func seedObserverOutbox(t *testing.T, p *process, f *fixture, routerToken, channel string) {
 	t.Helper()
 	source := input("outbox-observer-source")
-	source.Message.ThreadRef.ID, source.Message.Channel.ConversationID = "outbox-observer-conversation", "outbox-observer-conversation"
+	moveInput(&source, "outbox-observer-conversation")
 	m := submit(t, p, f, source)
 	for _, outcome := range []string{"pending", "task", "unknown", "permanent_failure", "sent"} {
 		op := "browser-outbox-" + outcome
@@ -435,14 +432,15 @@ func seedObserverOutbox(t *testing.T, p *process, f *fixture, routerToken, chann
 		var req core.OutboxCommand
 		switch outcome {
 		case "task":
-			req = outboxResult(item, "pending", "", "")
+			req = outboxResult(item, "pending", "")
 			req.TaskID = "observer-task-42"
 		case "sent":
-			code, nativeID := request(t, http.MethodPost, channel, "/send", "", item)
+			code, _ := request(t, http.MethodPost, channel, "/send", "", item)
 			require.Equal(t, http.StatusOK, code)
-			req = outboxResult(item, outcome, "", string(nativeID))
+			req = outboxResult(item, outcome, "")
+			req.TaskID = "observer-send-task"
 		default:
-			req = outboxResult(item, outcome, "observer_"+outcome, "")
+			req = outboxResult(item, outcome, "observer_"+outcome)
 		}
 		resultOutbox(t, p, f.token, req)
 	}
@@ -454,7 +452,4 @@ func seedObserverOutbox(t *testing.T, p *process, f *fixture, routerToken, chann
 		OperationID: "browser-outbox-options", MessageID: m.MessageID,
 		Content: core.StructuredContent{Type: "options", Data: json.RawMessage(`{"prompt":"**Choose what to do.**\n\n![Do not fetch](https://example.invalid/outbox-image.png)\n\n<span data-marker=\"outbox-raw-html\">raw HTML</span>","options":[{"id":"pause","label":"Pause"},{"id":"continue","label":"Continue"}]}`)},
 	})
-	echo := input("observer-actual-message")
-	echo.Message.ThreadRef.ID, echo.Message.Channel.ConversationID = "actual:conversation", "actual:conversation"
-	submit(t, p, f, echo)
 }

@@ -60,22 +60,20 @@ func assertTimerFollowup(t *testing.T, p *process, timer timerRecord) {
 	require.Equal(t, timerEventType, timer.Type)
 	message := readRecord[core.Message](t, p, "messages/"+timer.TriggerMessageID)
 	require.Equal(t, timer.ID, message.SourceMessageID)
-	ref := core.ThreadRef{Source: "core:timer", ID: timer.ID}
-	require.Equal(t, ref.Source, message.Source)
-	require.Equal(t, core.ThreadKey(ref), timer.ThreadKey)
+	require.Equal(t, "core:timer", message.Source)
+	require.Equal(t, "core%3Atimer:"+timer.ID, timer.ThreadKey)
 	require.Equal(t, timer.ThreadKey, message.ThreadKey)
 	require.Len(t, message.Content, 1)
 	require.Equal(t, timer.Content, message.Content[0].Text.Text)
 	require.Empty(t, message.TriggerMeta)
-	require.Empty(t, message.Meta)
-	require.Nil(t, message.Channel)
+	require.Empty(t, message.ReplyTarget)
 
 	type subscribedThread struct {
 		core.Thread
 		Subscriptions []core.Subscription `json:"subscriptions"`
 	}
 	thread := readRecord[subscribedThread](t, p, "threads/"+url.PathEscape(timer.ThreadKey))
-	require.Equal(t, ref, thread.Ref)
+	require.Equal(t, timer.ThreadKey, thread.Key)
 	require.Len(t, thread.Subscriptions, 1)
 	require.Equal(t, timer.TopicID, thread.Subscriptions[0].TopicID)
 	require.Len(t, page(t, p, "messages?threadKey="+url.QueryEscape(timer.ThreadKey)).Items, 1)
