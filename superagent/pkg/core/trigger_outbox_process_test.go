@@ -131,10 +131,10 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 		status int
 		code   string
 	}{{peer, http.StatusForbidden, "forbidden"}, {other, http.StatusNotFound, "not_found"}} {
-		status, raw := request(t, http.MethodGet, p.endpoint, detail, test.token, nil)
-		errorCode(t, status, raw, test.status, test.code)
-		status, raw = request(t, http.MethodPost, p.endpoint, channelOutbox+"/result", test.token, record)
-		errorCode(t, status, raw, test.status, test.code)
+		gotStatus, response := request(t, http.MethodGet, p.endpoint, detail, test.token, nil)
+		errorCode(t, gotStatus, response, test.status, test.code)
+		gotStatus, response = request(t, http.MethodPost, p.endpoint, channelOutbox+"/result", test.token, record)
+		errorCode(t, gotStatus, response, test.status, test.code)
 	}
 	require.Empty(t, listOutbox(t, p.endpoint, other, "").Items)
 	stored := readRecord[core.Message](t, p, "messages/"+message.MessageID)
