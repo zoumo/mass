@@ -148,6 +148,12 @@ func (e egress) handle(admit, drain context.Context, item outboxItem) {
 		taskID, retryAt = item.Receipt.TaskID, item.Receipt.RetryAt
 	}
 	if item.Status == "failed" {
+		// A previous task may have succeeded after Core marked it uncertain.
+		// The retry feed can remain available during individual read failures.
+		if attempt, found := e.evidence.successfulAttempt(item.ID); found {
+			e.settle(drain, item, attempt)
+			return
+		}
 		// Task IDs on failed receipts describe the preceding attempt.
 		taskID = ""
 		if retryAt == "" {

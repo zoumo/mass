@@ -644,9 +644,21 @@ func TestDWSStateOwnerRejectsDifferentDatabase(t *testing.T) {
 func TestEgressLateTaskResultSettlesBeforeRetry(t *testing.T) {
 	t.Parallel()
 	f := newEgressFixture(t, true)
+	proxy := f.Proxy(func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasPrefix(r.URL.Path, outboxPath+"/items/") {
+			http.Error(w, "test unavailable", http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	}, nil)
 	f.feed(1, "request", "self", "request")
-	_ = f.trigger(f.Endpoint)
+	trigger := f.trigger(proxy.URL)
 	id := f.reply("request", "answer")
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("DWS Trigger log:\n%s", trigger.Text())
+		}
+	})
 	task := f.waitTask(id)
 	triggertest.Write(t, filepath.Join(f.Dir, task+".json"), []byte(`{"success":false,"error":{"reason":"task_not_found"}}`))
 	triggertest.Wait(t, "task became unavailable", func() bool {
