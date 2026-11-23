@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/zoumo/mass/massd/pkg/events"
 )
 
 const internalEventSchema = `
@@ -52,6 +54,12 @@ type eventReference struct {
 	GoalRevision int    `json:"goal_revision,omitempty"`
 }
 
+type eventMessageContent struct {
+	ID     string
+	Blocks []events.ContentBlock
+	size   int
+}
+
 type internalEvent struct {
 	ID        string             `json:"event_id"`
 	Kind      string             `json:"kind"`
@@ -61,15 +69,16 @@ type internalEvent struct {
 	Body      json.RawMessage    `json:"body,omitempty"`
 	Refs      []eventReference   `json:"refs,omitempty"`
 	// Optional facts on the copy used for dispatch.
-	truncated   bool
-	threadKey   string
-	routing     json.RawMessage
-	quotedReply json.RawMessage
-	topic       *Topic
-	issue       *Issue
-	report      *Report
-	followup    json.RawMessage
-	messages    []json.RawMessage
+	truncated      bool
+	threadKey      string
+	routing        json.RawMessage
+	quotedReply    json.RawMessage
+	topic          *Topic
+	issue          *Issue
+	report         *Report
+	followup       json.RawMessage
+	messages       []json.RawMessage
+	messageContent []eventMessageContent
 }
 
 // AgentPromptView encodes the fields an agent needs to act on the source record.
@@ -123,6 +132,17 @@ func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 	if d.Kind == routeRequestKind && len(d.routing) != 0 {
 		event["threadKey"] = d.threadKey
 		event["routing"] = d.routing
+	}
+	if len(d.messageContent) != 0 {
+		type attachment struct {
+			MessageID  string `json:"messageId"`
+			BlockCount int    `json:"blockCount"`
+		}
+		list := make([]attachment, 0, len(d.messageContent))
+		for _, content := range d.messageContent {
+			list = append(list, attachment{MessageID: content.ID, BlockCount: len(content.Blocks)})
+		}
+		event["messageContent"] = list
 	}
 	if len(d.followup) != 0 {
 		event["followup"] = d.followup

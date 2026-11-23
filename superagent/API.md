@@ -22,58 +22,40 @@ source/account; body fields cannot select another identity.
 {
   "operationId": "stable-adapter-operation-17",
   "message": {
-    "source": "dws",
-    "accountId": "configured-native-account",
     "sourceMessageId": "native-message-id",
-    "threadRef": { "source": "dws", "id": "native-conversation-id" },
-    "actor": "native-sender-id",
-    "text": "Original input text",
-    "addressed": "direct",
-    "channel": {
-      "type": "dws",
-      "conversationId": "native-conversation-id",
-      "messageId": "native-message-id",
-      "actorId": "native-sender-id"
-    }
+    "threadKey": "https://github.example/org/repo/pull/42",
+    "content": [
+      {"type": "text", "text": "Review requested. https://github.example/org/repo/pull/42#comment"},
+      {"type": "resource_link", "uri": "file:///logs/checks.log", "name": "checks.log"}
+    ],
+    "_meta": {"observationId": "obs-17"}
   }
 }
 ```
 
-Required Message fields are source, accountId, sourceMessageId, threadRef,
-actor and nonblank text. No identity is synthesized. Optional fields: absolute
-RFC3339 `at`, tri-state `human`, `addressed`, `channel`, absolute HTTP(S) `url`
-without credentials, JSON object `meta`, JSON `quotedMessage`, `sourceEventId`,
-`collectedAt` and `collectorInstance`. Core generates `receivedAt`.
-Core rejects unknown request fields and trailing JSON values.
+`operationId` and `sourceMessageId` are required. The adapter supplies the
+final `threadKey`. Core stores it and matches subscriptions by exact string.
+A key is at most 2048 UTF-8 bytes and has no control characters or leading
+or trailing whitespace. A `sources` entry authorizes writes with `threadKeys`
+for exact matches and `threadKeyPrefixes` for literal prefixes. List the same
+range in multiple entries to let their accounts write to the same Threads.
+A structured request needs a match in at least one of the configured lists.
 
-`channel` is optional: absence means there is no supplied reply address, and
-Core never guesses one. A provided channel needs a `type`; its `address` object
-can preserve other adapters' native addressing fields. For `type=dws`,
-`conversationId` and `messageId` must match the native Thread and Message IDs.
-When present, `actorId` must match `actor`. DWS direct and self-chat Messages
-use `addressed=direct`. DWS group Messages use `addressed=group` with the native
-group conversation ID in `threadRef.id`. A reply-enabled group supplies
-`channel.type=dws`, `channel.actorId=actor`, and both `groupOpenConversationId`
-and `senderOpenDingtalkId` in `channel.address`. These entries must match
-`threadRef.id` and `actor`, respectively. Inbound-only groups omit `channel`.
+`content` is a nonempty ordered array using the same content union as Prompt.
+The supported types are `text`, `image`, `audio`, `resource`, and `resource_link`.
+Use text for source facts and webpage links. Use `resource_link` for attachment
+references. Optional `_meta` is an opaque JSON object. Core saves it for
+Observer diagnostics and omits it from Agent tools and Session input.
+Core generates `receivedAt`. Unknown fields and trailing JSON values fail.
 
-Thread identity compares source/id independently. The key is each UTF-8
-component URL-path escaped with colon escaped too, joined by one literal colon.
-Ordinary DWS keys remain `dws:conversationId`; `dws:a%3Ab%2Fc%25` reverses to
-conversation ID `a:b/c%`. Case is retained. No hash, account path or collector
-instance becomes part of the Thread identity.
-For PR Messages, send `threadRef: {"source":"pr:url","id":"https://..."}`.
-The `pr:url` reference kind uses the canonical resource URL as the Thread key.
-The outer `source` and `accountId` still match the authenticated collector and
-scope native message deduplication. A PR Thread requires a non-DWS source and
-cannot carry a DWS reply address. Use the optional Message `url` for a source
-link, such as a comment permalink, when available. See
-[PR URL rules](#pull-request-registration-and-subscriptions).
+The legacy `threadRef` request remains accepted during the adapter cutover.
+When a credential configures write scopes, they also restrict legacy intake.
+Legacy source fields, addressing, and echo behavior apply to that request shape.
 
 Success HTTP 200:
 
 ```json
-{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadKey":"dws:native-conversation-id","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
+{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadKey":"https://github.example/org/repo/pull/42","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
 ```
 
 Message, Thread update and the initial internal event commit together.
@@ -87,14 +69,13 @@ Exactly one queues a `routed_message` to that Topic. Both reference the
 stored original Message. Initial event status is `pending`. The event
 becomes `sent` after massd accepts the Session input.
 
-Admission deduplicates by source, account and native `sourceMessageId`.
-Duplicate intake returns the original Message ID, Thread key, acceptance time
-and initial event ID with `duplicate=true`. Changing text, actor, Thread,
-reply address or other business content under that native identity conflicts.
-Canonical comparison sorts JSON object keys and normalizes absolute source
-time and quoted JSON. Collection timestamps, collector instance and raw
-source event envelope IDs are excluded from comparison. `operationId` is a
-required caller correlation value.
+Admission deduplicates by the authenticated source, account, and
+`sourceMessageId`. Duplicate intake returns the original Message ID, Thread
+key, acceptance time, and initial event ID with `duplicate=true`. Changing
+the Thread key or ordered content under that identity returns `conflict`.
+Object field order is immaterial. Changing `_meta` alone returns the original
+receipt and preserves the first metadata. `operationId` correlates a caller's
+request and does not participate in Message deduplication.
 
 `GET /v1/channel/messages?sourceMessageId={encoded-native-id}` uses the same
 source credential and returns the stored acceptance receipt with `duplicate=false`.
@@ -586,15 +567,20 @@ canceled until that owner explicitly reopens it with `update_topic`.
 
 ## Internal event dispatch
 
-Core sends each Session a JSON object with ordered `events`. Read `kind` to
-select the action. Deduplicate by `event_id`.
+Core sends the ordered `events` JSON as the first text block of Session
+`Input.Content`. Read `kind` to select the action. Deduplicate by `event_id`.
+An event's `messageContent` lists the `messageId` and `blockCount` for each
+attached Message. The blocks after the header follow event order and then
+`messageContent` order. Each block retains its Prompt content type. A Message
+that exceeds the budget keeps its reference. `get_message` returns its full
+`content` array. Legacy records can still use inline `content.data.text`.
 
 For a Router `route_request`, use the Message ID from `refs`. Pass the current
 round in `route_messages.rounds`. After a stale round error or when the event
 contains only a reference, use `get_message` with `include: ["routing"]`.
 
 ```json
-{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"content":{"type":"markdown","data":{"text":"Verify the report."}},"threadKey":"dws:release","routing":{"round":1,"state":"pending"}}]}
+{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"messageContent":[{"messageId":"mass-m1","blockCount":2}],"threadKey":"opaque/42","routing":{"round":1,"state":"pending"}}]}
 ```
 
 For a Topic `routed_message`, Core may inline short content, matched quoted
@@ -710,14 +696,14 @@ time is eligible on the next scan. The first valid transaction to commit
 decides a race between firing, updating, canceling and Topic termination.
 Firing keeps the selected revision and commits `firedAt`, the task Thread,
 its Topic subscription, and one Trigger Message with its routing event in
-the same transaction. The internal source is `core:timer`. The task ID is both
-the native Thread ID and `sourceMessageId`. The Message text is the followup
-reason. Its `meta` includes `type: timer.followup`, `taskId`, `topicId`,
-`taskRevision`, `dueAt` and any task materials. The Message carries no
-external reply address.
+the same transaction. The internal source is `core:timer`. The task provides
+its final Thread key and uses its task ID as `sourceMessageId`. The Message
+contains the followup reason in a text block. The `followup` field in the
+`routed_message` and Topic `get_message` results gives the task ID, revision,
+due time, and material references from the scheduled task.
 
-The usual single-subscription rule routes the Message to the Topic. Core submits the `routed_message` through StartOrSteer. Use `get_message` to read the Message reference and `get_topic` with
-`include: ["followups"]` to check the current task.
+The single-subscription rule routes the Message to its Topic via StartOrSteer.
+Use `get_topic` with `include: ["followups"]` to check the current task.
 
 Completing or canceling the Topic atomically invalidates scheduled Timers and
 supersedes unconfirmed followup events. Accepted events and their

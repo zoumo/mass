@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/zoumo/mass/massd/pkg/events"
 )
 
 type Error struct {
@@ -92,9 +94,9 @@ type MessageInput struct {
 	Source            string          `json:"source"`
 	AccountID         string          `json:"accountId"`
 	SourceMessageID   string          `json:"sourceMessageId"`
-	ThreadRef         ThreadRef       `json:"threadRef"`
-	Actor             string          `json:"actor"`
-	Text              string          `json:"text"`
+	ThreadRef         ThreadRef       `json:"threadRef,omitzero"`
+	Actor             string          `json:"actor,omitempty"`
+	Text              string          `json:"text,omitempty"`
 	At                string          `json:"at,omitempty"`
 	Human             *bool           `json:"human,omitempty"`
 	Addressed         string          `json:"addressed,omitempty"`
@@ -113,12 +115,14 @@ type SubmitRequest struct {
 }
 type Message struct {
 	MessageInput
-	ID         string       `json:"id"`
-	ThreadKey  string       `json:"threadKey"`
-	ReceivedAt string       `json:"receivedAt"`
-	Acceptance string       `json:"acceptance"`
-	EventID    string       `json:"eventId,omitempty"`
-	Echo       *MessageEcho `json:"echo,omitempty"`
+	Content     []events.ContentBlock `json:"content,omitempty"`
+	TriggerMeta json.RawMessage       `json:"_meta,omitempty"`
+	ID          string                `json:"id"`
+	ThreadKey   string                `json:"threadKey"`
+	ReceivedAt  string                `json:"receivedAt"`
+	Acceptance  string                `json:"acceptance"`
+	EventID     string                `json:"eventId,omitempty"`
+	Echo        *MessageEcho          `json:"echo,omitempty"`
 }
 
 var _ AgentPromptView = Message{}

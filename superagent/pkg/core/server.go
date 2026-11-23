@@ -268,18 +268,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, problem("invalid_argument", "Content-Type must be application/json"))
 			return
 		}
-		var request SubmitRequest
-		dec := json.NewDecoder(r.Body)
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&request); err != nil {
-			s.fail(w, problem("invalid_argument", "invalid submitMessage JSON"))
-			return
-		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			s.fail(w, problem("invalid_argument", "exactly one JSON value is required"))
-			return
-		}
-		receipt, err := s.store.Submit(r.Context(), source, request)
+		receipt, err := s.store.submitChannelMessage(r.Context(), source, r.Body)
 		if err != nil {
 			s.fail(w, err)
 			return
