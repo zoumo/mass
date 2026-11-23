@@ -23,7 +23,7 @@ type Topic = { id: string; title: string; status: string; createdAt: string; las
 type EventIdentity = { id: string; topicId: string; at: string; traceAssociations?: TraceAssociation[] }
 type IngressEvent = EventIdentity & {
   kind: 'router_routed' | 'thread_direct'; actor: 'router' | 'core'; summary?: string; status: string
-  messageId: string; eventId: string; threadKey?: string
+  messageId: string; eventId: string; threadId?: string
 }
 type IssueCreated = EventIdentity & { kind: 'issue_created'; issueId: string; title: string }
 type IssueSessionDispatch = EventIdentity & {
@@ -269,16 +269,16 @@ function EventCard({ event, href, selected }: { event: ConversationEvent; href: 
     ? { kind: 'router', label: 'Router Session', href: viewHref('router', event.messageId), title: '查看 Router · ' + event.messageId }
     : { kind: 'core', label: 'Core' }
   const facts: { label: string; value: ReactNode }[] = [{ label: '投递', value: eventStatusLabel(event.status) }]
-  if (event.threadKey) facts.push({
+  if (event.threadId) facts.push({
     label: '来源',
-    value: <a href={recordHref('threads', event.threadKey)} title={event.threadKey} aria-label={`查看 Thread · ${event.threadKey}`}>查看 Thread</a>,
+    value: <a href={recordHref('threads', event.threadId)} title={event.threadId} aria-label={`查看 Thread · ${event.threadId}`}>查看 Thread</a>,
   })
   return <ConversationCard {...common} kind={labels[event.kind]} recordId={event.messageId} preview={event.summary || '暂无消息摘要'}
     sender={sender} recipient={topic} facts={facts}/>
 }
 
-function ThreadLink({ threadKey }: { threadKey: string }) {
-  return <a className="conversation-thread" href={recordHref('threads', threadKey)}><Hash size={12}/><code>{threadKey}</code></a>
+function ThreadLink({ threadId }: { threadId: string }) {
+  return <a className="conversation-thread" href={recordHref('threads', threadId)}><Hash size={12}/><code>{threadId}</code></a>
 }
 
 function EventDetails({ event }: { event: ConversationEvent }) {
@@ -302,7 +302,7 @@ function IngressDetails({ event }: { event: IngressEvent }) {
         <Fact label="发送状态">{eventStatusLabel(internalEvent.data?.status || event.status)}</Fact>
         {internalEvent.data?.body && <Fact label="路由依据">{internalEvent.data.body}</Fact>}
         {message.data && <Fact label="来源">{sourceLabel(message.data.source)}</Fact>}
-        {event.threadKey && <Fact label="来源 Thread"><ThreadLink threadKey={event.threadKey}/></Fact>}
+        {event.threadId && <Fact label="来源 Thread"><ThreadLink threadId={event.threadId}/></Fact>}
       </dl>
       <div className="conversation-links">
         <a href={viewHref('message', event.messageId)}>查看原始消息 →</a>

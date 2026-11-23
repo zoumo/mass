@@ -179,7 +179,7 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 		if known && comment.UpdatedAt.Before(previous.UpdatedAt) {
 			continue
 		}
-		number, threadKey, err := githubDiscussionThreadKey(comment.URL, repo, objectType, id)
+		number, threadID, err := githubDiscussionThreadID(comment.URL, repo, objectType, id)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +201,7 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 		meta := map[string]any{"objectType": objectType, "objectId": nativeID, "number": number}
 		if comment.ReplyTo > 0 {
 			meta["inReplyToId"] = strconv.FormatInt(comment.ReplyTo, 10)
-			meta["inReplyToURL"] = threadKey + "#discussion_r" + strconv.FormatInt(comment.ReplyTo, 10)
+			meta["inReplyToURL"] = threadID + "#discussion_r" + strconv.FormatInt(comment.ReplyTo, 10)
 		}
 		if comment.ReviewID > 0 {
 			meta["reviewId"] = strconv.FormatInt(comment.ReviewID, 10)
@@ -216,7 +216,7 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 		actor, human := githubDiscussionAuthor(comment.User, meta)
 		observations = append(observations, githubObservation{
 			Key: key, Data: data, Kind: kind, UpdatedAt: comment.UpdatedAt, At: comment.UpdatedAt, Actor: actor, Human: human,
-			URL: comment.URL, ThreadKey: threadKey, Title: fmt.Sprintf("GitHub %s %s#%d %s", objectType, repo, number, kind),
+			URL: comment.URL, ThreadID: threadID, Title: fmt.Sprintf("GitHub %s %s#%d %s", objectType, repo, number, kind),
 			Body: comment.Body, Meta: meta,
 		})
 	}
@@ -228,7 +228,7 @@ func githubBodyDigest(body string) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`"%x"`, sha256.Sum256([]byte(body))))
 }
 
-func githubDiscussionThreadKey(raw, repo, kind string, nativeID int64) (int, string, error) {
+func githubDiscussionThreadID(raw, repo, kind string, nativeID int64) (int, string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil {
 		return 0, "", errors.New("github_invalid_discussion_url")
@@ -246,7 +246,7 @@ func githubDiscussionThreadKey(raw, repo, kind string, nativeID int64) (int, str
 		return number, githubObjectURL(repo, "pull", number), nil
 	}
 	if parts[2] == "issues" && kind == "issue_comment" && u.Fragment == "issuecomment-"+suffix {
-		return number, githubIssueThreadKey(githubObjectURL(repo, "issues", number)), nil
+		return number, githubIssueThreadID(githubObjectURL(repo, "issues", number)), nil
 	}
 	return 0, "", errors.New("github_invalid_discussion_thread")
 }

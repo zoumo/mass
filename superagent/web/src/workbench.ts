@@ -20,7 +20,7 @@ export type WorkbenchRow = {
  executionProfile?: ExecutionProfile
  runtimeRef?: string; model?: string; effort?: string
  id?: string; key?: string; title?: string; text?: string; actor?: string; source?: string
- topicId?: string; messageId?: string; threadKey?: string; createdAt?: string; receivedAt?: string
+ topicId?: string; messageId?: string; threadId?: string; createdAt?: string; receivedAt?: string
  status?: string; kind?: string; at?: string; updatedAt?: string; summary?: string
  description?: string; acceptance?: string; goal?: string
  goalRevision?: number; currentSessionBindingId?: string; sessionBindingId?: string

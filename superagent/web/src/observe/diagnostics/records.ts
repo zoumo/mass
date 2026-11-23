@@ -122,9 +122,9 @@ export function followupLabel(followup?: DiagnosticRow) {
   return followup ? eventStatusLabel(followup.status) : '—'
 }
 
-export const identity = (row: DiagnosticRow) => String(row.event_id || row.id || row.key || '')
+export const identity = (row: DiagnosticRow) => String(row.event_id || row.id || '')
 
-export type Filter = 'topicId' | 'issueId' | 'messageId' | 'threadKey'
+export type Filter = 'topicId' | 'issueId' | 'messageId' | 'threadId'
 export type OpenCollection = (kind: Kind, filterId?: string, filter?: Filter, id?: string) => void
 
 export type RecordProps = { kind: Kind; detail: DiagnosticRow; navigate: OpenCollection }

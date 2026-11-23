@@ -17,7 +17,7 @@ import (
 // TriggerMessage is the channel input shared by all Trigger adapters.
 type TriggerMessage struct {
 	SourceMessageID string                `json:"sourceMessageId"`
-	ThreadKey       string                `json:"threadKey"`
+	ThreadID        string                `json:"threadId"`
 	Content         []events.ContentBlock `json:"content"`
 	Meta            json.RawMessage       `json:"_meta,omitempty"`
 }
@@ -29,21 +29,21 @@ type SubmitTriggerMessageRequest struct {
 	InReplyToOutboxID string          `json:"inReplyToOutboxId,omitempty"`
 }
 
-func validTriggerThreadKey(key string) bool {
-	return key != "" && len(key) <= 2048 && strings.TrimSpace(key) == key && utf8.ValidString(key) &&
-		!strings.ContainsFunc(key, unicode.IsControl)
+func validTriggerThreadID(id string) bool {
+	return id != "" && len(id) <= 2048 && strings.TrimSpace(id) == id && utf8.ValidString(id) &&
+		!strings.ContainsFunc(id, unicode.IsControl)
 }
 
-func (s Source) allowsThreadKey(key string) bool {
-	return slices.Contains(s.ThreadKeys, key) || slices.ContainsFunc(s.ThreadKeyPrefixes, func(prefix string) bool {
-		return prefix != "" && strings.HasPrefix(key, prefix)
+func (s Source) allowsThreadID(id string) bool {
+	return slices.Contains(s.ThreadIDs, id) || slices.ContainsFunc(s.ThreadIDPrefixes, func(prefix string) bool {
+		return prefix != "" && strings.HasPrefix(id, prefix)
 	})
 }
 
 func (r SubmitTriggerMessageRequest) prepare(source Source) (Message, []byte, error) {
 	m := r.Message
-	if strings.TrimSpace(m.SourceMessageID) == "" || !validTriggerThreadKey(m.ThreadKey) {
-		return Message{}, nil, problem("invalid_argument", "sourceMessageId and a valid threadKey are required")
+	if strings.TrimSpace(m.SourceMessageID) == "" || !validTriggerThreadID(m.ThreadID) {
+		return Message{}, nil, problem("invalid_argument", "sourceMessageId and a valid threadId are required")
 	}
 	if err := (runtime.Input{Content: m.Content}).Validate(); err != nil {
 		return Message{}, nil, problem("invalid_argument", err.Error())
@@ -55,14 +55,14 @@ func (r SubmitTriggerMessageRequest) prepare(source Source) (Message, []byte, er
 	if err != nil {
 		return Message{}, nil, err
 	}
-	if r.InReplyToOutboxID != "" && !validTriggerThreadKey(r.InReplyToOutboxID) {
+	if r.InReplyToOutboxID != "" && !validTriggerThreadID(r.InReplyToOutboxID) {
 		return Message{}, nil, problem("invalid_argument", "inReplyToOutboxId must be a valid identifier")
 	}
 	message := Message{
 		Source:            source.Source,
 		AccountID:         source.AccountID,
 		SourceMessageID:   m.SourceMessageID,
-		ThreadKey:         m.ThreadKey,
+		ThreadID:          m.ThreadID,
 		Content:           m.Content,
 		TriggerMeta:       m.Meta,
 		ReplyTarget:       target,
@@ -110,8 +110,8 @@ func (s *Store) SubmitTriggerMessage(ctx context.Context, source Source, request
 	if err != nil {
 		return Receipt{}, err
 	}
-	if !source.allowsThreadKey(message.ThreadKey) {
-		return Receipt{}, problem("forbidden", "threadKey is outside the authenticated write scope")
+	if !source.allowsThreadID(message.ThreadID) {
+		return Receipt{}, problem("forbidden", "threadId is outside the authenticated write scope")
 	}
 	return s.submitMessage(ctx, source, message, canonical)
 }

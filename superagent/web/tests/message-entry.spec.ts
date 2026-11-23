@@ -6,7 +6,7 @@ async function seed(request: APIRequestContext) {
   const response = await request.post('/v1/core/trigger-messages', {
     headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
     data: { operationId: 'observer-entry-chinese', message: {
-      sourceMessageId: 'observer-entry-chinese', threadKey: 'dws:observer-entry',
+      sourceMessageId: 'observer-entry-chinese', threadId: 'dws:observer-entry',
       content: [{ type: 'text', text: body }],
     } },
   })
@@ -54,8 +54,8 @@ test('Message entry reads the selected record, its full text and Core receipt', 
   await context.setOffline(false)
   await fresh
   await expect(page.getByRole('alert')).toHaveCount(0)
-  await list.getByRole('button', { name: '按线程键筛选' }).click()
-  await list.getByRole('textbox', { name: '按线程键筛选' }).fill(record.threadKey)
+  await list.getByRole('button', { name: '按线程 ID 筛选' }).click()
+  await list.getByRole('textbox', { name: '按线程 ID 筛选' }).fill(record.threadId)
   await list.getByRole('button', { name: '筛选', exact: true }).click()
   await expect(list.getByRole('link', { name: /发布前检查/ })).toBeVisible()
   await expect(list.getByText('已显示 1 条消息', { exact: true })).toBeVisible()

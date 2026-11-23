@@ -40,7 +40,7 @@ type coreListInput struct {
 	Order     string `query:"order" doc:"Use newest to read in reverse chronological order"`
 	Preview   string `query:"preview" hidden:"true"`
 	Trace     string `query:"trace" hidden:"true"`
-	ThreadKey string `query:"threadKey" hidden:"true"`
+	ThreadID  string `query:"threadId" hidden:"true"`
 	TopicID   string `query:"topicId" hidden:"true"`
 	IssueID   string `query:"issueId" hidden:"true"`
 	MessageID string `query:"messageId" hidden:"true"`
@@ -49,7 +49,7 @@ type coreListInput struct {
 }
 
 type threadReadInput struct {
-	ID string `path:"threadKey" doc:"Full Thread URL or key, encoded once as one path segment"`
+	ID string `path:"threadId" doc:"Full Thread ID, encoded once as one path segment"`
 }
 
 type topicReadInput struct {
@@ -138,7 +138,7 @@ func (s *Server) registerCoreReadResources(api *httpAPI) {
 	})
 	s.registerCoreList(api, "session-bindings", "SessionBindings", pageSchema(binding), []*huma.Param{queryString("issueId", "Filter Session Bindings owned by an Issue")})
 
-	registerCoreRecord(s, api, "threads/{threadKey}", "Thread", thread, func(in *threadReadInput) (string, string) { return in.ID, "" })
+	registerCoreRecord(s, api, "threads/{threadId}", "Thread", thread, func(in *threadReadInput) (string, string) { return in.ID, "" })
 	registerCoreRecord(s, api, "topics/{topicId}", "Topic", topic, func(in *topicReadInput) (string, string) { return in.ID, "" })
 	registerCoreRecord(s, api, "issues/{issueId}", "Issue", issue, func(in *issueReadInput) (string, string) { return in.ID, in.Trace })
 	registerCoreRecord(s, api, "reports/{reportId}", "Report", report, func(in *reportReadInput) (string, string) { return in.ID, in.Trace })
@@ -196,7 +196,7 @@ func (s *Server) registerCoreList(api *httpAPI, kind, name string, schema *huma.
 			return Page{}, err
 		}
 		return s.store.listScoped(ctx, QueryRequest{
-			Collection: kind, ThreadKey: in.ThreadKey, TopicID: in.TopicID, IssueID: in.IssueID, MessageID: in.MessageID,
+			Collection: kind, ThreadID: in.ThreadID, TopicID: in.TopicID, IssueID: in.IssueID, MessageID: in.MessageID,
 			Cursor: in.Cursor, Limit: limit, preview: in.Preview == "true", newest: in.Order == "newest", observerTrace: in.Trace == "true",
 		}, nil, nil)
 	})

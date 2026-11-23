@@ -70,7 +70,7 @@ type internalEvent struct {
 	Refs      []eventReference   `json:"refs,omitempty"`
 	// Optional facts on the copy used for dispatch.
 	truncated      bool
-	threadKey      string
+	threadID       string
 	routing        json.RawMessage
 	quotedReply    json.RawMessage
 	topic          *Topic
@@ -134,7 +134,7 @@ func (d *internalEvent) MarshalAgentPromptJSON() ([]byte, error) {
 		event["content"] = d.Content
 	}
 	if d.Kind == routeRequestKind && len(d.routing) != 0 {
-		event["threadKey"] = d.threadKey
+		event["threadId"] = d.threadID
 		event["routing"] = d.routing
 	}
 	if len(d.messageContent) != 0 {

@@ -136,7 +136,7 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   const { online } = useRefresh()
   const kind = kinds.find((k) => k === query.get('view')) || 'messages'
   const id = query.get('id') || ''
-  const scope = (['threadKey', 'topicId', 'messageId', 'issueId'] as const).find((key) => query.has(key))
+  const scope = (['threadId', 'topicId', 'messageId', 'issueId'] as const).find((key) => query.has(key))
   const filter = scope ? query.get(scope) || '' : ''
   const params = new URLSearchParams({ limit: '50', preview: 'true' })
   if (scope && filter) params.set(scope, filter)
@@ -145,7 +145,7 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   const detail = useRecord<DiagnosticRow>(id ? kind + '/' + encodeURIComponent(id) + '?trace=true' : '')
   const status = useRecord<StackStatus>('status')
   const [draft, setDraft] = useState(filter)
-  useEffect(() => setDraft(scope === 'threadKey' ? filter : ''), [scope, filter])
+  useEffect(() => setDraft(scope === 'threadId' ? filter : ''), [scope, filter])
   const rows = list.data || []
   const cols = columns(kind)
   const open: OpenCollection = (view, filterId, key, selected) => {
@@ -203,12 +203,12 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              open(kind, draft.trim(), 'threadKey')
+              open(kind, draft.trim(), 'threadId')
             }}
           >
             <input
-              aria-label="按线程键筛选"
-              placeholder="输入完整线程键"
+              aria-label="按线程 ID 筛选"
+              placeholder="输入完整线程 ID"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
             />

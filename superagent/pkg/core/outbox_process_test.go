@@ -42,9 +42,9 @@ func addOutboxPeerSources(t *testing.T, f *fixture) (sameSource, otherSource, in
 		write(t, filepath.Join(f.dir, name+".token"), token)
 	}
 	write(t, f.config, string(cfg)+
-		"  - source: dws\n    accountId: account-1\n    instanceId: collector-2\n    tokenFile: ./same.token\n    threadKeyPrefixes: ['dws:']\n"+
-		"  - source: other\n    accountId: account-2\n    instanceId: collector-1\n    tokenFile: ./other.token\n    threadKeyPrefixes: ['dws:']\n"+
-		"  - source: dws\n    accountId: account-1\n    tokenFile: ./ingress.token\n    threadKeyPrefixes: ['dws:']\n")
+		"  - source: dws\n    accountId: account-1\n    instanceId: collector-2\n    tokenFile: ./same.token\n    threadIdPrefixes: ['dws:']\n"+
+		"  - source: other\n    accountId: account-2\n    instanceId: collector-1\n    tokenFile: ./other.token\n    threadIdPrefixes: ['dws:']\n"+
+		"  - source: dws\n    accountId: account-1\n    tokenFile: ./ingress.token\n    threadIdPrefixes: ['dws:']\n")
 	return sameSource, otherSource, ingressOnly
 }
 
@@ -200,7 +200,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	require.Len(t, own.Replies, 1)
 	require.Equal(t, reply.ID, own.Replies[0].ID)
 	require.Len(t, page(t, p, "outbox-messages?messageId="+second.MessageID).Items, 2)
-	require.Len(t, page(t, p, "outbox-messages?threadKey="+url.QueryEscape(second.ThreadKey)).Items, 2)
+	require.Len(t, page(t, p, "outbox-messages?threadId="+url.QueryEscape(second.ThreadID)).Items, 2)
 
 	firstPage := listOutbox(t, p.endpoint, f.token, "?limit=1")
 	require.Len(t, firstPage.Items, 1)

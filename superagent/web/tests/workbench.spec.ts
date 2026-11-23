@@ -35,7 +35,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await message.getByRole('button', { name: 'Router', exact: true }).first().click()
   await expect(message.getByRole('region', { name: '路径详情' })).toContainText('已忽略 · 原因未记录')
   await expect(message.getByText('当前轮次').locator('xpath=following-sibling::dd[1]')).toHaveText('2')
-  await expect(page.getByRole('textbox', { name: '按线程键筛选' })).toHaveValue(/^dws:/)
+  await expect(page.getByRole('textbox', { name: '按线程 ID 筛选' })).toHaveValue(/^dws:/)
   await page.goBack()
   await topic.getByRole('link', { name: '所属 Issue' }).click()
   await page

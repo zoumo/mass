@@ -18,7 +18,7 @@ test('Message and Thread lead to scoped work, reports, explicit acceptance and S
  await expect(routing.getByRole('button', { name: /^查看 Topic mass-t[1-9]\d*$/ }).first()).toBeVisible()
  await drawer.getByRole('button', { name: /^查看线程 dws:/ }).click()
  await drawer.getByRole('button', { name: '查看线程消息' }).click()
- await expect(page).toHaveURL(/view=messages&threadKey=/)
+ await expect(page).toHaveURL(/view=messages&threadId=/)
  await page.getByRole('button', { name: 'Original input observer-routing', exact: true }).click()
  await drawer.getByRole('button', { name: /^查看 Topic mass-t[1-9]\d*$/ }).first().click()
  await expect(drawer.getByRole('heading', { name: 'Observer routing Topic' })).toBeVisible()

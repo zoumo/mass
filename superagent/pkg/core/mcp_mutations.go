@@ -103,8 +103,8 @@ func validateMCPPRs(input *addPullRequests) ([]string, error) {
 		return nil, problem("invalid_argument", "pullRequests.add requires at least one URL")
 	}
 	for _, raw := range input.Add {
-		if !validTriggerThreadKey(raw) {
-			return nil, problem("invalid_argument", "PR URL must be a valid Thread key")
+		if !validTriggerThreadID(raw) {
+			return nil, problem("invalid_argument", "PR URL must be a valid Thread ID")
 		}
 		if _, err := parsePullRequestURL(raw); err != nil {
 			return nil, err

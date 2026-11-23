@@ -43,23 +43,23 @@ func resourceRequest(t *testing.T, endpoint, method, path string) (int, http.Hea
 	return res.StatusCode, res.Header, body
 }
 
-func TestThreadResourceEscapedKey(t *testing.T) {
+func TestThreadResourceEscapedID(t *testing.T) {
 	s, server := startCoreResourceFixture(t)
-	const key = "https://example.test/projects/a%2Fb/name?cursor=10%25&N=中文#marker"
-	_, err := s.store.db.ExecContext(t.Context(), "INSERT INTO threads(key,source,native_id,created_at,last_message_at) VALUES(?,'fixture','native',?,'')", key, now())
+	const threadID = "https://example.test/projects/a%2Fb/name?cursor=10%25&N=中文#marker"
+	_, err := s.store.db.ExecContext(t.Context(), "INSERT INTO threads(id,source,native_id,created_at,last_message_at) VALUES(?,'fixture','native',?,'')", threadID, now())
 	require.NoError(t, err)
 	backend, err := url.Parse(server.URL)
 	require.NoError(t, err)
 	proxy := httptest.NewServer(&httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(backend) }})
 	t.Cleanup(proxy.Close)
-	path := "/v1/core/threads/" + url.PathEscape(key)
+	path := "/v1/core/threads/" + url.PathEscape(threadID)
 	for _, endpoint := range []string{server.URL, proxy.URL} {
 		status, header, body := resourceRequest(t, endpoint, http.MethodGet, path)
 		require.Equal(t, http.StatusOK, status, "%s", body)
 		require.Equal(t, "application/json", header.Get("Content-Type"))
 		var found Thread
 		require.NoError(t, json.Unmarshal(body, &found))
-		require.Equal(t, key, found.Key)
+		require.Equal(t, threadID, found.ID)
 		status, _, body = resourceRequest(t, endpoint, http.MethodHead, path)
 		require.Equal(t, http.StatusOK, status)
 		require.Empty(t, body)

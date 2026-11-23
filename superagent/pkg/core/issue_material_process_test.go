@@ -17,10 +17,10 @@ import (
 
 func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	f, boundary := fixtureAt(t), newRouteBoundary(t)
-	const threadKey = "work/structured-material"
+	const threadID = "work/structured-material"
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(config)+"    threadKeys: ['"+threadKey+"']\n")
+	write(t, f.config, string(config)+"    threadIds: ['"+threadID+"']\n")
 	f.execution(boundary)
 	boundary.driver.mu.Lock()
 	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}
@@ -32,7 +32,7 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 		status, body := request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, core.SubmitTriggerMessageRequest{
 			OperationID: id,
 			Message: core.TriggerMessage{
-				SourceMessageID: id, ThreadKey: threadKey, Content: content,
+				SourceMessageID: id, ThreadID: threadID, Content: content,
 				Meta: json.RawMessage(`{"diagnostic":"adapter evidence"}`),
 			},
 		})
@@ -110,7 +110,7 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 
 	full := roleWork[core.Message](t, p, issueToken, "get_message", map[string]string{"messageId": oversize.MessageID})
 	require.Equal(t, bigContent, full.Content)
-	require.Equal(t, threadKey, full.ThreadKey)
+	require.Equal(t, threadID, full.ThreadID)
 	require.Equal(t, "dws", full.Source)
 	require.Empty(t, full.TriggerMeta)
 	budgetFallback := roleWork[core.Message](t, p, issueToken, "get_message", map[string]string{"messageId": extraMaterials[3].MessageID})

@@ -30,7 +30,7 @@ type CoreFixture struct {
 	Core              *Process
 }
 
-func NewCoreFixture(t *testing.T, clock bool, source string, threadKeyPrefixes ...string) *CoreFixture {
+func NewCoreFixture(t *testing.T, clock bool, source string, threadIDPrefixes ...string) *CoreFixture {
 	t.Helper()
 	f := &CoreFixture{t: t, Dir: t.TempDir(), Binary: CorePath(t), started: time.Now().UTC()}
 	if clock {
@@ -52,7 +52,7 @@ func NewCoreFixture(t *testing.T, clock bool, source string, threadKeyPrefixes .
 	Write(t, massdTokenFile, []byte("test-only-massd-token"))
 	f.config = filepath.Join(f.Dir, "core.yaml")
 	f.mcpFiles = filepath.Join(f.Dir, "data", "mcp-files")
-	prefixes, err := json.Marshal(append([]string{}, threadKeyPrefixes...))
+	prefixes, err := json.Marshal(append([]string{}, threadIDPrefixes...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ sources:
     accountId: account
     instanceId: fixture-instance
     tokenFile: %q
-    threadKeyPrefixes: %s
+    threadIdPrefixes: %s
 massd:
   endpoint: %q
   tokenFile: %q

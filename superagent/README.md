@@ -41,14 +41,14 @@ concrete numeric address to reach Core.
 
 ### Reuse an existing Core data directory
 
-Core uses schema 26 and rejects older schemas before opening the database.
+Core uses schema 27 and rejects older schemas before opening the database.
 Use a new, empty `dataDir` when switching from an earlier Core release. Keep
 its old data directory and binary to access the prior state. Reuse an existing
-schema 26 directory on restart. If two Core installations share `massd`, give
+schema 27 directory on restart. If two Core installations share `massd`, give
 them distinct `sessions.namespace` values.
 
-Configure each Trigger to use the new Core and set its allowed `threadKeys`
-or `threadKeyPrefixes` in Core's source configuration.
+Configure each Trigger to use the new Core and set its allowed `threadIds`
+or `threadIdPrefixes` in Core's source configuration.
 
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
@@ -193,11 +193,11 @@ and `/readyz` and use `/status` to inspect the stack.
    replacing its binary. Verify that the old processes have exited and
    released their data directories before starting replacements.
 2. Update the binaries, Web build, gateway configuration, and caller
-   configuration together. Preserve the supported Core and massd data
-   directories, Trigger state, credential paths, and Session MCP origin.
-   See [data directory requirements](#reuse-an-existing-core-data-directory)
-   for schema 26. Run one owner per Core, massd, and Trigger data directory.
-   Keep one active Outbox sender per account.
+   configuration together. Use a schema 27 Core directory and schema 3 Trigger
+   databases. Preserve the massd data directory, credential paths, and Session
+   MCP origin. See the Core [data directory requirements](#reuse-an-existing-core-data-directory)
+   and [Trigger cutover steps](triggers/README.md#replace-deployed-triggers).
+   Run one owner per data directory and one active Outbox sender per account.
 3. Start standalone massd first if you stopped it. Then start Compose or Core
    and check `/readyz` and `/status` at the printed Core origin. If you expose
    massd, check `/massd/readyz` at its public origin. Start Web and the gateway
@@ -213,7 +213,7 @@ Use Superagent Web or these CLI commands to query retained Core resources.
 
 ```sh
 bin/superagent observe status
-bin/superagent observe trigger-messages --thread-key 'dws:example'
+bin/superagent observe trigger-messages --thread-id 'dws:example'
 bin/superagent observe router-messages --message-id mass-m1
 bin/superagent observe outbox-messages --message-id mass-m1
 bin/superagent observe topic-activity mass-t1 --filter message

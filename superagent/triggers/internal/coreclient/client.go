@@ -23,7 +23,7 @@ type Receipt struct {
 	Status     string `json:"status"`
 	Duplicate  bool   `json:"duplicate"`
 	MessageID  string `json:"messageId"`
-	ThreadKey  string `json:"threadKey"`
+	ThreadID   string `json:"threadId"`
 	AcceptedAt string `json:"acceptedAt"`
 	EventID    string `json:"eventId"`
 }
@@ -46,7 +46,7 @@ func (c *Client) SubmitPayload(ctx context.Context, payload []byte) SubmitResult
 		return SubmitResult{Code: code, Retry: retry}
 	}
 	var receipt Receipt
-	if json.Unmarshal(data, &receipt) != nil || (receipt.Status != "accepted" && receipt.Status != "duplicate") || receipt.MessageID == "" || receipt.ThreadKey == "" || receipt.AcceptedAt == "" {
+	if json.Unmarshal(data, &receipt) != nil || (receipt.Status != "accepted" && receipt.Status != "duplicate") || receipt.MessageID == "" || receipt.ThreadID == "" || receipt.AcceptedAt == "" {
 		return SubmitResult{Code: "core_receipt_unknown", Retry: true}
 	}
 	return SubmitResult{Receipt: receipt}

@@ -181,7 +181,7 @@ func githubObjectURL(repo, collection string, number int) string {
 	return fmt.Sprintf("https://github.com/%s/%s/%d", repo, collection, number)
 }
 
-func githubIssueThreadKey(issueURL string) string {
+func githubIssueThreadID(issueURL string) string {
 	return githubSource + ":" + strings.ReplaceAll(url.PathEscape(issueURL), ":", "%3A")
 }
 
@@ -245,7 +245,7 @@ func readGitHubNotifiedObject(ctx context.Context, api *githubAPI, repo string, 
 	var label, objectType, title string
 	if notice.Pull {
 		object.URL = githubObjectURL(repo, "pull", notice.Number)
-		object.ThreadKey = object.URL
+		object.ThreadID = object.URL
 		var old githubPullRecord
 		if len(previous.Data) != 0 && json.Unmarshal(previous.Data, &old) != nil {
 			return object, nil, errors.New("invalid saved GitHub pull record")
@@ -260,7 +260,7 @@ func readGitHubNotifiedObject(ctx context.Context, api *githubAPI, repo string, 
 		object.Body, object.UpdatedAt, title, label, objectType = p.Body, p.UpdatedAt, p.Title, "PR", "pull_request"
 	} else {
 		object.URL = githubObjectURL(repo, "issues", notice.Number)
-		object.ThreadKey = githubIssueThreadKey(object.URL)
+		object.ThreadID = githubIssueThreadID(object.URL)
 		var old githubObjectRecord
 		if len(previous.Data) != 0 && json.Unmarshal(previous.Data, &old) != nil {
 			return object, nil, errors.New("invalid saved GitHub issue record")

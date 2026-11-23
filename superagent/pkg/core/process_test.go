@@ -88,10 +88,10 @@ func TestObserveCoreResourceCLI(t *testing.T) {
 	require.Equal(t, "disabled", status.Massd.Status)
 	require.Equal(t, "not_managed", status.Triggers.GitHub.Status)
 	var messages core.Page
-	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-key", message.Message.ThreadKey, "--limit", "1"), &messages))
+	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-id", message.Message.ThreadID, "--limit", "1"), &messages))
 	require.Len(t, messages.Items, 1)
 	require.Contains(t, string(messages.Items[0]), "cli-resource")
-	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-key", "dws:unrelated"), &messages))
+	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-id", "dws:unrelated"), &messages))
 	require.Empty(t, messages.Items)
 
 	help := string(run("--help"))
@@ -124,7 +124,7 @@ func fixtureAt(t *testing.T) *fixture {
 
 func (f *fixture) configure(pages int, account string) {
 	f.t.Helper()
-	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\nsources:\n  - source: dws\n    accountId: %s\n    tokenFile: %s\n    threadKeyPrefixes: ['dws:']\n", f.data, pages, account, filepath.Join(f.dir, "source.token")))
+	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\nsources:\n  - source: dws\n    accountId: %s\n    tokenFile: %s\n    threadIdPrefixes: ['dws:']\n", f.data, pages, account, filepath.Join(f.dir, "source.token")))
 }
 
 func write(t *testing.T, p, s string) {
@@ -235,12 +235,12 @@ func (p *process) waitStopped(t *testing.T, kill bool) {
 
 const fixtureConversation = "conversation:Case/%原文"
 
-func fixtureThreadKey(conversation string) string {
+func fixtureThreadID(conversation string) string {
 	return "dws:" + strings.ReplaceAll(url.PathEscape(conversation), ":", "%3A")
 }
 
 func moveInput(req *core.SubmitTriggerMessageRequest, conversation string) {
-	req.Message.ThreadKey = fixtureThreadKey(conversation)
+	req.Message.ThreadID = fixtureThreadID(conversation)
 	req.ReplyTarget = json.RawMessage(fmt.Sprintf(`{"type":"dws","conversationId":%q,"messageId":%q,"actorId":"sender-1"}`, conversation, req.Message.SourceMessageID))
 }
 
@@ -359,7 +359,7 @@ func TestPublicIngressDurability(t *testing.T) {
 			case "content":
 				conflict.Message.Content[0].Text.Text = "changed"
 			case "thread":
-				conflict.Message.ThreadKey = fixtureThreadKey("other")
+				conflict.Message.ThreadID = fixtureThreadID("other")
 			case "reply":
 				conflict.ReplyTarget = json.RawMessage(`{"anotherAddress":"opaque"}`)
 			}
@@ -387,7 +387,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	require.Equal(t, r.Message.SourceMessageID, m.SourceMessageID)
 	require.Equal(t, r.Message.Content, m.Content)
 	require.JSONEq(t, `{"a":1,"b":"reference","quotedMessage":{"text":"quote"}}`, string(m.TriggerMeta))
-	require.Equal(t, r.Message.ThreadKey, accepted.ThreadKey)
+	require.Equal(t, r.Message.ThreadID, accepted.ThreadID)
 	// Queries through the shipped CLI require no source credential.
 	cmd := exec.CommandContext(context.Background(), build(t), "observe", "trigger-messages", accepted.MessageID, "--endpoint", p.endpoint)
 	cmd.Env = []string{"HOME=" + f.dir, "PATH=" + f.dir}
@@ -407,7 +407,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	if replay != duplicate {
 		t.Fatal("persisted operation receipt changed after restart")
 	}
-	t.Logf("durable receipt message=%s event=%s thread=%s", accepted.MessageID, accepted.EventID, accepted.ThreadKey)
+	t.Logf("durable receipt message=%s event=%s thread=%s", accepted.MessageID, accepted.EventID, accepted.ThreadID)
 }
 
 func TestPublicAdmissionKeepsTriggerMetadataOpaque(t *testing.T) {
@@ -443,14 +443,14 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	for _, field := range []string{"source", "accountId", "threadRef", "text", "actor", "addressed", "channel", "quotedMessage"} {
 		t.Run(field, func(t *testing.T) {
 			bad := map[string]any{"operationId": "legacy-" + field, "message": map[string]any{
-				"sourceMessageId": field, "threadKey": r.Message.ThreadKey, "content": r.Message.Content, field: "legacy",
+				"sourceMessageId": field, "threadId": r.Message.ThreadID, "content": r.Message.Content, field: "legacy",
 			}}
 			gotStatus, gotBody := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, bad)
 			errorCode(t, gotStatus, gotBody, 400, "invalid_argument")
 		})
 	}
 	unauthorizedThread := r
-	unauthorizedThread.Message.ThreadKey = "other:opaque"
+	unauthorizedThread.Message.ThreadID = "other:opaque"
 	status, b = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, unauthorizedThread)
 	errorCode(t, status, b, 403, "forbidden")
 	for _, path := range []string{"/v1/core/threads", "/v1/core/internal-events", "/status"} {
@@ -547,7 +547,7 @@ func TestPublicStablePagination(t *testing.T) {
 	if len(seen) != 6 {
 		t.Fatalf("pagination lost rows %d", len(seen))
 	}
-	for _, path := range []string{"trigger-messages?limit=201", "trigger-messages?limit=0", "trigger-messages?cursor=bad", "threads?cursor=" + first.NextCursor, "trigger-messages?cursor=" + first.NextCursor + "&threadKey=other"} {
+	for _, path := range []string{"trigger-messages?limit=201", "trigger-messages?limit=0", "trigger-messages?cursor=bad", "threads?cursor=" + first.NextCursor, "trigger-messages?cursor=" + first.NextCursor + "&threadId=other"} {
 		status, b = request(t, "GET", p.endpoint, "/v1/core/"+path, "", nil)
 		errorCode(t, status, b, 400, "invalid_argument")
 	}

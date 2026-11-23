@@ -22,7 +22,7 @@ func TestNormalizeNativeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Message.SourceMessageID != id || s.Message.ThreadKey != dwsThreadKey(c.Source, c.SelfChat.ConversationID) ||
+	if s.Message.SourceMessageID != id || s.Message.ThreadID != dwsThreadID(c.Source, c.SelfChat.ConversationID) ||
 		len(s.Message.Content) != 1 || s.Message.Content[0].Text == nil || s.Message.Content[0].Text.Text != "normal text without prefix\n\nAuthor: self\n\nSource time: 2026-11-15T16:45:43.211Z" || !s.SelfSent || s.Quote != nil {
 		t.Fatalf("wrong normalized message: %+v", s)
 	}

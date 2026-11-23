@@ -148,7 +148,7 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
       <div className="path-detail-title"><h3>{{ core: 'Core 接收记录', channel: '来源渠道', router: 'Router 处理记录', issue: 'Issue 材料引用', topic: '目标 Topic', event: '事件详情' }[selected.kind]}</h3>
         <button onClick={close} aria-label="收起路径详情"><X size={17}/></button></div>
       {selected.kind === 'event' && <InternalEventDetail id={selected.id}/>}
-      {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadKey], ['Trace', <TraceLinks associations={message.traceAssociations} at={message.receivedAt}/>]]}/>}
+      {selected.kind === 'core' && <Fields fields={[['消息 ID', message.id], ['渠道消息 ID', message.sourceMessageId], ['接收状态', stateLabel(message.acceptance)], ['登记时间', message.receivedAt], ['Thread', message.threadId], ['Trace', <TraceLinks associations={message.traceAssociations} at={message.receivedAt}/>]]}/>}
       {selected.kind === 'channel' && <Fields fields={[['渠道', source], ['渠道消息 ID', message.sourceMessageId], ['原文', messageBody(message)]]}/>}
       {selected.kind === 'router' && <><Fields fields={[['本消息路由状态', result === 'pending' ? '待决策' : result === 'ignored' ? '已忽略 · 原因未记录' : stateLabel(result)], ['当前轮次', message.routing?.round]]}/>
         <a className="path-link" href={viewHref('router', message.id)}>查看 Router<ArrowRight size={14}/></a></>}

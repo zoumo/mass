@@ -27,7 +27,7 @@ CREATE UNIQUE INDEX internal_events_return ON internal_events(` + returnedEventI
  WHERE kind='route_request' AND ` + returnedEventID + ` IS NOT NULL;
 
 CREATE VIEW thread_subscriptions AS
- SELECT t.seq, t.key AS thread_key, json_extract(sub.value,'$.id') AS id,
+ SELECT t.seq, t.id AS thread_id, json_extract(sub.value,'$.id') AS id,
  json_extract(sub.value,'$.topicId') AS topic_id,
  json_extract(sub.value,'$.createdAt') AS created_at, sub.value AS body
  FROM threads t,json_each(t.subscriptions) sub;
@@ -58,7 +58,7 @@ const routingState = "routing_state"
 
 func ensureSubscription(ctx context.Context, tx *sql.Tx, sub Subscription) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, "SELECT id FROM thread_subscriptions WHERE thread_key=? AND topic_id=?", sub.ThreadKey, sub.TopicID).Scan(&id)
+	err := tx.QueryRowContext(ctx, "SELECT id FROM thread_subscriptions WHERE thread_id=? AND topic_id=?", sub.ThreadID, sub.TopicID).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -71,7 +71,7 @@ func ensureSubscription(ctx context.Context, tx *sql.Tx, sub Subscription) (stri
 		return "", err
 	}
 	if err := putJSON(ctx, tx, `UPDATE threads SET subscriptions=json_insert(subscriptions,'$[#]',json(?2))
- WHERE key=?1`, sub, sub.ThreadKey); err != nil {
+ WHERE id=?1`, sub, sub.ThreadID); err != nil {
 		return "", err
 	}
 	return sub.ID, nil
@@ -80,12 +80,12 @@ func ensureSubscription(ctx context.Context, tx *sql.Tx, sub Subscription) (stri
 func acceptRoute(ctx context.Context, tx *sql.Tx, m Message, eventID, at string) error {
 	var count int
 	var topicID string
-	err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(min(topic_id),'') FROM thread_subscriptions WHERE thread_key=?`, m.ThreadKey).Scan(&count, &topicID)
+	err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(min(topic_id),'') FROM thread_subscriptions WHERE thread_id=?`, m.ThreadID).Scan(&count, &topicID)
 	if err != nil {
 		return storageError()
 	}
 	if count == 1 {
-		if _, err := recordRoutedMessage(ctx, tx, m.ID, m.ThreadKey, topicID, eventID, "single subscription", at, "core"); err != nil {
+		if _, err := recordRoutedMessage(ctx, tx, m.ID, m.ThreadID, topicID, eventID, "single subscription", at, "core"); err != nil {
 			return err
 		}
 		return setRoutingState(ctx, tx, m.ID, "routed")
@@ -124,7 +124,7 @@ func activeRouteID(ctx context.Context, tx *sql.Tx, messageID, topicID string) (
 	return id, nil
 }
 
-func recordRoutedMessage(ctx context.Context, tx *sql.Tx, messageID, threadKey, topicID, eventID, reason, at, sender string) (string, error) {
+func recordRoutedMessage(ctx context.Context, tx *sql.Tx, messageID, threadID, topicID, eventID, reason, at, sender string) (string, error) {
 	existing, err := activeRouteID(ctx, tx, messageID, topicID)
 	if err != nil || existing != "" {
 		return existing, err
@@ -141,12 +141,12 @@ func recordRoutedMessage(ctx context.Context, tx *sql.Tx, messageID, threadKey, 
 	if err := enqueueInternalEvent(ctx, tx, d); err != nil {
 		return "", err
 	}
-	_, err = ensureSubscription(ctx, tx, Subscription{TopicID: topicID, ThreadKey: threadKey, MessageID: messageID, CreatedAt: at})
+	_, err = ensureSubscription(ctx, tx, Subscription{TopicID: topicID, ThreadID: threadID, MessageID: messageID, CreatedAt: at})
 	return eventID, err
 }
 
 type routeMessage struct {
-	key, state string
+	threadID, state string
 }
 
 func (s *Store) Route(ctx context.Context, b SessionBinding, r RouteRequest) (_ json.RawMessage, retErr error) {
@@ -174,8 +174,8 @@ func (s *Store) Route(ctx context.Context, b SessionBinding, r RouteRequest) (_ 
 	for _, id := range r.MessageIDs {
 		var m routeMessage
 		var round int
-		err := tx.QueryRowContext(ctx, `SELECT thread_key,coalesce(`+routingState+`,''),`+routingRound+`
- FROM trigger_messages WHERE id=?`, id).Scan(&m.key, &m.state, &round)
+		err := tx.QueryRowContext(ctx, `SELECT thread_id,coalesce(`+routingState+`,''),`+routingRound+`
+ FROM trigger_messages WHERE id=?`, id).Scan(&m.threadID, &m.state, &round)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, problem("not_found", "source Message not found")
 		}
@@ -262,7 +262,7 @@ func (s *Store) routeTargets(ctx context.Context, tx *sql.Tx, b SessionBinding, 
 				target.EventIDs[id] = eventID
 				continue
 			}
-			eventID, err := recordRoutedMessage(ctx, tx, id, m.key, target.TopicID, newID("evt"), result.Reason, result.CreatedAt, "router")
+			eventID, err := recordRoutedMessage(ctx, tx, id, m.threadID, target.TopicID, newID("evt"), result.Reason, result.CreatedAt, "router")
 			if err != nil {
 				return err
 			}

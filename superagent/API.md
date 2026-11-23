@@ -24,7 +24,7 @@ source/account; body fields cannot select another identity.
   "operationId": "stable-adapter-operation-17",
   "message": {
     "sourceMessageId": "native-message-id",
-    "threadKey": "https://github.example/org/repo/pull/42",
+    "threadId": "https://github.example/org/repo/pull/42",
     "content": [
       {"type": "text", "text": "Review requested."},
       {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42", "name": "URL"},
@@ -37,10 +37,10 @@ source/account; body fields cannot select another identity.
 ```
 
 `operationId` and `sourceMessageId` are required. The adapter supplies the
-final `threadKey`. Core stores it and matches subscriptions by exact string.
-A key is at most 2048 UTF-8 bytes and has no control characters or leading
-or trailing whitespace. A `sources` entry authorizes writes with `threadKeys`
-for exact matches and `threadKeyPrefixes` for literal prefixes. List the same
+final `threadId`. Core stores it and matches subscriptions by exact string.
+A Thread ID is at most 2048 UTF-8 bytes and has no control characters or leading
+or trailing whitespace. A `sources` entry authorizes writes with `threadIds`
+for exact matches and `threadIdPrefixes` for literal prefixes. List the same
 range in multiple entries to let their accounts write to the same Threads.
 A structured request needs a match in at least one of the configured lists.
 
@@ -62,7 +62,7 @@ Message has the same source, account and Thread.
 Success HTTP 200:
 
 ```json
-{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadKey":"https://github.example/org/repo/pull/42","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
+{"status":"accepted","duplicate":false,"messageId":"mass-m1","threadId":"https://github.example/org/repo/pull/42","acceptedAt":"2026-11-18T01:02:03.000000000Z","eventId":"evt_..."}
 ```
 
 Message, Thread update and the initial internal event commit together.
@@ -76,8 +76,8 @@ becomes `sent` after massd accepts the Session input.
 
 Admission deduplicates by the authenticated source, account, and
 `sourceMessageId`. Duplicate intake returns the original Message ID, Thread
-key, acceptance time, and initial event ID with `duplicate=true`. Changing
-the Thread key, ordered content, reply target or Outbox reference under that
+ID, acceptance time, and initial event ID with `duplicate=true`. Changing
+the Thread ID, ordered content, reply target or Outbox reference under that
 identity returns `conflict`.
 Object field order is immaterial. Changing `_meta` alone returns the original
 receipt and preserves the first metadata. `operationId` correlates a caller's
@@ -112,7 +112,7 @@ Brackets indicate an optional detail path.
 | Trigger Messages | `/v1/core/trigger-messages[/{messageId}]` |
 | Router view | `/v1/core/trigger-messages?view=router` |
 | Outbox history | `/v1/core/outbox-messages[/{outboxId}]` |
-| Threads | `/v1/core/threads[/{threadKey}]` |
+| Threads | `/v1/core/threads[/{threadId}]` |
 | Topics | `/v1/core/topics[/{topicId}]` |
 | Topic activity and conversation | `/v1/core/topics/{topicId}/activity` |
 | Issues | `/v1/core/issues[/{issueId}]` |
@@ -125,7 +125,7 @@ Brackets indicate an optional detail path.
 | Trace | `/v1/telemetry/traces/{traceId}` |
 | Performance | `/v1/telemetry/performance` |
 
-Percent-encode the Thread key as one path segment. Topic and Issue details
+Percent-encode the Thread ID as one path segment. Topic and Issue details
 contain PR links. Thread details contain subscriptions. Trigger Message
 details contain routing relations.
 
@@ -183,7 +183,7 @@ conversation timeline in descending `(at, id)` order. Use `filter`
 with `all`, `router_routed`, `thread_direct`, `issue_created`, `issue_session_dispatch`
 or `report`.
 Ingress rows identify the saved Message and event and include the source
-`threadKey` when present. Issue creation appears on the timeline while activity
+`threadId` when present. Issue creation appears on the timeline while activity
 ordering uses conversation messages. Issue Session dispatch rows identify the saved
 event, its Issue and the recipient `sessionBindingId`. Their
 `dispatchKind` identifies startup, continuation, goal notification or context
@@ -216,7 +216,7 @@ Router is `not_started` when execution is
 omitted, or its persisted `pending/ready/blocked` preparation state. Messages
 include current `routing: {round,state}`. Trusted HTTP reads and Router MCP projections also include
 source reception/return relations. Topic-role Message queries omit other Topics'
-relations. Thread details expose the key and timestamps. SessionBindings expose fixed
+relations. Thread details expose the identifier as `id` and include timestamps. SessionBindings expose fixed
 role, owner, generation, workspace, namespace/name, `runtimeRef`, `model`,
 optional `effort`, actual Session IDs,
 preparation state and any error, and the next attempt time. Credentials and MCP capability files stay private.
@@ -225,7 +225,7 @@ and the Session acceptance timestamp.
 
 Lists return `{"items":[...],"nextCursor":"opaque"}`. Default limit 50,
 valid range 1–200. Trigger Messages and Outbox history accept an exact
-`threadKey`. Issues, Timers, and Outbox history accept `topicId`. Reports,
+`threadId`. Issues, Timers, and Outbox history accept `topicId`. Reports,
 Session Bindings, and Internal Events accept `issueId`. Internal Events and
 Outbox history accept `messageId`. Issues accept `messageId` to select Issues
 with matching materials across Topics. Supply one parent filter at a time.
@@ -238,7 +238,7 @@ its content types. Open a record by ID for its
 full `content` and diagnostic `_meta` when present. Continuation
 cursors bind collection, filter and the first page's sequence high-water mark.
 Rows accepted later never enter that traversal. Ordering uses fixed nanosecond
-UTC Core timestamps plus stable ID (Thread key for Threads). Thread ordering
+UTC Core timestamps plus stable ID (Thread ID for Threads). Thread ordering
 uses immutable `createdAt`. `lastMessageAt` reflects the last accepted Message
 and is `null` until the Thread receives its first source input.
 Router Messages default to 20 rows and accept an exact `messageId`. Rows represent
@@ -609,7 +609,7 @@ round in `route_messages.rounds`. After a stale round error or when the event
 contains only a reference, use `get_message` with `include: ["routing"]`.
 
 ```json
-{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"messageContent":[{"messageId":"mass-m1","blockCount":2}],"threadKey":"opaque/42","routing":{"round":1,"state":"pending"}}]}
+{"events":[{"event_id":"evt_router","kind":"route_request","refs":[{"kind":"trigger_message","id":"mass-m1"}],"messageContent":[{"messageId":"mass-m1","blockCount":2}],"threadId":"opaque/42","routing":{"round":1,"state":"pending"}}]}
 ```
 
 For a Topic `routed_message`, Core may inline short content, matched quoted
@@ -731,7 +731,7 @@ decides a race between firing, updating, canceling and Topic termination.
 Firing keeps the selected revision and commits `firedAt`, the task Thread,
 its Topic subscription, and one Trigger Message with its routing event in
 the same transaction. The internal source is `core:timer`. The task provides
-its final Thread key and uses its task ID as `sourceMessageId`. The Message
+its final Thread ID and uses its task ID as `sourceMessageId`. The Message
 contains the followup reason in a text block. The `followup` field in the
 `routed_message` and Topic `get_message` results gives the task ID, revision,
 due time, and material references from the scheduled task.
@@ -747,7 +747,7 @@ events use the same event ID on retry.
 
 `get_topic` with `include: ["followups"]` lists followups in the bound Topic.
 `GET /v1/core/timers?topicId={topicId}` and `observe timers --topic-id TOPIC_ID` expose the
-revision, due and fired times, state, `triggerMessageId`, `threadKey` and
+revision, due and fired times, state, `triggerMessageId`, `threadId` and
 `followup` routing event.
 
 ## Pull request registration and subscriptions
@@ -760,7 +760,7 @@ before writing or reusing the association.
 Core saves the canonical URL in the Topic's `pullRequests` and, when scoped
 to an Issue, in that Issue's `pullRequests`. The PR links, Thread, and Topic
 subscription share a transaction. A link returns
-`id`, `canonicalUrl`, `threadKey`, `topicId`, `subscriptionId` and
+`id`, `canonicalUrl`, `threadId`, `topicId`, `subscriptionId` and
 `createdAt`. Issue links also carry `issueId` and the initiating
 `sessionBindingId` if an Issue Session registered that link. Registration reuses the link for the same canonical URL and Topic or Issue,
 including across Issue Session generations. Multiple Issues can share one parent Topic–Thread
@@ -768,8 +768,8 @@ subscription. Each further Topic has its own subscription.
 
 Each entry in `pullRequests.add` is the final, absolute HTTP(S) PR URL without
 embedded credentials. Core validates the URL and uses the supplied string
-verbatim as both `canonicalUrl` and `threadKey`. The caller must normalize the
-URL to the same key used by the Trigger for that PR.
+verbatim as both `canonicalUrl` and `threadId`. The caller must normalize the
+URL to the same Thread ID used by the Trigger for that PR.
 
 For public GitHub, use `https://github.com/{owner}/{repo}/pull/{number}` with
 lowercase owner and repository and a positive decimal number without leading
@@ -870,7 +870,7 @@ again using the same channel idempotency key.
 ### Reply history
 
 The default Outbox history view shows pending, failed and sent replies by
-`messageId` or `threadKey`.
+`messageId` or `threadId`.
 The author can request reply history for one Message via `get_message`. Details show
 the original Message, any blocker reference and available channel receipt.
 

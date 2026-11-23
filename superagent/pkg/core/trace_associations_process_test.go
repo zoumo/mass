@@ -71,7 +71,7 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 		t.Helper()
 		require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&schemaVersion))
 		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables))
-		require.Equal(t, 26, schemaVersion)
+		require.Equal(t, 27, schemaVersion)
 		require.Equal(t, expectedTables, tables)
 	}
 	checkSchema(8)

@@ -30,17 +30,17 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
     instanceId: sender
     outboxConsumer: true
     tokenFile: ./consumer.token
-    threadKeyPrefixes: ['opaque/']
+    threadIdPrefixes: ['opaque/']
   - source: synthetic
     accountId: account-test
     instanceId: ingress
     tokenFile: ./peer.token
-    threadKeyPrefixes: ['opaque/']
+    threadIdPrefixes: ['opaque/']
   - source: another
     accountId: account-other
     instanceId: sender
     tokenFile: ./other.token
-    threadKeyPrefixes: ['opaque/']
+    threadIdPrefixes: ['opaque/']
 `)
 	f.execution(boundary)
 	clock, advance := outboxClock(t, f)
@@ -50,7 +50,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	const thread = "opaque/Ticket-42"
 	newInput := func(id, text string) core.SubmitTriggerMessageRequest {
 		return core.SubmitTriggerMessageRequest{OperationID: id, Message: core.TriggerMessage{
-			SourceMessageID: id, ThreadKey: thread, Content: []events.ContentBlock{events.Text(text)},
+			SourceMessageID: id, ThreadID: thread, Content: []events.ContentBlock{events.Text(text)},
 		}}
 	}
 	const ingress = "/v1/core/trigger-messages"
@@ -193,7 +193,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 
 	rejectSubmit(other, answer, http.StatusConflict, "failed_precondition")
 	wrong := answer
-	wrong.Message.ThreadKey = "opaque/Other"
+	wrong.Message.ThreadID = "opaque/Other"
 	rejectSubmit(peer, wrong, http.StatusConflict, "failed_precondition")
 	accepted := submit(answer)
 	replay = submit(answer)

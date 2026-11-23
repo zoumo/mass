@@ -145,7 +145,7 @@ func (s *Server) listMessageRecords(w http.ResponseWriter, r *http.Request, kind
 		limit = parsed
 	}
 	query := QueryRequest{
-		Collection: kind, ThreadKey: q.Get("threadKey"), TopicID: q.Get("topicId"), IssueID: q.Get("issueId"),
+		Collection: kind, ThreadID: q.Get("threadId"), TopicID: q.Get("topicId"), IssueID: q.Get("issueId"),
 		MessageID: q.Get("messageId"), Cursor: q.Get("cursor"), Limit: limit,
 		preview: q.Get("preview") == "true", newest: q.Get("order") == "newest", observerTrace: q.Get("trace") == "true",
 	}

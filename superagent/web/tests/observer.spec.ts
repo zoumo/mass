@@ -46,7 +46,7 @@ test('committed lists, full original text, Thread navigation and safe rendering'
  await page.getByRole('button', { name: /^查看线程 dws:/ }).click()
  await expect(page.getByRole('dialog')).toContainText('线程详情')
  await page.getByRole('button', { name: '查看线程消息' }).click()
- await expect(page.getByRole('textbox', { name: '按线程键筛选' })).toHaveValue(/^dws:/)
+ await expect(page.getByRole('textbox', { name: '按线程 ID 筛选' })).toHaveValue(/^dws:/)
  await expect(page.getByText('显示 50 条消息', { exact: false })).toBeVisible()
  await page.getByRole('button', { name: '加载更多' }).click()
  await expect(page.getByText('显示 56 条消息', { exact: false })).toBeVisible()
@@ -104,8 +104,8 @@ test('retired collections are absent from Superagent Web', async ({ page, reques
 test('offline snapshot stays visible and reconnect gets fresh filtered pages and selected detail', async ({ page, context, request }, testInfo) => {
  await page.goto('/superagent/?view=messages&mode=records')
  const first = (await (await request.get('/v1/core/trigger-messages?limit=1')).json()).items[0]
- const filter = page.getByRole('textbox', { name: '按线程键筛选' })
- await filter.fill(first.threadKey)
+ const filter = page.getByRole('textbox', { name: '按线程 ID 筛选' })
+ await filter.fill(first.threadId)
  await page.getByRole('button', { name: '筛选', exact: true }).click()
  await page.getByRole('button', { name: '加载更多' }).click()
  await expect(page.getByText('显示 56 条消息')).toBeVisible()
@@ -114,17 +114,17 @@ test('offline snapshot stays visible and reconnect gets fresh filtered pages and
  await context.setOffline(true)
  await expect(page.getByRole('alert')).toContainText('快照已过时')
  await expect(page.getByTestId('message-body')).toHaveText('Browser row 54')
- const submit = async (id: string, threadKey: string) => request.post('/v1/core/trigger-messages', {
+ const submit = async (id: string, threadId: string) => request.post('/v1/core/trigger-messages', {
   headers: { Authorization: `Bearer ${'a'.repeat(48)}` },
-  data: { operationId: id, message: { threadKey, sourceMessageId: id, content: [{ type: 'text', text: id }] } },
+  data: { operationId: id, message: { threadId, sourceMessageId: id, content: [{ type: 'text', text: id }] } },
  })
- expect((await submit('Committed while offline', first.threadKey)).ok()).toBeTruthy()
+ expect((await submit('Committed while offline', first.threadId)).ok()).toBeTruthy()
  expect((await submit('Unrelated Thread', 'dws:unrelated-thread')).ok()).toBeTruthy()
  await context.setOffline(false)
  await expect(page.getByRole('alert')).toHaveCount(0)
  await expect(page.getByTestId('message-body')).toHaveText('Browser row 54')
  await page.getByRole('button', { name: '关闭', exact: true }).click()
- await expect(filter).toHaveValue(first.threadKey)
+ await expect(filter).toHaveValue(first.threadId)
  await expect(page.getByText('显示 57 条消息')).toBeVisible()
  await expect(page.getByRole('button', { name: 'Committed while offline', exact: true })).toBeVisible()
  await expect(page.getByRole('button', { name: 'Unrelated Thread', exact: true })).toHaveCount(0)

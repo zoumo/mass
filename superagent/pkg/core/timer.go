@@ -38,7 +38,7 @@ type Timer struct {
 	UpdatedAt        string     `json:"updatedAt"`
 	FiredAt          string     `json:"firedAt,omitempty"`
 	TriggerMessageID string     `json:"triggerMessageId,omitempty"`
-	ThreadKey        string     `json:"threadKey,omitempty"`
+	ThreadID         string     `json:"threadId,omitempty"`
 }
 
 type SetTimerRequest struct {
@@ -247,7 +247,7 @@ func (s *Store) fireTimer(ctx context.Context, id string, revision int, cutoff s
 	ctx, finish := s.telemetry.startOperation(ctx, "timer.fire", "", trace.WithLinks(links...))
 	defer func() { finish(operationOutcome(retErr, "fired")) }()
 	t.Status, t.FiredAt, t.UpdatedAt = "fired", at, at
-	t.ThreadKey = "core%3Atimer:" + t.ID
+	t.ThreadID = "core%3Atimer:" + t.ID
 	receipt, err := admitTimerMessage(ctx, tx, t)
 	if err != nil {
 		return err
@@ -275,7 +275,7 @@ const messageFollowupProjection = `(SELECT json_patch(json_object(
 func admitTimerMessage(ctx context.Context, tx *sql.Tx, t Timer) (Receipt, error) {
 	source := Source{Source: timerSource}
 	request := SubmitTriggerMessageRequest{Message: TriggerMessage{
-		SourceMessageID: t.ID, ThreadKey: t.ThreadKey,
+		SourceMessageID: t.ID, ThreadID: t.ThreadID,
 		Content: []events.ContentBlock{events.Text(t.Content)},
 	}}
 	message, canonical, err := request.prepare(source)
@@ -283,10 +283,10 @@ func admitTimerMessage(ctx context.Context, tx *sql.Tx, t Timer) (Receipt, error
 		return Receipt{}, err
 	}
 	at := now()
-	if err := upsertThread(ctx, tx, t.ThreadKey, at, ""); err != nil {
+	if err := upsertThread(ctx, tx, t.ThreadID, at, ""); err != nil {
 		return Receipt{}, err
 	}
-	if _, err := ensureSubscription(ctx, tx, Subscription{TopicID: t.TopicID, ThreadKey: t.ThreadKey, CreatedAt: at}); err != nil {
+	if _, err := ensureSubscription(ctx, tx, Subscription{TopicID: t.TopicID, ThreadID: t.ThreadID, CreatedAt: at}); err != nil {
 		return Receipt{}, err
 	}
 	return admitTriggerMessage(ctx, tx, source, message, canonical)

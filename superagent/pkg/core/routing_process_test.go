@@ -388,9 +388,9 @@ type subscribedThread struct {
 	Subscriptions []core.Subscription `json:"subscriptions"`
 }
 
-func readThread(t *testing.T, p *process, key string) subscribedThread {
+func readThread(t *testing.T, p *process, threadID string) subscribedThread {
 	t.Helper()
-	return readRecord[subscribedThread](t, p, "threads/"+url.PathEscape(key))
+	return readRecord[subscribedThread](t, p, "threads/"+url.PathEscape(threadID))
 }
 
 func messageRelations(t *testing.T, p *process, messageID string) []core.Relation {
@@ -488,7 +488,7 @@ func TestRoutingPublicProcess(t *testing.T) {
 	require.Len(t, routingEvents(t, p, second.MessageID), 3)
 	// Create a second independent Topic from another Thread, then explicitly associate the shared Thread.
 	otherInput := input("other")
-	otherInput.Message.ThreadKey = fixtureThreadKey("other-thread")
+	otherInput.Message.ThreadID = fixtureThreadID("other-thread")
 	otherInput.ReplyTarget = nil
 	other := submit(t, p, f, otherInput)
 	otherDecision := decide(t, p, token, newRoute("other", []string{other.MessageID}, f.dir))
@@ -525,7 +525,7 @@ func TestRoutingPublicProcess(t *testing.T) {
 	require.Len(t, bindings(t, p), len(before))
 	require.Equal(t, decision.ID, decide(t, p, token, r).ID)
 	var subscribedTopics []string
-	for _, sub := range readThread(t, p, shared.ThreadKey).Subscriptions {
+	for _, sub := range readThread(t, p, shared.ThreadID).Subscriptions {
 		subscribedTopics = append(subscribedTopics, sub.TopicID)
 	}
 	require.ElementsMatch(t, []string{topicID, otherID}, subscribedTopics)
@@ -568,6 +568,7 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Session
 	listed := r.call("tools/list", map[string]any{"_meta": map[string]any{"progressToken": 1}})
 	require.Empty(t, listed["error"], "MCP client metadata must not prevent scoped tool discovery")
 	require.Contains(t, string(listed["result"]), "route_messages")
+	require.Contains(t, string(listed["result"]), `"threadId"`)
 	require.NotContains(t, string(listed["result"]), "decline_message")
 	require.NotContains(t, string(listed["result"]), "binding_get")
 	invalidList := r.call("tools/list", map[string]any{"role": "topic"})
@@ -589,14 +590,14 @@ func runRoleMCP(t *testing.T, f *fixture, p *process, router, topic core.Session
 	mcpWorkError(t, s, "get_topic", "invalid_argument", map[string]string{"topicId": otherID})
 	mcpWorkError(t, s, "route_messages", "forbidden", struct{}{})
 	incoming := input("mcp-ignore")
-	incoming.Message.ThreadKey = fixtureThreadKey("mcp-thread")
+	incoming.Message.ThreadID = fixtureThreadID("mcp-thread")
 	incoming.ReplyTarget = nil
 	receipt := submit(t, p, f, incoming)
 	ignored := r.call("tools/call", map[string]any{"name": "route_messages", "arguments": core.RouteRequest{OperationID: "mcp-ignore", MessageIDs: []string{receipt.MessageID}, Rounds: map[string]int{receipt.MessageID: 1}, Kind: "ignore", Reason: "explicitly not actionable"}})
 	require.Empty(t, ignored["error"])
 
 	business := input("mcp-create")
-	business.Message.ThreadKey = fixtureThreadKey("mcp-create-thread")
+	business.Message.ThreadID = fixtureThreadID("mcp-create-thread")
 	business.ReplyTarget = nil
 	m := submit(t, p, f, business)
 	routed := r.call("tools/call", map[string]any{"name": "route_messages", "arguments": newRoute("mcp-create", []string{m.MessageID}, f.dir)})
@@ -650,7 +651,7 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 	require.Equal(t, 2, relations)
 	// A valid create followed by an invalid existing target rolls back the whole request.
 	fresh := input("rollback")
-	fresh.Message.ThreadKey = fixtureThreadKey("rollback-thread")
+	fresh.Message.ThreadID = fixtureThreadID("rollback-thread")
 	fresh.ReplyTarget = nil
 	m := submit(t, p, f, fresh)
 	r := newRoute("rollback", []string{m.MessageID}, f.dir)
@@ -902,7 +903,7 @@ func TestRoutingCrashAtomicRoute(t *testing.T) {
 				expected = 1
 			}
 			require.Len(t, page(t, p, "topics").Items, expected)
-			require.Len(t, readThread(t, p, m.ThreadKey).Subscriptions, expected)
+			require.Len(t, readThread(t, p, m.ThreadID).Subscriptions, expected)
 			require.Len(t, messageRelations(t, p, m.MessageID), expected)
 			require.Len(t, bindings(t, p), expected+1)
 			replay := decide(t, p, token, r)
@@ -996,12 +997,12 @@ func TestRoutingCrashAtomicReturn(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &current))
 			require.Equal(t, expectedRound, current.Routing.Round)
 			require.Len(t, messageRelations(t, p, m.MessageID), expectedRelations)
-			require.Len(t, readThread(t, p, m.ThreadKey).Subscriptions, 1)
+			require.Len(t, readThread(t, p, m.ThreadID).Subscriptions, 1)
 			original := roleCall(t, p, token, "decline_message", r)
 			require.JSONEq(t, string(original), string(roleCall(t, p, token, "decline_message", r)))
 			waitDelivered(t, p, m.MessageID, "router", "")
 			require.Len(t, messageRelations(t, p, m.MessageID), 2)
-			require.Len(t, readThread(t, p, m.ThreadKey).Subscriptions, 1)
+			require.Len(t, readThread(t, p, m.ThreadID).Subscriptions, 1)
 			t.Logf("%s: return reason, routed delivery history and the stable Router request committed atomically", stage)
 		})
 	}
@@ -1080,13 +1081,14 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	require.Contains(t, routerSession.Spec.SystemPrompt, "deduplicate by event_id")
 	require.Contains(t, routerSession.Spec.SystemPrompt, "routing.round")
 	require.Contains(t, routerSession.Spec.SystemPrompt, "messageContent")
+	require.Contains(t, routerSession.Spec.SystemPrompt, "list_messages with threadId")
 	require.NotContains(t, routerSession.Spec.SystemPrompt, "eventId")
 
 	short := input("short")
 	msg := submit(t, p, f, short)
 	route := peer.next(t, "turn/start")
 	require.Equal(t, routerBinding.SessionID, route.session)
-	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}],"messageContent":[{"messageId":%q,"blockCount":1}],"threadKey":%q,"routing":{"round":1,"state":"pending"}}]}`, msg.EventID, msg.MessageID, msg.MessageID, msg.ThreadKey), route.text)
+	require.JSONEq(t, fmt.Sprintf(`{"events":[{"event_id":%q,"kind":"route_request","refs":[{"kind":"trigger_message","id":%q}],"messageContent":[{"messageId":%q,"blockCount":1}],"threadId":%q,"routing":{"round":1,"state":"pending"}}]}`, msg.EventID, msg.MessageID, msg.MessageID, msg.ThreadID), route.text)
 	require.Equal(t, short.Message.Content[0].Text.Text, route.blocks[1].Text)
 	var payload struct {
 		Events []struct {
@@ -1137,8 +1139,8 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 		call.answer <- nativeSubmitAnswer{complete: true}
 
 		item := mcpWork[json.RawMessage](t, topic, "get_message", map[string]string{"messageId": receipt.MessageID})
-		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"source":"dws","content":[{"type":"text","text":%q}],"threadKey":%q}`, receipt.MessageID, req.Message.Content[0].Text.Text, receipt.ThreadKey), string(item))
-		items := mcpWork[core.Page](t, topic, "list_messages", map[string]any{"threadKey": receipt.ThreadKey})
+		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"source":"dws","content":[{"type":"text","text":%q}],"threadId":%q}`, receipt.MessageID, req.Message.Content[0].Text.Text, receipt.ThreadID), string(item))
+		items := mcpWork[core.Page](t, topic, "list_messages", map[string]any{"threadId": receipt.ThreadID})
 		require.JSONEq(t, string(item), string(items.Items[len(items.Items)-1]))
 		original := readRecord[core.Message](t, p, "trigger-messages/"+receipt.MessageID)
 		require.Equal(t, req.Message.SourceMessageID, original.SourceMessageID)
@@ -1172,7 +1174,7 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	require.Empty(t, resolved.Issue.Blockers)
 
 	long := input("long-router")
-	long.Message.ThreadKey, long.ReplyTarget = fixtureThreadKey("unsubscribed"), nil
+	long.Message.ThreadID, long.ReplyTarget = fixtureThreadID("unsubscribed"), nil
 	long.Message.Content[0].Text.Text = strings.Repeat("界", 700)
 	longReceipt := submit(t, p, f, long)
 	longInput := peer.next(t, "turn/start")
@@ -1294,7 +1296,7 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	own = page(t, p, "topics/"+b.OwnerID+"/activity?filter=message")
 	require.NotEmpty(t, own.Items)
 	require.Contains(t, string(own.Items[0]), m.MessageID)
-	_, raw = request(t, http.MethodGet, p.endpoint, "/v1/core/threads/"+url.PathEscape(m.ThreadKey), "", nil)
+	_, raw = request(t, http.MethodGet, p.endpoint, "/v1/core/threads/"+url.PathEscape(m.ThreadID), "", nil)
 	require.Contains(t, string(raw), a.OwnerID)
 	require.Contains(t, string(raw), b.OwnerID)
 	peer.quiet(t, 300*time.Millisecond)

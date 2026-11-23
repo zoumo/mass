@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	schemaVersion       = 26
+	schemaVersion       = 27
 	applicationID       = 1398096210
 	storeStartupTimeout = 10 * time.Second
 	queryIndexTimeout   = 2 * time.Minute
@@ -336,11 +336,11 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Messa
 	at := now()
 	m.ReceivedAt, m.Acceptance = at, "accepted"
 	m.EventID = newID("evt")
-	if err := upsertThread(ctx, tx, m.ThreadKey, at, at); err != nil {
+	if err := upsertThread(ctx, tx, m.ThreadID, at, at); err != nil {
 		return Receipt{}, err
 	}
-	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_key,accepted_at,canonical,body)
- VALUES(?,?,?,?,?,?,'{}') RETURNING id`, source.Source, source.AccountID, m.SourceMessageID, m.ThreadKey, at, canonical).Scan(&m.ID); err != nil {
+	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_id,accepted_at,canonical,body)
+ VALUES(?,?,?,?,?,?,'{}') RETURNING id`, source.Source, source.AccountID, m.SourceMessageID, m.ThreadID, at, canonical).Scan(&m.ID); err != nil {
 		return Receipt{}, storageError()
 	}
 	if err := putJSON(ctx, tx, "UPDATE trigger_messages SET body=?2 WHERE id=?1", m, m.ID); err != nil {
@@ -355,7 +355,7 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Messa
 func messageReceipt(m Message, duplicate bool) Receipt {
 	return Receipt{
 		Status: m.Acceptance, Duplicate: duplicate, MessageID: m.ID,
-		ThreadKey: m.ThreadKey, AcceptedAt: m.ReceivedAt, EventID: m.EventID,
+		ThreadID: m.ThreadID, AcceptedAt: m.ReceivedAt, EventID: m.EventID,
 	}
 }
 
@@ -373,10 +373,10 @@ func (s *Store) channelMessageReceipt(ctx context.Context, source Source, native
 	return messageReceipt(m, false), nil
 }
 
-func upsertThread(ctx context.Context, tx *sql.Tx, key, createdAt, lastMessageAt string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO threads(key,source,native_id,created_at,last_message_at) VALUES(?,'',?,?,?)
- ON CONFLICT(key) DO UPDATE SET last_message_at=excluded.last_message_at WHERE excluded.last_message_at<>''`,
-		key, key, createdAt, lastMessageAt)
+func upsertThread(ctx context.Context, tx *sql.Tx, threadID, createdAt, lastMessageAt string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO threads(id,source,native_id,created_at,last_message_at) VALUES(?,'',?,?,?)
+ ON CONFLICT(id) DO UPDATE SET last_message_at=excluded.last_message_at WHERE excluded.last_message_at<>''`,
+		threadID, threadID, createdAt, lastMessageAt)
 	if err != nil {
 		return storageError()
 	}
@@ -412,12 +412,12 @@ func (c *cursor) resume(token string) error {
 }
 
 func (s *Store) List(ctx context.Context, kind, thread, token string, limit int) (Page, error) {
-	return s.listScoped(ctx, QueryRequest{Collection: kind, ThreadKey: thread, Cursor: token, Limit: limit}, nil, nil)
+	return s.listScoped(ctx, QueryRequest{Collection: kind, ThreadID: thread, Cursor: token, Limit: limit}, nil, nil)
 }
 
 func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *SessionBinding, source *Source) (Page, error) {
 	p := Page{Items: []json.RawMessage{}}
-	kind, thread, token, limit := q.Collection, q.ThreadKey, q.Cursor, q.Limit
+	kind, thread, token, limit := q.Collection, q.ThreadID, q.Cursor, q.Limit
 	if limit < 1 || limit > 200 {
 		return p, problem("invalid_argument", "limit must be between 1 and 200")
 	}
@@ -461,7 +461,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 	case "messages":
 		table, timeCol, idCol = "trigger_messages", "accepted_at", "id"
 	case "threads":
-		table, timeCol, idCol = "threads", "created_at", "key"
+		table, timeCol, idCol = "threads", "created_at", "id"
 	case "subscriptions":
 		table, timeCol, idCol = "thread_subscriptions", "created_at", "id"
 	case "relations":
@@ -484,7 +484,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		return p, problem("not_found", "unknown collection")
 	}
 	if thread != "" && kind != "messages" && kind != "subscriptions" && kind != "outbox" {
-		return p, problem("invalid_argument", "threadKey filters Messages, subscriptions and Outbox")
+		return p, problem("invalid_argument", "threadId filters Messages, subscriptions and Outbox")
 	}
 	if q.MessageID != "" {
 		materialFilter := kind == "issues" && binding == nil && source == nil
@@ -563,9 +563,9 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 	}
 	if thread != "" {
 		if kind == "outbox" {
-			query += " AND message_id IN (SELECT id FROM trigger_messages WHERE thread_key=?)"
+			query += " AND message_id IN (SELECT id FROM trigger_messages WHERE thread_id=?)"
 		} else {
-			query += " AND thread_key=?"
+			query += " AND thread_id=?"
 		}
 		args = append(args, thread)
 	}
@@ -656,11 +656,9 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Session
 		table, idCol = "routing_events", "event_id"
 	case "session-bindings":
 		table = "session_bindings"
-	case "topics", "issues", "reports", "outbox":
+	case "threads", "topics", "issues", "reports", "outbox":
 	case "timers":
 		table = "scheduled_tasks"
-	case "threads":
-		idCol = "key"
 	case "pull-requests":
 		table = "work_pull_requests"
 	default:

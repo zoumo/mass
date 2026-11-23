@@ -124,7 +124,7 @@ type githubPendingItem struct {
 
 func githubDatabaseIdentity(c githubConfig) triggerdb.Identity {
 	return triggerdb.Identity{
-		ApplicationID: githubDatabaseApplicationID, Version: 2,
+		ApplicationID: githubDatabaseApplicationID, Version: 3,
 		Source: githubSource, AccountID: c.AccountID, InstanceID: c.InstanceID,
 	}
 }

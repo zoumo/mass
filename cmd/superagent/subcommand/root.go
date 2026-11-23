@@ -91,7 +91,7 @@ func New() *cobra.Command {
 	observe := &cobra.Command{Use: "observe", Short: "Read Core snapshots without write credentials"}
 	observe.PersistentFlags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Core HTTP endpoint")
 	observe.PersistentFlags().StringVar(&cursor, "cursor", "", "Opaque continuation cursor")
-	observe.PersistentFlags().StringVar(&thread, "thread-key", "", "Filter Trigger Messages or Outbox Messages by exact Thread key")
+	observe.PersistentFlags().StringVar(&thread, "thread-id", "", "Filter Trigger Messages or Outbox Messages by exact Thread ID")
 	observe.PersistentFlags().StringVar(&message, "message-id", "", "Filter Issue materials, Outbox Messages, Router Messages or Internal Events by Message ID")
 	observe.PersistentFlags().StringVar(&topic, "topic-id", "", "Filter Issues, Timers or Outbox Messages by Topic ID")
 	observe.PersistentFlags().StringVar(&issue, "issue-id", "", "Filter Session Bindings, Reports or Internal Events by Issue ID")
@@ -135,7 +135,7 @@ func New() *cobra.Command {
 				q.Set("cursor", cursor)
 			}
 			if thread != "" {
-				q.Set("threadKey", thread)
+				q.Set("threadId", thread)
 			}
 			if message != "" {
 				q.Set("messageId", message)

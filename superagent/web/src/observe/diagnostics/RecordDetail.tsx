@@ -30,7 +30,7 @@ function TraceID({ traceId, phase, at }: { traceId: string; phase: string; at?: 
 
 export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
   const showRecord = (view: Kind, id: string) => navigate(view, '', undefined, id)
-  const showThread = (key: string) => showRecord('threads', key)
+  const showThread = (threadId: string) => showRecord('threads', threadId)
   const body = kind === 'messages' ? messageBody(detail) : detail.text
   return (
     <>
@@ -71,11 +71,11 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
         </section>
       )}
       {detail.observationGap && <p>观测中断 · {detail.observationGap}</p>}
-      {detail.threadKey && (
+      {detail.threadId && (
         <button
-          onClick={() => showThread(String(detail.threadKey))}
+          onClick={() => showThread(String(detail.threadId))}
           type="button"
-        >{`查看线程 ${detail.threadKey}`}</button>
+        >{`查看线程 ${detail.threadId}`}</button>
       )}
       <ChannelEvidence kind={kind} detail={detail} navigate={navigate} />
       {detail.topicId && (

@@ -37,7 +37,7 @@ LEFT JOIN topics t ON t.id=a.topic_id
 ORDER BY p.created_at DESC,p.message_id DESC`
 
 func (s *Store) observerRouterMessages(ctx context.Context, q QueryRequest) (Page, error) {
-	if q.Limit < 1 || q.Limit > 200 || q.ThreadKey != "" || q.IssueID != "" || q.TopicID != "" {
+	if q.Limit < 1 || q.Limit > 200 || q.ThreadID != "" || q.IssueID != "" || q.TopicID != "" {
 		return Page{}, problem("invalid_argument", "router-messages accepts a limit between 1 and 200 and an optional messageId")
 	}
 	c := cursor{Kind: "router-messages", Parent: q.MessageID, Newest: true}

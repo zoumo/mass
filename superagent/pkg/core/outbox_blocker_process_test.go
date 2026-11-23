@@ -85,7 +85,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *t
 	require.NotNil(t, match(partial).QuotedReply)
 	require.Equal(t, region.ID, match(partial).QuotedReply.OutboxID)
 	require.Equal(t, *region.BlockerRef, match(partial).QuotedReply.BlockerRef)
-	list := roleWork[core.Page](t, p, role, "list_messages", map[string]any{"threadKey": source.ThreadKey})
+	list := roleWork[core.Page](t, p, role, "list_messages", map[string]any{"threadId": source.ThreadID})
 	require.Len(t, list.Items, 3)
 	require.Contains(t, string(list.Items[2]), region.ID)
 

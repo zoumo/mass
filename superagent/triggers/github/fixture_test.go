@@ -269,7 +269,7 @@ func githubRegisterFixturePR(t *testing.T, f *triggertest.CoreFixture, topicID, 
 	type topicView struct {
 		ID           string
 		Revision     int
-		PullRequests []struct{ CanonicalURL, ThreadKey, TopicID string }
+		PullRequests []struct{ CanonicalURL, ThreadID, TopicID string }
 	}
 	before := triggertest.CallRoleTool[topicView](t, f.Endpoint, token, "get_topic", struct{}{})
 	body := map[string]any{
@@ -280,7 +280,7 @@ func githubRegisterFixturePR(t *testing.T, f *triggertest.CoreFixture, topicID, 
 	topic := triggertest.CallRoleTool[topicView](t, f.Endpoint, token, "update_topic", body)
 	require.Equal(t, topicID, topic.ID)
 	require.Equal(t, before.Revision+1, topic.Revision)
-	require.Contains(t, topic.PullRequests, struct{ CanonicalURL, ThreadKey, TopicID string }{prURL, prURL, topicID})
+	require.Contains(t, topic.PullRequests, struct{ CanonicalURL, ThreadID, TopicID string }{prURL, prURL, topicID})
 }
 
 func githubAssertTopicDelivery(t *testing.T, f *triggertest.CoreFixture, message map[string]any, topic string) {

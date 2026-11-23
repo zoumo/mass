@@ -18,7 +18,7 @@ type conversationRow struct {
 	Title            string `json:"title"`
 	Kind             string `json:"kind"`
 	TopicID          string `json:"topicId"`
-	ThreadKey        string `json:"threadKey"`
+	ThreadID         string `json:"threadId"`
 	MessageID        string `json:"messageId"`
 	EventID          string `json:"eventId"`
 	Actor            string `json:"actor"`
@@ -115,14 +115,14 @@ func TestObserverTopicConversationIngress(t *testing.T) {
 	require.Equal(t, "thread_direct/"+direct.EventID, both[0].ID)
 	require.Equal(t, "thread_direct", both[0].Kind)
 	require.Equal(t, topicB, both[0].TopicID)
-	require.Equal(t, direct.ThreadKey, both[0].ThreadKey)
+	require.Equal(t, direct.ThreadID, both[0].ThreadID)
 	require.Equal(t, direct.MessageID, both[0].MessageID)
 	require.Equal(t, direct.EventID, both[0].EventID)
 	require.Equal(t, "core", both[0].Actor)
 	require.Equal(t, "topic", both[0].Recipient)
 	routed, _ := conversationPage(t, p, url.Values{"topicId": {topicB}, "filter": {"router_routed"}})
 	require.Len(t, routed, 2)
-	require.Equal(t, shared.ThreadKey, routed[1].ThreadKey)
+	require.Equal(t, shared.ThreadID, routed[1].ThreadID)
 	require.Equal(t, shared.MessageID, routed[1].MessageID)
 	require.Equal(t, decision.Targets[1].EventIDs[shared.MessageID], routed[1].EventID)
 	require.Equal(t, "router", routed[1].Actor)
@@ -296,7 +296,7 @@ func TestObserverTopicConversationReport(t *testing.T) {
 	first, timelineCursor := conversationPage(t, p, url.Values{"topicId": {f.topicID}, "limit": {"1"}})
 	require.Len(t, first, 1)
 	require.Equal(t, "thread_direct/"+f.direct.EventID, first[0].ID)
-	require.Equal(t, f.direct.ThreadKey, first[0].ThreadKey)
+	require.Equal(t, f.direct.ThreadID, first[0].ThreadID)
 	require.NotEmpty(t, timelineCursor)
 
 	report := roleWork[core.Report](t, p, f.issueToken, "submit_report", f.report)

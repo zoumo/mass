@@ -62,7 +62,7 @@ function MessageFacts({ row }: { row: Event }) {
     </dl>
     {(internalEvent.loading && !internalEvent.data || row.messageId && message.loading && !message.data) && <p>正在读取详情…</p>}
     <div className="topic-links">
-      {row.messageId && <a href={viewHref('message',row.messageId, {threadKey: message.data?.threadKey || ''})}>查看此消息 →</a>}
+      {row.messageId && <a href={viewHref('message',row.messageId, {threadId: message.data?.threadId || ''})}>查看此消息 →</a>}
       {row.returnedEventId && <a href={recordHref('internal-events',{ id: row.returnedEventId })}>查看原事件 →</a>}
       <a href={recordHref('internal-events',{ id: row.eventId! })}>事件记录 →</a>
     </div>

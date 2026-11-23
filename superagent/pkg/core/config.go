@@ -21,15 +21,15 @@ import (
 )
 
 type Source struct {
-	Source            string   `mapstructure:"source"`
-	AccountID         string   `mapstructure:"accountId"`
-	InstanceID        string   `mapstructure:"instanceId"`
-	OutboxConsumer    bool     `mapstructure:"outboxConsumer"`
-	TokenFile         string   `mapstructure:"tokenFile"`
-	ThreadKeys        []string `mapstructure:"threadKeys"`
-	ThreadKeyPrefixes []string `mapstructure:"threadKeyPrefixes"`
-	tokenHash         [32]byte
-	token             string
+	Source           string   `mapstructure:"source"`
+	AccountID        string   `mapstructure:"accountId"`
+	InstanceID       string   `mapstructure:"instanceId"`
+	OutboxConsumer   bool     `mapstructure:"outboxConsumer"`
+	TokenFile        string   `mapstructure:"tokenFile"`
+	ThreadIDs        []string `mapstructure:"threadIds"`
+	ThreadIDPrefixes []string `mapstructure:"threadIdPrefixes"`
+	tokenHash        [32]byte
+	token            string
 }
 
 var instanceIDFormat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
@@ -233,9 +233,9 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if s.Source == "" || strings.ContainsAny(s.Source, ":/% \t\n") || s.AccountID == "" || s.TokenFile == "" {
 			return c, problem("invalid_argument", "source, accountId and tokenFile are required")
 		}
-		for _, key := range append(slices.Clone(s.ThreadKeys), s.ThreadKeyPrefixes...) {
-			if !validTriggerThreadKey(key) {
-				return c, problem("invalid_argument", "threadKeys and threadKeyPrefixes must contain valid opaque keys or prefixes")
+		for _, id := range append(slices.Clone(s.ThreadIDs), s.ThreadIDPrefixes...) {
+			if !validTriggerThreadID(id) {
+				return c, problem("invalid_argument", "threadIds and threadIdPrefixes must contain valid IDs or prefixes")
 			}
 		}
 		if account, ok := seenSource[s.Source]; ok && account != s.AccountID {

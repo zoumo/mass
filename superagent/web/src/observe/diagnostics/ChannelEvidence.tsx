@@ -9,8 +9,8 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
         <dl>
           <dt>渠道消息</dt>
           <dd>{detail.sourceMessageId}</dd>
-          <dt>线程键</dt>
-          <dd>{detail.threadKey}</dd>
+          <dt>线程 ID</dt>
+          <dd>{detail.threadId}</dd>
           <dt>路由状态</dt>
           <dd>
             {detail.routing ? `第 ${detail.routing.round} 轮 · ${stateLabel(detail.routing.state)}` : '无路由记录'}
@@ -50,15 +50,15 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
       {kind === 'threads' && (
         <>
           <dl>
-            <dt>线程键</dt>
-            <dd>{detail.key}</dd>
+            <dt>线程 ID</dt>
+            <dd>{detail.id}</dd>
             <dt>最近一条来源消息</dt>
             <dd>{detail.lastMessageAt || '暂未收到来源消息'}</dd>
           </dl>
-          <button onClick={() => navigate('messages', identity(detail), 'threadKey')} type="button">
+          <button onClick={() => navigate('messages', identity(detail), 'threadId')} type="button">
             查看线程消息
           </button>
-          <button onClick={() => navigate('outbox', identity(detail), 'threadKey')} type="button">
+          <button onClick={() => navigate('outbox', identity(detail), 'threadId')} type="button">
             查看线程回执
           </button>
         </>

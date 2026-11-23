@@ -10,7 +10,7 @@ import (
 // The store assembles these projections from saved resources and related data.
 // They describe the HTTP responses without decoding and re-encoding stored JSON.
 type threadReadProjection struct {
-	Key           string         `json:"key"`
+	ID            string         `json:"id"`
 	CreatedAt     string         `json:"createdAt"`
 	LastMessageAt *string        `json:"lastMessageAt" nullable:"true"`
 	Subscriptions []Subscription `json:"subscriptions"`
@@ -95,7 +95,7 @@ type topicActivityProjection struct {
 	TopicID          string          `json:"topicId,omitempty"`
 	IssueID          *string         `json:"issueId,omitempty" nullable:"true"`
 	MessageID        *string         `json:"messageId,omitempty" nullable:"true"`
-	ThreadKey        string          `json:"threadKey,omitempty"`
+	ThreadID         string          `json:"threadId,omitempty"`
 	Title            *string         `json:"title,omitempty" nullable:"true"`
 	Status           string          `json:"status,omitempty"`
 	EventID          *string         `json:"eventId,omitempty" nullable:"true"`

@@ -29,7 +29,7 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
   const insert = await request.post('/v1/core/trigger-messages', {
     headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
     data: { operationId: 'router-browser-insert', message: {
-      sourceMessageId: 'router-browser-insert', threadKey: 'dws:observer-router-new-message',
+      sourceMessageId: 'router-browser-insert', threadId: 'dws:observer-router-new-message',
       content: [{ type: 'text', text: '翻页期间收到的新消息' }],
     } },
   })

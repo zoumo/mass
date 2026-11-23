@@ -48,7 +48,7 @@ type messageTrace struct {
 
 type triggerMessageRecord struct {
 	SourceMessageID   string                 `json:"sourceMessageId"`
-	ThreadKey         string                 `json:"threadKey"`
+	ThreadID          string                 `json:"threadId"`
 	Content           []events.ContentBlock  `json:"content,omitempty"`
 	Meta              json.RawMessage        `json:"_meta,omitempty"`
 	ID                string                 `json:"id"`
@@ -170,7 +170,7 @@ func (s *Server) registerMessageResources(api *httpAPI) {
 	triggerList.Parameters = append(messageListParams(),
 		messageQueryParam("view", "Router projection sorted by latest Router activity", &huma.Schema{Type: huma.TypeString, Enum: []any{"router"}}),
 		messageQueryParam("sourceMessageId", "Return the receipt in the authenticated Source and Account. Supply this parameter alone", &huma.Schema{Type: huma.TypeString}),
-		messageQueryParam("threadKey", "Exact Thread key in the default view", &huma.Schema{Type: huma.TypeString}),
+		messageQueryParam("threadId", "Exact Thread ID in the default view", &huma.Schema{Type: huma.TypeString}),
 		messageQueryParam("messageId", "Exact Trigger Message ID in the Router view", &huma.Schema{Type: huma.TypeString}),
 	)
 	triggerList.Description = "The default view and the Router view use the trusted-read boundary. A sourceMessageId lookup requires a valid Source bearer and returns only the acceptance receipt."
@@ -195,7 +195,7 @@ func (s *Server) registerOutboxMessages(api *httpAPI) {
 	list.Parameters = append(messageListParams(), delivery,
 		messageQueryParam("messageId", "Exact Trigger Message ID in the history view", &huma.Schema{Type: huma.TypeString}),
 		messageQueryParam("topicId", "Topic routing history filter in the history view", &huma.Schema{Type: huma.TypeString}),
-		messageQueryParam("threadKey", "Exact Thread key in the history view", &huma.Schema{Type: huma.TypeString}),
+		messageQueryParam("threadId", "Exact Thread ID in the history view", &huma.Schema{Type: huma.TypeString}),
 	)
 	list.Description = "The history view uses the trusted-read boundary. The delivery view requires the configured Account consumer and returns pending or retry-eligible records using limit and cursor."
 	list.Security = append(bearerSecurity(sourceBearer), map[string][]string{})

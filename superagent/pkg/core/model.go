@@ -48,7 +48,7 @@ type Message struct {
 	ReplyTarget       json.RawMessage       `json:"replyTarget,omitempty"`
 	InReplyToOutboxID string                `json:"inReplyToOutboxId,omitempty"`
 	ID                string                `json:"id"`
-	ThreadKey         string                `json:"threadKey"`
+	ThreadID          string                `json:"threadId"`
 	ReceivedAt        string                `json:"receivedAt"`
 	Acceptance        string                `json:"acceptance"`
 	EventID           string                `json:"eventId,omitempty"`
@@ -57,11 +57,11 @@ type Message struct {
 var _ AgentPromptView = Message{}
 
 func (m Message) MarshalAgentPromptJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"id": m.ID, "source": m.Source, "threadKey": m.ThreadKey, "content": m.Content})
+	return json.Marshal(map[string]any{"id": m.ID, "source": m.Source, "threadId": m.ThreadID, "content": m.Content})
 }
 
 type Thread struct {
-	Key           string `json:"key"`
+	ID            string `json:"id"`
 	CreatedAt     string `json:"createdAt"`
 	LastMessageAt string `json:"lastMessageAt,omitempty"`
 	Label         string `json:"label,omitempty"`
@@ -70,7 +70,7 @@ type Receipt struct {
 	Status     string `json:"status"`
 	Duplicate  bool   `json:"duplicate"`
 	MessageID  string `json:"messageId"`
-	ThreadKey  string `json:"threadKey"`
+	ThreadID   string `json:"threadId"`
 	AcceptedAt string `json:"acceptedAt"`
 	EventID    string `json:"eventId,omitempty"`
 }

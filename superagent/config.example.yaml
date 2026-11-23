@@ -15,7 +15,7 @@ sources:
     # instanceId: collector-1  # match the Trigger for channel replies
     # outboxConsumer: true  # select one sender when the account has multiple instances
     tokenFile: ./source.token
-    threadKeyPrefixes: ["dws:"]
+    threadIdPrefixes: ["dws:"]
 # Optional SQLite main-database page budget; zero means unlimited.
 storageMaxPages: 0
 

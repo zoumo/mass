@@ -116,7 +116,7 @@ type Relation struct {
 type Subscription struct {
 	ID            string `json:"id"`
 	TopicID       string `json:"topicId"`
-	ThreadKey     string `json:"threadKey"`
+	ThreadID      string `json:"threadId"`
 	MessageID     string `json:"messageId,omitempty"`
 	PullRequestID string `json:"pullRequestId,omitempty"`
 	CreatedAt     string `json:"createdAt"`

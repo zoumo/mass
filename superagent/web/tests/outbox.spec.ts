@@ -47,7 +47,7 @@ test('Message and Thread link to read-only reply history and channel evidence', 
  await dialog.getByRole('button', { name: '查看目标消息' }).click()
  await dialog.getByRole('button', { name: '查看线程 dws:outbox-observer-conversation', exact: true }).click()
  await dialog.getByRole('button', { name: '查看线程回执' }).click()
- await expect(page).toHaveURL(/view=outbox&threadKey=/)
+ await expect(page).toHaveURL(/view=outbox&threadId=/)
  await table.getByRole('button', { name: 'Observer reply unknown', exact: true }).click()
  await expect(dialog.getByText(/恢复时可能重复发送/)).toBeVisible()
  await expect(dialog.getByText('允许重试时间', { exact: true })).toBeVisible()

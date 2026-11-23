@@ -1244,7 +1244,7 @@
           "subscriptionId": {
             "type": "string"
           },
-          "threadKey": {
+          "threadId": {
             "type": "string"
           },
           "topicId": {
@@ -1256,7 +1256,7 @@
           "id",
           "canonicalUrl",
           "topicId",
-          "threadKey",
+          "threadId",
           "subscriptionId",
           "createdAt"
         ],
@@ -1295,7 +1295,7 @@
           "status": {
             "type": "string"
           },
-          "threadKey": {
+          "threadId": {
             "type": "string"
           }
         },
@@ -1303,7 +1303,7 @@
           "status",
           "duplicate",
           "messageId",
-          "threadKey",
+          "threadId",
           "acceptedAt"
         ],
         "type": "object"
@@ -2117,7 +2117,7 @@
           "pullRequestId": {
             "type": "string"
           },
-          "threadKey": {
+          "threadId": {
             "type": "string"
           },
           "topicId": {
@@ -2127,7 +2127,7 @@
         "required": [
           "id",
           "topicId",
-          "threadKey",
+          "threadId",
           "createdAt"
         ],
         "type": "object"
@@ -2258,7 +2258,7 @@
           "createdAt": {
             "type": "string"
           },
-          "key": {
+          "id": {
             "type": "string"
           },
           "lastMessageAt": {
@@ -2278,7 +2278,7 @@
           }
         },
         "required": [
-          "key",
+          "id",
           "createdAt",
           "lastMessageAt",
           "subscriptions"
@@ -2360,7 +2360,7 @@
           "status": {
             "type": "string"
           },
-          "threadKey": {
+          "threadId": {
             "type": "string"
           },
           "topicGeneration": {
@@ -2534,7 +2534,7 @@
           "summary": {
             "type": "string"
           },
-          "threadKey": {
+          "threadId": {
             "type": "string"
           },
           "title": {
@@ -2845,13 +2845,13 @@
           "sourceMessageId": {
             "type": "string"
           },
-          "threadKey": {
+          "threadId": {
             "type": "string"
           }
         },
         "required": [
           "sourceMessageId",
-          "threadKey",
+          "threadId",
           "content"
         ],
         "type": "object"
@@ -3156,7 +3156,7 @@
           "text": {
             "type": "string"
           },
-          "threadKey": {
+          "threadId": {
             "type": "string"
           },
           "traceAssociations": {
@@ -3171,7 +3171,7 @@
         },
         "required": [
           "sourceMessageId",
-          "threadKey",
+          "threadId",
           "id",
           "source",
           "accountId",
@@ -4453,9 +4453,9 @@
             }
           },
           {
-            "description": "Exact Thread key in the history view",
+            "description": "Exact Thread ID in the history view",
             "in": "query",
-            "name": "threadKey",
+            "name": "threadId",
             "schema": {
               "type": "string"
             }
@@ -4625,9 +4625,9 @@
             }
           },
           {
-            "description": "Exact Thread key in the history view",
+            "description": "Exact Thread ID in the history view",
             "in": "query",
-            "name": "threadKey",
+            "name": "threadId",
             "schema": {
               "type": "string"
             }
@@ -6177,17 +6177,17 @@
         ]
       }
     },
-    "/v1/core/threads/{threadKey}": {
+    "/v1/core/threads/{threadId}": {
       "get": {
         "operationId": "getThread",
         "parameters": [
           {
-            "description": "Full Thread URL or key, encoded once as one path segment",
+            "description": "Full Thread ID, encoded once as one path segment",
             "in": "path",
-            "name": "threadKey",
+            "name": "threadId",
             "required": true,
             "schema": {
-              "description": "Full Thread URL or key, encoded once as one path segment",
+              "description": "Full Thread ID, encoded once as one path segment",
               "type": "string"
             }
           }
@@ -6253,12 +6253,12 @@
         "operationId": "getThreadHead",
         "parameters": [
           {
-            "description": "Full Thread URL or key, encoded once as one path segment",
+            "description": "Full Thread ID, encoded once as one path segment",
             "in": "path",
-            "name": "threadKey",
+            "name": "threadId",
             "required": true,
             "schema": {
-              "description": "Full Thread URL or key, encoded once as one path segment",
+              "description": "Full Thread ID, encoded once as one path segment",
               "type": "string"
             }
           }
@@ -7226,9 +7226,9 @@
             }
           },
           {
-            "description": "Exact Thread key in the default view",
+            "description": "Exact Thread ID in the default view",
             "in": "query",
-            "name": "threadKey",
+            "name": "threadId",
             "schema": {
               "type": "string"
             }
@@ -7401,9 +7401,9 @@
             }
           },
           {
-            "description": "Exact Thread key in the default view",
+            "description": "Exact Thread ID in the default view",
             "in": "query",
-            "name": "threadKey",
+            "name": "threadId",
             "schema": {
               "type": "string"
             }

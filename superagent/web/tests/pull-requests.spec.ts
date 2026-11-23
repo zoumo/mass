@@ -31,7 +31,7 @@ test('Topic and Issue preserve their external PR links and source messages', asy
  // The Thread URL includes nested escapes, slashes, query parameters and a fragment.
  const thread = await request.get('/v1/core/threads/' + encodeURIComponent(internal))
  expect(thread.status()).toBe(200)
- expect(await thread.json()).toMatchObject({ key: internal })
+ expect(await thread.json()).toMatchObject({ id: internal })
  await page.goto('/superagent/?view=threads&id=' + encodeURIComponent(internal))
  const detail = page.getByRole('dialog')
  await expect(detail.getByText('暂未收到来源消息', { exact: true })).toBeVisible()
@@ -39,7 +39,7 @@ test('Topic and Issue preserve their external PR links and source messages', asy
 
  await page.goto('/superagent/?view=threads&id=' + encodeURIComponent(github))
  await detail.getByRole('button', { name: '查看线程消息' }).click()
- await expect(page).toHaveURL(/view=messages&threadKey=/)
+ await expect(page).toHaveURL(/view=messages&threadId=/)
  await page.getByRole('button', { name: 'Synthetic PR review arrived.', exact: true }).click()
  await expect(detail.getByTestId('message-body')).toHaveText('Synthetic PR review arrived.')
  expect(new Set(methods)).toEqual(new Set(['GET']))
