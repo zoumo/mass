@@ -136,6 +136,20 @@ Codex home for the round. User Codex configuration stays in the source home.
 Each round discards any refreshed login state. Supply an API key for unattended
 periodic checks.
 
+To enable periodic checks, add a top-level `watchdog` section to the Compose
+file and put `codex` on Compose's `PATH`.
+
+```yaml
+watchdog:
+  interval: 10m
+```
+
+Compose starts Watchdog after Core is ready. Watchdog checks current state
+immediately and waits `interval` after each round, including failed rounds.
+Use a positive Go duration string, such as `10m` or `1h`. Find each JSON result
+under `component: watchdog` in the Compose logs. On shutdown, Compose cancels
+the running check and waits for the Watchdog process to exit.
+
 ## Run the stack with Compose
 
 1. Copy [the Compose example](compose.example.yaml) to a private run directory.

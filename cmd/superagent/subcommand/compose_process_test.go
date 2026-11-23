@@ -36,6 +36,9 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "watchdog" {
+		os.Exit(Execute())
+	}
 	if dir := os.Getenv(composeFixtureDir); dir != "" && len(os.Args) > 1 {
 		os.Exit(runComposeFixture(dir, os.Args[1:]))
 	}
@@ -176,7 +179,18 @@ func runComposeHTTPFixture(dir, name string) int {
 	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/readyz":
+			if name == "core" && os.Getenv("TEST_COMPOSE_CORE_FIXTURE") == "watchdog" {
+				recordComposeEvent(dir, "core:readiness-probe")
+				if _, err := os.Stat(filepath.Join(dir, "core-ready")); err != nil {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				recordComposeEvent(dir, "core:ready")
+			}
 			w.WriteHeader(http.StatusOK)
+		case "/v1/core/reports":
+			recordComposeEvent(dir, "core:reports")
+			fmt.Fprintln(w, `{"items":[]}`)
 		case "/status":
 			w.Header().Set("Content-Type", "application/json")
 			mode, _ := os.ReadFile(filepath.Join(dir, "github-status-mode"))
@@ -594,6 +608,7 @@ func TestComposeProcessCombinations(t *testing.T) {
 			}
 			require.NoError(t, p.cmd.Process.Signal(tc.signal))
 			require.NoError(t, p.wait(t), readComposeFile(t, p.logs))
+			require.NotContains(t, readComposeFile(t, p.logs), "Watchdog check")
 			require.NoError(t, unrelated.Process.Signal(syscall.Signal(0)))
 			assertComposeOrder(t, dir, "core:start", "core:stop")
 			if tc.github {
@@ -604,6 +619,28 @@ func TestComposeProcessCombinations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestComposeWatchdogWaitsForCore(t *testing.T) {
+	dir := t.TempDir()
+	config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + "watchdog: {interval: 1h}\n"
+	p := startComposeFixture(t, dir, config, "TEST_COMPOSE_CORE_FIXTURE=watchdog")
+	awaitComposeEvent(t, dir, "core:readiness-probe")
+	require.Never(t, func() bool {
+		return slices.ContainsFunc(composeEvents(dir), func(event composeFixtureEvent) bool { return event.Name == "core:reports" })
+	}, 250*time.Millisecond, 10*time.Millisecond)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "core-ready"), nil, 0o600))
+	startup := p.startup(t)
+	require.NotEmpty(t, startup.Endpoint)
+	awaitComposeEvent(t, dir, "core:reports")
+	assertComposeOrder(t, dir, "core:start", "core:ready", "core:reports")
+	require.Eventually(t, func() bool {
+		logs, _ := os.ReadFile(p.logs)
+		return strings.Contains(string(logs), `"reason":"no_candidate"`)
+	}, 10*time.Second, 20*time.Millisecond)
+	require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
+	require.NoError(t, p.wait(t), readComposeFile(t, p.logs))
 }
 
 func TestComposeProcessPreflight(t *testing.T) {
