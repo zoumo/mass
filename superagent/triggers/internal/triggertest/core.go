@@ -30,7 +30,7 @@ type CoreFixture struct {
 	Core              *Process
 }
 
-func NewCoreFixture(t *testing.T, clock bool, source string) *CoreFixture {
+func NewCoreFixture(t *testing.T, clock bool, source string, threadKeyPrefixes ...string) *CoreFixture {
 	t.Helper()
 	f := &CoreFixture{t: t, Dir: t.TempDir(), Binary: CorePath(t), started: time.Now().UTC()}
 	if clock {
@@ -52,6 +52,10 @@ func NewCoreFixture(t *testing.T, clock bool, source string) *CoreFixture {
 	Write(t, massdTokenFile, []byte("test-only-massd-token"))
 	f.config = filepath.Join(f.Dir, "core.yaml")
 	f.mcpFiles = filepath.Join(f.Dir, "data", "mcp-files")
+	prefixes, err := json.Marshal(append([]string{}, threadKeyPrefixes...))
+	if err != nil {
+		t.Fatal(err)
+	}
 	Write(t, f.config, fmt.Appendf(nil, `dataDir: %q
 listen: %q
 sources:
@@ -59,6 +63,7 @@ sources:
     accountId: account
     instanceId: fixture-instance
     tokenFile: %q
+    threadKeyPrefixes: %s
 massd:
   endpoint: %q
   tokenFile: %q
@@ -77,7 +82,7 @@ sessions:
     - runtimeRef: test-runtime
       model: test-model
       description: Fixture Issue template
-`, filepath.Join(f.Dir, "data"), FreeAddress(t), source, sourceTokenFile,
+`, filepath.Join(f.Dir, "data"), FreeAddress(t), source, sourceTokenFile, prefixes,
 		"ws"+strings.TrimPrefix(unavailable.URL, "http")+"/jsonrpc", massdTokenFile, f.OperatorTokenFile, f.Dir))
 	f.StartCore(clock)
 	f.RoleToken = f.WaitRoleToken("router", "")

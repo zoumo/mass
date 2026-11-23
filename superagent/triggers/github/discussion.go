@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/shurcooL/githubv4"
-
-	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
 
 type githubAuthor struct {
@@ -181,7 +179,7 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 		if known && comment.UpdatedAt.Before(previous.UpdatedAt) {
 			continue
 		}
-		number, thread, err := githubDiscussionThread(comment.URL, repo, objectType, id)
+		number, threadKey, err := githubDiscussionThreadKey(comment.URL, repo, objectType, id)
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +201,7 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 		meta := map[string]any{"objectType": objectType, "objectId": nativeID, "number": number}
 		if comment.ReplyTo > 0 {
 			meta["inReplyToId"] = strconv.FormatInt(comment.ReplyTo, 10)
-			meta["inReplyToURL"] = thread.ID + "#discussion_r" + strconv.FormatInt(comment.ReplyTo, 10)
+			meta["inReplyToURL"] = threadKey + "#discussion_r" + strconv.FormatInt(comment.ReplyTo, 10)
 		}
 		if comment.ReviewID > 0 {
 			meta["reviewId"] = strconv.FormatInt(comment.ReviewID, 10)
@@ -218,7 +216,7 @@ func githubCommentObservations(repo string, expectedNumber int, scope *githubStr
 		actor, human := githubDiscussionAuthor(comment.User, meta)
 		observations = append(observations, githubObservation{
 			Key: key, Data: data, Kind: kind, UpdatedAt: comment.UpdatedAt, At: comment.UpdatedAt, Actor: actor, Human: human,
-			URL: comment.URL, Thread: thread, Title: fmt.Sprintf("GitHub %s %s#%d %s\n%s", objectType, repo, number, kind, comment.URL),
+			URL: comment.URL, ThreadKey: threadKey, Title: fmt.Sprintf("GitHub %s %s#%d %s", objectType, repo, number, kind),
 			Body: comment.Body, Meta: meta,
 		})
 	}
@@ -230,27 +228,27 @@ func githubBodyDigest(body string) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`"%x"`, sha256.Sum256([]byte(body))))
 }
 
-func githubDiscussionThread(raw, repo, kind string, nativeID int64) (int, coreclient.ThreadRef, error) {
+func githubDiscussionThreadKey(raw, repo, kind string, nativeID int64) (int, string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil {
-		return 0, coreclient.ThreadRef{}, errors.New("github_invalid_discussion_url")
+		return 0, "", errors.New("github_invalid_discussion_url")
 	}
 	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 	if len(parts) != 4 || !strings.EqualFold(parts[0]+"/"+parts[1], repo) {
-		return 0, coreclient.ThreadRef{}, errors.New("github_invalid_discussion_repository")
+		return 0, "", errors.New("github_invalid_discussion_repository")
 	}
 	number, err := strconv.Atoi(parts[3])
 	if err != nil || number <= 0 {
-		return 0, coreclient.ThreadRef{}, errors.New("github_invalid_discussion_number")
+		return 0, "", errors.New("github_invalid_discussion_number")
 	}
 	suffix := strconv.FormatInt(nativeID, 10)
 	if parts[2] == "pull" && (kind == "issue_comment" && u.Fragment == "issuecomment-"+suffix || kind == "review_comment" && u.Fragment == "discussion_r"+suffix || kind == "review" && u.Fragment == "pullrequestreview-"+suffix) {
-		return number, coreclient.ThreadRef{Source: githubPRThreadSource, ID: githubObjectURL(repo, "pull", number)}, nil
+		return number, githubObjectURL(repo, "pull", number), nil
 	}
 	if parts[2] == "issues" && kind == "issue_comment" && u.Fragment == "issuecomment-"+suffix {
-		return number, coreclient.ThreadRef{Source: githubSource, ID: githubObjectURL(repo, "issues", number)}, nil
+		return number, githubIssueThreadKey(githubObjectURL(repo, "issues", number)), nil
 	}
-	return 0, coreclient.ThreadRef{}, errors.New("github_invalid_discussion_thread")
+	return 0, "", errors.New("github_invalid_discussion_thread")
 }
 
 func githubDiscussionAuthor(author *githubAuthor, meta map[string]any) (string, bool) {

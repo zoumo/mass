@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
+	"github.com/zoumo/mass/superagent/internal/triggercontent"
 	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
 
@@ -44,7 +46,7 @@ type githubObservation struct {
 	UpdatedAt              time.Time
 	Data                   json.RawMessage
 	Kind, Title, Body, URL string
-	Thread                 coreclient.ThreadRef
+	ThreadKey              string
 	Actor                  string
 	Human                  bool
 	SourceEventID          string
@@ -52,24 +54,45 @@ type githubObservation struct {
 	Meta                   map[string]any
 }
 
-func (o githubObservation) submission(c githubConfig, repo githubRepository, stream string, version uint64) coreclient.Submission {
+func (o githubObservation) submission(c githubConfig, repo githubRepository, stream string, version uint64) (coreclient.TriggerSubmission, error) {
 	key := fmt.Sprintf("%s\n%s\n%s\n%s\n%d", repo.Repository, stream, o.Key, o.Kind, version)
 	id := fmt.Sprintf("github:%x", sha256.Sum256([]byte(key)))
 	if o.Actor == "" {
 		o.Actor = "github-trigger"
 	}
-	if o.Meta == nil {
-		o.Meta = make(map[string]any)
+	meta := make(map[string]any, len(o.Meta)+6)
+	maps.Copy(meta, o.Meta)
+	meta["repository"] = repo.Repository
+	meta["observation"] = o.Kind
+	meta["observationVersion"] = version
+	title := o.Title
+	if strings.HasPrefix(o.ThreadKey, "https://") && o.ThreadKey != o.URL {
+		title += "\nPR: " + o.ThreadKey
 	}
-	o.Meta["repository"] = repo.Repository
-	o.Meta["observation"] = o.Kind
-	o.Meta["observationVersion"] = version
-	return coreclient.Submission{OperationID: id, Message: coreclient.Message{
-		Source: githubSource, AccountID: c.AccountID, CollectorInstance: c.InstanceID,
-		ThreadRef: o.Thread, SourceMessageID: id, Actor: o.Actor, Human: &o.Human,
-		Text: githubMessageText(o.Title, o.Body, repo.Prompt), At: o.At.UTC().Format(time.RFC3339Nano), URL: o.URL,
-		Meta: o.Meta, SourceEventID: o.SourceEventID,
-	}}
+	content := triggercontent.SourceText(githubMessageText(title, o.Body, repo.Prompt), o.Actor, o.URL, o.At)
+	diagnostics, err := githubDiagnostics(meta, &o.Human, o.SourceEventID, c.InstanceID)
+	if err != nil {
+		return coreclient.TriggerSubmission{}, err
+	}
+	return coreclient.TriggerSubmission{OperationID: id, Message: coreclient.TriggerMessage{
+		SourceMessageID: id, ThreadKey: o.ThreadKey, Content: content, Meta: diagnostics,
+	}}, nil
+}
+
+func githubDiagnostics(meta map[string]any, human *bool, sourceEventID, collectorInstance string) (json.RawMessage, error) {
+	if meta == nil {
+		meta = make(map[string]any)
+	}
+	if human != nil {
+		meta["human"] = *human
+	}
+	if sourceEventID != "" {
+		meta["sourceEventId"] = sourceEventID
+	}
+	if collectorInstance != "" {
+		meta["collectorInstance"] = collectorInstance
+	}
+	return json.Marshal(meta)
 }
 
 var githubTextEscaper = strings.NewReplacer(

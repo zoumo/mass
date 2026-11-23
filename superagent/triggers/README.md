@@ -112,7 +112,15 @@ One notification can yield several changes after the Trigger reads the object
 and discussion. It can recover only the history GitHub exposes. It leaves read
 status and the inbox unchanged.
 
-PR Messages share a canonical `pr:url` Thread. A qualifying notification for
+The GitHub Trigger uses `https://github.com/{owner}/{repo}/pull/{number}` as
+its PR Thread key. It lowercases the owner and repository. In `pullRequests.add`,
+submit that same URL without a query, fragment, or trailing slash. A PR message
+includes the PR URL and any comment permalink in its text block. GitHub Issue
+messages retain their existing `github:` keys. Configure the Core source's
+`threadKeys` or `threadKeyPrefixes` to grant only the GitHub resources it should
+write.
+
+A qualifying notification for
 an open PR starts Actions tracking. The first Actions read establishes a
 baseline without a Message. Completion or a changed conclusion can yield a
 Message. Tracking stops on merge or close. A reopened PR needs a qualifying

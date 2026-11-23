@@ -203,10 +203,34 @@ func readGitHubStatus(t *testing.T, endpoint string) githubStatus {
 	return status
 }
 
+func newGitHubCoreFixture(t *testing.T) *triggertest.CoreFixture {
+	t.Helper()
+	return triggertest.NewCoreFixture(t, false, githubSource, "https://github.com/demo/", "github:https%3A%2F%2Fgithub.com%2Fdemo%2F",
+		"github:https%3A%2F%2Fgithub.com%2Felsewhere%2Fmass%2Fissues%2F")
+}
+
+func githubMessageMeta(msg map[string]any) map[string]any {
+	meta, _ := msg["_meta"].(map[string]any)
+	return meta
+}
+
+func githubFixtureMessageText(t *testing.T, msg map[string]any) string {
+	t.Helper()
+	blocks, ok := msg["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, blocks, 1)
+	block, ok := blocks[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "text", block["type"])
+	text, ok := block["text"].(string)
+	require.True(t, ok)
+	return text
+}
+
 func githubMessage(t *testing.T, f *triggertest.CoreFixture, repo, observation, objectID string) map[string]any {
 	t.Helper()
 	for _, msg := range triggertest.ReadMessages(t, f.Endpoint) {
-		meta, _ := msg["meta"].(map[string]any)
+		meta := githubMessageMeta(msg)
 		if meta["repository"] == repo && meta["observation"] == observation && meta["objectId"] == objectID {
 			return msg
 		}

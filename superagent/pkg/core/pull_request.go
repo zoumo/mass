@@ -17,14 +17,23 @@ var (
 	githubComment  = regexp.MustCompile(`^(issuecomment-|discussion_r|pullrequestreview-)\d+$`)
 )
 
-func canonicalPullRequestURL(raw string) (string, error) {
+func parsePullRequestURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Opaque != "" || u.Hostname() == "" || u.User != nil ||
 		(u.Scheme != "https" && u.Scheme != "http") || strings.ContainsAny(raw, " \t\r\n\\") {
-		return "", problem("invalid_argument", "PR URL must be an absolute HTTP(S) resource URL without credentials")
+		return nil, problem("invalid_argument", "PR URL must be an absolute HTTP(S) resource URL without credentials")
 	}
 	if _, err := url.QueryUnescape(u.RawQuery); err != nil {
-		return "", problem("invalid_argument", "PR URL has invalid query escaping")
+		return nil, problem("invalid_argument", "PR URL has invalid query escaping")
+	}
+	return u, nil
+}
+
+// canonicalPullRequestURL is used only by the legacy ThreadRef contract.
+func canonicalPullRequestURL(raw string) (string, error) {
+	u, err := parsePullRequestURL(raw)
+	if err != nil {
+		return "", err
 	}
 	// Keep unknown platforms' explicitly supplied identity byte for byte.
 	if !strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), "github.com") {
@@ -69,8 +78,8 @@ type pullRequestLink struct {
 	Sequence int64 `json:"sequence"`
 }
 
-func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, canonical, sessionBindingID string) error {
-	matches := func(link pullRequestLink) bool { return link.CanonicalURL == canonical }
+func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue Issue, key, sessionBindingID string) error {
+	matches := func(link pullRequestLink) bool { return link.CanonicalURL == key }
 	topicIndex := slices.IndexFunc(topic.PullRequests, matches)
 	if issue.ID == "" && topicIndex >= 0 {
 		return nil
@@ -79,11 +88,10 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 		return nil
 	}
 
-	ref := ThreadRef{Source: pullRequestSource, ID: canonical}
 	link := pullRequestLink{PullRequest: PullRequest{
-		CanonicalURL: canonical, TopicID: topic.ID, ThreadKey: ThreadKey(ref), CreatedAt: now(),
+		CanonicalURL: key, TopicID: topic.ID, ThreadKey: key, CreatedAt: now(),
 	}}
-	if err := upsertThread(ctx, tx, link.ThreadKey, ref, link.CreatedAt, ""); err != nil {
+	if err := upsertThread(ctx, tx, link.ThreadKey, ThreadRef{}, link.CreatedAt, ""); err != nil {
 		return err
 	}
 	subID, err := ensureSubscription(ctx, tx, Subscription{

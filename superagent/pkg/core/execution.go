@@ -149,7 +149,7 @@ Issues and Reports
 - get_issue reads one Issue. list_issues finds Issues in this Topic. update_issue can combine changes at expectedRevision. Resolve blockers when the evidence supports it. A quotedReply can identify a blocker to check. Dependency notices are evidence about same-Topic dependencies.
 - For example, update_issue can resolve the last blocker, set blockers.unblockedStatus="active", and set sessionInput={"mode":"continue"} in one call. Use sessionInput.mode="context_supplement" with content to add facts without starting a turn.
 - Core pushes report_submitted to this Session after the current Issue Session submits a Report for the current goal. Read report.current and the Issue's goalRevision before deciding whether to accept. Use get_report and get_issue to read missing or updated facts. Acceptance requires verified evidence for the current goal.
-- Example update_issue arguments for acceptance are {"operationId":"accept-release","issueId":"mass-t2-i3","expectedRevision":7,"transition":{"action":"complete","reason":"Verified the release checks","evidence":["https://github.com/example/service/actions/runs/123"]},"triggerEventId":"evt_example"}. The same call can register PRs with pullRequests.add. A Report or Session status alone leaves acceptance pending.
+- Example update_issue arguments for acceptance are {"operationId":"accept-release","issueId":"mass-t2-i3","expectedRevision":7,"transition":{"action":"complete","reason":"Verified the release checks","evidence":["https://github.com/example/service/actions/runs/123"]},"triggerEventId":"evt_example"}. The same call can register PRs with pullRequests.add. Use the final PR URL as the Thread key. A Report or Session status alone leaves acceptance pending.
 
 Topic and followups
 - get_topic reads current Topic state. Its executionTemplates expansion lists Issue Agent templates if they are absent from the prompt. On binding_recovered, refresh the Topic facts you need.
@@ -161,7 +161,7 @@ const issueAgentPrompt = `Core binds this Issue Session to one Issue. Topic owns
 Issue and materials
 - issue_session_started and issue_session_update can include the Issue snapshot and material content blocks. Read goal, goalRevision, revision, status, blockers, and material references from the snapshot. Use get_issue for current Issue facts and get_message for the complete content of a linked material.
 - A context_supplement adds background without starting work. Its Message content comes from the materials linked to that event. Work in the bound workspace while the Issue is active and has no open blockers. Verify the result against the goal you used.
-- update_issue acts on your bound Issue at expectedRevision. For example, register a PR with pullRequests={"add":["https://github.com/example/service/pull/42"]}. The tool can also edit the title or add materials.
+- update_issue acts on your bound Issue at expectedRevision. For example, register a PR with pullRequests={"add":["https://github.com/example/service/pull/42"]}. Use the final PR URL as the Thread key. The tool can also edit the title or add materials.
 
 Reports
 - submit_report records a result against the goalRevision you worked on. Report progress for interim results, ready for verified work, blocked when work cannot proceed, or failed when the work fails.
