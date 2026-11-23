@@ -97,6 +97,8 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 github.com/zoumo/agent-sdk-go v0.1.1-0.20261123092114-f2be5368ff4d h1:3llFmiz59OcmbDmYaMDKVlRG/1s4y4bpJDMiLoPzsmQ=
 github.com/zoumo/agent-sdk-go v0.1.1-0.20261123092114-f2be5368ff4d/go.mod h1:JUvWfbXJQGQ8afjWPY0ecyX9AH67WQtQFw0dpenvyT4=
+github.com/zoumo/agent-sdk-go v0.1.1-0.20261123094149-65ea0a1f62bb h1:aY8pJbaRDG7KR3UoqgwyIypx7pD14eG8KW+X0f8qJII=
+github.com/zoumo/agent-sdk-go v0.1.1-0.20261123094149-65ea0a1f62bb/go.mod h1:JUvWfbXJQGQ8afjWPY0ecyX9AH67WQtQFw0dpenvyT4=
 github.com/zoumo/agent-sdk-testify v0.2.2 h1:1IUptuMzO5Yvs243Aj13A6PwlaXonz0GBlhtYTGmE8o=
 github.com/zoumo/agent-sdk-testify v0.2.2/go.mod h1:XqC5i1y/g7tl3V0iA21J/8IUN8e7eXMYw0dykwkG/tY=
 github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a h1:Hyb0V2EaZhrmAh/kEl4Cxi1p3uAmSXAI2ZCL9xLbUWY=

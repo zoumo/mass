@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
@@ -161,6 +162,78 @@ func TestInjectNativeDaemonSuccess(t *testing.T) {
 			require.NotContains(t, trace, `"method":"turn/start"`)
 			require.NotContains(t, trace, `"method":"turn/steer"`)
 			t.Logf("synthetic %s native trace: %s", kind, trace)
+		})
+	}
+}
+
+func TestStructuredInputThroughNativeDaemon(t *testing.T) {
+	const image = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg=="
+	input := runtime.Input{Content: []events.ContentBlock{
+		events.Text("before"),
+		{Image: &agent.ContentBlockImage{MIMEType: "image/png", Data: image}},
+		events.Text("after"),
+	}}
+	for _, kind := range []string{"codex", "claude"} {
+		t.Run(kind, func(t *testing.T) {
+			c, _, peer, ref := injectDaemon(t, kind)
+			injected := make(chan injectResult, 1)
+			go func() {
+				var receipt runtime.InjectReceipt
+				err := c.Inject(ctx(t), ref, input, &receipt)
+				injected <- injectResult{receipt, err}
+			}()
+			call := peer.next(t)
+			expected := runtime.Acceptance{Sent: runtime.Yes()}
+			claudeContent := []any{
+				map[string]any{"type": "text", "text": "before"},
+				map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": image}},
+				map[string]any{"type": "text", "text": "after"},
+			}
+			if kind == "codex" {
+				require.Equal(t, "thread/inject_items", call.method)
+				require.Equal(t, []any{map[string]any{
+					"type": "message", "role": "user", "content": []any{
+						map[string]any{"type": "input_text", "text": "before"},
+						map[string]any{"type": "input_image", "image_url": "data:image/png;base64," + image, "detail": "high"},
+						map[string]any{"type": "input_text", "text": "after"},
+					},
+				}}, call.params["items"])
+				call.respond(map[string]any{})
+				expected.NativeAccepted = runtime.Yes()
+			} else {
+				require.Equal(t, "user", call.method)
+				require.Equal(t, false, call.params["shouldQuery"])
+				require.Equal(t, claudeContent, call.params["message"].(map[string]any)["content"])
+			}
+			result := injectResultOf(t, injected)
+			require.NoError(t, result.err)
+			require.Equal(t, expected, result.receipt.Acceptance)
+			var canceled runtime.CancelReceipt
+			require.NoError(t, c.Cancel(ctx(t), ref, &canceled))
+			require.Equal(t, "noActiveWork", canceled.Result)
+
+			prompted := make(chan error, 1)
+			go func() {
+				var receipt runtime.InputReceipt
+				prompted <- c.SendPrompt(ctx(t), ref, input, &receipt)
+			}()
+			call = peer.next(t)
+			if kind == "codex" {
+				require.Equal(t, "turn/start", call.method)
+				require.Equal(t, []any{
+					map[string]any{"type": "text", "text": "before"},
+					map[string]any{"type": "image", "url": "data:image/png;base64," + image},
+					map[string]any{"type": "text", "text": "after"},
+				}, call.params["input"])
+				call.respond(map[string]any{"turn": map[string]any{"id": "structured-turn", "status": "inProgress", "items": []any{}}})
+			} else {
+				require.Equal(t, "user", call.method)
+				require.Equal(t, true, call.params["shouldQuery"])
+				require.Equal(t, claudeContent, call.params["message"].(map[string]any)["content"])
+			}
+			require.NoError(t, <-prompted)
+			require.NoError(t, c.CloseSession(ctx(t), ref, nil))
+			require.Empty(t, peer.calls)
 		})
 	}
 }
