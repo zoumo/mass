@@ -168,9 +168,21 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 		return item, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := readJSON(ctx, tx, "SELECT "+outboxProjection+" FROM outbox WHERE id=?"+channelOutboxScope,
-		&item, req.OutboxID, source.Source, source.AccountID); err != nil {
+	var scoped struct {
+		OutboxItem
+		LegacyChannel bool
+	}
+	// The native result fields belong only to replies enqueued from old intake.
+	const settlementProjection = `json_set(` + outboxProjection + `,'$.legacyChannel',json(CASE WHEN EXISTS(
+ SELECT 1 FROM trigger_messages WHERE id=outbox.message_id AND body->'$.channel' IS NOT NULL
+ ) THEN 'true' ELSE 'false' END))`
+	if err := readJSON(ctx, tx, "SELECT "+settlementProjection+" FROM outbox WHERE id=?"+channelOutboxScope,
+		&scoped, req.OutboxID, source.Source, source.AccountID); err != nil {
 		return item, err
+	}
+	item = scoped.OutboxItem
+	if !scoped.LegacyChannel && (req.ConversationID != "" || req.MessageID != "") {
+		return item, problem("invalid_argument", "native references belong in adapter state")
 	}
 	if s.telemetry.tracesEnabled {
 		addTraceLinks(ctx, outboxEnqueue.links(ctx, tx, nil, item.ID, 0))
@@ -214,8 +226,10 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 	if _, err := tx.ExecContext(ctx, "UPDATE outbox SET status=?,receipt=? WHERE id=?", item.Status, rawReceipt, item.ID); err != nil {
 		return item, storageError()
 	}
-	if err := reconcileEchoResult(ctx, tx, item, source, at); err != nil {
-		return item, err
+	if scoped.LegacyChannel {
+		if err := reconcileEchoResult(ctx, tx, item, source, at); err != nil {
+			return item, err
+		}
 	}
 	if req.Outcome == "permanent_failure" {
 		if err := enqueueOutboxFailure(ctx, tx, item); err != nil {

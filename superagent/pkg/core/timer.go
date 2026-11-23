@@ -274,10 +274,10 @@ const messageFollowupProjection = `(SELECT json_patch(json_object(
 
 func admitTimerMessage(ctx context.Context, tx *sql.Tx, t Timer) (Receipt, error) {
 	source := Source{Source: timerSource}
-	request := TriggerMessage{
+	request := SubmitTriggerMessageRequest{Message: TriggerMessage{
 		SourceMessageID: t.ID, ThreadKey: t.ThreadKey,
 		Content: []events.ContentBlock{events.Text(t.Content)},
-	}
+	}}
 	message, canonical, err := request.prepare(source)
 	if err != nil {
 		return Receipt{}, err

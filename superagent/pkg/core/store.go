@@ -352,6 +352,11 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Messa
 	if !errors.Is(err, sql.ErrNoRows) {
 		return result, storageError()
 	}
+	if m.InReplyToOutboxID != "" {
+		if err := validateReplyReference(ctx, tx, m); err != nil {
+			return result, err
+		}
+	}
 
 	at := now()
 	m.ReceivedAt, m.Acceptance = at, "accepted"
