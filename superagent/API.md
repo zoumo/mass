@@ -25,7 +25,9 @@ source/account; body fields cannot select another identity.
     "sourceMessageId": "native-message-id",
     "threadKey": "https://github.example/org/repo/pull/42",
     "content": [
-      {"type": "text", "text": "Review requested. https://github.example/org/repo/pull/42#comment"},
+      {"type": "text", "text": "Review requested."},
+      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42", "name": "Pull request"},
+      {"type": "resource_link", "uri": "https://github.example/org/repo/pull/42#comment", "name": "Review comment"},
       {"type": "resource_link", "uri": "file:///logs/checks.log", "name": "checks.log"}
     ],
     "_meta": {"observationId": "obs-17"}
@@ -43,9 +45,11 @@ A structured request needs a match in at least one of the configured lists.
 
 `content` is a nonempty ordered array using the same content union as Prompt.
 The supported types are `text`, `image`, `audio`, `resource`, and `resource_link`.
-Use text for source facts and webpage links. Use `resource_link` for attachment
-references. Optional `_meta` is an opaque JSON object. Core saves it for
-Observer diagnostics and omits it from Agent tools and Session input.
+Use text for source facts. For a webpage URL, use a `resource_link` with
+`mimeType` omitted. The SDK passes the original URI to the Agent as text.
+`resource_link` can also reference attachments. Optional `_meta` is an opaque
+JSON object. Core saves it for Observer diagnostics and omits it from Agent
+tools and Session input.
 Core generates `receivedAt`. Unknown fields and trailing JSON values fail.
 
 The request can include `replyTarget` and `inReplyToOutboxId` beside `message`.

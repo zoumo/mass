@@ -115,8 +115,10 @@ status and the inbox unchanged.
 The GitHub Trigger uses `https://github.com/{owner}/{repo}/pull/{number}` as
 its PR Thread key. It lowercases the owner and repository. In `pullRequests.add`,
 submit that same URL without a query, fragment, or trailing slash. A PR message
-includes the PR URL and any comment permalink in its text block. GitHub Issue
-messages retain their existing `github:` keys. Configure the Core source's
+starts with a text block for the body and source facts. It then includes the PR
+URL and any distinct observation URL, such as a comment permalink or Actions
+run page, in that order as `resource_link` blocks with no `mimeType`. GitHub
+Issue messages retain their existing `github:` keys. Configure the Core source's
 `threadKeys` or `threadKeyPrefixes` to grant only the GitHub resources it should
 write.
 

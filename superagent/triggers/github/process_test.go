@@ -172,7 +172,7 @@ func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 	require.Equal(t, bot["id"], delivery.Repositories[sdk].LastReceipt.MessageID)
 	require.Contains(t, githubFixtureMessageText(t, first), "historical discussion")
 	require.Contains(t, githubFixtureMessageText(t, second), "subscribed")
-	require.Contains(t, githubFixtureMessageText(t, second), githubObjectURL(mass, "issues", 42))
+	githubAssertMessageLinks(t, second, githubObjectURL(mass, "issues", 42))
 	require.Nil(t, githubMessage(t, f, sdk, "comment_created", "501"))
 	captureMu.Lock()
 	captured := append([][]byte(nil), captures...)
@@ -260,7 +260,7 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 	require.Contains(t, githubFixtureMessageText(t, fallback), "review_requested")
 	require.Contains(t, githubFixtureMessageText(t, fallback), "old PR discussion")
 	require.Contains(t, githubFixtureMessageText(t, fallback), "Review SDK compatibility")
-	require.Contains(t, githubFixtureMessageText(t, fallback), prURL)
+	githubAssertMessageLinks(t, fallback, prURL)
 	f.AssertRouted(fallback, 1)
 	topic := githubCreateTopic(t, f, fallback)
 	githubRegisterFixturePR(t, f, topic, prURL)
@@ -268,15 +268,19 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 	triggertest.Wait(t, "all discussion changes in the next Notifications version reach Core", func() bool {
 		return len(triggertest.ReadMessages(t, f.Endpoint)) == 4
 	})
-	for id, kind := range map[string]string{"602": "comment_created", "603": "comment_created", "604": "review_submitted"} {
-		msg := githubMessage(t, f, repo, kind, id)
-		require.NotNil(t, msg, "missing %s %s", kind, id)
+	for _, comment := range []struct{ id, kind, fragment, text string }{
+		{"602", "comment_created", "#issuecomment-602", "new comment"},
+		{"603", "comment_created", "#discussion_r603", "inline review comment"},
+		{"604", "review_submitted", "#pullrequestreview-604", "review from native ID"},
+	} {
+		msg := githubMessage(t, f, repo, comment.kind, comment.id)
+		require.NotNil(t, msg, "missing %s %s", comment.kind, comment.id)
 		require.Equal(t, prURL, msg["threadKey"])
 		require.Equal(t, true, githubMessageMeta(msg)["human"])
-		require.Contains(t, githubFixtureMessageText(t, msg), prURL)
-		if id == "603" {
-			require.Contains(t, githubFixtureMessageText(t, msg), prURL+"#discussion_r603")
-		}
+		text := githubFixtureMessageText(t, msg)
+		require.Contains(t, text, comment.text)
+		require.NotContains(t, text, prURL)
+		githubAssertMessageLinks(t, msg, prURL, prURL+comment.fragment)
 		githubAssertTopicDelivery(t, f, msg, topic)
 	}
 	require.Zero(t, outsideReads.Load())
@@ -322,7 +326,10 @@ func TestGitHubLegacyQueueRecoversOriginalReceipt(t *testing.T) {
 	// here to verify that the upgraded adapter recovers its original receipt.
 	projected := coreclient.TriggerSubmission{OperationID: legacy.OperationID, Message: coreclient.TriggerMessage{
 		SourceMessageID: legacy.Message.SourceMessageID, ThreadKey: prURL,
-		Content: []events.ContentBlock{events.Text("Original comment body\n\nAuthor: reviewer\n\nSource time: 2026-11-23T00:03:04.123456789Z\n\nURL: " + commentURL)},
+		Content: []events.ContentBlock{
+			events.Text("Original comment body\n\nAuthor: reviewer\n\nSource time: 2026-11-23T00:03:04.123456789Z"),
+			{ResourceLink: &events.ContentBlockResourceLink{URI: commentURL, Name: commentURL}},
+		},
 	}}
 	var original coreclient.Receipt
 	require.Equal(t, http.StatusOK, triggertest.Request(t, http.MethodPost, f.Endpoint, "/v1/channel/messages", triggertest.Token, projected, &original))
@@ -362,6 +369,8 @@ func TestGitHubLegacyQueueRecoversOriginalReceipt(t *testing.T) {
 	require.Equal(t, original.AcceptedAt, got.AcceptedAt)
 	require.Equal(t, prURL, got.ThreadKey)
 	require.EqualValues(t, 1, retries.Load())
-	require.Len(t, triggertest.ReadMessages(t, f.Endpoint), 1)
+	messages := triggertest.ReadMessages(t, f.Endpoint)
+	require.Len(t, messages, 1)
+	githubAssertMessageLinks(t, messages[0], commentURL)
 	triggertest.Terminate(t, proc)
 }

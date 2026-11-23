@@ -146,8 +146,8 @@ func TestGitHubDiscoveredPullTracksActionsAndStopsOnClosure(t *testing.T) {
 	triggertest.Wait(t, "first attempt completion", func() bool { return status().Accepted == 3 })
 	failure := githubActionMessage(t, f, "failure")
 	require.Equal(t, prURL, failure["threadKey"])
-	require.Contains(t, githubFixtureMessageText(t, failure), prURL)
-	require.Contains(t, githubFixtureMessageText(t, failure), "https://github.com/demo/sdk/actions/runs/90")
+	require.Contains(t, githubFixtureMessageText(t, failure), "Commit "+head)
+	githubAssertMessageLinks(t, failure, prURL, "https://github.com/demo/sdk/actions/runs/90")
 	githubAssertTopicDelivery(t, f, failure, topic)
 	triggertest.Terminate(t, proc)
 
