@@ -137,7 +137,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	addressed := input("verified-instance")
 	addressed.Message.Meta = json.RawMessage(`{"sourceTime":"2000-01-01T12:00:00Z","collectorInstance":"collector-2"}`)
 	second := submit(t, p, f, addressed)
-	code, raw := request(t, "POST", p.endpoint, "/v1/channel/messages", peer, addressed)
+	code, raw := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", peer, addressed)
 	require.Equal(t, 200, code, "%s", raw)
 	route := decide(t, p, routerToken, newRoute("outbox-scope", []string{second.MessageID, first.MessageID}, f.dir))
 	topic := waitBinding(t, p, "topic", route.Targets[0].TopicID, "ready")
@@ -199,8 +199,8 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	})
 	require.Len(t, own.Replies, 1)
 	require.Equal(t, reply.ID, own.Replies[0].ID)
-	require.Len(t, page(t, p, "outbox?messageId="+second.MessageID).Items, 2)
-	require.Len(t, page(t, p, "outbox?threadKey="+url.QueryEscape(second.ThreadKey)).Items, 2)
+	require.Len(t, page(t, p, "outbox-messages?messageId="+second.MessageID).Items, 2)
+	require.Len(t, page(t, p, "outbox-messages?threadKey="+url.QueryEscape(second.ThreadKey)).Items, 2)
 
 	firstPage := listOutbox(t, p.endpoint, f.token, "?limit=1")
 	require.Len(t, firstPage.Items, 1)
@@ -231,7 +231,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	}
 	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", peer, nil)
 	errorCode(t, code, raw, 403, "forbidden")
-	code, raw = request(t, "POST", p.endpoint, "/v1/channel/messages", peer, input("passive-collector"))
+	code, raw = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", peer, input("passive-collector"))
 	require.Equal(t, 200, code, "%s", raw)
 	var passive core.Receipt
 	require.NoError(t, json.Unmarshal(raw, &passive))
@@ -240,7 +240,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 4)
 	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", "", nil)
 	errorCode(t, code, raw, 401, "unauthorized")
-	code, _ = request(t, "POST", p.endpoint, "/v1/observer/outbox/"+reply.ID, "", struct{}{})
+	code, _ = request(t, "POST", p.endpoint, "/v1/core/outbox-messages/"+reply.ID, "", struct{}{})
 	require.Equal(t, 405, code)
 	require.Equal(t, "pending", readOutbox(t, p, reply.ID).Status)
 	require.Nil(t, readOutbox(t, p, reply.ID).Receipt)
@@ -262,7 +262,7 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	item := roleWork[core.OutboxItem](t, p, token, "send_reply", core.ReplyRequest{
 		OperationID: "reply", MessageID: message.MessageID, Content: markdownReply("Reply in progress"),
 	})
-	enqueued := observedTraces(t, p, "outbox", item.ID)
+	enqueued := observedTraces(t, p, "outbox-messages", item.ID)
 	require.Len(t, enqueued, 1)
 	require.Equal(t, "enqueue", enqueued[0].Phase)
 	record := outboxResult(item, "pending", "")
@@ -272,7 +272,7 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	require.Equal(t, record.TaskID, saved.Receipt.TaskID)
 	p.stop(t, true)
 	p = f.start(telemetryEnv...)
-	require.Equal(t, enqueued, observedTraces(t, p, "outbox", item.ID))
+	require.Equal(t, enqueued, observedTraces(t, p, "outbox-messages", item.ID))
 	require.Equal(t, saved, readOutbox(t, p, item.ID))
 	require.Equal(t, saved, resultOutbox(t, p, f.token, record))
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 1)

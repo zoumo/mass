@@ -175,7 +175,7 @@ func runComposeHTTPFixture(dir, name string) int {
 	}
 	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/readyz", "/v1/observer/health":
+		case "/readyz":
 			w.WriteHeader(http.StatusOK)
 		case "/status":
 			w.Header().Set("Content-Type", "application/json")
@@ -449,7 +449,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		require.Error(t, second.wait(t))
 		require.Contains(t, readComposeFile(t, second.logs), "data_directory_in_use")
 		require.Empty(t, readComposeFile(t, second.stdout))
-		composeHTTPBody(t, startup.Endpoint+"/v1/observer/health")
+		composeHTTPBody(t, startup.Endpoint+"/status")
 		require.NoError(t, first.cmd.Process.Signal(syscall.SIGTERM))
 		require.NoError(t, first.wait(t), readComposeFile(t, first.logs))
 
@@ -587,7 +587,7 @@ func TestComposeProcessCombinations(t *testing.T) {
 					return json.Unmarshal([]byte(composeHTTPBody(t, endpoint+"/status")), &status) == nil &&
 						status.Connection == "ready" && status.ConsumerReady && status.Accepted == 1
 				}, 5*time.Second, 20*time.Millisecond)
-				require.Contains(t, composeHTTPBody(t, startup.Endpoint+"/v1/observer/messages"), "last-message")
+				require.Contains(t, composeHTTPBody(t, startup.Endpoint+"/v1/core/trigger-messages"), "last-message")
 				assertComposeOrder(t, dir, "dws:check", "core:start", "dws:serve", "consumer:start")
 			} else {
 				require.NotContains(t, startup.TriggerEndpoints, "dws")

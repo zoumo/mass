@@ -138,7 +138,7 @@ func TestProcessAcceptanceReplayFilteringRestart(t *testing.T) {
 		t.Fatalf("native source changed: %+v", original)
 	}
 	var detail map[string]any
-	if code := triggertest.Request(t, "GET", endpoint, "/v1/observer/messages/"+original["id"].(string), "", nil, &detail); code != http.StatusOK {
+	if code := triggertest.Request(t, "GET", endpoint, "/v1/core/trigger-messages/"+original["id"].(string), "", nil, &detail); code != http.StatusOK {
 		t.Fatalf("read message detail: %d", code)
 	}
 	wantMeta := map[string]any{

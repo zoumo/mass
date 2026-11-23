@@ -219,7 +219,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	awaitMessage := func(native string) (m core.Message) {
 		t.Helper()
 		require.Eventually(t, func() bool {
-			for _, row := range page(t, p, "messages").Items {
+			for _, row := range page(t, p, "trigger-messages").Items {
 				require.NoError(t, json.Unmarshal(row, &m))
 				if m.SourceMessageID == native {
 					return true
@@ -343,8 +343,8 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	require.Len(t, outcome.Issue.Reports, 2)
 	require.Len(t, page(t, p, "session-bindings?issueId="+waiting.ID).Items, 1)
 	require.Len(t, workEvents(t, p, "issue_session_update"), 1)
-	require.Len(t, page(t, p, "outbox").Items, 1)
-	require.Len(t, page(t, p, "messages").Items, 2)
+	require.Len(t, page(t, p, "outbox-messages").Items, 1)
+	require.Len(t, page(t, p, "trigger-messages").Items, 2)
 	require.Equal(t, "completed", readRecord[core.Issue](t, p, "issues/"+waiting.ID).Status)
 
 	calls, err := os.ReadFile(filepath.Join(f.dir, "calls.ndjson"))

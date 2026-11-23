@@ -198,9 +198,8 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 		if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
 			expectedHost = local.String()
 		}
-		observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
-		allowedObserverHost := (observerAPI || isTrustedResourceRead(r.URL.Path)) && isReadMethod(r.Method) && slices.Contains(s.config.ReadAllowedHosts, r.Host)
-		if r.Host != expectedHost && !allowedObserverHost {
+		allowedReadHost := isTrustedResourceRead(r.URL.Path) && isReadMethod(r.Method) && slices.Contains(s.config.ReadAllowedHosts, r.Host)
+		if r.Host != expectedHost && !allowedReadHost {
 			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 			return
 		}
@@ -221,57 +220,6 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 	})
 }
 
-// serveLegacy serves callers that have yet to switch to the resource routes.
-func (s *Server) serveLegacy(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, "/v1/telemetry/") {
-		s.observerTelemetry.serve(w, r)
-		return
-	}
-	observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
-	if s.store.telemetry.enabled {
-		observed, request := s.store.telemetry.startHTTP(w, r)
-		defer observed.finishRequest()
-		w, r = observed, request
-	}
-	switch {
-	case r.URL.Path == "/v1/channel/messages":
-		if r.Method != http.MethodPost && !isReadMethod(r.Method) {
-			w.Header().Set("Allow", "GET, HEAD, POST")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		if isReadMethod(r.Method) {
-			s.readTriggerReceipt(w, r)
-		} else {
-			s.postTriggerMessage(w, r)
-		}
-	case r.URL.Path == "/v1/channel/outbox" || strings.HasPrefix(r.URL.Path, "/v1/channel/outbox/"):
-		s.channelOutbox(w, r)
-	case r.URL.Path == "/v1/operator/input-recovery":
-		s.recoverInput(w, r)
-	case strings.HasPrefix(r.URL.Path, "/v1/operator/session-bindings/"):
-		s.inspectBinding(w, r)
-	case observerAPI:
-		if !readOnly(w, r) {
-			return
-		}
-		s.query(w, r)
-	default:
-		if !s.testDispatch(w, r) {
-			s.fail(w, problem("not_found", "route not found"))
-		}
-	}
-}
-
-func readOnly(w http.ResponseWriter, r *http.Request) bool {
-	if !isReadMethod(r.Method) {
-		w.Header().Set("Allow", "GET, HEAD")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return false
-	}
-	return true
-}
-
 func isReadMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
@@ -290,111 +238,12 @@ func (s *Server) authenticate(r *http.Request) (Source, bool) {
 	return Source{}, false
 }
 
-func (s *Server) query(w http.ResponseWriter, r *http.Request) {
-	if id, ok := strings.CutPrefix(r.URL.Path, observerTracePath); ok {
-		result, err := s.observerTraces.read(r.Context(), id, r.URL.Query())
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.write(w, http.StatusOK, result)
-		return
-	}
-	path := strings.TrimPrefix(r.URL.Path, "/v1/observer/")
-	if r.URL.Path == observerPerformancePath {
-		result, err := s.observerTraces.performance(r.Context(), r.URL.Query())
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.write(w, http.StatusOK, result)
-		return
-	}
-	if path == "health" {
-		state, err := s.store.observerHealth(r.Context())
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.write(w, 200, state)
-		return
-	}
-	if path == "topic-activity" {
-		query := r.URL.Query()
-		read := s.store.topicActivity
-		if query.Get("mode") == "conversation" {
-			read = s.store.topicConversation
-		}
-		page, err := read(r.Context(), query)
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.write(w, http.StatusOK, page)
-		return
-	}
-	if id, ok := strings.CutPrefix(path, "session-preview/"); ok {
-		s.sessionPreview(w, r, id)
-		return
-	}
-	kind, id, detail := strings.Cut(path, "/")
-	if detail {
-		s.readCoreRecord(w, r, kind, id)
-		return
-	}
-	s.readCoreCollection(w, r, kind)
-}
-
-func (s *Server) readCoreRecord(w http.ResponseWriter, r *http.Request, kind, id string) {
-	raw, err := s.coreRecord(r.Context(), kind, id, r.URL.Query().Get("trace") == "true", r.Method == http.MethodGet)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.write(w, http.StatusOK, raw)
-}
-
 func (s *Server) coreRecord(ctx context.Context, kind, id string, trace, observe bool) (json.RawMessage, error) {
 	raw, err := s.store.getRecord(ctx, kind, id, nil, nil, trace)
 	if err == nil && kind == "issues" && observe {
 		raw = s.observeIssue(ctx, raw)
 	}
 	return raw, err
-}
-
-func (s *Server) readCoreCollection(w http.ResponseWriter, r *http.Request, kind string) {
-	q := r.URL.Query()
-	limit := 50
-	if kind == "router-messages" {
-		limit = 20
-	}
-	limit, err := coreListLimit(q.Get("limit"), limit)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	query := QueryRequest{
-		Collection: kind, ThreadKey: q.Get("threadKey"),
-		TopicID: q.Get("topicId"), IssueID: q.Get("issueId"), MessageID: q.Get("messageId"), Cursor: q.Get("cursor"), Limit: limit,
-		preview:       q.Get("preview") == "true",
-		newest:        q.Get("order") == "newest",
-		observerTrace: q.Get("trace") == "true",
-	}
-	var page Page
-	if kind == "router-messages" {
-		if q.Get("order") != "" && !query.newest {
-			s.fail(w, problem("invalid_argument", "router-messages uses newest order"))
-			return
-		}
-		page, err = s.store.observerRouterMessages(r.Context(), query)
-	} else {
-		page, err = s.store.listScoped(r.Context(), query, nil, nil)
-	}
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.write(w, http.StatusOK, page)
 }
 
 func (s *Server) fail(w http.ResponseWriter, err error) {

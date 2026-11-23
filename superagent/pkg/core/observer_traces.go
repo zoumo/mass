@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	observerTracePath   = "/v1/observer/traces/"
 	observerTraceLimit  = 1000
 	observerTraceWindow = 7 * 24 * time.Hour
 )
@@ -82,7 +81,7 @@ func newObserverTraceReader(config *TelemetryQueryConfig) (*observerTraceReader,
 	return reader, nil
 }
 
-type observerSpan struct {
+type telemetrySpan struct {
 	ID         string  `json:"id"`
 	ParentID   string  `json:"parentId,omitempty"`
 	Name       string  `json:"name"`
@@ -98,11 +97,11 @@ type observerSpan struct {
 	EventID    string  `json:"eventId,omitempty"`
 }
 
-type observerTrace struct {
-	TraceID   string         `json:"traceId"`
-	StartedAt time.Time      `json:"startedAt"`
-	Spans     []observerSpan `json:"spans"`
-	Truncated bool           `json:"truncated"`
+type telemetryTrace struct {
+	TraceID   string          `json:"traceId"`
+	StartedAt time.Time       `json:"startedAt"`
+	Spans     []telemetrySpan `json:"spans"`
+	Truncated bool            `json:"truncated"`
 }
 
 type traceSearchHit struct {
@@ -122,8 +121,8 @@ type traceSearchHit struct {
 	EventID    string `json:"superagent_event_id"`
 }
 
-func (r *observerTraceReader) read(ctx context.Context, id string, query url.Values) (observerTrace, error) {
-	result := observerTrace{TraceID: id, Spans: []observerSpan{}}
+func (r *observerTraceReader) read(ctx context.Context, id string, query url.Values) (telemetryTrace, error) {
+	result := telemetryTrace{TraceID: id, Spans: []telemetrySpan{}}
 	if _, err := trace.TraceIDFromHex(id); err != nil {
 		return result, problem("invalid_argument", "invalid Trace ID")
 	}
@@ -193,7 +192,7 @@ func (r *observerTraceReader) read(ctx context.Context, id string, query url.Val
 			first = hit.StartNS
 			result.StartedAt = time.Unix(0, first).UTC()
 		}
-		result.Spans = append(result.Spans, observerSpan{
+		result.Spans = append(result.Spans, telemetrySpan{
 			ID: hit.ID, ParentID: hit.ParentID, Name: hit.Name, Service: hit.Service,
 			OffsetUS: float64(hit.StartNS-first) / 1000, DurationUS: hit.DurationUS, Status: hit.Status,
 			Role: hit.Role, Tool: hit.Tool, Action: hit.Action, Outcome: hit.Outcome, CallerID: hit.CallerID, EventID: hit.EventID,

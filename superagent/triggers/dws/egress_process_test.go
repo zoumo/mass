@@ -126,7 +126,7 @@ func TestOutboxRendersStructuredReply(t *testing.T) {
 func (f *egressFixture) outbox(id string) outboxItem {
 	f.t.Helper()
 	var item outboxItem
-	if code := triggertest.Request(f.t, "GET", f.Endpoint, "/v1/observer/outbox/"+id, "", nil, &item); code != http.StatusOK {
+	if code := triggertest.Request(f.t, "GET", f.Endpoint, "/v1/core/outbox-messages/"+id, "", nil, &item); code != http.StatusOK {
 		f.t.Fatalf("outbox readback: %d", code)
 	}
 	return item
@@ -619,7 +619,7 @@ func TestEgressEarlyQuoteWaitsForCoreAndRecoversAfterRestart(t *testing.T) {
 	_ = f.trigger(proxy.URL)
 	msg := f.message("quoted")
 	var detail map[string]any
-	code := triggertest.Request(t, http.MethodGet, f.Endpoint, "/v1/observer/messages/"+msg["id"].(string), "", nil, &detail)
+	code := triggertest.Request(t, http.MethodGet, f.Endpoint, "/v1/core/trigger-messages/"+msg["id"].(string), "", nil, &detail)
 	association, _ := detail["quotedReply"].(map[string]any)
 	if code != http.StatusOK || association["outboxId"] != id {
 		t.Fatalf("missing native quote association: HTTP %d, %+v", code, detail)

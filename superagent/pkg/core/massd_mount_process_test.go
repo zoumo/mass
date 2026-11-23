@@ -96,7 +96,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	slowSubscription, err := slow.Subscribe(ctx, ref)
 	require.NoError(t, err)
 
-	preview := "/v1/observer/session-preview/" + router.ID
+	preview := "/v1/core/session-bindings/" + router.ID
 	previewCtx, cancelPreview := context.WithCancel(ctx)
 	defer cancelPreview()
 	req, err := http.NewRequestWithContext(previewCtx, http.MethodGet, p.endpoint+preview+"/live", http.NoBody)
@@ -112,7 +112,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	submitted := input("mounted-mass-router")
 	submitted.Message.Content[0].Text.Text += " " + token
 	receipt := submit(t, p, f, submitted)
-	status, observed := request(t, http.MethodGet, p.endpoint, "/v1/observer/messages", "", nil)
+	status, observed := request(t, http.MethodGet, p.endpoint, "/v1/core/trigger-messages", "", nil)
 	require.Equal(t, http.StatusOK, status)
 	require.NotContains(t, string(observed), token)
 	require.Contains(t, string(observed), "[redacted]")

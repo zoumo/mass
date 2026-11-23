@@ -259,7 +259,7 @@ func embeddedProcessFixture(t *testing.T, peer *nativeSubmitPeer) (*fixture, str
 
 func requireEmbeddedHistory(t *testing.T, p *process, bindingID string, messages ...string) {
 	t.Helper()
-	path := "/v1/observer/session-preview/" + bindingID + "/history"
+	path := "/v1/core/session-bindings/" + bindingID + "/history"
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		status, history := request(t, http.MethodGet, p.endpoint, path, "", nil)
 		assert.Equal(collect, http.StatusOK, status, string(history))

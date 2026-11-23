@@ -42,7 +42,7 @@ func TestObserverTraceReadProjectsKnownFields(t *testing.T) {
 	path := telemetryTracePath + "/" + id
 	status, _, body := resourceRequest(t, httpServer.URL, http.MethodGet, path)
 	require.Equal(t, http.StatusOK, status, "%s", body)
-	var result observerTrace
+	var result telemetryTrace
 	require.NoError(t, json.Unmarshal(body, &result))
 	require.Len(t, result.Spans, 2)
 	require.Equal(t, spanID, result.Spans[1].ParentID)

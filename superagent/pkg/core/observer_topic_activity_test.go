@@ -26,13 +26,18 @@ type topicEvent struct {
 	Status    string `json:"status"`
 }
 
-func topicEvents(t *testing.T, p *process, query string) ([]topicEvent, string) {
+func topicActivityPath(t *testing.T, query string) string {
 	t.Helper()
 	params, err := url.ParseQuery(query)
 	require.NoError(t, err)
 	path := "/v1/core/topics/" + url.PathEscape(params.Get("topicId")) + "/activity"
 	params.Del("topicId")
-	status, body := request(t, http.MethodGet, p.endpoint, path+"?"+params.Encode(), "", nil)
+	return path + "?" + params.Encode()
+}
+
+func topicEvents(t *testing.T, p *process, query string) ([]topicEvent, string) {
+	t.Helper()
+	status, body := request(t, http.MethodGet, p.endpoint, topicActivityPath(t, query), "", nil)
 	require.Equal(t, http.StatusOK, status, "%s", body)
 	var got core.Page
 	require.NoError(t, json.Unmarshal(body, &got))
@@ -80,7 +85,7 @@ func TestObserverTopicActivityWatermark(t *testing.T) {
 	require.Empty(t, first[0].Actor)
 	require.NotEmpty(t, token)
 	for _, wrong := range []string{"topicId=mass-t2", "topicId=mass-t1&filter=message", "topicId=mass-t1&order=oldest"} {
-		status, _ := request(t, "GET", p.endpoint, "/v1/observer/topic-activity?"+wrong+"&cursor="+url.QueryEscape(token), "", nil)
+		status, _ := request(t, "GET", p.endpoint, topicActivityPath(t, wrong+"&cursor="+url.QueryEscape(token)), "", nil)
 		require.Equal(t, 400, status)
 	}
 	// A late insertion even with the exact same saved timestamp must not enter page two.
@@ -118,7 +123,7 @@ func TestObserverTopicActivityWatermark(t *testing.T) {
 		{"GET", "topicId=missing", 404}, {"GET", "topicId=mass-t1&filter=unknown", 400}, {"GET", "", 400}, {"GET", "topicId=mass-t1&limit=201", 400}, {"GET", "topicId=mass-t1&cursor=broken", 400}, {"HEAD", "topicId=mass-t1", 200}, {"POST", "topicId=mass-t1", 405},
 	} {
 		t.Run(fmt.Sprintf("%s_%s", test.method, test.query), func(t *testing.T) {
-			status, _ := request(t, test.method, p.endpoint, "/v1/observer/topic-activity?"+test.query, "", nil)
+			status, _ := request(t, test.method, p.endpoint, topicActivityPath(t, test.query), "", nil)
 			require.Equal(t, test.status, status)
 		})
 	}
@@ -150,7 +155,7 @@ func TestObserverTopicActivitySavedActions(t *testing.T) {
 		require.Empty(t, event.MessageID)
 	}
 	require.Equal(t, []string{"reopening", "cancellation", "blocker_resolved", "issue_created"}, kinds)
-	cli := exec.CommandContext(t.Context(), build(t), "observe", "topic-activity", "--topic-id", topic.OwnerID, "--filter", "issue", "--endpoint", p.endpoint)
+	cli := exec.CommandContext(t.Context(), build(t), "observe", "topic-activity", topic.OwnerID, "--filter", "issue", "--endpoint", p.endpoint)
 	body, err := cli.Output()
 	require.NoError(t, err)
 	var actual struct{ Items []topicEvent }
