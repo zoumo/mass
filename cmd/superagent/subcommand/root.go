@@ -184,6 +184,7 @@ func New() *cobra.Command {
 	}
 	root.AddCommand(observe)
 	root.AddCommand(newRecoverInput(), newInspectBinding())
+	root.AddCommand(newWatchdog())
 	return root
 }
 
