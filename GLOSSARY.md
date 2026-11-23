@@ -120,6 +120,8 @@ _Avoid_: 将实时事件流等同于完整会话历史或可靠消费进度。
 
 **Issue Session**：Issue 通过当前 SessionBinding 使用的 MASS Session。它接收启动指令、后续指令和补充材料，并按实际采用的目标版本提交 Report。
 
+**Watchdog**：Superagent 中独立于 Core 运行的业务巡检。每次启动一个 Session，从当前业务状态中发现至多一个值得处理的问题，判断如何处理后结束。
+
 **Internal Event（内部事件）**：Superagent 发给一个 Router Session、Topic Session 或 Issue Session 的结构化输入，例如路由请求、消息、执行输入或通知。每个事件有稳定身份，向同一接收方重试时沿用该身份。
 
 ## 消费与观察
