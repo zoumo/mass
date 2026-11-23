@@ -57,7 +57,7 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	credentials := filepath.Join(t.TempDir(), "login.txt")
 	require.NoError(t, os.WriteFile(credentials, []byte("observer\nfixture\n"), 0o600))
-	reader, err := newObserverTraceReader(&ObserverTraceConfig{
+	reader, err := newObserverTraceReader(&TelemetryQueryConfig{
 		Endpoint: upstream.URL, Organization: "review", CredentialFile: credentials,
 	})
 	require.NoError(t, err)
@@ -129,7 +129,7 @@ func TestObserverPerformanceScopesOpenTelemetryQueries(t *testing.T) {
 ]}}`, start)
 			}))
 			t.Cleanup(upstream.Close)
-			reader, err := newObserverTraceReader(&ObserverTraceConfig{Endpoint: upstream.URL})
+			reader, err := newObserverTraceReader(&TelemetryQueryConfig{Endpoint: upstream.URL})
 			require.NoError(t, err)
 			t.Cleanup(reader.client.CloseIdleConnections)
 			server := &Server{observerTraces: reader, store: store}

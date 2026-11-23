@@ -16,14 +16,20 @@ import (
 )
 
 func newRecoverInput() *cobra.Command {
-	var req core.RecoveryRequest
+	var req struct {
+		OperationID             string `json:"operationId"`
+		Mode                    string `json:"mode"`
+		Reconciliation          string `json:"reconciliation"`
+		AcceptPossibleDuplicate bool   `json:"acceptPossibleDuplicate"`
+		StopRuntime             bool   `json:"stopRuntime,omitempty"`
+	}
 	var endpoint, tokenFile string
 	cmd := &cobra.Command{
 		Use: "recover-input SESSION_BINDING_ID", Short: "Reconcile a local SessionBinding before retry, settlement or replacement",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			req.SessionBindingID = args[0]
-			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodPost, "/v1/operator/input-recovery", req)
+			path := "/v1/core/session-bindings/" + url.PathEscape(args[0]) + "/recoveries"
+			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodPost, path, req)
 		},
 	}
 	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Local Core HTTP endpoint")
@@ -45,7 +51,7 @@ func newInspectBinding() *cobra.Command {
 		Use: "inspect-session-binding SESSION_BINDING_ID", Short: "Read a SessionBinding and its live massd evidence",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodGet, "/v1/operator/session-bindings/"+url.PathEscape(args[0]), nil)
+			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodGet, "/v1/core/session-bindings/"+url.PathEscape(args[0])+"/runtime-evidence", nil)
 		},
 	}
 	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Local Core HTTP endpoint")

@@ -1,7 +1,7 @@
 # Superagent
 
 Superagent Core routes Messages to Topics and coordinates Issue Sessions through
-MASS. The DWS and GitHub Triggers collect Messages. The Observer reads Core state.
+MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core state.
 
 ## Start Core
 
@@ -16,7 +16,7 @@ MASS. The DWS and GitHub Triggers collect Messages. The Observer reads Core stat
    bin/superagent serve --config /absolute/run/core.yaml
    ```
 
-3. Read `endpoint` and `observerEndpoint` from the ready record. Check Core intake
+3. Read `endpoint` from the ready record. Check Core intake
    from another terminal. Use the printed Core endpoint if you changed `listen`.
 
    ```sh
@@ -35,9 +35,9 @@ Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
 Use the same host and OS account for Core and standalone `massd` so native
 Sessions can read their credential files. See the [Session preparation contract](API.md#session-configuration-and-preparation).
 
-Observer reads need no login. Keep them within the network boundary for trusted
-readers. When `listen` uses a wildcard, use a concrete numeric address that
-reaches Core. See the [Observer Host and Origin rules](API.md#read-only-observation).
+Core resource reads need no login. Keep Core and the Web gateway within a
+network boundary for trusted readers. When `listen` uses a wildcard, use a
+concrete numeric address to reach Core.
 
 ### Reuse an existing Core data directory
 
@@ -132,11 +132,69 @@ Press Ctrl-C to stop the Triggers before Core and embedded MASS. After startup,
 Compose logs a Trigger exit and keeps the other processes running. If Core
 exits unexpectedly, Compose stops the Triggers and returns an error.
 
+## Start Superagent Web
+
+Build `superagent-web` and start its static service with Caddy 2.11.2.
+Run these commands from the repository root in one terminal.
+
+```sh
+make build-superagent-web
+cd superagent/web
+caddy run --config Caddyfile
+```
+
+Start the same-origin gateway in a second terminal.
+
+```sh
+cd superagent/web
+caddy run --config Gateway.Caddyfile
+```
+
+Open `http://127.0.0.1:24372/superagent/`. The Web service listens on
+`127.0.0.1:24371` and serves `superagent/web/dist`. The gateway sends
+`/superagent/` and its assets to Web. It sends `/v1/core/`, `/v1/telemetry/`,
+`/v1/mcp`, `/status`, `/livez`, and `/readyz` to Core. Restart Web to serve a
+new build. Core and Compose can keep running during that restart.
+
+| Setting | Use |
+|---|---|
+| `SUPERAGENT_WEB_LISTEN` | Host and port of the static Web service. Set `SUPERAGENT_WEB_BIND` to change its loopback bind. |
+| `SUPERAGENT_WEB_DIST` | Absolute path to the Web build when you run Caddy outside `superagent/web`. |
+| `SUPERAGENT_PUBLIC_ORIGIN` | Gateway address with scheme, such as `https://superagent.example.com`. Use your TLS hostname for HTTPS. Set `SUPERAGENT_GATEWAY_BIND` to the intended interface. |
+| `SUPERAGENT_WEB_UPSTREAM` | Host and port of the Web service. Defaults to `127.0.0.1:24371`. |
+| `SUPERAGENT_CORE_UPSTREAM` | Host and port of the Core listener. Defaults to `127.0.0.1:24370`. |
+| `SUPERAGENT_MASSD_ROUTE` | `embedded_massd` forwards `/massd/` to Core. `standalone_massd` removes the `/massd` prefix and forwards to `SUPERAGENT_MASSD_UPSTREAM`, which defaults to `127.0.0.1:24368`. |
+
+The gateway checks the browser Origin against the incoming scheme and host. It
+checks Fetch Metadata and normalizes `Host` before forwarding to Core. Keep
+backend listeners private. Configure `externalURL` with the origin that role
+Sessions use for MCP, including the gateway origin if they connect there.
+Use a direct loopback Core endpoint for Operator commands.
+
+If you used `observerAllowedHosts`, use `readAllowedHosts` for additional
+direct Core read hosts. The gateway already sends the Core authority as `Host`.
+Move `observerTrace` settings to `telemetryQuery`. Keep its credential file on
+the Core host. See [Web telemetry](telemetry/README.md#enable-superagent-web-telemetry).
+
+For local frontend development, run `npm ci` and `npm run dev` in
+`superagent/web`. Open the printed Vite origin at `/superagent/`. Vite proxies
+Core and embedded MASS paths to `SUPERAGENT_CORE_ORIGIN`, which defaults to
+`http://127.0.0.1:24370`.
+
 ## Inspect delivery and recover input
 
-- Use Observer or `superagent observe` to read Message admission, routing,
-  Session input, Report acceptance, and Outbox delivery. Each records a
-  different outcome. See [the Core API](API.md).
+Use Superagent Web or these CLI commands to query retained Core resources.
+
+```sh
+bin/superagent observe status
+bin/superagent observe trigger-messages --thread-key 'dws:example'
+bin/superagent observe router-messages --message-id mass-m1
+bin/superagent observe outbox-messages --message-id mass-m1
+bin/superagent observe topic-activity mass-t1 --filter message
+```
+
+See [the Core API](API.md) for the resource contract.
+
 - Use `inspect-session-binding` before `recover-input` to reconcile an uncertain
   dispatch, settle a retired binding, or replace a Session.
   See [operator reconciliation](API.md#local-operator-reconciliation).
@@ -146,5 +204,5 @@ exits unexpectedly, Compose stops the Triggers and returns an error.
 
 Run `make test-superagent` for the offline Core and Trigger process tests. They
 use synthetic peers and do not call live models or channel accounts. Run
-`make check-superagent` for the full local checks, including Observer tests.
+`make check-superagent` for the full local checks, including Superagent Web browser tests with Caddy and Chrome.
 See the [Makefile](../Makefile).

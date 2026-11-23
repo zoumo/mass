@@ -21,7 +21,7 @@ function Events({ events }: { events: Item[] }) {
   )
 }
 export default function SessionPreview({ sessionBindingId }: { sessionBindingId: string }) {
-  const path = 'session-preview/' + encodeURIComponent(sessionBindingId)
+  const path = 'session-bindings/' + encodeURIComponent(sessionBindingId)
   const [history, setHistory] = useState<Item[]>([])
   const [live, setLive] = useState<Item[]>([])
   const [next, setNext] = useState('')

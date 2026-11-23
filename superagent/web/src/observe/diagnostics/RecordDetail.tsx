@@ -38,7 +38,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
         <span className="record-state">
           {kind === 'outbox'
             ? replyLabel(String(detail.status))
-            : kind === 'routing-events' || kind === 'internal-events' || kind === 'relations'
+            : kind === 'internal-events'
               ? eventStatusLabel(detail.status)
               : stateLabel(String(detail.acceptance || detail.status || detail.state))}
         </span>
@@ -78,26 +78,6 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
         >{`查看线程 ${detail.threadKey}`}</button>
       )}
       <ChannelEvidence kind={kind} detail={detail} navigate={navigate} />
-      {kind === 'pull-requests' && (
-        <>
-          <dl>
-            <dt>规范拉取请求 URL</dt>
-            <dd>{detail.canonicalUrl}</dd>
-            <dt>登记时间</dt>
-            <dd>{detail.createdAt}</dd>
-          </dl>
-          {detail.subscriptionId && (
-            <button onClick={() => showRecord('subscriptions', detail.subscriptionId!)} type="button">
-              查看订阅
-            </button>
-          )}
-        </>
-      )}
-      {detail.pullRequestId && (
-        <button onClick={() => showRecord('pull-requests', detail.pullRequestId!)} type="button">
-          查看登记记录
-        </button>
-      )}
       {detail.topicId && (
         <button
           onClick={() => showRecord('topics', String(detail.topicId))}
@@ -116,15 +96,9 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
             <dt>工作目录</dt>
             <dd>{detail.workspace}</dd>
           </dl>
-          <button onClick={() => navigate('subscriptions', identity(detail))} type="button">
-            查看 Topic 来源
-          </button>
-          <button onClick={() => navigate('relations', identity(detail))} type="button">
-            查看 Topic 路由历史
-          </button>
         </>
       )}
-      {['subscriptions', 'relations', 'routing-events'].includes(kind) && detail.messageId && (
+      {kind === 'internal-events' && detail.messageId && (
         <button onClick={() => showRecord('messages', detail.messageId!)} type="button">
           查看来源消息
         </button>
@@ -137,16 +111,6 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
       {kind === 'topics' && (
         <button onClick={() => navigate('timers', identity(detail))} type="button">
           查看 Topic 定时器
-        </button>
-      )}
-      {kind === 'topics' && (
-        <button onClick={() => navigate('pull-requests', identity(detail))} type="button">
-          查看 Topic 拉取请求
-        </button>
-      )}
-      {kind === 'issues' && (
-        <button onClick={() => navigate('pull-requests', identity(detail), 'issueId')} type="button">
-          查看 Issue 拉取请求
         </button>
       )}
       {detail.issueId && (
@@ -284,7 +248,7 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
             </button>
           )}
           {detail.followup?.kind === 'routed_message' && detail.followup.event_id && (
-            <button onClick={() => showRecord('routing-events', detail.followup!.event_id!)} type="button">
+            <button onClick={() => showRecord('internal-events', detail.followup!.event_id!)} type="button">
               查看跟进事件
             </button>
           )}
@@ -380,10 +344,10 @@ export default function RecordDetail({ kind, detail, navigate }: RecordProps) {
           查看接收会话
         </button>
       )}
-      {['routing-events', 'subscriptions', 'relations', 'internal-events'].includes(kind) && (
+      {kind === 'internal-events' && (
         <pre data-testid="routing-record">{JSON.stringify(detail, null, 2)}</pre>
       )}
-      {!['routing-events', 'subscriptions', 'relations', 'internal-events'].includes(kind) && (
+      {kind !== 'internal-events' && (
         <details>
           <summary>原始字段和引用</summary>
           <pre>{JSON.stringify(detail, null, 2)}</pre>

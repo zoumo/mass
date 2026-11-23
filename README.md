@@ -77,8 +77,8 @@ See the [interactive massd diagram](docs/assets/mass-v2-architecture.html) and t
 ![Superagent architecture](docs/assets/superagent-architecture.svg)
 
 Superagent accepts messages from channel adapters. Its Router directs messages
-to Topics, and Topics coordinate Issues and Issue Reports. The read-only
-Observer queries the business state that Superagent persists in its own SQLite
+to Topics, and Topics coordinate Issues and Issue Reports. The independent
+Superagent Web service reads the business state that Superagent persists in its own SQLite
 database. See the [interactive Superagent diagram](docs/assets/superagent-architecture.html).
 
 ![Combined MASS and Superagent architecture](docs/assets/mass-superagent-architecture.svg)
@@ -92,32 +92,34 @@ connect to the same daemon directly. See the
 
 Superagent is an experimental application for routing messages and coordinating
 agent work. You can run it for message intake with execution disabled. Enable
-execution to run Issue Sessions through `massd`. Open `/observer/` to inspect message
-routing and Issue progress.
+execution to run Issue Sessions through `massd`. Run Superagent Web and open `/superagent/` on the gateway to inspect
+message routing and Issue progress.
 
 Most of Superagent's design and core concepts were inspired by the
 [DeepSeek Harness `dsh-superagent` prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
 
-Build it with `make build-superagent`. For setup and data-directory
-compatibility, see the [Superagent guide](superagent/README.md).
+Build Core with `make build-superagent` and Web with `make build-superagent-web`.
+For startup and data-directory instructions, see the [Superagent guide](superagent/README.md).
 
 ## Build
 
 Run build commands from the repository root with **Go 1.26.9 or later**.
 `make build-go` builds `massd` and `massctl` as separate executables. The full
-build also builds Superagent and its Observer. It requires Node.js
+build also produces `bin/superagent` and the Superagent Web assets.
+The Web build requires Node.js
 20.19 or later in the 20.x series, or 22.12 or later, and a populated npm cache.
 
 ```sh
 make build
-# Produces bin/massctl, bin/massd and bin/superagent
+# Produces bin/massctl, bin/massd, bin/superagent and superagent/web/dist
 ```
 
-| Binary | Role |
+| Build output | Role |
 |---|---|
 | `bin/massd` | 🛠️ Daemon for the WebSocket JSON-RPC API and health probes. |
 | `bin/massctl` | ⌨️ CLI for managing Runtimes and Sessions. |
-| `bin/superagent` | Experimental message routing and work coordination service with a read-only Observer. |
+| `bin/superagent` | Experimental message routing and work coordination service. |
+| `superagent/web/dist` | Static assets for the independent Superagent Web service. |
 
 To build a single executable, select its package in `cmd/`.
 
@@ -131,7 +133,7 @@ go build -mod=readonly -o bin/mass-record-diagnose ./cmd/mass-record-diagnose
 The repository uses one Go module, [`github.com/zoumo/mass`](go.mod). Command
 entries live in [`cmd/`](cmd/). The [`massd/`](massd/README.md) component owns
 the session service, public Go client, and in-process assembly. Core, the
-[Trigger packages](superagent/triggers/README.md), and Observer live under
+[Trigger packages](superagent/triggers/README.md), and Superagent Web live under
 [`superagent/`](superagent/README.md).
 
 ## Quick start
@@ -149,7 +151,7 @@ Superagent is experimental.
 | 🧪 Demonstration | Isolated end-to-end runtime scenarios | Uses mock CLIs. Real-agent checks run separately. |
 | 💬 Claude input | Text input, close, and resume | Each input uses one text block. Resume requires an absolute `CLAUDE_CONFIG_DIR`. |
 | 🤝 Permissions & questions | JSON-RPC `session.answer` | Answer through the API. |
-| Superagent | Message routing, Issue Session coordination, and a read-only Observer | Experimental. Execution requires explicit configuration. |
+| Superagent | Message routing, Issue Session coordination, and a read-only web workspace | Experimental. Execution requires explicit configuration. |
 
 ## Development
 
@@ -157,13 +159,13 @@ Superagent is experimental.
 |---|---|
 | `make fmt` | Format Go code |
 | `make lint` | Run Go lint |
-| `make test` | Run offline Go tests with the race detector and run Observer browser tests |
+| `make test` | Run offline Go tests with the race detector and run Superagent Web browser tests |
 | `make test-unit-go` | Run package-local tests only |
 | `make test-integration-go` | Run constructed multi-module scenarios and SDK probes |
 | `make test-simulation-go` | Replay recorded Agent material through `agent-sdk-testify` |
 | `make test-e2e-go` | Run the separate end-to-end suite with real Codex and Claude CLIs |
-| `make build` | Build the daemon, CLI, and Superagent with its Observer |
-| `make check` | Check the Go module and Observer with lint, tests, builds, and formatting checks |
+| `make build` | Build the daemon, CLI, and Superagent Core and Superagent Web |
+| `make check` | Check the Go module and Superagent Web with lint, tests, builds, and formatting checks |
 | `make prototype-go` | Run the isolated synthetic end-to-end demonstration |
 
 ## Documentation
@@ -173,7 +175,7 @@ Superagent is experimental.
 | 📘 [Go implementation](massd/README.md) | Configuration, commands, and implementation limits |
 | 🧭 [Project harness](harness/index.md) | Authoritative design, principles, and API contracts |
 | 🌐 [API contract](harness/bindings/jsonrpc.md) | JSON-RPC 2.0 methods, subscription events, and transport rules |
-| [Superagent guide](superagent/README.md) | Configuration, execution, and the Observer |
+| [Superagent guide](superagent/README.md) | Configuration, execution, and Superagent Web |
 
 `massd` exposes `/jsonrpc`, `/livez`, and `/readyz`. The retired `/rpc` and
 `/apis/v1` routes return `404` for authenticated requests. See the

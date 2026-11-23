@@ -10,9 +10,9 @@ import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './conversation.css'
 
 const view = 'topic-conversation'
-const activity = (params: Record<string, string>) =>
-  'topic-activity?' + new URLSearchParams({ mode: 'conversation', ...params })
-const recordHref = (view: string, id: string) => '/observer/?' + new URLSearchParams({ view, id })
+const activity = (topicId: string, params: Record<string, string>) =>
+  'topics/' + encodeURIComponent(topicId) + '/activity?' + new URLSearchParams({ view: 'conversation', ...params })
+const recordHref = (view: string, id: string) => '/superagent/?' + new URLSearchParams({ view, id })
 const labels = {
   all: '全部', router_routed: 'Router 路由入群', thread_direct: 'Core Thread 直投',
   issue_created: '创建 Issue', issue_session_dispatch: '任务派发', report: 'Issue Report',
@@ -42,7 +42,6 @@ type IssueEvent = {
   body?: { instruction?: string; materials?: WorkbenchRow['materials'] }
   refs?: { kind: string; id: string; goal_revision?: number }[]
 }
-type Subscription = { id: string; threadKey: string }
 type Issue = {
   id: string; title: string; status: string
   completion?: { reason: string; evidence: string[]; completedAt: string }
@@ -67,7 +66,7 @@ export default function TopicConversation({ query }: ViewProps) {
 function TopicWorkspace({ query, search }: ViewProps & { search: string }) {
   const requestedTopicId = query.get('id') || ''
   const [automaticTopicId, setAutomaticTopicId] = useState('')
-  const topics = usePages<Topic>(activity({ search, limit: '20' }))
+  const topics = usePages<Topic>('topics?' + new URLSearchParams({ view: 'conversation', search, limit: '20' }))
   const firstTopicId = topics.data?.[0]?.id || ''
   const topicId = requestedTopicId || automaticTopicId || firstTopicId
   useLayoutEffect(() => {
@@ -123,9 +122,9 @@ type ConversationProps = {
 
 function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
   const topic = useRecord<Topic>('topics/' + encodeURIComponent(topicId))
-  const timeline = usePages<ConversationEvent>(activity({ topicId, filter, limit: '20' }))
+  const timeline = usePages<ConversationEvent>(activity(topicId, { filter, limit: '20' }))
   const selected = timeline.data?.find(event => event.id === eventId)
-  const event = useRecord<Page<ConversationEvent>>(eventId && timeline.data && !selected ? activity({ topicId, eventId }) : '')
+  const event = useRecord<Page<ConversationEvent>>(eventId && timeline.data && !selected ? activity(topicId, { eventId }) : '')
   const focused = selected || event.data?.items[0]
   const context = useRef<HTMLElement>(null)
   useLayoutEffect(() => {
@@ -290,7 +289,7 @@ function EventDetails({ event }: { event: ConversationEvent }) {
 }
 
 function IngressDetails({ event }: { event: IngressEvent }) {
-  const internalEvent = useRecord<RoutingEvent>('routing-events/' + encodeURIComponent(event.eventId))
+  const internalEvent = useRecord<RoutingEvent>('internal-events/' + encodeURIComponent(event.eventId))
   const message = useRecord<WorkbenchRow>('messages/' + encodeURIComponent(event.messageId))
   return <>
     {[internalEvent, message].map((result, i) => result.error && <ReadError key={i} error={result.error} stale={!!result.data}/>)}
@@ -307,7 +306,7 @@ function IngressDetails({ event }: { event: IngressEvent }) {
       </dl>
       <div className="conversation-links">
         <a href={viewHref('message', event.messageId)}>查看原始消息 →</a>
-        <a href={recordHref('routing-events', event.eventId)}>查看事件记录 →</a>
+        <a href={recordHref('internal-events', event.eventId)}>查看事件记录 →</a>
       </div>
     </section>
   </>
@@ -419,19 +418,8 @@ function DetailList({ title, items }: { title: string; items?: string[] }) {
 function GroupInfo({ topicId }: { topicId: string }) {
   const { online } = useRefresh()
   const params = new URLSearchParams({ topicId, preview: 'true', order: 'newest', limit: '10' })
-  const subscriptions = usePages<Subscription>('subscriptions?' + params)
   const issues = usePages<Issue>('issues?' + params)
   return <>
-    <section className="conversation-section">
-      <h3>订阅的 Thread</h3>
-      {subscriptions.error && <ReadError error={subscriptions.error} stale={!!subscriptions.data}/>}
-      {subscriptions.data?.length === 0 && <p className="conversation-muted">暂无订阅</p>}
-      <ul className="conversation-references">
-        {subscriptions.data?.map(subscription => <li key={subscription.id}><ThreadLink threadKey={subscription.threadKey}/></li>)}
-      </ul>
-      {subscriptions.next && <Button size="sm" variant="ghost" disabled={!online || subscriptions.loading}
-        onClick={() => void subscriptions.more()}>加载更多 Thread</Button>}
-    </section>
     <section className="conversation-section">
       <h3>关联 Issue</h3>
       {issues.error && <ReadError error={issues.error} stale={!!issues.data}/>}

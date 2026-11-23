@@ -23,7 +23,7 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
         </button>
       )}
       {kind === 'messages' && (
-        <button onClick={() => navigate('routing-events', identity(detail), 'messageId')} type="button">
+        <button onClick={() => navigate('internal-events', identity(detail), 'messageId')} type="button">
           查看路由事件
         </button>
       )}
@@ -57,9 +57,6 @@ export default function ChannelEvidence({ kind, detail, navigate }: RecordProps)
           </dl>
           <button onClick={() => navigate('messages', identity(detail), 'threadKey')} type="button">
             查看线程消息
-          </button>
-          <button onClick={() => navigate('subscriptions', identity(detail), 'threadKey')} type="button">
-            查看线程订阅
           </button>
           <button onClick={() => navigate('outbox', identity(detail), 'threadKey')} type="button">
             查看线程回执

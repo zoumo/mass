@@ -1,0 +1,60 @@
+(proxy_request_headers) {
+	header_up Host {upstream_hostport}
+	header_up -Forwarded
+	header_up -X-Forwarded-*
+}
+
+(embedded_massd) {
+	reverse_proxy {args[0]} {
+		import proxy_request_headers
+	}
+}
+
+(standalone_massd) {
+	uri strip_prefix /massd
+	reverse_proxy {$SUPERAGENT_MASSD_UPSTREAM:127.0.0.1:24368} {
+		import proxy_request_headers
+	}
+}
+
+(superagent_gateway) {
+	route {
+		@foreign_origin expression `{http.request.header.Origin} != "" && {http.request.header.Origin} != {http.request.scheme} + "://" + {http.request.hostport}`
+		@foreign_site expression `{http.request.header.Sec-Fetch-Site} != "" && {http.request.header.Sec-Fetch-Site} != "same-origin" && {http.request.header.Sec-Fetch-Site} != "none"`
+		respond @foreign_origin 403
+		respond @foreign_site 403
+
+		@web path /superagent /superagent/*
+		handle @web {
+			reverse_proxy {args[0]} {
+				import proxy_request_headers
+				header_up -Authorization
+				header_up -Cookie
+			}
+		}
+		handle /massd/* {
+			import {args[2]} {args[1]}
+		}
+
+		@operator path /v1/core/session-bindings/*/runtime-evidence /v1/core/session-bindings/*/recoveries
+		respond @operator 404
+		@core path /v1/core/* /v1/telemetry/* /v1/mcp /livez /readyz /status
+		@origin header Origin *
+		handle @core {
+			reverse_proxy @origin {args[1]} {
+				import proxy_request_headers
+				header_up Origin http://{upstream_hostport}
+				transport http {
+					compression off
+				}
+			}
+			reverse_proxy {args[1]} {
+				import proxy_request_headers
+				transport http {
+					compression off
+				}
+			}
+		}
+		respond 404
+	}
+}

@@ -71,11 +71,11 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	if err != nil {
 		return nil, err
 	}
-	gateway, err := newObserverTelemetryGateway(c.ObserverOTLPEndpoint)
+	gateway, err := newObserverTelemetryGateway(c.WebOTLPEndpoint)
 	if err != nil {
 		return nil, err
 	}
-	traces, err := newObserverTraceReader(c.ObserverTrace)
+	traces, err := newObserverTraceReader(c.TelemetryQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -199,8 +199,7 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 			expectedHost = local.String()
 		}
 		observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
-		observerUI := r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/")
-		allowedObserverHost := (observerAPI || observerUI || isTrustedResourceRead(r.URL.Path)) && isReadMethod(r.Method) && slices.Contains(s.config.ObserverAllowedHosts, r.Host)
+		allowedObserverHost := (observerAPI || isTrustedResourceRead(r.URL.Path)) && isReadMethod(r.Method) && slices.Contains(s.config.ReadAllowedHosts, r.Host)
 		if r.Host != expectedHost && !allowedObserverHost {
 			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 			return
@@ -229,7 +228,6 @@ func (s *Server) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	observerAPI := strings.HasPrefix(r.URL.Path, "/v1/observer/")
-	observerUI := r.URL.Path == "/observer" || strings.HasPrefix(r.URL.Path, "/observer/")
 	if s.store.telemetry.enabled {
 		observed, request := s.store.telemetry.startHTTP(w, r)
 		defer observed.finishRequest()
@@ -258,11 +256,6 @@ func (s *Server) serveLegacy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.query(w, r)
-	case observerUI:
-		if !readOnly(w, r) {
-			return
-		}
-		serveObserver(w, r, s.observerTelemetry != nil)
 	default:
 		if !s.testDispatch(w, r) {
 			s.fail(w, problem("not_found", "route not found"))

@@ -1,14 +1,15 @@
 import { expect, test } from '@playwright/test'
+import { fixtureOrigins } from './endpoints.mjs'
 
-test.use({ baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'}` })
+test.use({ baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}` })
 
-const observer = '/observer/?perspective=topic-conversation'
+const observer = '/superagent/?perspective=topic-conversation'
 const audit = `http://127.0.0.1:${process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795'}`
 const routed = 'Original input observer-routing'
 const direct = 'Synthetic PR review arrived.'
 
 test('reads distinct Router and Core ingress with their own Thread and source links', async ({ page }) => {
-  await page.goto('/observer/?perspective=message')
+  await page.goto('/superagent/?perspective=message')
   await page.getByRole('link', { name: 'Topic 会话', exact: true }).click()
   const topics = page.getByRole('complementary', { name: 'Topics', exact: true })
   const activeTopic = topics.getByRole('link', { name: /Observer routing Topic/ })
@@ -29,7 +30,7 @@ test('reads distinct Router and Core ingress with their own Thread and source li
   await expect(details.getByText(routed, { exact: true })).toBeVisible()
   await expect(details.getByText('independent requested work', { exact: true })).toBeVisible()
   await expect(details.getByRole('link', { name: '查看原始消息 →' })).toHaveAttribute('href', /perspective=message&id=/)
-  await expect(details.getByRole('link', { name: '查看事件记录 →' })).toHaveAttribute('href', /view=routing-events&id=/)
+  await expect(details.getByRole('link', { name: '查看事件记录 →' })).toHaveAttribute('href', /view=internal-events&id=/)
   await page.reload()
   await expect(details.getByText('independent requested work', { exact: true })).toBeVisible()
 
@@ -68,8 +69,6 @@ test('reads Issue creation and Issue Session dispatch separately, with real grou
   const timeline = page.getByRole('region', { name: '群聊时间线' })
   await expect(timeline.getByRole('heading', { name: 'Observer routing Topic' })).toBeVisible()
   const group = page.getByRole('complementary', { name: '群组信息' })
-  await expect(group.getByRole('link', { name: /^dws:/ })).toBeVisible()
-  await expect(group.getByRole('link', { name: /github\.com\/example\/alpha\/pull\/42/ })).toBeVisible()
   await expect(group.getByRole('link', { name: '查看 Issue · Verify sample build' })).toHaveAttribute('href', /perspective=issue&id=/)
   await expect(group.getByRole('link', { name: '查看 Issue · Review blocked build' })).toBeVisible()
 
@@ -123,12 +122,12 @@ test('renders Markdown and previews a structured choice directly in the conversa
 test('defaults to Topic conversations and refreshes Report order while preserving selection and reading position', async ({ page, context, request }, testInfo) => {
   const fixture = await request.get(audit + '/topic-conversation-fixture')
   expect(fixture.ok()).toBe(true)
-  const { endpoint } = await fixture.json()
-  await page.goto(endpoint + '/observer/')
+  const endpoint = fixtureOrigins['topic-conversation-fixture']
+  await page.goto(endpoint + '/superagent/')
   await expect(page.getByRole('heading', { name: 'Topic 会话', exact: true })).toBeVisible()
   const views = page.getByRole('navigation', { name: '观察视角' })
   for (const name of ['Message', 'Router', 'Topic', 'Issue']) {
-    await expect(views.getByRole('link', { name, exact: true })).toHaveAttribute('href', `/observer/?perspective=${name.toLowerCase()}`)
+    await expect(views.getByRole('link', { name, exact: true })).toHaveAttribute('href', `/superagent/?perspective=${name.toLowerCase()}`)
   }
   await expect(page.getByRole('link', { name: '诊断', exact: true })).toBeVisible()
   const topics = page.getByRole('complementary', { name: 'Topics', exact: true })
@@ -191,13 +190,13 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   await expect(details.getByText('artifacts/conversation.log')).toBeVisible()
   await reading.screenshot({ path: testInfo.outputPath('topic-conversation.png') })
   await reading.getByRole('link', { name: 'Message', exact: true }).click()
-  await reading.getByRole('link', { name: 'Superagent 观察台首页' }).click()
-  await expect(reading).toHaveURL(endpoint + '/observer/')
+  await reading.getByRole('link', { name: 'Superagent Web 首页' }).click()
+  await expect(reading).toHaveURL(endpoint + '/superagent/')
   await expect(reading.getByRole('heading', { name: 'Conversation pipeline' })).toBeVisible()
 })
 
 test('reads Issue acceptance from the saved completion alongside its Issue Report', async ({ page }) => {
-  await page.goto('/observer/')
+  await page.goto('/superagent/')
   const timeline = page.getByRole('region', { name: '群聊时间线' })
   await timeline.getByRole('link', { name: 'Issue Report', exact: true }).click()
   await expect(timeline.getByRole('article')).toHaveCount(2)
@@ -209,10 +208,10 @@ test('reads Issue acceptance from the saved completion alongside its Issue Repor
   await expect(details.getByText('Reviewed the sample build log')).toBeVisible()
 })
 
-test('opens event Trace in the observer and returns to the conversation', async ({ page }) => {
+test('opens event Trace in Superagent Web and returns to the conversation', async ({ page }) => {
   const traceId = 'db64663e60fb444b8a93ea9c06c24413'
   const start = '5b147a1058d5e09f'
-  await page.route(url => url.pathname.endsWith('/topic-activity') && url.searchParams.has('topicId'), async route => {
+  await page.route(url => url.pathname.endsWith('/activity') && url.searchParams.get('view') === 'conversation', async route => {
     const response = await route.fetch()
     const result = await response.json()
     for (const event of result.items) event.traceAssociations = [{ traceId, phase: 'enqueue' }, { traceId, phase: 'dispatch' }]

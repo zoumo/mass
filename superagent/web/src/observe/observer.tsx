@@ -17,7 +17,7 @@ export function viewHref(view: Perspective, id = '', filters: Record<string, str
   const query = new URLSearchParams({ perspective: view })
   if (id) query.set('id', id)
   for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value)
-  return '/observer/?' + query
+  return '/superagent/?' + query
 }
 
 export function navigate(href: string) {

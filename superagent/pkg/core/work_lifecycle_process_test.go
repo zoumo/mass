@@ -62,6 +62,7 @@ func recoverRoleBinding(t *testing.T, p *process, operatorFile string, req core.
 	var recovery core.Recovery
 	require.NoError(t, json.Unmarshal(out, &recovery))
 	require.Equal(t, "completed", recovery.Status)
+	require.Equal(t, req.SessionBindingID, recovery.SessionBindingID)
 	return recovery
 }
 
