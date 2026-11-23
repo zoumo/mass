@@ -1,6 +1,7 @@
 package dws
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
 	"strings"
@@ -98,7 +99,7 @@ func TestLegacyQueueReplayMatchesNewNormalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(oldPayload) != string(newPayload) {
+	if !bytes.Equal(oldPayload, newPayload) {
 		t.Fatalf("legacy and redelivered messages differ: %s\n%s", oldPayload, newPayload)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	massevents "github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/superagent/internal/triggercontent"
 	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
@@ -148,7 +149,7 @@ func normalize(line []byte, c dwsConfig, target subscription) (queuedSubmission,
 	}
 	return newQueuedSubmission(coreclient.TriggerMessage{
 		SourceMessageID: e.MessageID, ThreadKey: dwsThreadKey(c.Source, e.ConversationID),
-		Content: triggercontent.SourceText(text, e.SenderID, "", at),
+		Content: []massevents.ContentBlock{triggercontent.SourceText(text, e.SenderID, at)},
 	}, reply, meta, "dws-message:"+e.MessageID, e.ConversationID, selfSent, e.Quoted)
 }
 
