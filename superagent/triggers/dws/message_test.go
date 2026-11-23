@@ -76,6 +76,9 @@ func TestLegacyQueueReplayMatchesNewNormalization(t *testing.T) {
 		Source: "dws", AccountID: "account", InstanceID: "instance", SelfID: "self",
 		SelfChat: selfChatConfig{Enabled: true, ConversationID: fixtureSelfConversation, Match: allTextRules()},
 	}
+	if err := validateRules("selfChat", c.SelfChat.Match, true); err != nil {
+		t.Fatal(err)
+	}
 	current, err := normalize(testMarshalMessage(t, event("message", "body")), c, c.subscriptions()[0])
 	if err != nil {
 		t.Fatal(err)
