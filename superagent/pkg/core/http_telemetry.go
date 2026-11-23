@@ -21,16 +21,16 @@ type telemetryTraceInput struct {
 }
 
 func (s *Server) registerTelemetryResources(api *httpAPI) {
-	traceResponses := api.readResponses(api.schema(reflect.TypeFor[observerTrace]()), true)
+	traceResponses := api.readResponses(api.schema(reflect.TypeFor[telemetryTrace]()), true)
 	traceResponses["409"] = api.coreError("Trace query source is not configured")
 	registerJSONRead(s, api, huma.Operation{
 		Path: telemetryTracePath + "/{traceId}", OperationID: "getTelemetryTrace", Summary: "Read a Trace",
 		Tags: []string{"Telemetry"}, Responses: traceResponses,
-	}, func(ctx context.Context, in *telemetryTraceInput, _ bool) (observerTrace, error) {
+	}, func(ctx context.Context, in *telemetryTraceInput, _ bool) (telemetryTrace, error) {
 		return s.observerTraces.read(ctx, in.TraceID, url.Values{"at": {in.At}})
 	})
 
-	performanceResponses := api.readResponses(api.schema(reflect.TypeFor[observerPerformance]()), false)
+	performanceResponses := api.readResponses(api.schema(reflect.TypeFor[telemetryPerformance]()), false)
 	performanceResponses["409"] = api.coreError("Performance query source is not configured")
 	// The query engine validates the original multimap, including unknown,
 	// duplicate and empty values and filter combinations for each metric.

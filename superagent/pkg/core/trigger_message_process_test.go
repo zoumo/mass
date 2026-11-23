@@ -89,12 +89,12 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 		reject(tokens["custom"], json.RawMessage(invalid), http.StatusBadRequest, "invalid_argument")
 	}
 	reject("", firstInput, http.StatusUnauthorized, "unauthorized")
-	stored := readRecord[core.Message](t, p, "messages/"+first.MessageID)
+	stored := readRecord[core.Message](t, p, "trigger-messages/"+first.MessageID)
 	require.Equal(t, "custom", stored.Source)
 	require.Equal(t, "custom-account", stored.AccountID)
 	require.JSONEq(t, string(firstInput.Message.Meta), string(stored.TriggerMeta))
 	require.Len(t, page(t, p, "threads").Items, 1)
-	require.Len(t, page(t, p, "messages").Items, 4)
+	require.Len(t, page(t, p, "trigger-messages").Items, 4)
 	require.Len(t, routingEvents(t, p, first.MessageID), 1)
 
 	// Reopen with execution configured so the first three committed events enter

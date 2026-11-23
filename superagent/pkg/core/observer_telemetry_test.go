@@ -133,7 +133,7 @@ func TestObserverTelemetryGateway(t *testing.T) {
 	require.Empty(t, res.body)
 	require.Len(t, forwarded, 2)
 	require.Empty(t, recorder.Ended(), "the gateway bypasses ordinary Core telemetry")
-	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodPost, "/v1/observer/health", contentType, nil).status)
+	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodPost, "/status", contentType, nil).status)
 }
 
 func TestObserverTelemetryRequiresLoopbackOrigin(t *testing.T) {

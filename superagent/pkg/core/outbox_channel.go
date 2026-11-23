@@ -13,40 +13,6 @@ import (
 	"time"
 )
 
-func (s *Server) channelOutbox(w http.ResponseWriter, r *http.Request) {
-	source, err := s.authenticateOutboxConsumer(r)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	path := strings.TrimPrefix(r.URL.Path, "/v1/channel/outbox")
-	switch {
-	case path == "" || strings.HasPrefix(path, "/items/"):
-		if !readOnly(w, r) {
-			return
-		}
-		s.readOutboxDelivery(w, r, strings.TrimPrefix(path, "/items/"), path == "", source)
-	case path == "/result":
-		s.outboxResult(w, r, source)
-	default:
-		s.fail(w, problem("not_found", "unknown Outbox path"))
-	}
-}
-
-func (s *Server) outboxResult(w http.ResponseWriter, r *http.Request, source Source) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var req OutboxCommand
-	if err := decodeOutboxResult(w, r, &req); err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.writeOutboxResult(w, r, source, req)
-}
-
 func decodeOutboxResult(w http.ResponseWriter, r *http.Request, request any) error {
 	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" {

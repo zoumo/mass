@@ -116,7 +116,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
   data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'report_submit', arguments: {} } },
  })
  expect(toolCall.status()).toBe(401)
- expect((await request.post('/v1/channel/outbox/result', { data: {} })).ok()).toBeFalsy()
+ expect((await request.patch(sentPath, { data: {} })).status()).toBe(401)
  const after = await state()
  const methods = Object.fromEntries(Object.entries(after.rpc)
   .map(([method, count]) => [method, count - (before.rpc[method] ?? 0)] as const)

@@ -89,11 +89,7 @@ INSERT INTO trace_associations VALUES('internal-events','returned','enqueue',0,'
 	require.NoError(t, json.Unmarshal(body, &first))
 	require.Len(t, first.Items, 1)
 	require.NotEmpty(t, first.NextCursor)
-	oldStatus, _, oldBody := resourceRequest(t, server.URL, http.MethodGet, "/v1/observer/routing-events"+filter)
-	require.Equal(t, http.StatusOK, oldStatus)
-	var old Page
-	require.NoError(t, json.Unmarshal(oldBody, &old))
-	require.Equal(t, old.Items, first.Items, "the filtered preview uses the stored routing projection")
+	require.Contains(t, string(first.Items[0]), `"event_id":"returned"`)
 	require.Contains(t, string(first.Items[0]), `"topicTitle":"Saved Topic"`)
 	require.Contains(t, string(first.Items[0]), `"traceId":"4bf92f3577b34da6a3ce929d0e0e4736"`)
 

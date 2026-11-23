@@ -962,126 +962,6 @@
         ],
         "type": "object"
       },
-      "ObserverPerformance": {
-        "additionalProperties": false,
-        "properties": {
-          "from": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "metrics": {
-            "items": {
-              "$ref": "#/components/schemas/PerformanceMetric"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "stepSeconds": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "until": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "from",
-          "until",
-          "stepSeconds",
-          "metrics"
-        ],
-        "type": "object"
-      },
-      "ObserverSpan": {
-        "additionalProperties": false,
-        "properties": {
-          "action": {
-            "type": "string"
-          },
-          "callerId": {
-            "type": "string"
-          },
-          "durationUs": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "eventId": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "offsetUs": {
-            "format": "double",
-            "type": "number"
-          },
-          "outcome": {
-            "type": "string"
-          },
-          "parentId": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string"
-          },
-          "service": {
-            "type": "string"
-          },
-          "status": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "tool": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "service",
-          "offsetUs",
-          "durationUs",
-          "status"
-        ],
-        "type": "object"
-      },
-      "ObserverTrace": {
-        "additionalProperties": false,
-        "properties": {
-          "spans": {
-            "items": {
-              "$ref": "#/components/schemas/ObserverSpan"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "startedAt": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "traceId": {
-            "type": "string"
-          },
-          "truncated": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "traceId",
-          "startedAt",
-          "spans",
-          "truncated"
-        ],
-        "type": "object"
-      },
       "OperationError": {
         "additionalProperties": false,
         "properties": {
@@ -2249,6 +2129,126 @@
           "topicId",
           "threadKey",
           "createdAt"
+        ],
+        "type": "object"
+      },
+      "TelemetryPerformance": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/PerformanceMetric"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "stepSeconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "until": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from",
+          "until",
+          "stepSeconds",
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "TelemetrySpan": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "callerId": {
+            "type": "string"
+          },
+          "durationUs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "offsetUs": {
+            "format": "double",
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tool": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "service",
+          "offsetUs",
+          "durationUs",
+          "status"
+        ],
+        "type": "object"
+      },
+      "TelemetryTrace": {
+        "additionalProperties": false,
+        "properties": {
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/TelemetrySpan"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "traceId",
+          "startedAt",
+          "spans",
+          "truncated"
         ],
         "type": "object"
       },
@@ -7938,7 +7938,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ObserverPerformance"
+                  "$ref": "#/components/schemas/TelemetryPerformance"
                 }
               }
             },
@@ -8193,7 +8193,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ObserverTrace"
+                  "$ref": "#/components/schemas/TelemetryTrace"
                 }
               }
             },

@@ -14,9 +14,7 @@ import (
 	"time"
 )
 
-const observerPerformancePath = "/v1/observer/performance"
-
-type observerPerformance struct {
+type telemetryPerformance struct {
 	From        int64               `json:"from"`
 	Until       int64               `json:"until"`
 	StepSeconds int64               `json:"stepSeconds"`
@@ -34,8 +32,8 @@ type performanceSeries struct {
 	Points     [][2]float64      `json:"points"`
 }
 
-func (r *observerTraceReader) performance(ctx context.Context, q url.Values) (observerPerformance, error) {
-	var result observerPerformance
+func (r *observerTraceReader) performance(ctx context.Context, q url.Values) (telemetryPerformance, error) {
+	var result telemetryPerformance
 	var seconds, step int64
 	switch q.Get("window") {
 	case "15m":
@@ -65,7 +63,7 @@ func (r *observerTraceReader) performance(ctx context.Context, q url.Values) (ob
 		return result, problem("unavailable", "Performance query source is busy")
 	}
 	until := time.Now().Unix() / step * step
-	result = observerPerformance{From: until - seconds, Until: until, StepSeconds: step}
+	result = telemetryPerformance{From: until - seconds, Until: until, StepSeconds: step}
 	result.Metrics = make([]performanceMetric, len(queries))
 	var pending sync.WaitGroup
 	for i, query := range queries {

@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -39,13 +38,6 @@ func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool 
 		return false
 	}
 	return true
-}
-
-func (s *Server) inspectBinding(w http.ResponseWriter, r *http.Request) {
-	if !readOnly(w, r) || !s.authorizeOperator(w, r) {
-		return
-	}
-	s.bindingEvidence(w, r, strings.TrimPrefix(r.URL.Path, "/v1/operator/session-bindings/"))
 }
 
 func (s *Server) bindingEvidence(w http.ResponseWriter, r *http.Request, id string) {

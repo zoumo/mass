@@ -29,7 +29,7 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	submitMaterial := func(id string, content ...events.ContentBlock) core.Receipt {
 		t.Helper()
-		status, body := request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", f.token, core.SubmitTriggerMessageRequest{
+		status, body := request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, core.SubmitTriggerMessageRequest{
 			OperationID: id,
 			Message: core.TriggerMessage{
 				SourceMessageID: id, ThreadKey: threadKey, Content: content,
@@ -138,16 +138,16 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	require.Empty(t, event.Issue)
 	require.Equal(t, 1, injects)
 
-	diagnostic := readRecord[core.Message](t, p, "messages/"+second.MessageID)
+	diagnostic := readRecord[core.Message](t, p, "trigger-messages/"+second.MessageID)
 	require.Equal(t, []events.ContentBlock{attachment}, diagnostic.Content)
 	require.JSONEq(t, `{"diagnostic":"adapter evidence"}`, string(diagnostic.TriggerMeta))
 	for _, preview := range []struct {
 		path, field, id, expected string
 	}{
-		{"messages?preview=true", "text", first.MessageID, "Check the attached log."},
-		{"messages?preview=true", "text", second.MessageID, "[resource_link]"},
-		{"router-messages?messageId=" + first.MessageID, "text", first.MessageID, "Check the attached log."},
-		{"topic-activity?mode=conversation&topicId=" + topicID, "summary", "router_routed/" + routedID, "Check the attached log."},
+		{"trigger-messages?preview=true", "text", first.MessageID, "Check the attached log."},
+		{"trigger-messages?preview=true", "text", second.MessageID, "[resource_link]"},
+		{"trigger-messages?view=router&messageId=" + first.MessageID, "text", first.MessageID, "Check the attached log."},
+		{"topics/" + topicID + "/activity?view=conversation", "summary", "router_routed/" + routedID, "Check the attached log."},
 	} {
 		found := false
 		for _, raw := range page(t, p, preview.path).Items {

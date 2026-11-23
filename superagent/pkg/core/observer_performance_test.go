@@ -73,7 +73,7 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 	api := server.newHTTPAPI()
 	api.router.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, telemetryPerformancePath+"?window=15m", http.NoBody))
 	require.Equal(t, http.StatusOK, response.Code)
-	var result observerPerformance
+	var result telemetryPerformance
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 	require.NotContains(t, response.Body.String(), "secret")
 	require.NotContains(t, response.Body.String(), "unrelated")
@@ -134,9 +134,9 @@ func TestObserverPerformanceScopesOpenTelemetryQueries(t *testing.T) {
 			t.Cleanup(reader.client.CloseIdleConnections)
 			server := &Server{observerTraces: reader, store: store}
 			response := httptest.NewRecorder()
-			server.query(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, observerPerformancePath+"?"+test.query, http.NoBody))
+			server.newHTTPAPI().router.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, telemetryPerformancePath+"?"+test.query, http.NoBody))
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			var result observerPerformance
+			var result telemetryPerformance
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 			require.Equal(t, []performanceMetric{{ID: test.id, Series: []performanceSeries{{
 				Dimensions: test.dimensions, Points: [][2]float64{{float64(result.From), 0.5}},
@@ -150,7 +150,7 @@ func TestObserverPerformanceScopesOpenTelemetryQueries(t *testing.T) {
 		t.Run(invalid, func(t *testing.T) {
 			server := &Server{store: store}
 			response := httptest.NewRecorder()
-			server.query(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, observerPerformancePath+"?"+invalid, http.NoBody))
+			server.newHTTPAPI().router.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, telemetryPerformancePath+"?"+invalid, http.NoBody))
 			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 		})
 	}

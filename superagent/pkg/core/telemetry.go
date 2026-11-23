@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -163,10 +162,8 @@ func (t *coreTelemetry) startHTTPWithParent(w http.ResponseWriter, r *http.Reque
 		ctx = context.WithValue(ctx, traceAssociationContextKey{}, true)
 	}
 	method := boundedHTTPMethod(r.Method)
+	// Chi sets Pattern from the matched route, keeping IDs out of telemetry.
 	route := r.Pattern
-	if route == "" {
-		route = telemetryRoute(r.URL.Path)
-	}
 	spanName := method
 	if method == "_OTHER" {
 		spanName = "HTTP"
@@ -199,50 +196,6 @@ func boundedHTTPMethod(method string) string {
 	default:
 		return "_OTHER"
 	}
-}
-
-// telemetryRoute returns a constant or a path built from an allowlisted
-// collection. Object ids, unknown paths, and query strings never become labels.
-func telemetryRoute(path string) string {
-	switch path {
-	case triggerMessagesPath, outboxMessagesPath:
-		return path
-	case "/v1/channel/messages", "/v1/channel/outbox", "/v1/channel/outbox/result",
-		"/v1/operator/input-recovery", "/v1/observer/health",
-		"/v1/observer/topic-activity", observerPerformancePath,
-		"/observer", "/observer/", mcpPath:
-		return path
-	}
-	switch {
-	case strings.HasPrefix(path, triggerMessagesPath+"/"):
-		return triggerMessagesPath + "/{messageId}"
-	case strings.HasPrefix(path, outboxMessagesPath+"/"):
-		return outboxMessagesPath + "/{outboxId}"
-	case strings.HasPrefix(path, "/v1/channel/outbox/items/"):
-		return "/v1/channel/outbox/items/{id}"
-	case strings.HasPrefix(path, "/v1/operator/session-bindings/"):
-		return "/v1/operator/session-bindings/{id}"
-	case strings.HasPrefix(path, observerTracePath):
-		return observerTracePath + "{id}"
-	case strings.HasPrefix(path, "/v1/observer/session-preview/"):
-		_, view, _ := strings.Cut(strings.TrimPrefix(path, "/v1/observer/session-preview/"), "/")
-		if view == "history" || view == "live" {
-			return "/v1/observer/session-preview/{id}/" + view
-		}
-	case strings.HasPrefix(path, "/v1/observer/"):
-		collection, _, detail := strings.Cut(strings.TrimPrefix(path, "/v1/observer/"), "/")
-		switch collection {
-		case "messages", "threads", "internal-events", "topics", "issues", "reports", "timers",
-			"pull-requests", "router-messages", "routing-events", "subscriptions", "relations", "session-bindings", "outbox":
-			if detail {
-				return "/v1/observer/" + collection + "/{id}"
-			}
-			return "/v1/observer/" + collection
-		}
-	case strings.HasPrefix(path, "/observer/"):
-		return "/observer/{asset}"
-	}
-	return ""
 }
 
 func (t *coreTelemetry) preview(ctx context.Context) func(string) {

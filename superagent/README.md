@@ -181,6 +181,32 @@ For local frontend development, run `npm ci` and `npm run dev` in
 Core and embedded MASS paths to `SUPERAGENT_CORE_ORIGIN`, which defaults to
 `http://127.0.0.1:24370`.
 
+## Cut over the HTTP API
+
+Use Core, Compose, the Superagent Web build, the gateway configuration,
+Operator CLI, and Trigger binaries that use the same resource API. This
+includes the separately built AntCode Trigger. Configure probes for `/livez`
+and `/readyz` and use `/status` to inspect the stack.
+
+1. Pause incoming Trigger traffic. Stop standalone Triggers and stop Compose
+   or standalone Core. For standalone massd, stop it after Core if you are
+   replacing its binary. Verify that the old processes have exited and
+   released their data directories before starting replacements.
+2. Update the binaries, Web build, gateway configuration, and caller
+   configuration together. Preserve the supported Core and massd data
+   directories, Trigger state, credential paths, and Session MCP origin.
+   See [data directory requirements](#reuse-an-existing-core-data-directory)
+   for schema 26. Run one owner per Core, massd, and Trigger data directory.
+   Keep one active Outbox sender per account.
+3. Start standalone massd first if you stopped it. Then start Compose or Core
+   and check `/readyz` and `/status` at the printed Core origin. If you expose
+   massd, check `/massd/readyz` at its public origin. Start Web and the gateway
+   and open `/superagent/` at the gateway origin.
+4. Start standalone Triggers and resume traffic. Verify that a Trigger Message
+   can be submitted and its receipt read back by `sourceMessageId`. Inspect
+   pending Outbox delivery before retrying an uncertain send. Keep the original
+   native Message identity and the saved Outbox item ID across retries.
+
 ## Inspect delivery and recover input
 
 Use Superagent Web or these CLI commands to query retained Core resources.

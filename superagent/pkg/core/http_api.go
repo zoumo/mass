@@ -31,7 +31,11 @@ func OpenAPI() *huma.OpenAPI {
 
 func (s *Server) newHTTPAPI() *httpAPI {
 	router := chi.NewRouter()
-	router.NotFound(s.serveLegacy)
+	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		if !s.testDispatch(w, r) {
+			s.fail(w, problem("not_found", "route not found"))
+		}
+	})
 	config := huma.DefaultConfig("Superagent HTTP API", "1.0.0")
 	config.OpenAPIPath, config.DocsPath, config.SchemasPath = "", "", ""
 	config.CreateHooks = nil

@@ -267,7 +267,7 @@ func (f *fixture) execution(boundary *routeBoundary) {
 
 func bindings(t *testing.T, p *process) []core.SessionBinding {
 	t.Helper()
-	_, data := request(t, http.MethodGet, p.endpoint, "/v1/observer/session-bindings", "", nil)
+	_, data := request(t, http.MethodGet, p.endpoint, "/v1/core/session-bindings", "", nil)
 	var page struct {
 		Items []core.SessionBinding `json:"items"`
 	}
@@ -379,8 +379,23 @@ type observedRoutingEvent struct {
 
 func routingEvents(t *testing.T, p *process, messageID string) []observedRoutingEvent {
 	t.Helper()
-	records := readRecord[struct{ Items []observedRoutingEvent }](t, p, "routing-events?limit=200&messageId="+messageID)
+	records := readRecord[struct{ Items []observedRoutingEvent }](t, p, "internal-events?limit=200&messageId="+messageID)
 	return records.Items
+}
+
+type subscribedThread struct {
+	core.Thread
+	Subscriptions []core.Subscription `json:"subscriptions"`
+}
+
+func readThread(t *testing.T, p *process, key string) subscribedThread {
+	t.Helper()
+	return readRecord[subscribedThread](t, p, "threads/"+url.PathEscape(key))
+}
+
+func messageRelations(t *testing.T, p *process, messageID string) []core.Relation {
+	t.Helper()
+	return readRecord[struct{ Relations []core.Relation }](t, p, "trigger-messages/"+messageID).Relations
 }
 
 func readReturnID(t *testing.T, raw json.RawMessage) string {
@@ -395,7 +410,7 @@ func waitRouteStatus(t *testing.T, p *process, id, status string) observedRoutin
 	t.Helper()
 	var got observedRoutingEvent
 	require.Eventually(t, func() bool {
-		got = readRecord[observedRoutingEvent](t, p, "routing-events/"+id)
+		got = readRecord[observedRoutingEvent](t, p, "internal-events/"+id)
 		return got.Status == status
 	}, 15*time.Second, 50*time.Millisecond)
 	return got
@@ -458,11 +473,11 @@ func TestRoutingPublicProcess(t *testing.T) {
 	// Return bypasses the existing single subscription and increments the round.
 	returned := roleCall(t, p, topicToken, "decline_message", core.DeclineMessageRequest{EventID: second.EventID, Reason: "outside scope"})
 	require.Contains(t, string(returned), second.EventID)
-	routeRequest := readRecord[observedRoutingEvent](t, p, "routing-events/"+readReturnID(t, returned))
+	routeRequest := readRecord[observedRoutingEvent](t, p, "internal-events/"+readReturnID(t, returned))
 	waitRouteStatus(t, p, routeRequest.ID, "sent")
 	require.Equal(t, second.EventID, routeRequest.ReturnedEventID)
 	require.Equal(t, "outside scope", routeRequest.Body)
-	require.Equal(t, "sent", readRecord[observedRoutingEvent](t, p, "routing-events/"+second.EventID).Status)
+	require.Equal(t, "sent", readRecord[observedRoutingEvent](t, p, "internal-events/"+second.EventID).Status)
 	retry := core.RouteRequest{OperationID: "redeliver", MessageIDs: []string{second.MessageID}, Rounds: map[string]int{second.MessageID: 2}, Kind: "route", Reason: "reconsider", Targets: []core.RouteTarget{{TopicID: topicID, MessageIDs: []string{second.MessageID}}}}
 	rerouted := decide(t, p, token, retry)
 	newID := rerouted.Targets[0].EventIDs[second.MessageID]
@@ -509,9 +524,11 @@ func TestRoutingPublicProcess(t *testing.T) {
 	require.Empty(t, liveMCP.call("tools/call", map[string]any{"name": "list_topics", "arguments": map[string]string{"query": topicID}})["error"])
 	require.Len(t, bindings(t, p), len(before))
 	require.Equal(t, decision.ID, decide(t, p, token, r).ID)
-	_, data = request(t, http.MethodGet, p.endpoint, "/v1/observer/subscriptions", "", nil)
-	require.Contains(t, string(data), topicID)
-	require.Contains(t, string(data), otherID)
+	var subscribedTopics []string
+	for _, sub := range readThread(t, p, shared.ThreadKey).Subscriptions {
+		subscribedTopics = append(subscribedTopics, sub.TopicID)
+	}
+	require.ElementsMatch(t, []string{topicID, otherID}, subscribedTopics)
 	t.Log("0/1/many subscriptions, explicit multi-Topic, retry, return round, scope rejection, HTTP MCP and restart passed")
 }
 
@@ -625,13 +642,12 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 		result = append(result, code)
 	}
 	require.ElementsMatch(t, []int{200, 409}, result)
-	_, data := request(t, http.MethodGet, p.endpoint, "/v1/observer/topics", "", nil)
+	_, data := request(t, http.MethodGet, p.endpoint, "/v1/core/topics", "", nil)
 	var page core.Page
 	require.NoError(t, json.Unmarshal(data, &page))
 	require.Len(t, page.Items, 1)
-	_, data = request(t, http.MethodGet, p.endpoint, "/v1/observer/relations", "", nil)
-	require.NoError(t, json.Unmarshal(data, &page))
-	require.Len(t, page.Items, 2)
+	relations := len(messageRelations(t, p, a.MessageID)) + len(messageRelations(t, p, b.MessageID)) + len(messageRelations(t, p, c.MessageID))
+	require.Equal(t, 2, relations)
 	// A valid create followed by an invalid existing target rolls back the whole request.
 	fresh := input("rollback")
 	fresh.Message.ThreadKey = fixtureThreadKey("rollback-thread")
@@ -641,7 +657,7 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 	r.Targets = append(r.Targets, core.RouteTarget{TopicID: "missing-topic", MessageIDs: []string{m.MessageID}})
 	status, data := requestMCPTool(t, p.endpoint, "route_messages", token, r)
 	require.Equal(t, 404, status, string(data))
-	_, data = request(t, http.MethodGet, p.endpoint, "/v1/observer/topics", "", nil)
+	_, data = request(t, http.MethodGet, p.endpoint, "/v1/core/topics", "", nil)
 	require.NoError(t, json.Unmarshal(data, &page))
 	require.Len(t, page.Items, 1)
 	require.Len(t, bindings(t, p), 2)
@@ -680,7 +696,7 @@ func TestRoutingLostCreateAndPreparationRetry(t *testing.T) {
 	waitBinding(t, p, "topic", id, "ready")
 	require.EqualValues(t, 2, boundary.dropped.Load())
 	waitDelivered(t, p, receipt.MessageID, "topic", id)
-	_, data := request(t, http.MethodGet, p.endpoint, "/v1/observer/topics", "", nil)
+	_, data := request(t, http.MethodGet, p.endpoint, "/v1/core/topics", "", nil)
 	var page core.Page
 	require.NoError(t, json.Unmarshal(data, &page))
 	require.Len(t, page.Items, 1)
@@ -886,8 +902,8 @@ func TestRoutingCrashAtomicRoute(t *testing.T) {
 				expected = 1
 			}
 			require.Len(t, page(t, p, "topics").Items, expected)
-			require.Len(t, page(t, p, "subscriptions").Items, expected)
-			require.Len(t, page(t, p, "relations").Items, expected)
+			require.Len(t, readThread(t, p, m.ThreadKey).Subscriptions, expected)
+			require.Len(t, messageRelations(t, p, m.MessageID), expected)
 			require.Len(t, bindings(t, p), expected+1)
 			replay := decide(t, p, token, r)
 			require.Equal(t, "mass-t1", replay.Targets[0].TopicID)
@@ -979,13 +995,13 @@ func TestRoutingCrashAtomicReturn(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(raw, &current))
 			require.Equal(t, expectedRound, current.Routing.Round)
-			require.Len(t, page(t, p, "relations").Items, expectedRelations)
-			require.Len(t, page(t, p, "subscriptions").Items, 1)
+			require.Len(t, messageRelations(t, p, m.MessageID), expectedRelations)
+			require.Len(t, readThread(t, p, m.ThreadKey).Subscriptions, 1)
 			original := roleCall(t, p, token, "decline_message", r)
 			require.JSONEq(t, string(original), string(roleCall(t, p, token, "decline_message", r)))
 			waitDelivered(t, p, m.MessageID, "router", "")
-			require.Len(t, page(t, p, "relations").Items, 2)
-			require.Len(t, page(t, p, "subscriptions").Items, 1)
+			require.Len(t, messageRelations(t, p, m.MessageID), 2)
+			require.Len(t, readThread(t, p, m.ThreadKey).Subscriptions, 1)
 			t.Logf("%s: return reason, routed delivery history and the stable Router request committed atomically", stage)
 		})
 	}
@@ -1045,7 +1061,7 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	write(t, f.config, string(original))
 	p = f.start()
 	require.Equal(t, router.ID, waitBinding(t, p, "router", "", "ready").ID)
-	require.Len(t, page(t, p, "messages").Items, 1)
+	require.Len(t, page(t, p, "trigger-messages").Items, 1)
 	require.Len(t, routingEvents(t, p, m.MessageID), 1)
 	t.Log("intake delivery resumed with its original ID; massd endpoint came from startup configuration and the existing binding identity was retained")
 }
@@ -1124,7 +1140,7 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 		require.JSONEq(t, fmt.Sprintf(`{"id":%q,"source":"dws","content":[{"type":"text","text":%q}],"threadKey":%q}`, receipt.MessageID, req.Message.Content[0].Text.Text, receipt.ThreadKey), string(item))
 		items := mcpWork[core.Page](t, topic, "list_messages", map[string]any{"threadKey": receipt.ThreadKey})
 		require.JSONEq(t, string(item), string(items.Items[len(items.Items)-1]))
-		original := readRecord[core.Message](t, p, "messages/"+receipt.MessageID)
+		original := readRecord[core.Message](t, p, "trigger-messages/"+receipt.MessageID)
 		require.Equal(t, req.Message.SourceMessageID, original.SourceMessageID)
 		require.Empty(t, original.ReplyTarget)
 	}
@@ -1275,10 +1291,10 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	raw = roleCall(t, p, bToken, "list_messages", map[string]any{})
 	require.NoError(t, json.Unmarshal(raw, &own))
 	require.Len(t, own.Items, 1)
-	own = page(t, p, "routing-events?topicId="+b.OwnerID)
+	own = page(t, p, "topics/"+b.OwnerID+"/activity?filter=message")
 	require.NotEmpty(t, own.Items)
 	require.Contains(t, string(own.Items[0]), m.MessageID)
-	_, raw = request(t, http.MethodGet, p.endpoint, "/v1/observer/threads/"+url.PathEscape(m.ThreadKey), "", nil)
+	_, raw = request(t, http.MethodGet, p.endpoint, "/v1/core/threads/"+url.PathEscape(m.ThreadKey), "", nil)
 	require.Contains(t, string(raw), a.OwnerID)
 	require.Contains(t, string(raw), b.OwnerID)
 	peer.quiet(t, 300*time.Millisecond)

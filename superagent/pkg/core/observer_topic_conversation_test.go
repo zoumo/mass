@@ -33,15 +33,19 @@ type conversationRow struct {
 	Summary          string `json:"summary"`
 }
 
-func conversationPage(t *testing.T, p *process, query url.Values) ([]conversationRow, string) {
-	t.Helper()
+func topicConversationPath(query url.Values) string {
 	path := "/v1/core/topics"
 	if id := query.Get("topicId"); id != "" {
 		path += "/" + url.PathEscape(id) + "/activity"
 		query.Del("topicId")
 	}
 	query.Set("view", "conversation")
-	status, body := request(t, http.MethodGet, p.endpoint, path+"?"+query.Encode(), "", nil)
+	return path + "?" + query.Encode()
+}
+
+func conversationPage(t *testing.T, p *process, query url.Values) ([]conversationRow, string) {
+	t.Helper()
+	status, body := request(t, http.MethodGet, p.endpoint, topicConversationPath(query), "", nil)
 	require.Equal(t, http.StatusOK, status, "%s", body)
 	var result core.Page
 	require.NoError(t, json.Unmarshal(body, &result))
@@ -138,8 +142,7 @@ func TestObserverTopicConversationIngress(t *testing.T) {
 		{"HEAD", url.Values{}, 200},
 		{"POST", url.Values{}, 405},
 	} {
-		check.query.Set("mode", "conversation")
-		status, body := request(t, check.method, p.endpoint, "/v1/observer/topic-activity?"+check.query.Encode(), "", nil)
+		status, body := request(t, check.method, p.endpoint, topicConversationPath(check.query), "", nil)
 		require.Equal(t, check.status, status, string(body))
 	}
 }
@@ -195,8 +198,7 @@ func TestObserverTopicConversationIssueDispatch(t *testing.T) {
 	require.Equal(t, "issue_created/"+issue.ID, remainder[0].ID)
 	require.Equal(t, ingress.MessageID, remainder[1].MessageID)
 
-	params := url.Values{"mode": {"conversation"}, "topicId": {topic.OwnerID}, "filter": {"issue_session_dispatch"}}
-	result := page(t, p, "topic-activity?"+params.Encode())
+	result := page(t, p, "topics/"+topic.OwnerID+"/activity?view=conversation&filter=issue_session_dispatch")
 	want := []struct {
 		kind, id, sessionBindingID string
 	}{

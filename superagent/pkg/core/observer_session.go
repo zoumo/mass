@@ -39,15 +39,6 @@ type sessionPreviewHistory struct {
 
 // Only Core-owned bindings can be inspected. The browser never chooses a
 // massd target or sees its connection configuration.
-func (s *Server) sessionPreview(w http.ResponseWriter, r *http.Request, path string) {
-	id, view, ok := strings.Cut(path, "/")
-	if !ok || (view != "history" && view != "live") {
-		s.fail(w, problem("not_found", "unknown Session preview"))
-		return
-	}
-	s.previewSessionBinding(w, r, id, view)
-}
-
 func (s *Server) previewSessionBinding(w http.ResponseWriter, r *http.Request, id, view string) {
 	raw, err := s.store.Get(r.Context(), "session-bindings", id)
 	if err != nil {

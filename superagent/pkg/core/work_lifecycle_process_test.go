@@ -408,8 +408,8 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	follow := input("after-topic-cancel")
 	follow.Message.ThreadKey, follow.ReplyTarget = fixtureThreadKey("lifecycle-topic"), nil
 	queued := submit(t, p, f, follow)
-	require.Equal(t, "pending", readRecord[observedRoutingEvent](t, p, "routing-events/"+queued.EventID).Status)
-	require.Equal(t, "pending", readRecord[observedRoutingEvent](t, p, "routing-events/"+queued.EventID).Status)
+	require.Equal(t, "pending", readRecord[observedRoutingEvent](t, p, "internal-events/"+queued.EventID).Status)
+	require.Equal(t, "pending", readRecord[observedRoutingEvent](t, p, "internal-events/"+queued.EventID).Status)
 	peer.quiet(t, 250*time.Millisecond)
 	topicRecovery := recoveryFor("restore-topic", "settle", topicBinding.ID)
 	topicRecovery.StopRuntime = true
@@ -468,7 +468,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	require.Equal(t, thirdBinding.SessionID, thirdInput.session)
 	decodeInternalBatch(t, thirdInput, third.SessionBinding.StartEventID)
 	waitWorkEvent(t, p, third.SessionBinding.StartEventID, "sent")
-	for _, path := range []string{"/v1/observer/topics/" + oldTopic.ID, "/v1/observer/session-bindings/" + newTopic.ID} {
+	for _, path := range []string{"/v1/core/topics/" + oldTopic.ID, "/v1/core/session-bindings/" + newTopic.ID} {
 		status, _ = request(t, http.MethodPost, p.endpoint, path, string(opToken), nil)
 		require.Equal(t, http.StatusMethodNotAllowed, status)
 	}

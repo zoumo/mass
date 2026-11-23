@@ -249,7 +249,7 @@ func (f *CoreFixture) RoutingEvents(m map[string]any) []routingEvent {
 	var page struct {
 		Items []routingEvent `json:"items"`
 	}
-	path := "/v1/observer/routing-events?messageId=" + url.QueryEscape(m["id"].(string))
+	path := "/v1/core/internal-events?messageId=" + url.QueryEscape(m["id"].(string))
 	if code := Request(f.t, "GET", f.Endpoint, path, "", nil, &page); code != http.StatusOK {
 		f.t.Fatalf("read routing events: HTTP %d", code)
 	}
@@ -261,7 +261,7 @@ func ReadMessages(t *testing.T, endpoint string) []map[string]any {
 	var page struct {
 		Items []map[string]any `json:"items"`
 	}
-	if code := Request(t, http.MethodGet, endpoint, "/v1/observer/messages?limit=200", "", nil, &page); code != http.StatusOK {
+	if code := Request(t, http.MethodGet, endpoint, "/v1/core/trigger-messages?limit=200", "", nil, &page); code != http.StatusOK {
 		t.Fatalf("Core Messages: HTTP %d", code)
 	}
 	return page.Items

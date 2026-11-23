@@ -58,7 +58,7 @@ func assertTimerFollowup(t *testing.T, p *process, timer timerRecord) {
 	require.NotNil(t, timer.Followup)
 	require.NotEmpty(t, timer.TriggerMessageID)
 	require.Equal(t, timerEventType, timer.Type)
-	message := readRecord[core.Message](t, p, "messages/"+timer.TriggerMessageID)
+	message := readRecord[core.Message](t, p, "trigger-messages/"+timer.TriggerMessageID)
 	require.Equal(t, timer.ID, message.SourceMessageID)
 	require.Equal(t, "core:timer", message.Source)
 	require.Equal(t, "core%3Atimer:"+timer.ID, timer.ThreadKey)
@@ -68,17 +68,13 @@ func assertTimerFollowup(t *testing.T, p *process, timer timerRecord) {
 	require.Empty(t, message.TriggerMeta)
 	require.Empty(t, message.ReplyTarget)
 
-	type subscribedThread struct {
-		core.Thread
-		Subscriptions []core.Subscription `json:"subscriptions"`
-	}
-	thread := readRecord[subscribedThread](t, p, "threads/"+url.PathEscape(timer.ThreadKey))
+	thread := readThread(t, p, timer.ThreadKey)
 	require.Equal(t, timer.ThreadKey, thread.Key)
 	require.Len(t, thread.Subscriptions, 1)
 	require.Equal(t, timer.TopicID, thread.Subscriptions[0].TopicID)
-	require.Len(t, page(t, p, "messages?threadKey="+url.QueryEscape(timer.ThreadKey)).Items, 1)
-	require.Len(t, page(t, p, "routing-events?messageId="+message.ID).Items, 1)
-	internalEvent := readRecord[timerRoute](t, p, "routing-events/"+timer.Followup.ID)
+	require.Len(t, page(t, p, "trigger-messages?threadKey="+url.QueryEscape(timer.ThreadKey)).Items, 1)
+	require.Len(t, page(t, p, "internal-events?messageId="+message.ID).Items, 1)
+	internalEvent := readRecord[timerRoute](t, p, "internal-events/"+timer.Followup.ID)
 	require.Equal(t, message.EventID, internalEvent.ID)
 	require.Equal(t, "routed_message", internalEvent.Kind)
 	require.Equal(t, timer.TopicID, internalEvent.TopicID)
@@ -89,7 +85,7 @@ func waitTimerEvent(t *testing.T, p *process, id, status string) timerRoute {
 	t.Helper()
 	var found timerRoute
 	require.Eventually(t, func() bool {
-		found = readRecord[timerRoute](t, p, "routing-events/"+id)
+		found = readRecord[timerRoute](t, p, "internal-events/"+id)
 		return found.Status == status
 	}, 7*time.Second, 25*time.Millisecond, "Timer delivery %s: waiting for %s", id, status)
 	return found
@@ -211,12 +207,12 @@ func TestTimerNativeEventAndAuthority(t *testing.T) {
 	mcpWorkError(t, topic, "timer_cancel", "failed_precondition", cancelTimerInput("too-late", fired.Timer))
 	update.CancelTimerRequest = cancelTimerInput("update-fired", fired.Timer)
 	mcpWorkError(t, topic, "timer_update", "failed_precondition", update)
-	require.Len(t, page(t, p, "messages").Items, 3)
+	require.Len(t, page(t, p, "trigger-messages").Items, 3)
 	require.Len(t, page(t, p, "threads").Items, 3)
 	require.Empty(t, page(t, p, "issues").Items)
 	require.Empty(t, issueBindings(t, p))
 	require.Equal(t, 1, readRecord[core.Topic](t, p, "topics/"+binding.OwnerID).Revision)
-	firedTrace := observedTraces(t, p, "messages", fired.TriggerMessageID)
+	firedTrace := observedTraces(t, p, "trigger-messages", fired.TriggerMessageID)
 	require.Len(t, firedTrace, 1)
 	p.stop(t, false)
 	var linked bool
@@ -285,7 +281,7 @@ func TestTimerRevisionWinsBeforeFire(t *testing.T) {
 			waitTimerEvent(t, p, fired.Followup.ID, "sent")
 			require.Equal(t, changed, readRecord[timerRecord](t, p, "timers/"+changed.ID).Timer)
 			require.Equal(t, changed, roleWork[core.Timer](t, p, token, "schedule_followup", r))
-			require.Len(t, page(t, p, "messages").Items, 2)
+			require.Len(t, page(t, p, "trigger-messages").Items, 2)
 			require.Len(t, page(t, p, "threads").Items, 2)
 			assertTimerFollowup(t, p, fired)
 			t.Logf("%s committed after selecting the old due revision and prevented its followup", action)
@@ -319,7 +315,7 @@ func TestTimerFireCommitCrash(t *testing.T) {
 			if stage == "timer_before_commit" {
 				waitWorkGate(t, resume, "timer_before_fire")
 				require.Equal(t, "scheduled", readRecord[timerRecord](t, p, "timers/"+timer.ID).Status)
-				require.Len(t, page(t, p, "messages").Items, 1)
+				require.Len(t, page(t, p, "trigger-messages").Items, 1)
 				require.Len(t, page(t, p, "threads").Items, 1)
 			} else {
 				fired := readRecord[timerRecord](t, p, "timers/"+timer.ID)
@@ -391,7 +387,7 @@ func TestTimerTopicLifecycleFence(t *testing.T) {
 			p.stop(t, false)
 			advanceClock(time.Minute)
 			p = f.start(clock)
-			require.Len(t, page(t, p, "messages").Items, 2)
+			require.Len(t, page(t, p, "trigger-messages").Items, 2)
 			require.Len(t, page(t, p, "threads").Items, 2)
 			require.Equal(t, invalidated, readRecord[timerRecord](t, p, "timers/"+future.ID))
 			require.Equal(t, internalEvent, waitTimerEvent(t, p, fired.Followup.ID, "superseded"))

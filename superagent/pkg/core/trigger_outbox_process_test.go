@@ -207,7 +207,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	require.NotNil(t, association.QuotedReply)
 	require.Equal(t, item.ID, association.QuotedReply.OutboxID)
 	require.Equal(t, *ref, association.QuotedReply.BlockerRef)
-	require.Equal(t, association, readRecord[quotedReplyRecord](t, p, "messages/"+accepted.MessageID))
+	require.Equal(t, association, readRecord[quotedReplyRecord](t, p, "trigger-messages/"+accepted.MessageID))
 	waitRouteStatus(t, p, accepted.EventID, "sent")
 	promptEvent := func(receipt core.Receipt) map[string]json.RawMessage {
 		t.Helper()
