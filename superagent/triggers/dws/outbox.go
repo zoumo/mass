@@ -12,7 +12,11 @@ import (
 	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
 
-const outboxPath = "/v1/channel/outbox"
+const outboxPath = "/v1/core/outbox-messages"
+
+func outboxDeliveryPath(id string) string {
+	return outboxPath + "/" + url.PathEscape(id) + "?view=delivery"
+}
 
 type outboxReceipt struct {
 	TaskID    string `json:"taskId,omitempty"`
@@ -77,7 +81,6 @@ type outboxPage struct {
 }
 
 type outboxCommand struct {
-	OutboxID  string      `json:"outboxId"`
 	Expected  outboxState `json:"expected"`
 	Outcome   string      `json:"outcome"`
 	TaskID    string      `json:"taskId,omitempty"`
@@ -103,7 +106,7 @@ func (e egress) run(admit, drain context.Context) {
 func (e egress) scan(admit, drain context.Context) bool {
 	e.recover(admit, drain)
 	for cursor := ""; admit.Err() == nil; {
-		raw, code, retry := e.core.Request(admit, http.MethodGet, outboxPath+"?limit=20&cursor="+url.QueryEscape(cursor), nil, 8<<20)
+		raw, code, retry := e.core.Request(admit, http.MethodGet, outboxPath+"?view=delivery&limit=20&cursor="+url.QueryEscape(cursor), nil, 8<<20)
 		if code != "" {
 			if admit.Err() == nil {
 				e.log("outbox_poll_failed", code)
@@ -268,7 +271,7 @@ func (e egress) recover(admit, drain context.Context) {
 				continue
 			}
 		}
-		raw, code, _ := e.core.Request(admit, http.MethodGet, outboxPath+"/items/"+url.PathEscape(attempt.OutboxID), nil, 65536)
+		raw, code, _ := e.core.Request(admit, http.MethodGet, outboxDeliveryPath(attempt.OutboxID), nil, 65536)
 		var item outboxItem
 		if code != "" || json.Unmarshal(raw, &item) != nil || item.ID != attempt.OutboxID {
 			continue
@@ -302,13 +305,13 @@ func replyTarget(c dwsConfig, channel nativeReplyTarget) (peer string, allowed b
 
 func (e egress) update(ctx context.Context, item outboxItem, result channelOutcome) bool {
 	req := outboxCommand{
-		OutboxID: item.ID, Expected: item.outboxState, Outcome: result.Outcome, TaskID: result.TaskID, ErrorCode: result.ErrorCode,
+		Expected: item.outboxState, Outcome: result.Outcome, TaskID: result.TaskID, ErrorCode: result.ErrorCode,
 	}
 	delay := time.Duration(e.config.RetryMillis) * time.Millisecond
 	for ctx.Err() == nil {
-		raw, code, retry := e.core.Post(ctx, outboxPath+"/result", req)
+		raw, code, retry := e.core.Patch(ctx, outboxPath+"/"+url.PathEscape(item.ID), req)
 		if code == "" {
-			if validOutboxWrite(raw, req) {
+			if validOutboxWrite(raw, item.ID, req) {
 				return true
 			}
 			code, retry = "core_response_unknown", true
@@ -322,9 +325,9 @@ func (e egress) update(ctx context.Context, item outboxItem, result channelOutco
 	return false
 }
 
-func validOutboxWrite(raw []byte, req outboxCommand) bool {
+func validOutboxWrite(raw []byte, id string, req outboxCommand) bool {
 	var item outboxItem
-	if json.Unmarshal(raw, &item) != nil || item.ID != req.OutboxID {
+	if json.Unmarshal(raw, &item) != nil || item.ID != id {
 		return false
 	}
 	var receipt outboxReceipt

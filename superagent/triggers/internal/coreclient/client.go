@@ -13,6 +13,8 @@ import (
 	"github.com/zoumo/mass/superagent/triggers/internal/trigger"
 )
 
+const TriggerMessagesPath = "/v1/core/trigger-messages"
+
 type Client struct {
 	endpoint, token string
 	http            *http.Client
@@ -39,7 +41,7 @@ func New(endpoint string, timeout time.Duration, token string) (*Client, error) 
 }
 
 func (c *Client) SubmitPayload(ctx context.Context, payload []byte) SubmitResult {
-	data, code, retry := c.Request(ctx, http.MethodPost, "/v1/channel/messages", bytes.NewReader(payload), 65536)
+	data, code, retry := c.Request(ctx, http.MethodPost, TriggerMessagesPath, bytes.NewReader(payload), 65536)
 	if code != "" {
 		return SubmitResult{Code: code, Retry: retry}
 	}
@@ -50,12 +52,12 @@ func (c *Client) SubmitPayload(ctx context.Context, payload []byte) SubmitResult
 	return SubmitResult{Receipt: receipt}
 }
 
-func (c *Client) Post(ctx context.Context, path string, payload any) (data []byte, code string, retry bool) {
+func (c *Client) Patch(ctx context.Context, path string, payload any) (data []byte, code string, retry bool) {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, "invalid_message", false
 	}
-	return c.Request(ctx, http.MethodPost, path, bytes.NewReader(b), 65536)
+	return c.Request(ctx, http.MethodPatch, path, bytes.NewReader(b), 65536)
 }
 
 func (c *Client) Request(ctx context.Context, method, path string, body io.Reader, limit int64) (data []byte, code string, retry bool) {

@@ -16,7 +16,7 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-const channelOutbox = "/v1/channel/outbox"
+const channelOutbox = "/v1/core/outbox-messages"
 
 func markdownReply(text string) core.StructuredContent {
 	data, err := json.Marshal(map[string]string{"text": text})
@@ -50,7 +50,7 @@ func addOutboxPeerSources(t *testing.T, f *fixture) (sameSource, otherSource, in
 
 func readOutbox(t *testing.T, p *process, id string) core.OutboxItem {
 	t.Helper()
-	code, data := request(t, "GET", p.endpoint, "/v1/observer/outbox/"+id, "", nil)
+	code, data := request(t, "GET", p.endpoint, channelOutbox+"/"+id, "", nil)
 	require.Equal(t, 200, code, "%s", data)
 	require.NotContains(t, string(data), "attempts")
 	var detail core.OutboxItem
@@ -60,7 +60,7 @@ func readOutbox(t *testing.T, p *process, id string) core.OutboxItem {
 
 func listOutbox(t *testing.T, endpoint, token, query string) core.Page {
 	t.Helper()
-	code, data := request(t, "GET", endpoint, channelOutbox+query, token, nil)
+	code, data := request(t, "GET", endpoint, channelOutbox+"?view=delivery&"+strings.TrimPrefix(query, "?"), token, nil)
 	require.Equal(t, 200, code, "%s", data)
 	var result core.Page
 	require.NoError(t, json.Unmarshal(data, &result))
@@ -69,7 +69,7 @@ func listOutbox(t *testing.T, endpoint, token, query string) core.Page {
 
 func resultOutbox(t *testing.T, p *process, token string, req core.OutboxCommand) core.OutboxItem {
 	t.Helper()
-	code, data := request(t, "POST", p.endpoint, channelOutbox+"/result", token, req)
+	code, data := patchOutbox(t, p, token, req)
 	require.Equal(t, 200, code, "%s", data)
 	var result core.OutboxItem
 	require.NoError(t, json.Unmarshal(data, &result))
@@ -77,6 +77,17 @@ func resultOutbox(t *testing.T, p *process, token string, req core.OutboxCommand
 	stored := readOutbox(t, p, req.OutboxID)
 	require.Equal(t, stored.OutboxState, result.OutboxState)
 	return stored
+}
+
+func patchOutbox(t *testing.T, p *process, token string, req core.OutboxCommand) (int, []byte) {
+	t.Helper()
+	body := struct {
+		Expected  core.OutboxState `json:"expected"`
+		Outcome   string           `json:"outcome"`
+		TaskID    string           `json:"taskId,omitempty"`
+		ErrorCode string           `json:"errorCode,omitempty"`
+	}{Expected: req.Expected, Outcome: req.Outcome, TaskID: req.TaskID, ErrorCode: req.ErrorCode}
+	return request(t, http.MethodPatch, p.endpoint, channelOutbox+"/"+req.OutboxID, token, body)
 }
 
 func outboxResult(item core.OutboxItem, outcome, code string) core.OutboxCommand {
@@ -200,7 +211,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 		AccountID, Source string
 		ReplyTarget       json.RawMessage
 	}
-	code, raw = request(t, "GET", p.endpoint, channelOutbox+"/items/"+reply.ID, f.token, nil)
+	code, raw = request(t, "GET", p.endpoint, channelOutbox+"/"+reply.ID+"?view=delivery", f.token, nil)
 	require.Equal(t, 200, code, "%s", raw)
 	require.NoError(t, json.Unmarshal(raw, &address))
 	require.Equal(t, "account-1", address.AccountID)
@@ -213,12 +224,12 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 		code    int
 		problem string
 	}{{peer, 403, "forbidden"}, {other, 404, "not_found"}, {intake, 403, "forbidden"}} {
-		code, raw = request(t, "GET", p.endpoint, channelOutbox+"/items/"+reply.ID, tc.token, nil)
+		code, raw = request(t, "GET", p.endpoint, channelOutbox+"/"+reply.ID+"?view=delivery", tc.token, nil)
 		errorCode(t, code, raw, tc.code, tc.problem)
-		code, raw = request(t, "POST", p.endpoint, channelOutbox+"/result", tc.token, result)
+		code, raw = patchOutbox(t, p, tc.token, result)
 		errorCode(t, code, raw, tc.code, tc.problem)
 	}
-	code, raw = request(t, "GET", p.endpoint, channelOutbox, peer, nil)
+	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", peer, nil)
 	errorCode(t, code, raw, 403, "forbidden")
 	code, raw = request(t, "POST", p.endpoint, "/v1/channel/messages", peer, input("passive-collector"))
 	require.Equal(t, 200, code, "%s", raw)
@@ -227,7 +238,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	roleWork[core.OutboxItem](t, p, routerToken, "send_reply",
 		core.ReplyRequest{OperationID: "reply-on-account", Content: markdownReply("Send via configured consumer"), MessageID: passive.MessageID})
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 4)
-	code, raw = request(t, "GET", p.endpoint, channelOutbox, "", nil)
+	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", "", nil)
 	errorCode(t, code, raw, 401, "unauthorized")
 	code, _ = request(t, "POST", p.endpoint, "/v1/observer/outbox/"+reply.ID, "", struct{}{})
 	require.Equal(t, 405, code)
@@ -268,7 +279,7 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 
 	wrongTask := outboxResult(saved, "sent", "")
 	wrongTask.TaskID = "different-task"
-	code, body := request(t, "POST", p.endpoint, channelOutbox+"/result", f.token, wrongTask)
+	code, body := patchOutbox(t, p, f.token, wrongTask)
 	errorCode(t, code, body, 409, "conflict")
 	retry := outboxResult(saved, "retryable_failure", "confirmed_failure")
 	failed := resultOutbox(t, p, f.token, retry)
@@ -286,7 +297,7 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	require.Nil(t, sent.Receipt)
 	require.Equal(t, sent, resultOutbox(t, p, f.token, settle))
 	require.Empty(t, listOutbox(t, p.endpoint, f.token, "").Items)
-	code, body = request(t, "POST", p.endpoint, channelOutbox+"/result", f.token, retry)
+	code, body = patchOutbox(t, p, f.token, retry)
 	errorCode(t, code, body, 409, "conflict")
 	require.Equal(t, sent, readOutbox(t, p, sent.ID))
 
@@ -385,7 +396,7 @@ func TestOutboxStructuredContentDiscoveryAndValidation(t *testing.T) {
 		channelItems = append(channelItems, channelItem)
 	}
 	require.ElementsMatch(t, []core.OutboxItem{item, markdownItem}, channelItems)
-	code, raw := request(t, "GET", p.endpoint, channelOutbox+"/items/"+item.ID, f.token, nil)
+	code, raw := request(t, "GET", p.endpoint, channelOutbox+"/"+item.ID+"?view=delivery", f.token, nil)
 	require.Equal(t, http.StatusOK, code)
 	var channelItem core.OutboxItem
 	require.NoError(t, json.Unmarshal(raw, &channelItem))

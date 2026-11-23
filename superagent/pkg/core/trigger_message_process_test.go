@@ -3,6 +3,7 @@ package core_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 func TestStructuredTriggerMessageProcess(t *testing.T) {
 	f := fixtureAt(t)
 	const thread = "opaque/Case%2f:入口"
+	const ingress = "/v1/core/trigger-messages"
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
 	config = []byte(strings.Replace(string(config), "['dws:']", "['opaque/']", 1))
@@ -37,7 +39,7 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	}
 	submit := func(source string, input core.SubmitTriggerMessageRequest) core.Receipt {
 		t.Helper()
-		status, data := request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", tokens[source], input)
+		status, data := request(t, http.MethodPost, p.endpoint, ingress, tokens[source], input)
 		require.Equal(t, http.StatusOK, status, string(data))
 		var receipt core.Receipt
 		require.NoError(t, json.Unmarshal(data, &receipt))
@@ -45,7 +47,7 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	}
 	reject := func(token string, input any, status int, code string) {
 		t.Helper()
-		got, data := request(t, http.MethodPost, p.endpoint, "/v1/channel/messages", token, input)
+		got, data := request(t, http.MethodPost, p.endpoint, ingress, token, input)
 		errorCode(t, got, data, status, code)
 	}
 	attachment := events.ContentBlock{ResourceLink: &events.ContentBlockResourceLink{URI: "file:///logs/checks.log", Name: "checks.log"}}
@@ -101,6 +103,37 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f.execution(boundary)
 	p = f.start()
+	lookup := ingress + "?sourceMessageId=" + url.QueryEscape(firstInput.Message.SourceMessageID)
+	status, raw := request(t, http.MethodGet, p.endpoint, lookup, tokens["custom"], nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var readback core.Receipt
+	require.NoError(t, json.Unmarshal(raw, &readback))
+	require.Equal(t, first, readback)
+	require.NotContains(t, string(raw), `"content"`)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, tokens["github"], nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &readback))
+	require.Equal(t, second, readback)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, tokens["dws"], nil)
+	errorCode(t, status, raw, http.StatusNotFound, "not_found")
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, "", nil)
+	errorCode(t, status, raw, http.StatusUnauthorized, "unauthorized")
+	status, raw = request(t, http.MethodHead, p.endpoint, lookup, tokens["custom"], nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, raw)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup+"&view=router", "", nil)
+	errorCode(t, status, raw, http.StatusBadRequest, "invalid_argument")
+	status, raw = request(t, http.MethodGet, p.endpoint, ingress+"?sourceMessageId=%zz", "", nil)
+	errorCode(t, status, raw, http.StatusBadRequest, "invalid_argument")
+	status, raw = request(t, http.MethodGet, p.endpoint, ingress+"/"+first.MessageID, "", nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	require.NotContains(t, string(raw), `"inReplyToOutboxId"`)
+	status, raw = request(t, http.MethodGet, p.endpoint, ingress+"?view=router&messageId="+first.MessageID, "", nil)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var routedPage core.Page
+	require.NoError(t, json.Unmarshal(raw, &routedPage))
+	require.Len(t, routedPage.Items, 1)
+	require.Contains(t, string(routedPage.Items[0]), first.MessageID)
 	router := waitBinding(t, p, "router", "", "ready")
 	routerToken := roleToken(t, f, router)
 	for _, receipt := range []core.Receipt{first, second, large} {
