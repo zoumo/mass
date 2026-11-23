@@ -2,7 +2,6 @@ package github
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,8 +13,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/mass/massd/pkg/events"
-	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggertest"
 )
 
@@ -297,80 +294,4 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 		require.NotContains(t, githubFixtureMessageText(t, msg), "demo/outside")
 	}
 	require.Len(t, triggertest.ReadMessages(t, f.Endpoint), 4)
-}
-
-func TestGitHubLegacyQueueRecoversOriginalReceipt(t *testing.T) {
-	t.Parallel()
-	f := newGitHubCoreFixture(t)
-	const repo = "demo/sdk"
-	prURL := githubObjectURL(repo, "pull", 42)
-	commentURL := prURL + "?diff=a%2fb#discussion_r123"
-	c := githubTestConfig(f)
-	c.Repositories = []githubRepository{{Repository: repo}}
-	store, closeStore, err := openGitHubStore(c)
-	require.NoError(t, err)
-	t.Cleanup(closeStore)
-	legacy := coreclient.Submission{OperationID: "old-operation", Message: coreclient.Message{
-		Source: githubSource, AccountID: c.AccountID, CollectorInstance: c.InstanceID,
-		SourceMessageID: "old-observation", ThreadRef: coreclient.ThreadRef{Source: "pr:url", ID: prURL},
-		Text: "Original comment body", Actor: "reviewer", At: "2026-11-23T02:03:04.123456789+02:00", URL: commentURL,
-		Meta: map[string]any{"repository": repo, "objectId": "123", "diagnostic": uint64(9007199254740993)},
-	}}
-	payload, err := json.Marshal(legacy)
-	require.NoError(t, err)
-	_, err = store.db.ExecContext(t.Context(), githubInsertPending, repo, legacy.Message.SourceMessageID, payload)
-	require.NoError(t, err)
-	closeStore()
-
-	// Ticket 08 projects the accepted Core row at cutover. Seed that form
-	// here to verify that the upgraded adapter recovers its original receipt.
-	projected := coreclient.TriggerSubmission{OperationID: legacy.OperationID, Message: coreclient.TriggerMessage{
-		SourceMessageID: legacy.Message.SourceMessageID, ThreadKey: prURL,
-		Content: []events.ContentBlock{
-			events.Text("Original comment body\n\nAuthor: reviewer\n\nSource time: 2026-11-23T00:03:04.123456789Z"),
-			{ResourceLink: &events.ContentBlockResourceLink{URI: commentURL, Name: "URL"}},
-		},
-	}}
-	var original coreclient.Receipt
-	require.Equal(t, http.StatusOK, triggertest.Request(t, http.MethodPost, f.Endpoint, "/v1/channel/messages", triggertest.Token, projected, &original))
-	require.NotEmpty(t, original.MessageID)
-	require.NotEmpty(t, original.EventID)
-
-	var retries atomic.Int32
-	c.CoreEndpoint = f.Proxy(func(_ http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/channel/messages" {
-			var retry coreclient.TriggerSubmission
-			body, readErr := io.ReadAll(r.Body)
-			if readErr != nil || json.Unmarshal(body, &retry) != nil || retry.OperationID != projected.OperationID ||
-				retry.Message.SourceMessageID != projected.Message.SourceMessageID {
-				t.Error("legacy queue retry changed its operation or message identity")
-			}
-			var meta map[string]json.RawMessage
-			if json.Unmarshal(retry.Message.Meta, &meta) != nil || string(meta["diagnostic"]) != "9007199254740993" {
-				t.Error("legacy queue retry changed its diagnostic metadata")
-			}
-			r.Body = io.NopCloser(bytes.NewReader(body))
-			retries.Add(1)
-		}
-		return false
-	}, nil).URL
-	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		githubFixtureJSON(w, []githubNotification{})
-	}))
-	t.Cleanup(fixture.Close)
-	proc, statusURL := startGitHubFixture(t, fixture.URL, c)
-	triggertest.Wait(t, "legacy queued observation acknowledged as duplicate", func() bool {
-		delivery := readGitHubStatus(t, statusURL).Repositories[repo]
-		return delivery.Backlog == 0 && delivery.Duplicates == 1
-	})
-	got := readGitHubStatus(t, statusURL).Repositories[repo].LastReceipt
-	require.Equal(t, original.MessageID, got.MessageID)
-	require.Equal(t, original.EventID, got.EventID)
-	require.Equal(t, original.AcceptedAt, got.AcceptedAt)
-	require.Equal(t, prURL, got.ThreadKey)
-	require.EqualValues(t, 1, retries.Load())
-	messages := triggertest.ReadMessages(t, f.Endpoint)
-	require.Len(t, messages, 1)
-	githubAssertMessageLinks(t, messages[0], commentURL)
-	triggertest.Terminate(t, proc)
 }

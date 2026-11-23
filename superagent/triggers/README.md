@@ -94,20 +94,6 @@ bin/superagent triggers dws release-input <native-id> --reason "<reason>" --conf
 bin/superagent triggers dws dismiss-send <attempt-id> --reason "<reason>" --config /absolute/run/dws.yaml
 ```
 
-To migrate old send evidence, export one JSON object per line for each `sent`
-Outbox item with an exact native conversation and message ID. Each object has
-`source`, `accountId`, `outboxId`, `conversationId`, and `messageId`. `taskId`
-is optional. Verify the account and Outbox origin before exporting. Feed the
-matching account's export into the stopped adapter.
-
-```sh
-bin/superagent triggers dws import-sent-evidence --config /absolute/run/dws.yaml < sent-evidence.ndjson
-```
-
-Repeat the import to resume after interruption. The importer rejects conflicting
-evidence and preserves matching records. For an old pending Outbox task, keep its
-generic `taskId` in Core so the adapter can resume native task queries.
-
 For optional message reactions, configure two reusable text emotion templates
 for the same DWS profile. Keep `feedback.statePath` on persistent storage,
 separate from the queue. Feedback adds `thinking` on admission and replaces it
@@ -160,11 +146,13 @@ notification to resume tracking. See the [PR routing contract](../API.md#pull-re
 
 ## Replace deployed Triggers
 
-Follow the [coordinated Core and Trigger upgrade](../README.md#reuse-an-existing-core-data-directory)
-when moving an existing installation to schema 26. Keep all Trigger queue
-paths. Each adapter upgrades its historical queued Messages on replay and
-uses the original operation and source Message IDs. Import legacy GitHub v2
-JSON state into SQLite before switching.
+When switching an existing installation to structured Trigger Messages, stop the
+old Triggers and configure a fresh `databasePath` for each adapter. For DWS,
+choose a path with a fresh adjacent `.dws-sends` directory and use a fresh
+`feedback.statePath` if reactions are enabled. Keep the former state paths for
+reference. Trigger SQLite databases at the previous schema version are
+rejected. On subsequent restarts, use the same paths to recover queued Messages,
+GitHub checkpoints, and DWS send evidence.
 
 Run `make test-superagent` to exercise Core and the Triggers with local channel
 fixtures. Use `bin/superagent triggers --help` to discover the command groups.

@@ -104,9 +104,5 @@ func dwsEvidenceCommands() []*cobra.Command {
 			}),
 		release,
 		dismiss,
-		build("import-sent-evidence", "Import legacy DWS send evidence from NDJSON on stdin with the adapter stopped", cobra.NoArgs,
-			func(c dws.Component, cmd *cobra.Command, _ []string) error {
-				return c.ImportSentEvidence(cmd.InOrStdin())
-			}),
 	}
 }

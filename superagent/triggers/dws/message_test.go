@@ -1,7 +1,6 @@
 package dws
 
 import (
-	"bytes"
 	"encoding/json"
 	"maps"
 	"strings"
@@ -70,36 +69,4 @@ func testMarshalMessage(t *testing.T, message any) []byte {
 		t.Fatal(err)
 	}
 	return data
-}
-
-func TestLegacyQueueReplayMatchesNewNormalization(t *testing.T) {
-	c := dwsConfig{
-		Source: "dws", AccountID: "account", InstanceID: "instance", SelfID: "self",
-		SelfChat: selfChatConfig{Enabled: true, ConversationID: fixtureSelfConversation, Match: allTextRules()},
-	}
-	if err := validateRules("selfChat", c.SelfChat.Match, true); err != nil {
-		t.Fatal(err)
-	}
-	current, err := normalize(testMarshalMessage(t, event("message", "body")), c, c.subscriptions()[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := []byte(`{"operationId":"dws-message:message","selfSent":true,"message":{
-		"source":"dws","accountId":"account","sourceMessageId":"message",
-		"threadRef":{"source":"dws","id":"CID:a/b%"},"actor":"self","text":"body",
-		"at":"2026-11-16T00:45:43.211+08:00","addressed":"direct","collectorInstance":"another-instance",
-		"sourceEventId":"another-envelope","channel":{"type":"dws","conversationId":"CID:a/b%",
-		"messageId":"message","actorId":"self","address":{"peerOpenDingtalkId":"self","senderOpenDingtalkId":"self"}}
-	}}`)
-	oldPayload, err := dwsBusinessPayload(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newPayload, err := dwsBusinessPayload(testMarshalMessage(t, current))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(oldPayload, newPayload) {
-		t.Fatalf("legacy and redelivered messages differ: %s\n%s", oldPayload, newPayload)
-	}
 }

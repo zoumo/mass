@@ -49,6 +49,8 @@ func (c feedbackConfig) validate() error {
 }
 
 const (
+	feedbackStateVersion = 2
+
 	feedbackAwaiting   = "awaiting_admission"
 	feedbackReady      = "ready"
 	feedbackThinking   = "thinking"
@@ -100,14 +102,22 @@ func openFeedback(c dwsConfig, core *coreclient.Client, evidence *sendEvidenceSt
 		closeLock()
 		return nil, nil, errors.New("cannot acquire DWS feedback state lock")
 	}
-	state := feedbackState{Version: 1, Profile: c.Profile, Source: c.Source, Instance: c.InstanceID, Records: map[string]feedbackRecord{}}
+	state := feedbackState{Version: feedbackStateVersion, Profile: c.Profile, Source: c.Source, Instance: c.InstanceID, Records: map[string]feedbackRecord{}}
 	file, err := os.Open(path)
 	switch {
 	case err == nil:
 		defer file.Close()
 		decoder := json.NewDecoder(file)
 		err = decoder.Decode(&state)
-		if err != nil || decoder.Decode(new(any)) != io.EOF || !state.validFor(c) {
+		if err != nil || decoder.Decode(new(any)) != io.EOF {
+			closeLock()
+			return nil, nil, errors.New("invalid DWS feedback state")
+		}
+		if state.Version != feedbackStateVersion {
+			closeLock()
+			return nil, nil, errors.New("unsupported DWS feedback state version. Configure a new feedback.statePath")
+		}
+		if !state.validFor(c) {
 			closeLock()
 			return nil, nil, errors.New("invalid or mismatched DWS feedback state")
 		}
@@ -124,7 +134,7 @@ func openFeedback(c dwsConfig, core *coreclient.Client, evidence *sendEvidenceSt
 }
 
 func (s feedbackState) validFor(c dwsConfig) bool {
-	if s.Version != 1 || s.Profile != c.Profile || s.Source != c.Source || s.Instance != c.InstanceID || s.Records == nil {
+	if s.Profile != c.Profile || s.Source != c.Source || s.Instance != c.InstanceID || s.Records == nil {
 		return false
 	}
 	for key, record := range s.Records {

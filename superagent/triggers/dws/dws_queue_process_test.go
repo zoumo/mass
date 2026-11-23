@@ -34,6 +34,9 @@ func TestDWSDatabaseIdentityAndPermissions(t *testing.T) {
 	if err := queue.db.QueryRowContext(t.Context(), `PRAGMA synchronous`).Scan(&syncMode); err != nil || syncMode != 2 {
 		t.Fatalf("synchronous %d, %v", syncMode, err)
 	}
+	if _, _, err := queue.counts(); err != nil {
+		t.Fatal(err)
+	}
 	for _, suffix := range []string{"", "-wal", "-shm", ".lock"} {
 		file, err := os.Stat(c.DatabasePath + suffix)
 		if err != nil || file.Mode().Perm() != 0o600 {

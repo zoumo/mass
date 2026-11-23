@@ -263,7 +263,7 @@ func TestEgressDurableTaskExactEchoAndLostWriteReceipt(t *testing.T) {
 		t.Fatal("expected the same successful write after losing the committed response")
 	}
 	d := f.outbox(id)
-	if d.Status != "sent" || d.Receipt == nil || d.Receipt.TaskID != task || d.Receipt.MessageID != "" || !f.nativeResult(id, "actual-echo") || len(f.calls(false)) != 1 {
+	if d.Status != "sent" || d.Receipt == nil || d.Receipt.TaskID != task || !f.nativeResult(id, "actual-echo") || len(f.calls(false)) != 1 {
 		t.Fatalf("unexpected durable send receipt: %+v", d)
 	}
 	f.assertContentSentOnce("identical text")
@@ -503,7 +503,7 @@ func TestEgressKnownSuccessOnlyRetriesWrite(t *testing.T) {
 		return f.outbox(id).Status == "sent" && f.outbox(second).Status == "sent"
 	})
 	if d := f.outbox(id); d.Receipt == nil || d.Receipt.TaskID != "task-send_already_done" ||
-		d.Receipt.MessageID != "" || !f.nativeResult(id, "direct-echo") || len(f.calls(false)) != 2 || len(f.calls(true)) != 0 {
+		!f.nativeResult(id, "direct-echo") || len(f.calls(false)) != 2 || len(f.calls(true)) != 0 {
 		t.Fatalf("unexpected send, query, or successful receipt: %+v", d)
 	}
 	f.assertLocalEcho("direct-echo", "outbound_echo")

@@ -15,12 +15,10 @@ import (
 const outboxPath = "/v1/channel/outbox"
 
 type outboxReceipt struct {
-	TaskID         string `json:"taskId,omitempty"`
-	ConversationID string `json:"conversationId,omitempty"`
-	MessageID      string `json:"messageId,omitempty"`
-	ErrorCode      string `json:"errorCode,omitempty"`
-	RetryAt        string `json:"retryAt,omitempty"`
-	Uncertain      bool   `json:"uncertain,omitempty"`
+	TaskID    string `json:"taskId,omitempty"`
+	ErrorCode string `json:"errorCode,omitempty"`
+	RetryAt   string `json:"retryAt,omitempty"`
+	Uncertain bool   `json:"uncertain,omitempty"`
 }
 
 type outboxState struct {
@@ -33,7 +31,6 @@ type outboxItem struct {
 	ID          string          `json:"id"`
 	Source      string          `json:"source"`
 	AccountID   string          `json:"accountId"`
-	Text        string          `json:"text"`
 	Content     outboxContent   `json:"content"`
 	ReplyTarget json.RawMessage `json:"replyTarget"`
 }
@@ -46,8 +43,6 @@ type outboxContent struct {
 func (item outboxItem) renderText() string {
 	content := item.Content
 	switch content.Type {
-	case "":
-		return item.Text
 	case "markdown":
 		var data struct {
 			Text string `json:"text"`
@@ -172,6 +167,10 @@ func (e egress) handle(admit, drain context.Context, item outboxItem) {
 	if taskID != "" && (!found || attempt.Result.TaskID != taskID) {
 		// A retry's Core deadline is cleared once the native task is recorded.
 		attempt, found = e.evidence.byTask(item.ID, taskID)
+		if !found {
+			e.log("outbox_evidence_failed", "missing_task_attempt")
+			return
+		}
 	}
 	if found && attempt.Result.Outcome != "" && attempt.Result.Outcome != "pending" {
 		e.settle(drain, item, attempt)
@@ -179,16 +178,9 @@ func (e egress) handle(admit, drain context.Context, item outboxItem) {
 	}
 	if !found {
 		key.StartedAt = time.Now().UTC()
-		if taskID != "" {
-			key.StartedAt = time.Unix(0, 0).UTC() // An old task can already have emitted its echo.
-			key.Result = channelOutcome{Outcome: "pending", TaskID: taskID}
-		}
 		attempt = key
 	}
 	if attempt.Result.TaskID != "" {
-		if !found && !e.record(attempt) {
-			return
-		}
 		result := queryDWS(admit, e.config, attempt.Result.TaskID)
 		if result.Outcome == "" || result.Outcome == "pending" {
 			if taskID == "" {

@@ -32,7 +32,7 @@ func (c Component) Describe() trigger.Descriptor {
 }
 
 func (c Component) Check(ctx context.Context, out io.Writer) error {
-	if err := triggerdb.CheckDestination(c.config.DatabasePath); err != nil {
+	if err := triggerdb.CheckDestination(c.config.DatabasePath, githubDatabaseIdentity(c.config)); err != nil {
 		return err
 	}
 	api, _, err := c.clients()
