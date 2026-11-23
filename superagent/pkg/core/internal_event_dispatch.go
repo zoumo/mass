@@ -161,7 +161,7 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 		}
 		var contents []eventMessageContent
 		var contentSize int
-		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0 || len(view.routing) != 0 || len(view.messageContent) != 0) {
+		if err == nil && (view.Content != q.item.Content || view.topic != nil || view.issue != nil || len(view.messages) != 0 || len(view.followup) != 0 || len(view.routing) != 0 || len(view.quotedReply) != 0 || len(view.messageContent) != 0) {
 			var enriched json.RawMessage
 			enriched, err = view.MarshalAgentPromptJSON()
 			for _, content := range view.messageContent {
@@ -231,16 +231,16 @@ func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sq
 	}
 	columns := `CASE WHEN length(CAST(body->'$.content' AS BLOB))<=? THEN body->'$.content' END, thread_key`
 	params := []any{inlineMessageBytes}
-	var content, routing, followup []byte
+	var content, routing, followup, quote []byte
 	targets := []any{&content, &d.threadKey}
 	if b.Role == "router" {
 		columns += ",json_object('round'," + routingRound + ",'state'," + routingState + ")"
 		scope += " AND " + routingState + "='pending'"
 		targets = append(targets, &routing)
 	} else {
-		columns += "," + messageFollowupProjection
-		params = append(params, b.OwnerID)
-		targets = append(targets, &followup)
+		columns += "," + messageFollowupProjection + "," + quotedReplyForTopic
+		params = append(params, b.OwnerID, b.OwnerID)
+		targets = append(targets, &followup, &quote)
 	}
 	id := d.Refs[0].ID
 	params = append(params, id)
@@ -254,6 +254,11 @@ func (d *internalEvent) loadStructuredTriggerMessage(ctx context.Context, tx *sq
 		return false, err
 	}
 	d.routing, d.followup = routing, followup
+	if len(quote) != 0 {
+		if _, err := d.attachQuotedReply(ctx, tx, b, quote); err != nil {
+			return false, err
+		}
+	}
 	if len(content) != 0 {
 		if err := d.attachMessageContent(id, content); err != nil {
 			return false, err
@@ -336,31 +341,39 @@ func (d *internalEvent) loadInlineTriggerMessage(ctx context.Context, tx *sql.Tx
 		return nil
 	}
 	if hasQuote {
-		var match struct {
-			BlockerRef BlockerRef `json:"blockerRef"`
-		}
-		if err := json.Unmarshal(quotedReply, &match); err != nil {
+		if attached, err := d.attachQuotedReply(ctx, tx, b, quotedReply); !attached || err != nil {
 			return err
 		}
-		issue, err := topicIssue(ctx, tx, b, match.BlockerRef.IssueID)
-		if errorCode(err) == "not_found" {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if terminal(issue.Status) || !slices.ContainsFunc(issue.Blockers, func(blocker Blocker) bool {
-			return blocker.ID == match.BlockerRef.BlockerID
-		}) {
-			return nil
-		}
-		d.quotedReply, d.issue = quotedReply, &issue
 	}
 	if len(followup) != 0 && string(followup) != "null" {
 		d.followup = agentFollowupMeta(followup)
 	}
 	d.Content, d.threadKey, d.routing = &content, threadKey, routing
 	return nil
+}
+
+func (d *internalEvent) attachQuotedReply(ctx context.Context, tx *sql.Tx, b SessionBinding, raw []byte) (bool, error) {
+	var match quotedReply
+	if err := json.Unmarshal(raw, &match); err != nil {
+		return false, err
+	}
+	if match.BlockerRef != nil {
+		issue, err := topicIssue(ctx, tx, b, match.BlockerRef.IssueID)
+		if errorCode(err) == "not_found" {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if terminal(issue.Status) || !slices.ContainsFunc(issue.Blockers, func(blocker Blocker) bool {
+			return blocker.ID == match.BlockerRef.BlockerID && blocker.Kind == "human"
+		}) {
+			return false, nil
+		}
+		d.issue = &issue
+	}
+	d.quotedReply = raw
+	return true, nil
 }
 
 func (d *internalEvent) loadInlineReport(ctx context.Context, tx *sql.Tx, b SessionBinding) error {

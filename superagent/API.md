@@ -48,6 +48,12 @@ references. Optional `_meta` is an opaque JSON object. Core saves it for
 Observer diagnostics and omits it from Agent tools and Session input.
 Core generates `receivedAt`. Unknown fields and trailing JSON values fail.
 
+The request can include `replyTarget` and `inReplyToOutboxId` beside `message`.
+`replyTarget` is an opaque JSON object of at most 16 KiB. It enables replies
+and is visible to the account's configured Outbox consumer. To link an answer
+to a prior reply, supply the `inReplyToOutboxId` of a sent item whose original
+Message has the same source, account and Thread.
+
 The legacy `threadRef` request remains accepted during the adapter cutover.
 When a credential configures write scopes, they also restrict legacy intake.
 Legacy source fields, addressing, and echo behavior apply to that request shape.
@@ -72,7 +78,8 @@ becomes `sent` after massd accepts the Session input.
 Admission deduplicates by the authenticated source, account, and
 `sourceMessageId`. Duplicate intake returns the original Message ID, Thread
 key, acceptance time, and initial event ID with `duplicate=true`. Changing
-the Thread key or ordered content under that identity returns `conflict`.
+the Thread key, ordered content, reply target or Outbox reference under that
+identity returns `conflict`.
 Object field order is immaterial. Changing `_meta` alone returns the original
 receipt and preserves the first metadata. `operationId` correlates a caller's
 request and does not participate in Message deduplication.
@@ -774,7 +781,7 @@ Router may give one explicit `messageId` or the distinct `messageIds` of its
 current routing input. Topic may give an explicit associated Message or omit
 the target to use its oldest associated Message. Core orders the candidates by
 its own `receivedAt` then the stable SQLite acceptance sequence. It checks the
-chosen Message's channel after selection. No match, missing native address or
+chosen Message's reply target after selection. No match, missing reply target or
 an out-of-scope target returns an error. Issue Session has no reply capability.
 
 An Outbox item carries `id`, `messageId`, `content` and `status`, with optional
@@ -784,7 +791,12 @@ in its own Issue. Router replies cannot set this field.
 
 ### Quoted answers
 
-For DWS, Core matches the inbound `quotedMessage.message_id` against the
+For structured intake, `inReplyToOutboxId` records the adapter's match at
+admission. Topic `get_message` on an associated Message can return
+`quotedReply: {outboxId, blockerRef?}`. The Topic Session receives the related
+blocker context while the blocker remains open and belongs to that Topic.
+
+For legacy DWS intake, Core matches the inbound `quotedMessage.message_id` against the
 native `receipt.messageId` of a sent question. Source, account and the inbound
 native conversation must match. If `quotedMessage.conversation_id` is provided,
 it must also match. Topic `get_message` on an associated Message returns
@@ -804,7 +816,7 @@ Issue Session after resolving the last blocker, set `blockers.unblockedStatus` t
 
 ## Trigger Outbox
 
-Core resolves the account and address from the original Message. For each
+Core resolves the account and reply target from the original Message. For each
 account, run a single active sender and stop it before starting a replacement.
 Configure the Core source with the sender's `instanceId` and Bearer token. If
 there is more than one instance-bound credential for an account, set
@@ -819,8 +831,9 @@ account's item IDs return `not_found`.
 | GET `/v1/channel/outbox/items/{id}` | One reply in the account, including terminal states. |
 | POST `/v1/channel/outbox/result` | Update one reply and return its committed {id, status, receipt?}. |
 
-Channel reads join `source`, `accountId` and `channel` from the original
-Message. Query results include pending replies with and without known tasks.
+Channel reads include `source`, `accountId` and the original Message's
+`replyTarget`. During the transition, reads for legacy items carry `channel`.
+Query results include pending replies with and without known tasks.
 Failed replies with an elapsed `receipt.retryAt` are eligible for retry.
 
 Result writes accept `Content-Type: application/json` with `outboxId`,
@@ -829,7 +842,7 @@ Result writes accept `Content-Type: application/json` with `outboxId`,
 | Outcome | Additional fields and behavior |
 | --- | --- |
 | `pending` | Save `taskId` before querying. Subsequent pulls can query the same native task. |
-| `sent` | Preserve the current task ID when present. Save the actual native `conversationId` and `messageId` if available. A native message ID requires its conversation ID. |
+| `sent` | Preserve the current task ID when present. Adapters preserve native delivery identifiers in their own state. |
 | `retryable_failure` | Save `errorCode` and schedule retry after 60 seconds. |
 | `permanent_failure` | Save `errorCode` and notify the author through Core event dispatch. |
 | `unknown` | Save `errorCode`, mark the receipt uncertain, and schedule retry after 60 seconds. Use when the send result is unknown and its task cannot be queried. |
@@ -842,6 +855,9 @@ different result return `conflict`. The receipt can retain `uncertain` across
 retries when a previous send could have succeeded. After process loss before
 any task or success was saved, a replacement can send the same Outbox row
 again using the same channel idempotency key.
+
+Results for legacy items can include the native `conversationId` and `messageId`
+on `sent`. When present, `messageId` requires `conversationId`.
 
 ### Reply history
 

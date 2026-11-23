@@ -115,14 +115,16 @@ type SubmitRequest struct {
 }
 type Message struct {
 	MessageInput
-	Content     []events.ContentBlock `json:"content,omitempty"`
-	TriggerMeta json.RawMessage       `json:"_meta,omitempty"`
-	ID          string                `json:"id"`
-	ThreadKey   string                `json:"threadKey"`
-	ReceivedAt  string                `json:"receivedAt"`
-	Acceptance  string                `json:"acceptance"`
-	EventID     string                `json:"eventId,omitempty"`
-	Echo        *MessageEcho          `json:"echo,omitempty"`
+	Content           []events.ContentBlock `json:"content,omitempty"`
+	TriggerMeta       json.RawMessage       `json:"_meta,omitempty"`
+	ReplyTarget       json.RawMessage       `json:"replyTarget,omitempty"`
+	InReplyToOutboxID string                `json:"inReplyToOutboxId,omitempty"`
+	ID                string                `json:"id"`
+	ThreadKey         string                `json:"threadKey"`
+	ReceivedAt        string                `json:"receivedAt"`
+	Acceptance        string                `json:"acceptance"`
+	EventID           string                `json:"eventId,omitempty"`
+	Echo              *MessageEcho          `json:"echo,omitempty"`
 }
 
 var _ AgentPromptView = Message{}

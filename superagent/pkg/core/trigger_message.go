@@ -23,8 +23,10 @@ type TriggerMessage struct {
 }
 
 type SubmitTriggerMessageRequest struct {
-	OperationID string         `json:"operationId"`
-	Message     TriggerMessage `json:"message"`
+	OperationID       string          `json:"operationId"`
+	Message           TriggerMessage  `json:"message"`
+	ReplyTarget       json.RawMessage `json:"replyTarget,omitempty"`
+	InReplyToOutboxID string          `json:"inReplyToOutboxId,omitempty"`
 }
 
 func validTriggerThreadKey(key string) bool {
@@ -38,7 +40,8 @@ func (s Source) allowsThreadKey(key string) bool {
 	})
 }
 
-func (m TriggerMessage) prepare(source Source) (Message, []byte, error) {
+func (r SubmitTriggerMessageRequest) prepare(source Source) (Message, []byte, error) {
+	m := r.Message
 	if strings.TrimSpace(m.SourceMessageID) == "" || !validTriggerThreadKey(m.ThreadKey) {
 		return Message{}, nil, problem("invalid_argument", "sourceMessageId and a valid threadKey are required")
 	}
@@ -48,23 +51,60 @@ func (m TriggerMessage) prepare(source Source) (Message, []byte, error) {
 	if meta := bytes.TrimSpace(m.Meta); len(meta) != 0 && (meta[0] != '{' || !json.Valid(meta)) {
 		return Message{}, nil, problem("invalid_argument", "_meta must be a JSON object")
 	}
+	target, err := canonicalReplyTarget(r.ReplyTarget)
+	if err != nil {
+		return Message{}, nil, err
+	}
+	if r.InReplyToOutboxID != "" && !validTriggerThreadKey(r.InReplyToOutboxID) {
+		return Message{}, nil, problem("invalid_argument", "inReplyToOutboxId must be a valid identifier")
+	}
 	message := Message{
-		MessageInput: MessageInput{Source: source.Source, AccountID: source.AccountID, SourceMessageID: m.SourceMessageID},
-		ThreadKey:    m.ThreadKey, Content: m.Content, TriggerMeta: m.Meta,
+		MessageInput:      MessageInput{Source: source.Source, AccountID: source.AccountID, SourceMessageID: m.SourceMessageID},
+		ThreadKey:         m.ThreadKey,
+		Content:           m.Content,
+		TriggerMeta:       m.Meta,
+		ReplyTarget:       target,
+		InReplyToOutboxID: r.InReplyToOutboxID,
 	}
 	m.Meta = nil
-	canonical, err := json.Marshal(m)
+	canonical, err := json.Marshal(struct {
+		TriggerMessage
+		ReplyTarget       json.RawMessage `json:"replyTarget,omitempty"`
+		InReplyToOutboxID string          `json:"inReplyToOutboxId,omitempty"`
+	}{m, target, r.InReplyToOutboxID})
 	if err != nil {
 		return Message{}, nil, problem("invalid_argument", "message cannot be encoded")
 	}
 	return message, canonical, nil
 }
 
+const maxReplyTargetBytes = 16 << 10
+
+func canonicalReplyTarget(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) > maxReplyTargetBytes {
+		return nil, problem("invalid_argument", "replyTarget exceeds 16 KiB")
+	}
+	var target map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&target); err != nil || target == nil || decoder.Decode(new(any)) != io.EOF {
+		return nil, problem("invalid_argument", "replyTarget must be a JSON object")
+	}
+	canonical, err := json.Marshal(target)
+	if err != nil {
+		return nil, problem("invalid_argument", "replyTarget cannot be encoded")
+	}
+	return canonical, nil
+}
+
 func (s *Store) SubmitTriggerMessage(ctx context.Context, source Source, request SubmitTriggerMessageRequest) (Receipt, error) {
 	if strings.TrimSpace(request.OperationID) == "" {
 		return Receipt{}, problem("invalid_argument", "operationId is required")
 	}
-	message, canonical, err := request.Message.prepare(source)
+	message, canonical, err := request.prepare(source)
 	if err != nil {
 		return Receipt{}, err
 	}
