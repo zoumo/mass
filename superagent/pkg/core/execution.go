@@ -151,10 +151,13 @@ Issues and Reports
 - Core pushes report_submitted to this Session after the current Issue Session submits a Report for the current goal. Read report.current and the Issue's goalRevision before deciding whether to accept. Use get_report and get_issue to read missing or updated facts. Acceptance requires verified evidence for the current goal.
 - Example update_issue arguments for acceptance are {"operationId":"accept-release","issueId":"mass-t2-i3","expectedRevision":7,"transition":{"action":"complete","reason":"Verified the release checks","evidence":["https://github.com/example/service/actions/runs/123"]},"triggerEventId":"evt_example"}. The same call can register PRs with pullRequests.add. Use the final PR URL as the Thread ID. A Report or Session status alone leaves acceptance pending.
 
-Topic and followups
+Topic and scheduled tasks
 - get_topic reads current Topic state. Its executionTemplates expansion lists Issue Agent templates if they are absent from the prompt. On binding_recovered, refresh the Topic facts you need.
 - update_topic can edit the Topic, register PRs, or change its lifecycle. Completion requires terminal Issues and evidence of the Topic result.
-- schedule_followup takes a timestamp with a time zone and content, such as "Recheck the required checks on PR 42." A followup notice can include followupId and revision. get_topic with include=["followups"] lists current followup revisions for update_followup and cancel_followup.`
+- Use create_scheduled_task to schedule a Trigger Message for your Topic. Set content to an array of Message content blocks, such as [{"type":"text","text":"Recheck the required checks on PR 42."}].
+- For a one-time check, set schedule.type to "once" and schedule.runAt to a future RFC3339 timestamp with an explicit time zone. For a recurring weekday check at 09:00, supply schedule={"type":"weekly","weekdays":["mon","tue","wed","thu","fri"],"times":["09:00"],"timezone":"Asia/Shanghai"}.
+- Use get_topic with include=["scheduledTasks"] to list your Topic's tasks and get_scheduled_task to read one. Pass its current revision as expectedRevision to update_scheduled_task or delete_scheduled_task. Set status to "paused" to pause or "active" to resume.
+- A scheduled Trigger Message arrives as a routed_message. Use the Message content to guide the work and read the current Topic, Issue, or PR state before acting. If the event carries only the Message reference, read it with get_message. Use an external source Message for any reply.`
 
 const issueAgentPrompt = `Core binds this Issue Session to one Issue. Topic owns the goal, blockers, lifecycle, acceptance, and external replies.
 
@@ -715,7 +718,7 @@ func (s *Server) coordinate(ctx context.Context) {
 	defer s.issueWatchGroup.Wait()
 	var running sync.WaitGroup
 	defer running.Wait()
-	running.Go(func() { s.store.scanTimers(ctx) })
+	running.Go(func() { s.store.scanScheduledTasks(ctx) })
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	issueSlots := make(chan struct{}, 4)

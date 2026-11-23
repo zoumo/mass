@@ -70,7 +70,7 @@ func (s *Server) mcpQuery(ctx context.Context, b SessionBinding, tool string, ra
 		if err := decodeStrict(raw, &q); err != nil {
 			return nil, err
 		}
-		if err := validIncludes(q.Include, "executionTemplates", "followups", "pullRequests"); err != nil {
+		if err := validIncludes(q.Include, "executionTemplates", "scheduledTasks", "pullRequests"); err != nil {
 			return nil, err
 		}
 		value, err := s.store.mcpRecord(ctx, b, "topics", b.OwnerID)
@@ -86,8 +86,8 @@ func (s *Server) mcpQuery(ctx context.Context, b SessionBinding, tool string, ra
 				return nil, err
 			}
 		}
-		if slices.Contains(q.Include, "followups") {
-			value["followups"], err = s.store.mcpExpansion(ctx, b, QueryRequest{Collection: "timers", TopicID: b.OwnerID})
+		if slices.Contains(q.Include, "scheduledTasks") {
+			value["scheduledTasks"], err = s.store.mcpExpansion(ctx, b, QueryRequest{Collection: "scheduled-tasks"})
 			if err != nil {
 				return nil, err
 			}
@@ -130,6 +130,14 @@ func (s *Server) mcpQuery(ctx context.Context, b SessionBinding, tool string, ra
 			delete(value, "pullRequests")
 		}
 		return value, nil
+	case "get_scheduled_task":
+		var q struct {
+			ScheduledTaskID string `json:"scheduledTaskId"`
+		}
+		if err := decodeStrict(raw, &q); err != nil {
+			return nil, err
+		}
+		return s.store.mcpRecord(ctx, b, "scheduled-tasks", q.ScheduledTaskID)
 	case "get_report":
 		var q struct {
 			ReportID string `json:"reportId"`
