@@ -44,6 +44,8 @@ func New() *cobra.Command {
 	root := &cobra.Command{Use: "superagent", Short: "Superagent Core and read-only observation", SilenceUsage: true, SilenceErrors: true}
 	var config string
 	var composed bool
+	var statusSocket string
+	var statusTriggers []string
 	serve := &cobra.Command{Use: "serve", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		signals, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -57,11 +59,21 @@ func New() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if statusSocket != "" || len(statusTriggers) != 0 {
+			if !composed || statusSocket == "" {
+				return errors.New("status options require Compose configuration and a supervisor socket")
+			}
+			c.ComposeTriggerStatus = readComposeStatus(statusSocket, statusTriggers)
+		}
 		return runCore(signals, cmd, c)
 	}}
 	serve.Flags().StringVar(&config, "config", "", "YAML configuration file")
 	serve.Flags().BoolVar(&composed, "compose-config-stdin", false, "Read the Core configuration section from Compose")
+	serve.Flags().StringVar(&statusSocket, "compose-status-socket", "", "Private Compose status socket")
+	serve.Flags().StringArrayVar(&statusTriggers, "compose-status-trigger", nil, "Trigger managed by Compose")
 	_ = serve.Flags().MarkHidden("compose-config-stdin")
+	_ = serve.Flags().MarkHidden("compose-status-socket")
+	_ = serve.Flags().MarkHidden("compose-status-trigger")
 	_ = serve.MarkFlagRequired("config")
 	root.AddCommand(serve, newCompose(), newTriggers(), &cobra.Command{
 		Use:   "openapi",

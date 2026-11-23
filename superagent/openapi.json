@@ -17,6 +17,108 @@
         ],
         "type": "object"
       },
+      "ComponentStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "observedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "starting",
+              "degraded",
+              "unavailable",
+              "disabled",
+              "not_managed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "CoreComponentStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "eventStates": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "ingress": {
+            "type": "string"
+          },
+          "issueStates": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "observedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outboxStates": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "router": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "timerStates": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "topicStates": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "unknownStops": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "ingress",
+          "schemaVersion",
+          "router",
+          "topicStates",
+          "issueStates",
+          "eventStates",
+          "outboxStates",
+          "timerStates",
+          "unknownStops"
+        ],
+        "type": "object"
+      },
       "CoreHTTPError": {
         "additionalProperties": false,
         "properties": {
@@ -209,6 +311,26 @@
         ],
         "type": "object"
       },
+      "OperationError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "reason",
+          "message"
+        ],
+        "type": "object"
+      },
       "OutboxDeliveryRecord": {
         "additionalProperties": false,
         "properties": {
@@ -366,6 +488,23 @@
         },
         "required": [
           "id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ProbeState": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "alive",
+              "ready",
+              "unavailable"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
           "status"
         ],
         "type": "object"
@@ -596,6 +735,34 @@
           "topicId",
           "title",
           "reason"
+        ],
+        "type": "object"
+      },
+      "StackStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "core": {
+            "$ref": "#/components/schemas/CoreComponentStatus"
+          },
+          "massd": {
+            "$ref": "#/components/schemas/ComponentStatus"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "degraded"
+            ],
+            "type": "string"
+          },
+          "triggers": {
+            "$ref": "#/components/schemas/TriggerStatuses"
+          }
+        },
+        "required": [
+          "status",
+          "core",
+          "massd",
+          "triggers"
         ],
         "type": "object"
       },
@@ -1215,6 +1382,22 @@
           "acceptance"
         ],
         "type": "object"
+      },
+      "TriggerStatuses": {
+        "additionalProperties": false,
+        "properties": {
+          "dws": {
+            "$ref": "#/components/schemas/ComponentStatus"
+          },
+          "github": {
+            "$ref": "#/components/schemas/ComponentStatus"
+          }
+        },
+        "required": [
+          "github",
+          "dws"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1246,6 +1429,274 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/livez": {
+      "get": {
+        "operationId": "coreLiveness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request origin not allowed"
+          }
+        },
+        "summary": "Check that the Core process can respond",
+        "tags": [
+          "Status"
+        ]
+      }
+    },
+    "/massd/jsonrpc": {
+      "get": {
+        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
+        "operationId": "connectMassd",
+        "responses": {
+          "101": {
+            "description": "WebSocket handshake accepted"
+          },
+          "400": {
+            "description": "Invalid WebSocket handshake"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            },
+            "description": "massd instance credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/CoreHTTPError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OperationError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Core request host or WebSocket Origin not allowed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "massd exposure disabled"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            },
+            "description": "massd admission closed"
+          }
+        },
+        "security": [
+          {
+            "massdBearer": []
+          }
+        ],
+        "summary": "Upgrade to massd JSON-RPC over WebSocket",
+        "tags": [
+          "massd"
+        ]
+      }
+    },
+    "/massd/livez": {
+      "get": {
+        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
+        "operationId": "massdLiveness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "Successful probe"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request host not allowed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "massd exposure disabled"
+          }
+        },
+        "summary": "Check that the massd process can respond",
+        "tags": [
+          "massd"
+        ]
+      }
+    },
+    "/massd/readyz": {
+      "get": {
+        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
+        "operationId": "massdReadiness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "Successful probe"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request host not allowed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "massd exposure disabled"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationError"
+                }
+              }
+            },
+            "description": "massd admission closed"
+          }
+        },
+        "summary": "Check that massd can admit requests",
+        "tags": [
+          "massd"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "coreReadiness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request origin not allowed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "Core admission unavailable"
+          }
+        },
+        "summary": "Check that Core can admit requests",
+        "tags": [
+          "Status"
+        ]
+      }
+    },
+    "/status": {
+      "get": {
+        "description": "Returns partial status when a component is unavailable. In standalone Core, GitHub and DWS are not managed. Timer state is reported by Core.",
+        "operationId": "getStackStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StackStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request origin not allowed"
+          }
+        },
+        "summary": "Read Core, massd and built-in Trigger status",
+        "tags": [
+          "Status"
+        ]
+      }
+    },
     "/v1/core/outbox-messages": {
       "get": {
         "description": "The history view uses the trusted-read boundary. The delivery view requires the configured Account consumer and returns pending or retry-eligible records using limit and cursor.",

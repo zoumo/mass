@@ -17,14 +17,17 @@ MASS. The DWS and GitHub Triggers collect Messages. The Observer reads Core stat
    ```
 
 3. Read `endpoint` and `observerEndpoint` from the ready record. Check Core intake
-   from another terminal. Pass the printed numeric origin if you changed `listen`.
+   from another terminal. Use the printed Core endpoint if you changed `listen`.
 
    ```sh
-   bin/superagent observe health --endpoint http://127.0.0.1:24370
+   curl --fail http://127.0.0.1:24370/readyz
+   curl --fail http://127.0.0.1:24370/status
    ```
 
-   `ingress: ready` confirms Core intake. Query the local Trigger status for
-   channel readiness. For more read commands, run `bin/superagent observe --help`.
+   `/livez` checks whether Core can respond. `/readyz` reports whether Core
+   can accept requests. `/status` reports Core and massd health. Standalone
+   Core lists the built-in Triggers as `not_managed`. Run
+   `bin/superagent observe --help` for Core record queries.
 
 Omit `sessions` to collect Messages without starting Agents. To enable execution,
 configure role Sessions and at least one Issue template in the example YAML.
@@ -116,10 +119,14 @@ See the [WebSocket binding](../harness/bindings/websocket.md#认证与部署).
    bin/superagent compose --config /absolute/run/stack.yaml
    ```
 
-4. Read `observerEndpoint` and `triggerEndpoints` from the ready record. Query
-   each Trigger's status. Check DWS `consumerReady` and the GitHub stream's
-   `lastSuccessAt`. If you enabled embedded MASS exposure, use `massdEndpoint`
-   with its dedicated token.
+4. Read `endpoint` from the ready record and request `/status` at that origin.
+   The response lists Core, massd, GitHub, and DWS. Timer counts appear under
+   `core.timerStates`. A Trigger failure can make `/status` report `degraded`
+   while `/readyz` continues to report Core admission. For adapter details,
+   use the corresponding loopback address in `triggerEndpoints`.
+5. If you enabled embedded MASS exposure, use `massdEndpoint` with its
+   dedicated token. Use `/massd/livez` and `/massd/readyz` at the Core origin
+   to check the exposed instance.
 
 Press Ctrl-C to stop the Triggers before Core and embedded MASS. After startup,
 Compose logs a Trigger exit and keeps the other processes running. If Core

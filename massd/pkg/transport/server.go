@@ -71,6 +71,9 @@ func (s *Server) Connect(ctx context.Context, writeTimeout time.Duration) (*rpcw
 	return peer, nil
 }
 
+// Ready reports whether the instance admits new external RPC connections.
+func (s *Server) Ready() bool { return s.ready.Load() }
+
 // CloseExternalAdmission rejects new WebSocket connections and requests while
 // allowing the host to finish its in-process calls.
 func (s *Server) CloseExternalAdmission() {
@@ -140,7 +143,7 @@ func (s *Server) routes() http.Handler {
 				fail(w, http.StatusMethodNotAllowed, Invalid())
 				return
 			}
-			if path == "/readyz" && !s.ready.Load() {
+			if path == "/readyz" && !s.Ready() {
 				fail(w, http.StatusServiceUnavailable, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
 				return
 			}
