@@ -415,7 +415,7 @@ func (d *Driver) bindSession(native agent.Session, address runtime.Address, sour
 }
 
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
-	if err := runtime.ValidateTextInput(input); err != nil {
+	if err := runtime.ValidateInput(input); err != nil {
 		return runtime.InputReceipt{}, err
 	}
 	return d.sendPrompt(ctx, id, input)
