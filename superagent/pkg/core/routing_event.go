@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/triggermessage"
 )
 
 const (
@@ -83,7 +85,7 @@ func routeAcceptedMessage(ctx context.Context, tx *sql.Tx, m Message, topicID, e
 }
 
 func setRoutingState(ctx context.Context, tx *sql.Tx, messageID, state string) error {
-	if _, err := tx.ExecContext(ctx, "UPDATE trigger_messages SET routing_state=? WHERE id=?", state, messageID); err != nil {
+	if err := entClientForTx(tx).TriggerMessage.Update().Where(triggermessage.BusinessIDEQ(messageID)).SetRoutingState(state).Exec(ctx); err != nil {
 		return storageError()
 	}
 	return nil
@@ -212,7 +214,7 @@ func (s *Store) routeTargets(ctx context.Context, tx *sql.Tx, b SessionBinding, 
 			scope := b.ID + "/" + strconv.Itoa(i)
 			key := creationKey("topic", scope, result.OperationID)
 			digest := creationDigest(decision)
-			id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM topics WHERE creation_key=?", key)
+			id, err := topicCreationReplay(ctx, entClientForTx(tx).Topic, key, digest)
 			if err != nil {
 				return err
 			}

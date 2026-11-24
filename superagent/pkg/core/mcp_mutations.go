@@ -130,8 +130,8 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 		return nil, problem("invalid_argument", "provide at least one Topic update")
 	}
 	result, err := s.commitWork(ctx, b, "update_topic", r.OperationID, func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
-		var topic Topic
-		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
+		topic, err := readTopic(ctx, tx, b.OwnerID)
+		if err != nil {
 			return nil, err
 		}
 		if err := checkRevision(topic.ID, r.ExpectedRevision, topic.Revision); err != nil {
@@ -160,14 +160,14 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 			if err := registerWorkPullRequest(ctx, tx, topic, Issue{}, key, ""); err != nil {
 				return nil, err
 			}
-			var persisted Topic
-			if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &persisted, topic.ID); err != nil {
+			persisted, err := readTopic(ctx, tx, topic.ID)
+			if err != nil {
 				return nil, err
 			}
 			topic.PullRequests = persisted.PullRequests
 		}
 		if r.Transition != nil {
-			if err := putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", topic, topic.ID); err != nil {
+			if err := saveTopic(ctx, tx, topic); err != nil {
 				return nil, err
 			}
 			t := r.Transition
@@ -181,7 +181,7 @@ func (s *Store) updateMCPTopic(ctx context.Context, b SessionBinding, raw []byte
 		}
 		topic.Revision++
 		topic.UpdatedAt = now()
-		return topic, putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", topic, topic.ID)
+		return topic, saveTopic(ctx, tx, topic)
 	})
 	if err == nil && r.Transition != nil {
 		commitGate("lifecycle_after_commit")
@@ -224,7 +224,7 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 			issue, binding, err = currentBoundIssue(ctx, tx, b)
 			sessionBindingID = binding.ID
 			if err == nil {
-				err = readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, issue.TopicID)
+				topic, err = readTopic(ctx, tx, issue.TopicID)
 			}
 		} else {
 			issue, err = topicIssue(ctx, tx, b, r.IssueID)
@@ -270,11 +270,12 @@ func (s *Store) updateMCPIssue(ctx context.Context, b SessionBinding, raw []byte
 			if err := registerWorkPullRequest(ctx, tx, topic, issue, key, sessionBindingID); err != nil {
 				return nil, err
 			}
-			if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, topic.ID); err != nil {
+			topic, err = readTopic(ctx, tx, topic.ID)
+			if err != nil {
 				return nil, err
 			}
-			var persisted Issue
-			if err := readJSON(ctx, tx, "SELECT body FROM issues WHERE id=?", &persisted, issue.ID); err != nil {
+			persisted, err := readIssue(ctx, tx, issue.ID)
+			if err != nil {
 				return nil, err
 			}
 			issue.PullRequests = persisted.PullRequests

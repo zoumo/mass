@@ -340,8 +340,8 @@ func (t *scheduledTaskRecord) checkOwner(ctx context.Context, tx *sql.Tx) error 
 	if t.Owner == nil {
 		return nil
 	}
-	var topic Topic
-	if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, t.Owner.ID); err != nil {
+	topic, err := readTopic(ctx, tx, t.Owner.ID)
+	if err != nil {
 		return err
 	}
 	if topic.Status != "active" || topic.LifecycleGeneration != t.topicGeneration {

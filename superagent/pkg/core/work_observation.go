@@ -40,11 +40,11 @@ func (s *Server) observeIssueSession(ctx context.Context, sessionBindingID strin
 	observation := issueSessionObservation{SessionBindingID: sessionBindingID, State: "unknown", ObservationGap: "issue_session_unavailable"}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	var b SessionBinding
-	var body []byte
-	if s.config.Sessions == nil || s.store.db.QueryRowContext(ctx, "SELECT body FROM session_bindings WHERE id=? AND role='issue' AND state='ready'", sessionBindingID).Scan(&body) != nil ||
-		json.Unmarshal(body, &b) != nil ||
-		b.SessionID == "" || b.SessionUID == "" {
+	if s.config.Sessions == nil {
+		return observation
+	}
+	b, err := s.store.readyIssueBinding(ctx, sessionBindingID)
+	if err != nil || b.SessionID == "" || b.SessionUID == "" {
 		return observation
 	}
 	c, err := s.massClient()

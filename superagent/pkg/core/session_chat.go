@@ -88,27 +88,28 @@ func (s *Server) registerSessionChatOperations(api *httpAPI, bindingParam *huma.
 }
 
 // Resolve only the current binding, including when a client calls Core directly.
-func (s *Server) sessionChatBinding(ctx context.Context, id string) (SessionBinding, error) {
+func (s *Store) sessionChatBinding(ctx context.Context, id string) (SessionBinding, error) {
 	var b SessionBinding
-	tx, err := s.store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return b, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE id=?`, &b, id); err != nil {
+	b, err = readBindingByID(ctx, tx, id)
+	if err != nil {
 		return b, err
 	}
 	var current string
 	switch b.Role {
 	case "topic":
-		var topic Topic
-		if err := readJSON(ctx, tx, `SELECT body FROM topics WHERE id=?`, &topic, b.OwnerID); err != nil {
+		topic, err := readTopic(ctx, tx, b.OwnerID)
+		if err != nil {
 			return b, err
 		}
 		current = topic.SessionBindingID
 	case "issue":
-		var issue Issue
-		if err := readJSON(ctx, tx, `SELECT body FROM issues WHERE id=?`, &issue, b.OwnerID); err != nil {
+		issue, err := readIssue(ctx, tx, b.OwnerID)
+		if err != nil {
 			return b, err
 		}
 		current = issue.CurrentSessionBindingID
@@ -130,7 +131,7 @@ type chatSession struct {
 }
 
 func (s *Server) openSessionChat(ctx context.Context, r *http.Request) (chatSession, error) {
-	b, err := s.sessionChatBinding(ctx, resourcePathValue(r, "bindingId"))
+	b, err := s.store.sessionChatBinding(ctx, resourcePathValue(r, "bindingId"))
 	if err != nil {
 		return chatSession{}, err
 	}
@@ -142,7 +143,7 @@ func (s *Server) openSessionChat(ctx context.Context, r *http.Request) (chatSess
 }
 
 func (chat chatSession) requireCurrent(ctx context.Context) error {
-	current, err := chat.server.sessionChatBinding(ctx, chat.binding.ID)
+	current, err := chat.server.store.sessionChatBinding(ctx, chat.binding.ID)
 	if err != nil {
 		return err
 	}

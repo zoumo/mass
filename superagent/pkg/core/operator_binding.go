@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"net"
 	"net/http"
 	"time"
@@ -41,26 +40,12 @@ func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool 
 }
 
 func (s *Server) bindingEvidence(w http.ResponseWriter, r *http.Request, id string) {
-	tx, err := s.store.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
+	binding, spec, err := s.store.bindingAndSpec(r.Context(), id)
 	if err != nil {
-		s.fail(w, storageError())
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-	var inspection SessionBindingInspection
-	var spec resource.SessionSpec
-	if err := readJSON(r.Context(), tx, "SELECT body FROM session_bindings WHERE id=?", &inspection.SessionBinding, id); err != nil {
 		s.fail(w, err)
 		return
 	}
-	if err := readJSON(r.Context(), tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, id); err != nil {
-		s.fail(w, err)
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		s.fail(w, storageError())
-		return
-	}
+	inspection := SessionBindingInspection{SessionBinding: binding}
 	s.observeBinding(r.Context(), spec, &inspection)
 	s.write(w, http.StatusOK, inspection)
 }

@@ -182,8 +182,8 @@ func (s *Store) triggerScheduledTask(ctx context.Context, taskID, operationID st
 	defer func() { _ = tx.Rollback() }()
 	// The configured Bearer represents a single Operator authority across token rotations.
 	sourceMessageID := taskID + "/manual/" + creationKey("operator", taskID, operationID)
-	var m Message
-	err = readJSON(ctx, tx, "SELECT body FROM trigger_messages WHERE source=? AND account_id='' AND native_id=?", &m, scheduledTaskSource, sourceMessageID)
+	messages := entClientForTx(tx).TriggerMessage
+	m, err := readTriggerMessage(ctx, triggerMessageByNativeID(messages, scheduledTaskSource, "", sourceMessageID))
 	if err == nil {
 		return messageReceipt(m, true), nil
 	}

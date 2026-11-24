@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/outbox"
 )
 
 func decodeOutboxResult(w http.ResponseWriter, r *http.Request, request any) error {
@@ -186,16 +188,18 @@ func (s *Store) changeOutbox(ctx context.Context, source Source, req OutboxComma
 		outcome = "duplicate"
 		return item, nil
 	}
-	var rawReceipt any
-	if next.Receipt != nil {
+	update := entClientForTx(tx).Outbox.Update().Where(outbox.IDEQ(item.ID)).SetStatus(outbox.Status(next.Status))
+	if next.Receipt == nil {
+		update.ClearReceipt()
+	} else {
 		raw, err := json.Marshal(next.Receipt)
 		if err != nil {
 			return item, storageError()
 		}
-		rawReceipt = string(raw)
+		update.SetReceipt(string(raw))
 	}
 	item.OutboxState = next
-	if _, err := tx.ExecContext(ctx, "UPDATE outbox SET status=?,receipt=? WHERE id=?", item.Status, rawReceipt, item.ID); err != nil {
+	if err := update.Exec(ctx); err != nil {
 		return item, storageError()
 	}
 	if req.Outcome == "permanent_failure" {
