@@ -3,9 +3,11 @@ import type { Context } from '@opentelemetry/api'
 import type { WorkbenchRow, Page } from '../workbench'
 import { measureView, observerRequest } from './telemetry'
 
-export type Perspective = 'message' | 'router' | 'topic' | 'issue' | 'topic-conversation' | 'trace' | 'metrics' | 'watchdog'
-export const defaultPerspective = 'topic-conversation'
-export const watchdogPath = '/superagent/watchdog'
+const perspectives = ['topic-conversation', 'message', 'router', 'topic', 'issue', 'trace', 'metrics', 'watchdog'] as const
+export type Perspective = typeof perspectives[number]
+const defaultPerspective = 'topic-conversation'
+export const observerHome = '/superagent/'
+const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
 export type ViewProps = { query: URLSearchParams }
 export type MessageRecord = WorkbenchRow & {
   id: string
@@ -14,12 +16,26 @@ export type MessageRecord = WorkbenchRow & {
   eventId?: string
 }
 
+export function perspectiveFromPath(path: string): Perspective | undefined {
+  return perspectives.find(view => path === observerHome + view)
+}
+
+export function observerView(url: URL): Perspective | 'diagnostics' {
+  const fromPath = perspectiveFromPath(url.pathname)
+  if (fromPath) return fromPath
+  const collection = url.searchParams.get('view') || ''
+  if (url.searchParams.get('mode') === 'records' || (collection && !Object.hasOwn(previousViews, collection))) {
+    return 'diagnostics'
+  }
+  const requested = url.searchParams.get('perspective') || previousViews[collection]
+  return perspectives.find(view => view === requested) || defaultPerspective
+}
+
 export function viewHref(view: Perspective, id = '', filters: Record<string, string> = {}) {
-  if (view === 'watchdog') return watchdogPath
-  const query = new URLSearchParams({ perspective: view })
+  const query = new URLSearchParams()
   if (id) query.set('id', id)
   for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value)
-  return '/superagent/?' + query
+  return observerHome + view + (query.size ? '?' + query : '')
 }
 
 export function navigate(href: string) {
@@ -27,9 +43,10 @@ export function navigate(href: string) {
   if (href === current) return
   const target = new URL(href, location.origin)
   const previous = new URL(current, location.origin)
-  const workspace = (url: URL) => url.pathname === watchdogPath
-    ? 'watchdog'
-    : url.searchParams.get('perspective') || url.searchParams.get('view') || defaultPerspective
+  const workspace = (url: URL) => {
+    const view = observerView(url)
+    return view === 'diagnostics' ? `diagnostics:${url.searchParams.get('view') || ''}` : view
+  }
   history.pushState({ ...history.state, observerPrevious: current }, '', href)
   if (workspace(target) !== workspace(previous)) window.scrollTo(0, 0)
   window.dispatchEvent(new PopStateEvent('popstate'))
@@ -43,10 +60,10 @@ export function useObserverLocation() {
   return new URL(useSyncExternalStore(listenLocation, () => location.href))
 }
 
-export const RefreshContext = createContext({
+export const RefreshContext = createContext<{ revision: number; online: boolean; view: Perspective | 'diagnostics' }>({
   revision: 0,
   online: true,
-  view: defaultPerspective as Perspective | 'diagnostics',
+  view: defaultPerspective,
 })
 export const useRefresh = () => useContext(RefreshContext)
 

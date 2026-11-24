@@ -3,13 +3,13 @@ import { fixtureOrigins } from './endpoints.mjs'
 
 test.use({ baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}` })
 
-const observer = '/superagent/?perspective=topic-conversation'
+const observer = '/superagent/topic-conversation'
 const audit = `http://127.0.0.1:${process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795'}`
 const routed = 'Original input observer-routing'
 const direct = 'Synthetic PR review arrived.'
 
 test('reads distinct Router and Core ingress with their own Thread and source links', async ({ page }) => {
-  await page.goto('/superagent/?perspective=message')
+  await page.goto('/superagent/message')
   await page.getByRole('link', { name: 'Topic 会话', exact: true }).click()
   const topics = page.getByRole('complementary', { name: 'Topics', exact: true })
   const activeTopic = topics.getByRole('link', { name: /Observer routing Topic/ })
@@ -21,15 +21,15 @@ test('reads distinct Router and Core ingress with their own Thread and source li
   await filters.getByRole('link', { name: 'Router 路由入群' }).click()
   const router = timeline.getByRole('article').filter({ hasText: routed })
   const routerAvatar = router.getByRole('group', { name: '发送方' }).getByRole('link', { name: /查看 Router/ })
-  await expect(routerAvatar).toHaveAttribute('href', /perspective=router&id=/)
-  await expect(router.getByRole('group', { name: '收件方' }).getByRole('link', { name: /查看 Topic/ })).toHaveAttribute('href', /perspective=topic&id=/)
+  await expect(routerAvatar).toHaveAttribute('href', /\/superagent\/router\?id=/)
+  await expect(router.getByRole('group', { name: '收件方' }).getByRole('link', { name: /查看 Topic/ })).toHaveAttribute('href', /\/superagent\/topic\?id=/)
   await expect(router.getByRole('link', { name: /查看 Thread · dws:/ })).toHaveAttribute('href', /view=threads/)
   await expect(timeline.getByText(direct)).toHaveCount(0)
   await router.getByRole('link', { name: new RegExp(routed) }).click()
   const details = page.getByRole('complementary', { name: '消息详情' })
   await expect(details.getByText(routed, { exact: true })).toBeVisible()
   await expect(details.getByText('independent requested work', { exact: true })).toBeVisible()
-  await expect(details.getByRole('link', { name: '查看原始消息 →' })).toHaveAttribute('href', /perspective=message&id=/)
+  await expect(details.getByRole('link', { name: '查看原始消息 →' })).toHaveAttribute('href', /\/superagent\/message\?id=/)
   await expect(details.getByRole('link', { name: '查看事件记录 →' })).toHaveAttribute('href', /view=internal-events&id=/)
   await page.reload()
   await expect(details.getByText('independent requested work', { exact: true })).toBeVisible()
@@ -69,7 +69,7 @@ test('reads Issue creation and Issue Session dispatch separately, with real grou
   const timeline = page.getByRole('region', { name: '群聊时间线' })
   await expect(timeline.getByRole('heading', { name: 'Observer routing Topic' })).toBeVisible()
   const group = page.getByRole('complementary', { name: '群组信息' })
-  await expect(group.getByRole('link', { name: '查看 Issue · Verify sample build' })).toHaveAttribute('href', /perspective=issue&id=/)
+  await expect(group.getByRole('link', { name: '查看 Issue · Verify sample build' })).toHaveAttribute('href', /\/superagent\/issue\?id=/)
   await expect(group.getByRole('link', { name: '查看 Issue · Review blocked build' })).toBeVisible()
 
   const filters = timeline.getByRole('navigation')
@@ -77,10 +77,10 @@ test('reads Issue creation and Issue Session dispatch separately, with real grou
   const created = timeline.getByRole('article').filter({ hasText: 'Verify sample build' })
   await expect(created.locator('header')).toContainText('创建 Issue')
   await expect(created.locator('header code')).toHaveText('mass-t1-i1')
-  await expect(created.getByRole('group', { name: '收件方' }).getByRole('link')).toHaveAttribute('href', /perspective=issue&id=mass-t1-i1/)
+  await expect(created.getByRole('group', { name: '收件方' }).getByRole('link')).toHaveAttribute('href', /\/superagent\/issue\?id=mass-t1-i1/)
   await created.getByRole('link', { name: /创建 Issue · Verify sample build/ }).click()
   const details = page.getByRole('complementary', { name: '消息详情' })
-  await expect(details.getByRole('link', { name: '查看 Issue →' })).toHaveAttribute('href', /perspective=issue&id=/)
+  await expect(details.getByRole('link', { name: '查看 Issue →' })).toHaveAttribute('href', /\/superagent\/issue\?id=/)
 
   await filters.getByRole('link', { name: '任务派发' }).click()
   await expect(timeline.getByText(direct)).toHaveCount(0)
@@ -126,8 +126,9 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   await page.goto(endpoint + '/superagent/')
   await expect(page.getByRole('heading', { name: 'Topic 会话', exact: true })).toBeVisible()
   const views = page.getByRole('navigation', { name: '观察视角' })
-  for (const name of ['Message', 'Router', 'Topic', 'Issue']) {
-    await expect(views.getByRole('link', { name, exact: true })).toHaveAttribute('href', `/superagent/?perspective=${name.toLowerCase()}`)
+  await expect(views.getByRole('link', { name: 'Topic 会话', exact: true })).toHaveAttribute('href', observer)
+  for (const name of ['Message', 'Router', 'Topic', 'Issue', 'Trace', 'Metrics', 'Watchdog']) {
+    await expect(views.getByRole('link', { name, exact: true })).toHaveAttribute('href', `/superagent/${name.toLowerCase()}`)
   }
   await expect(page.getByRole('link', { name: '诊断', exact: true })).toBeVisible()
   const topics = page.getByRole('complementary', { name: 'Topics', exact: true })
@@ -182,7 +183,7 @@ test('defaults to Topic conversations and refreshes Report order while preservin
   await expect(details.getByText('artifacts/conversation.log')).toBeVisible()
   await expect(details.getByText('当前报告', { exact: true })).toBeVisible()
   await expect(details.getByText('待 Topic 验收')).toBeVisible()
-  await expect(details.getByRole('link', { name: '查看 Issue →' })).toHaveAttribute('href', /perspective=issue&id=/)
+  await expect(details.getByRole('link', { name: '查看 Issue →' })).toHaveAttribute('href', /\/superagent\/issue\?id=/)
   await expect(details.getByRole('link', { name: '查看 SessionBinding →' })).toHaveAttribute('href', /view=session-bindings&id=/)
   await expect(details.getByRole('link', { name: '查看 Report →' })).toHaveAttribute('href', /view=reports&id=/)
   await expect(details.getByRole('link', { name: '查看启动事件 →' })).toHaveAttribute('href', /view=internal-events&id=/)
@@ -232,7 +233,7 @@ test('opens event Trace in Superagent Web and returns to the conversation', asyn
   await expect(link).toHaveAttribute('href', new RegExp(traceId))
   await expect(card).not.toContainText(traceId)
   await link.click()
-  await expect(page).toHaveURL(/perspective=trace/)
+  await expect(page).toHaveURL(/\/superagent\/trace/)
   await expect(page.getByRole('region', { name: 'Trace 瀑布图' })).toBeVisible()
   await page.getByRole('button', { name: /update_issue/ }).click()
   const detail = page.getByRole('complementary', { name: 'Span 详情' })

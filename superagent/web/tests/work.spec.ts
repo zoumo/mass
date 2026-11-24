@@ -168,7 +168,7 @@ test('A reopened Issue links each report to its own binding and retains shared M
   expect.objectContaining({ id: originalReportId, current: false, sessionBindingId: originalSessionBindingId }),
   expect.objectContaining({ id: currentReportId, current: true, sessionBindingId: currentSessionBindingId }),
  ]))
- await page.goto(`${endpoint}/superagent/?perspective=issue&id=${issueId}`)
+ await page.goto(`${endpoint}/superagent/issue?id=${issueId}`)
  const issue = page.getByRole('article', { name: '当前 Issue' })
  const currentSession = issue.getByRole('link', { name: '查看当前会话 →' })
  await expect(currentSession).toHaveAttribute('href', `/superagent/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)

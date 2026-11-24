@@ -53,10 +53,10 @@ function OriginalRoutingEvent({ id }: { id: string }) {
   </div>
 }
 
-function RouterHistory({ message }: { message: RouterMessage }) {
+function RouterHistory({ message, copyHref }: { message: RouterMessage; copyHref: string }) {
   const list = usePages<InternalEvent>('internal-events?' + new URLSearchParams({ messageId: message.id, limit: '20', trace: 'true' }))
   return <section className="router-history" aria-label="路由事件记录">
-    <div className="router-history-heading"><h3>路由事件记录</h3><a href={viewHref('metrics', '', { metric: 'mcp_rate', role: 'router' })}>Router 指标</a><CopyLink href={location.pathname+location.search}/><a href={viewHref('message', message.id)}>查看消息路径<ArrowUpRight size={14}/></a></div>
+    <div className="router-history-heading"><h3>路由事件记录</h3><a href={viewHref('metrics', '', { metric: 'mcp_rate', role: 'router' })}>Router 指标</a><CopyLink href={copyHref}/><a href={viewHref('message', message.id)}>查看消息路径<ArrowUpRight size={14}/></a></div>
     {list.error && <p role="alert" className="read-error">{list.error}{list.data && ' · 快照已过时'}</p>}
     {!list.data && !list.error && <p className="empty">正在读取事件…</p>}
     {list.data?.length === 0 && <p className="empty">事件记录缺失</p>}
@@ -122,7 +122,7 @@ function RouterFlow({ messages, selected, limit }: { messages: RouterMessage[]; 
     lanes={shown.flatMap(row => routerLanes(row, limit))}/></div>
 }
 
-function RouterRow({ row, open, toggle }: { row: RouterMessage; open: boolean; toggle: () => void }) {
+function RouterRow({ row, open, toggle, copyHref }: { row: RouterMessage; open: boolean; toggle: () => void; copyHref: string }) {
   const action = activity(row.activityKind, row.returnedEventId)
   return <article className={'router-row' + (open ? ' expanded' : '')} data-message-id={row.id}>
     <div className="router-grid">
@@ -139,7 +139,7 @@ function RouterRow({ row, open, toggle }: { row: RouterMessage; open: boolean; t
       </div>
       <div className="router-time"><small>{action}登记</small><time dateTime={row.activityAt} title={row.activityAt}>{formatTime(row.activityAt)}</time></div>
     </div>
-    {open && <RouterHistory message={row}/>}
+    {open && <RouterHistory message={row} copyHref={copyHref}/>}
   </article>
 }
 
@@ -147,6 +147,7 @@ export default function RouterView({ query }: ViewProps) {
   const value = query.get('limit') || ''
   const limit = ['50', '100'].includes(value) ? value : '20'
   const selected = query.get('id') || ''
+  const copyHref = viewHref('router', selected, { limit: value })
   const path = 'messages?view=router&limit=' + limit
   const list = usePages<RouterMessage>(path)
   const onPage = list.data?.find(row => row.id === selected)
@@ -185,7 +186,7 @@ export default function RouterView({ query }: ViewProps) {
     }}>
       {!list.data && !list.error && <p className="empty">正在读取路由消息…</p>}
       {list.data?.length === 0 && <p className="empty">暂无交给 Router 的消息</p>}
-      {rows.map(row => <RouterRow row={row} key={row.id} open={selected === row.id} toggle={() => toggle(row.id)}/>)}
+      {rows.map(row => <RouterRow row={row} key={row.id} open={selected === row.id} toggle={() => toggle(row.id)} copyHref={copyHref}/>)}
       {list.next && <Button variant="ghost" className="load-more" disabled={list.loading} onClick={list.more}>加载更多消息<ChevronDown/></Button>}
     </div>
     {list.data && <footer className="list-footer"><List size={14}/>已显示 {list.data.length} 条消息</footer>}

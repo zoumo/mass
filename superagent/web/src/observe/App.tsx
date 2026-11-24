@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine, ShieldCheck } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { RefreshContext, defaultPerspective, navigate, useObserverLocation, viewHref, watchdogPath, type Perspective } from './observer'
+import { RefreshContext, navigate, observerHome, observerView, perspectiveFromPath, useObserverLocation, viewHref, type Perspective } from './observer'
 import MessageView from './MessageView'
 import RouterView from './RouterView'
 import TopicView from './TopicView'
@@ -11,8 +11,6 @@ import Diagnostics from './diagnostics/Diagnostics'
 import TraceView from './TraceView'
 import MetricsView from './MetricsView'
 import WatchdogView from './WatchdogView'
-
-const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
 
 const views = {
   'topic-conversation': { title: 'Topic 会话', subtitle: '', icon: MessagesSquare, component: TopicConversation },
@@ -28,12 +26,8 @@ const views = {
 export default function App() {
   const route = useObserverLocation()
   const query = route.searchParams
-  const onWatchdogPage = route.pathname === watchdogPath
-  const collection = query.get('view') || ''
-  const diagnostics = !onWatchdogPage &&
-    (query.get('mode') === 'records' || (Boolean(collection) && !Object.hasOwn(previousViews, collection)))
-  const key = onWatchdogPage ? 'watchdog' : query.get('perspective') || previousViews[collection] || defaultPerspective
-  const view: Perspective = Object.hasOwn(views, key) ? (key as Perspective) : defaultPerspective
+  const view = observerView(route)
+  const diagnostics = view === 'diagnostics'
   const {
     component: View,
     icon: Icon,
@@ -73,16 +67,16 @@ export default function App() {
     )
       return
     const url = new URL(link.href)
-    if (url.origin !== location.origin || (url.pathname !== '/superagent/' && url.pathname !== watchdogPath)) return
+    if (url.origin !== location.origin || (url.pathname !== observerHome && !perspectiveFromPath(url.pathname))) return
     event.preventDefault()
     navigate(url.pathname + url.search)
   }
   return (
-    <RefreshContext.Provider value={{ revision, online, view: diagnostics ? 'diagnostics' : view }}>
+    <RefreshContext.Provider value={{ revision, online, view }}>
       <div className="observer" onClick={follow}>
         <header className="topbar">
           <div className="shell top-inner">
-            <a className="brand" href="/superagent/" aria-label="Superagent Web 首页">
+            <a className="brand" href={observerHome} aria-label="Superagent Web 首页">
               <span className="brand-icon">
                 <Activity />
               </span>

@@ -44,7 +44,7 @@ button:disabled { cursor: default }
 .tabs { background: #07101b; border-bottom: 1px solid var(--line) }
 .tab-inner { gap: 28px; height: 47px }
 .tab-inner a { position: relative; gap: 8px; height: 100%; font-size: 14px; font-weight: 550; color: var(--muted) }
-[data-view=message] { --object: #2dd4bf }
+[data-view=message], [data-view=diagnostics] { --object: var(--teal) }
 [data-view=router] { --object: #c4a8ff }
 [data-view=topic] { --object: #88dfa7 }
 [data-view=issue] { --object: #a7bfdf }

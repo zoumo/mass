@@ -139,7 +139,7 @@ An Issue has a creation Trace link when Core saved its creation association.
 `telemetryQuery`. Specify a 32-character hexadecimal Trace ID. Lookup covers
 the past seven days by default, or seven days on either side of an optional
 RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
-partial results. Superagent Web links to `/superagent/?perspective=trace&id={traceId}`.
+partial results. Superagent Web links to `/superagent/trace?id={traceId}`.
 
 `GET /v1/telemetry/performance` queries OTel time series in OpenObserve. `window`
 accepts `15m`, `1h`, `6h` and `24h` and defaults to `1h`.
