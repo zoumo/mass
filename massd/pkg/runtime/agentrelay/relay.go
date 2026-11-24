@@ -19,8 +19,6 @@ import (
 
 type Sink func(context.Context, events.SessionEvent) error
 
-const unsupportedNativeEventReason = "unsupported_native_event"
-
 type Config struct {
 	Session      agent.Session
 	Address      runtime.Address
@@ -95,14 +93,9 @@ func (r *Relay) consume(ctx context.Context, config Config, stream agent.EventSt
 			return
 		}
 		if config.Interactions != nil {
-			var publish bool
-			mapped, publish, err = config.Interactions.observe(mapped)
-			if err != nil {
+			if err := config.Interactions.observe(mapped); err != nil {
 				r.setErr(err)
 				return
-			}
-			if !publish {
-				continue
 			}
 		}
 		if err := config.Sink(ctx, mapped); err != nil {
@@ -135,18 +128,10 @@ func (r *Relay) setErr(err error) {
 	r.mu.Unlock()
 }
 
-// MapEvent preserves SDK identity and metadata in the MASS envelope and
-// projects unsupported native event diagnostics into session.error.
+// MapEvent adds the MASS address and source to an SDK event.
 func MapEvent(address runtime.Address, source events.Source, event agent.Event) (events.SessionEvent, error) {
 	if err := event.Validate(); err != nil {
 		return events.SessionEvent{}, MapError(err)
-	}
-	payload := event.Payload
-	if event.Type() == agent.EventSessionUnsupportedNativeEvent {
-		payload = events.SessionError{
-			Reason:  unsupportedNativeEventReason,
-			Message: "Agent SDK could not convert the native event",
-		}
 	}
 	var meta map[string]any
 	if event.Meta != nil {
@@ -164,7 +149,7 @@ func MapEvent(address runtime.Address, source events.Source, event agent.Event) 
 		Time:        event.Time,
 		ItemID:      event.ItemID,
 		Meta:        meta,
-	}, payload, source)
+	}, event.Payload, source)
 	if err != nil {
 		return events.SessionEvent{}, runtime.InvalidArgument(err.Error())
 	}

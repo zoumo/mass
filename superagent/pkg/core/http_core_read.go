@@ -29,7 +29,7 @@ func isTrustedResourceRead(path string) bool {
 		return true
 	case "session-bindings":
 		_, view, _ := strings.Cut(suffix, "/")
-		return view == "" || view == "history" || view == "live"
+		return view == "" || view == "history" || view == "live" || view == "chat/history" || view == "chat/live"
 	}
 	return false
 }
