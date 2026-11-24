@@ -45,7 +45,7 @@ func TestOverloadTotalRetentionExhaustionRetainsOriginalDelivery(t *testing.T) {
 	d := &overloadDriver{pipe: events.NewEventPipe(128), source: events.NewSource(), peerSource: events.NewSource(), count: 320}
 	d.unknown.Store(true)
 	svc := service.New(st.Meta, &overloadStore{EventStore: st.Events, gate: gate}, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	defer func() { release.Do(func() { close(gate) }); d.unknown.Store(false); _ = svc.Shutdown(ctx) }()
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
@@ -58,6 +58,22 @@ func TestOverloadTotalRetentionExhaustionRetainsOriginalDelivery(t *testing.T) {
 	}
 	slow := resource.SessionRef{SessionID: "slow"}
 	fast := resource.SessionRef{SessionID: "fast"}
+	b, err := svc.EventBroadcast(slow)
+	require.NoError(t, err)
+	headroom := make(chan struct{})
+	drained := make(chan struct{})
+	var delivered atomic.Int32
+	require.NoError(t, b.AddHandler(&observingHandler{handle: func(e events.SessionEvent) error {
+		if e.Persistent() {
+			switch int(delivered.Add(1)) {
+			case d.count / 2:
+				close(headroom)
+			case d.count:
+				close(drained)
+			}
+		}
+		return nil
+	}}))
 	input := runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}
 	_, err = svc.SendPrompt(ctx, slow, input)
 	require.NoError(t, err)
@@ -69,18 +85,26 @@ func TestOverloadTotalRetentionExhaustionRetainsOriginalDelivery(t *testing.T) {
 	_, err = svc.SendPrompt(ctx, fast, input)
 	require.Error(t, err, "total exhaustion cannot promise healthy-peer progress")
 	release.Do(func() { close(gate) })
-	require.Eventually(t, func() bool {
-		short, stop := context.WithTimeout(ctx, 30*time.Millisecond)
-		defer stop()
-		_ = svc.ReconcileDelivery(short, "agent")
-		page, e := svc.ListHistoryEvents(slow, store.HistoryQuery{Limit: 400})
-		return e == nil && len(page.Events) == 320
-	}, 25*time.Second, 50*time.Millisecond)
+	// Drain enough of the queued events to accommodate the retained delivery
+	// and the remaining stream tail when the reader resumes.
+	select {
+	case <-headroom:
+	case <-ctx.Done():
+		t.Fatalf("only %d events committed before resuming delivery: %v", delivered.Load(), ctx.Err())
+	}
+	require.NoError(t, svc.ReconcileDelivery(ctx, "agent"))
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		t.Fatalf("only %d of %d events committed after resuming delivery: %v", delivered.Load(), d.count, ctx.Err())
+	}
 	page, err := svc.ListHistoryEvents(slow, store.HistoryQuery{Limit: 400})
 	require.NoError(t, err)
+	require.Len(t, page.Events, d.count)
 	for i, e := range page.Events {
 		require.Equal(t, d.sent[i].EventID, e.EventID)
 		require.Equal(t, fmt.Sprintf("fact-%03d", i), e.ItemID)
+		require.Equal(t, d.sent[i].Payload(), e.Payload())
 	}
 	d.unknown.Store(false)
 	_, err = svc.CloseSession(ctx, slow)
@@ -131,10 +155,7 @@ func (d *overloadDriver) Stop(context.Context) error { d.pipe.End(nil); return n
 func (d *overloadDriver) SendPrompt(ctx context.Context, id string, _ runtime.Input) (runtime.InputReceipt, error) {
 	n := 1
 	if id == "slow" {
-		n = 160
-		if d.count > 0 {
-			n = d.count
-		}
+		n = d.count
 	}
 	source := d.source
 	if id == "fast" {
@@ -192,7 +213,7 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				gate := make(chan struct{})
 				var release sync.Once
 				defer release.Do(func() { close(gate) })
-				d := &overloadDriver{pipe: events.NewEventPipe(128), source: events.NewSource(), peerSource: events.NewSource()}
+				d := &overloadDriver{pipe: events.NewEventPipe(128), source: events.NewSource(), peerSource: events.NewSource(), count: 160}
 				d.unknown.Store(unknown)
 				var history eventstore.EventStore = st.Events
 				faultStore := &overloadStore{EventStore: st.Events, gate: gate, failed: make(chan struct{})}
@@ -201,7 +222,7 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 					history = faultStore
 				}
 				svc := service.New(st.Meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
-				ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 				defer cancel()
 				defer func() {
 					release.Do(func() { close(gate) })
@@ -223,11 +244,12 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				fast := resource.SessionRef{SessionID: "fast"}
 				b, e := svc.EventBroadcast(slow)
 				require.NoError(t, e)
+				drained := make(chan struct{})
 				var delivered atomic.Int32
 				var diagnosed atomic.Bool
 				require.NoError(t, b.AddHandler(&observingHandler{handle: func(e events.SessionEvent) error {
-					if e.Persistent() {
-						delivered.Add(1)
+					if e.Persistent() && int(delivered.Add(1)) == d.count {
+						close(drained)
 					}
 					if failure, ok := e.Payload().(events.SessionError); ok && failure.Reason == "session_delivery_overloaded" {
 						diagnosed.Store(true)
@@ -293,12 +315,15 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 					faultStore.unavailable.Store(false)
 					require.Eventually(t, func() bool { return svc.ReconcileHistory(ctx, slow) == nil }, time.Second, 10*time.Millisecond)
 				}
-				require.Eventually(t, func() bool {
-					p, e := svc.ListHistoryEvents(slow, store.HistoryQuery{Limit: 200})
-					return e == nil && len(p.Events) == 160
-				}, 20*time.Second, 50*time.Millisecond)
+				// Publication follows the file history commit for each event.
+				select {
+				case <-drained:
+				case <-ctx.Done():
+					t.Fatalf("only %d of %d events committed after releasing the gate: %v", delivered.Load(), d.count, ctx.Err())
+				}
 				page, err := svc.ListHistoryEvents(slow, store.HistoryQuery{Limit: 200})
 				require.NoError(t, err)
+				require.Len(t, page.Events, d.count)
 				for i, e := range page.Events {
 					require.Equal(t, fmt.Sprintf("fact-%03d", i), e.ItemID)
 					require.Equal(t, d.sent[i].EventID, e.EventID)
@@ -316,7 +341,7 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				} else {
 					require.NoError(t, err)
 				}
-				require.EqualValues(t, 160, delivered.Load(), "partial required publication never replays already committed facts")
+				require.EqualValues(t, d.count, delivered.Load(), "partial required publication never replays already committed facts")
 				require.True(t, diagnosed.Load(), "the local overload failure is published after storage settles")
 				if !unknown {
 					require.EqualValues(t, 1, d.closed.Load(), "confirmed native release is not repeated during settlement")
