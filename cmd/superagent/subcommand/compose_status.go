@@ -19,6 +19,8 @@ import (
 const (
 	triggerProbeTimeout = time.Second
 	maxTriggerStatus    = 2 << 20
+	maxWatchdogSnapshot = 64 << 10
+	composeWatchdogPath = "/watchdog"
 )
 
 type triggerStatusTarget struct {
@@ -30,6 +32,7 @@ type triggerStatusTarget struct {
 type composeStatusServer struct {
 	mu        sync.RWMutex
 	targets   map[string]triggerStatusTarget
+	watchdog  core.WatchdogSnapshot
 	server    *http.Server
 	client    *http.Client
 	directory string
@@ -37,7 +40,7 @@ type composeStatusServer struct {
 	done      chan struct{}
 }
 
-func startComposeStatus(ctx context.Context, enabled []composeTrigger) (*composeStatusServer, error) {
+func startComposeStatus(ctx context.Context, enabled []composeTrigger, watchdogEnabled bool) (*composeStatusServer, error) {
 	// A short path works with the Unix socket limits on macOS and Linux.
 	directory, err := os.MkdirTemp("/tmp", "mass-status-")
 	if err != nil {
@@ -51,6 +54,7 @@ func startComposeStatus(ctx context.Context, enabled []composeTrigger) (*compose
 	}
 	s := &composeStatusServer{
 		targets: make(map[string]triggerStatusTarget, len(enabled)), directory: directory, socket: socket, done: make(chan struct{}),
+		watchdog: core.WatchdogSnapshot{Enabled: watchdogEnabled},
 		client: &http.Client{
 			Timeout: triggerProbeTimeout, Transport: &http.Transport{DisableKeepAlives: true},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -83,7 +87,7 @@ func (s *composeStatusServer) register(kind, endpoint string, child *childProces
 }
 
 func (s *composeStatusServer) serve(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/status" {
+	if r.URL.Path != "/status" && r.URL.Path != composeWatchdogPath {
 		http.NotFound(w, r)
 		return
 	}
@@ -93,6 +97,12 @@ func (s *composeStatusServer) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.RLock()
+	if r.URL.Path == composeWatchdogPath {
+		snapshot := s.watchdog
+		s.mu.RUnlock()
+		writeComposeStatus(w, snapshot)
+		return
+	}
 	github, githubEnabled := s.targets[triggers.GitHub]
 	dws, dwsEnabled := s.targets[triggers.DWS]
 	s.mu.RUnlock()
@@ -101,13 +111,23 @@ func (s *composeStatusServer) serve(w http.ResponseWriter, r *http.Request) {
 	probes.Go(func() { snapshot.GitHub = s.probe(r.Context(), github, githubEnabled, githubState) })
 	snapshot.DWS = s.probe(r.Context(), dws, dwsEnabled, dwsState)
 	probes.Wait()
+	writeComposeStatus(w, snapshot)
+}
+
+func writeComposeStatus(w http.ResponseWriter, snapshot any) {
 	body, err := json.Marshal(snapshot)
 	if err != nil {
-		http.Error(w, "cannot encode Trigger status", http.StatusInternalServerError)
+		http.Error(w, "cannot encode Compose status", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
+}
+
+func (s *composeStatusServer) recordWatchdog(check core.WatchdogCheck) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.watchdog.Latest = &check
 }
 
 func (s *composeStatusServer) probe(ctx context.Context, target triggerStatusTarget, enabled bool, normalize func(json.RawMessage, string) string) core.ComponentStatus {
@@ -170,15 +190,7 @@ func readComposeStatus(socket string, enabled []string) func(context.Context) co
 			fallback.DWS.Status = "unavailable"
 		}
 	}
-	client := &http.Client{
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return new(net.Dialer).DialContext(ctx, "unix", socket)
-			},
-		},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	client := composeStatusClient(socket)
 	return func(ctx context.Context) core.TriggerStatuses {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://compose/status", http.NoBody)
 		if err != nil {
@@ -203,6 +215,47 @@ func readComposeStatus(socket string, enabled []string) func(context.Context) co
 		return core.TriggerStatuses{
 			GitHub: supervisedStatus(statuses.GitHub, fallback.GitHub), DWS: supervisedStatus(statuses.DWS, fallback.DWS),
 		}
+	}
+}
+
+func readComposeWatchdog(socket string) func(context.Context) (core.WatchdogSnapshot, error) {
+	client := composeStatusClient(socket)
+	client.Timeout = time.Second
+	return func(ctx context.Context) (core.WatchdogSnapshot, error) {
+		var snapshot core.WatchdogSnapshot
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://compose"+composeWatchdogPath, http.NoBody)
+		if err != nil {
+			return snapshot, err
+		}
+		response, err := client.Do(req)
+		if err != nil {
+			return snapshot, err
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return snapshot, errors.New("cannot read Compose Watchdog snapshot")
+		}
+		body, err := io.ReadAll(io.LimitReader(response.Body, maxWatchdogSnapshot+1))
+		if err != nil {
+			return snapshot, err
+		}
+		if len(body) > maxWatchdogSnapshot {
+			return snapshot, errors.New("compose Watchdog snapshot exceeds size limit")
+		}
+		err = json.Unmarshal(body, &snapshot)
+		return snapshot, err
+	}
+}
+
+func composeStatusClient(socket string) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return new(net.Dialer).DialContext(ctx, "unix", socket)
+			},
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }
 

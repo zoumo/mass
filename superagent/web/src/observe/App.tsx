@@ -1,5 +1,5 @@
 import { useEffect, useState, type MouseEvent } from 'react'
-import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine } from 'lucide-react'
+import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine, ShieldCheck } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { RefreshContext, defaultPerspective, navigate, useQuery, viewHref, type Perspective } from './observer'
 import MessageView from './MessageView'
@@ -10,6 +10,7 @@ import IssueView from './IssueView'
 import Diagnostics from './diagnostics/Diagnostics'
 import TraceView from './TraceView'
 import MetricsView from './MetricsView'
+import WatchdogView from './WatchdogView'
 
 const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
 
@@ -21,6 +22,7 @@ const views = {
   issue: { title: 'Issue', subtitle: '事项', icon: CircleDot, component: IssueView },
   trace: { title: 'Trace', subtitle: '调用链', icon: ListTree, component: TraceView },
   metrics: { title: 'Metrics', subtitle: '', icon: BarChart3, component: MetricsView },
+  watchdog: { title: 'Watchdog', subtitle: '', icon: ShieldCheck, component: WatchdogView },
 }
 
 export default function App() {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/superagent/pkg/core"
 	"github.com/zoumo/mass/superagent/pkg/watchdog"
 )
 
@@ -37,8 +38,7 @@ func newWatchdog() *cobra.Command {
 					return errors.New("watchdog interval must be positive")
 				}
 				logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
-				runWatchdogLoop(ctx, logger, options, interval)
-				return nil
+				return runWatchdogLoop(ctx, logger, json.NewEncoder(cmd.OutOrStdout()), options, interval)
 			}
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(options.Run(ctx))
 		},
@@ -51,7 +51,7 @@ func newWatchdog() *cobra.Command {
 	return cmd
 }
 
-func runWatchdogLoop(ctx context.Context, logger *slog.Logger, options watchdog.Options, interval time.Duration) {
+func runWatchdogLoop(ctx context.Context, logger *slog.Logger, output *json.Encoder, options watchdog.Options, interval time.Duration) error {
 	for ctx.Err() == nil {
 		result := options.Run(ctx)
 		level := slog.LevelInfo
@@ -59,19 +59,49 @@ func runWatchdogLoop(ctx context.Context, logger *slog.Logger, options watchdog.
 			level = slog.LevelWarn
 		}
 		logger.Log(ctx, level, "Watchdog check", "component", "watchdog", "result", result)
+		if err := output.Encode(result); err != nil {
+			return err
+		}
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return
+			return nil
 		case <-timer.C:
 		}
 	}
+	return nil
 }
 
-func startComposeWatchdog(executable, endpoint string, interval time.Duration, environment []string, diagnostics io.Writer) (*childProcess, error) {
+func startComposeWatchdog(executable, endpoint string, interval time.Duration, environment []string, diagnostics io.Writer, record func(core.WatchdogCheck)) (*childProcess, error) {
 	command := exec.CommandContext(context.Background(), executable, "watchdog", "--endpoint", endpoint, "--compose-interval", interval.String())
 	command.Env = watchdog.ProcessEnvironment(environment)
 	command.Stderr = diagnostics
-	return startChild("watchdog", command)
+	child, err := startChild("watchdog", command)
+	if err != nil {
+		return nil, err
+	}
+	child.readDone = make(chan struct{})
+	go func() {
+		defer close(child.readDone)
+		decoder := json.NewDecoder(child.stdout)
+		for {
+			var result watchdog.Result
+			if err := decoder.Decode(&result); err != nil {
+				if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
+					slog.New(slog.NewJSONHandler(diagnostics, nil)).Error("Cannot read Watchdog result", "component", "watchdog")
+				}
+				return
+			}
+			check := core.WatchdogCheck{
+				ObservedAt: result.ObservedAt, Status: result.Status, Reason: result.Reason,
+				Judgment: result.Judgment, Recommendation: result.Recommendation,
+			}
+			if result.Delivery != nil {
+				check.TopicID, check.IssueID = result.TopicID, result.IssueID
+			}
+			record(check)
+		}
+	}()
+	return child, nil
 }

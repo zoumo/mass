@@ -16,7 +16,7 @@ import (
 const coreResourcePrefix = "/v1/core/"
 
 func isTrustedResourceRead(path string) bool {
-	if path == telemetryPerformancePath || strings.HasPrefix(path, telemetryTracePath+"/") {
+	if path == watchdogReadPath || path == telemetryPerformancePath || strings.HasPrefix(path, telemetryTracePath+"/") {
 		return true
 	}
 	rest, ok := strings.CutPrefix(path, coreResourcePrefix)

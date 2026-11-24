@@ -1,4 +1,44 @@
 import { test, expect } from '@playwright/test'
+import { routing } from './endpoints.mjs'
+
+test('Watchdog shows the latest read-only result and links to Topic and Issue', async ({ page, request }) => {
+ const issues = await (await request.get(routing + '/v1/core/issues?limit=1')).json()
+ const { id: issueId, topicId } = issues.items[0]
+ const observedAt = '2026-11-24T02:34:00Z'
+ await page.goto(routing + '/superagent/')
+ await page.getByRole('link', { name: 'Watchdog', exact: true }).click()
+ await expect(page.getByRole('heading', { name: 'Watchdog', exact: true })).toBeVisible()
+ await expect(page.getByText('Watchdog 尚未启用。')).toBeVisible()
+
+ let finding = true
+ await page.route('**/v1/core/watchdog', async route => {
+  expect(route.request().method()).toBe('GET')
+  expect(route.request().headers()['authorization']).toBeUndefined()
+  const latest = finding
+   ? { observedAt, status: 'finding', reason: 'suspected_missed_acceptance', topicId, issueId,
+       judgment: 'Report 已送达，尚无验收记录。', recommendation: '请复核 Report。' }
+   : { observedAt, status: 'no_finding', reason: 'no_candidate' }
+  await route.fulfill({ json: { enabled: true, latest } })
+ })
+ await page.getByRole('button', { name: '刷新', exact: true }).click()
+ await expect(page.getByText('有发现', { exact: true })).toBeVisible()
+ await expect(page.locator('time')).toHaveAttribute('datetime', observedAt)
+ await expect(page.getByText('Report 已送达，尚无验收记录。')).toBeVisible()
+ await expect(page.getByText('请复核 Report。')).toBeVisible()
+ await page.getByRole('link', { name: '查看 Topic' }).click()
+ await expect(page).toHaveURL(routing + `/superagent/?perspective=topic&id=${topicId}`)
+ await expect(page.getByRole('article', { name: '当前 Topic' }).locator('h2').first()).toBeVisible()
+ await page.goBack()
+ await page.getByRole('link', { name: '查看 Issue' }).click()
+ await expect(page).toHaveURL(routing + `/superagent/?perspective=issue&id=${issueId}`)
+ await expect(page.getByRole('article', { name: '当前 Issue' })).toBeVisible()
+ await page.goBack()
+ await expect(page.getByText('有发现', { exact: true })).toBeVisible()
+ finding = false
+ await page.getByRole('button', { name: '刷新', exact: true }).click()
+ await expect(page.getByText('没有待巡检的 Report')).toBeVisible()
+ await expect(page.getByRole('link', { name: '查看 Issue' })).toHaveCount(0)
+})
 
 test('shows structured Message body and attachment types while retaining Thread navigation', async ({ page, request }) => {
  const result = await (await request.get('/v1/core/trigger-messages?limit=1')).json()

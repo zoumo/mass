@@ -5033,6 +5033,59 @@
         ],
         "type": "object"
       },
+      "WatchdogCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "issueId": {
+            "type": "string"
+          },
+          "judgment": {
+            "type": "string"
+          },
+          "observedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "finding",
+              "no_finding",
+              "incomplete"
+            ],
+            "type": "string"
+          },
+          "topicId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "observedAt",
+          "status",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "WatchdogSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "latest": {
+            "$ref": "#/components/schemas/WatchdogCheck"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
       "WorkEnd": {
         "additionalProperties": false,
         "properties": {
@@ -10231,6 +10284,78 @@
           }
         },
         "summary": "Read Trigger Message details",
+        "tags": [
+          "Core"
+        ]
+      }
+    },
+    "/v1/core/watchdog": {
+      "get": {
+        "operationId": "getWatchdog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchdogSnapshot"
+                }
+              }
+            },
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read the latest Compose Watchdog check",
+        "tags": [
+          "Core"
+        ]
+      },
+      "head": {
+        "operationId": "getWatchdogHead",
+        "responses": {
+          "200": {
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "503": {
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read the latest Compose Watchdog check",
         "tags": [
           "Core"
         ]

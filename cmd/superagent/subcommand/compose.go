@@ -91,7 +91,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		diagnostics = &composeDiagnostics{output: diagnostics}
 	}
 
-	statusServer, err := startComposeStatus(ctx, triggers)
+	statusServer, err := startComposeStatus(ctx, triggers, config.watchdogInterval > 0)
 	if err != nil {
 		return err
 	}
@@ -175,11 +175,14 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	}
 	var watchdogChild *childProcess
 	if config.watchdogInterval > 0 {
-		watchdogChild, err = startComposeWatchdog(superagent, coreEndpoint, config.watchdogInterval, sharedEnvironment, diagnostics)
+		watchdogChild, err = startComposeWatchdog(superagent, coreEndpoint, config.watchdogInterval, sharedEnvironment, diagnostics, statusServer.recordWatchdog)
 		if err != nil {
 			return err
 		}
-		defer func() { result = errors.Join(result, watchdogChild.stop(composeWatchdogShutdownTimeout)) }()
+		defer func() {
+			result = errors.Join(result, watchdogChild.stop(composeWatchdogShutdownTimeout))
+			<-watchdogChild.readDone
+		}()
 	}
 	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(addresses); err != nil {
 		return err

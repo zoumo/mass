@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,10 +46,18 @@ watchdog: {interval: %s}
 `, interval)
 	require.NoError(t, os.WriteFile(path, []byte(config), 0o600))
 
-	pid, logs, stop := startWatchdogCompose(t, binary, path, peerDir)
+	pid, endpoint, logs, stop := startWatchdogCompose(t, binary, path, peerDir)
 	first := awaitComposeTurn(t, peerLog, 1)
 	require.NoError(t, syscall.Kill(first.ParentPID, 0))
 	require.NotEqual(t, pid, first.ParentPID, "native Codex is owned by the Watchdog child")
+	require.Equal(t, core.WatchdogSnapshot{Enabled: true}, readWatchdogSnapshot(t, endpoint))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint+"/v1/core/watchdog", http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Origin", "https://foreign.example")
+	response, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusForbidden, response.StatusCode)
 	// Keep the first round in flight across multiple intervals. The next round
 	// must wait for its completion and start after a full interval.
 	require.Never(t, func() bool { return len(composeTurns(peerLog)) > 1 }, 2*interval, 15*time.Millisecond)
@@ -67,6 +76,16 @@ watchdog: {interval: %s}
 	require.Equal(t, "finding", rounds[1].Result.Status)
 	require.Equal(t, "mass-t1-i9-r1", rounds[1].Result.ReportID)
 	require.GreaterOrEqual(t, rounds[1].Result.ObservedAt.Sub(rounds[0].At), interval)
+	var snapshot core.WatchdogSnapshot
+	require.Eventually(t, func() bool {
+		snapshot = readWatchdogSnapshot(t, endpoint)
+		return snapshot.Latest != nil && snapshot.Latest.Status == "finding"
+	}, 2*time.Second, 15*time.Millisecond)
+	require.True(t, snapshot.Enabled)
+	require.Equal(t, rounds[1].Result.TopicID, snapshot.Latest.TopicID)
+	require.Equal(t, rounds[1].Result.IssueID, snapshot.Latest.IssueID)
+	require.Equal(t, rounds[1].Result.Judgment, snapshot.Latest.Judgment)
+	require.Equal(t, rounds[1].Result.Recommendation, snapshot.Latest.Recommendation)
 	stop()
 	require.ErrorIs(t, syscall.Kill(second.PID, 0), syscall.ESRCH)
 	require.ErrorIs(t, syscall.Kill(first.ParentPID, 0), syscall.ESRCH)
@@ -76,11 +95,12 @@ watchdog: {interval: %s}
 	count := len(composeTurns(peerLog))
 	require.NoError(t, os.WriteFile(path, []byte(strings.Replace(config, interval.String(), "1h", 1)), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(peerDir, "mode"), []byte("hang"), 0o600))
-	_, logs, stop = startWatchdogCompose(t, binary, path, peerDir)
+	_, endpoint, logs, stop = startWatchdogCompose(t, binary, path, peerDir)
 	restarted := awaitComposeTurn(t, peerLog, count+1)
 	require.NotEqual(t, first.ParentPID, restarted.ParentPID)
 	require.NotEqual(t, second.ThreadID, restarted.ThreadID)
 	require.Contains(t, string(restarted.Params), `\"reportId\":\"mass-t1-i9-r1\"`)
+	require.Equal(t, core.WatchdogSnapshot{Enabled: true}, readWatchdogSnapshot(t, endpoint))
 	stop()
 	require.ErrorIs(t, syscall.Kill(restarted.PID, 0), syscall.ESRCH)
 	require.ErrorIs(t, syscall.Kill(restarted.ParentPID, 0), syscall.ESRCH)
@@ -90,7 +110,22 @@ watchdog: {interval: %s}
 	require.False(t, rounds[0].Result.ReleaseUnconfirmed)
 }
 
-func startWatchdogCompose(t *testing.T, binary, path, peerDir string) (int, string, func()) {
+func readWatchdogSnapshot(t *testing.T, endpoint string) core.WatchdogSnapshot {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/core/watchdog", http.NoBody)
+	require.NoError(t, err)
+	response, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var snapshot core.WatchdogSnapshot
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&snapshot))
+	return snapshot
+}
+
+func startWatchdogCompose(t *testing.T, binary, path, peerDir string) (int, string, string, func()) {
 	t.Helper()
 	stdout, err := os.CreateTemp(t.TempDir(), "startup-")
 	require.NoError(t, err)
@@ -123,12 +158,12 @@ func startWatchdogCompose(t *testing.T, binary, path, peerDir string) (int, stri
 		}
 	}
 	t.Cleanup(stop)
+	var ready struct{ Status, Endpoint string }
 	require.Eventually(t, func() bool {
-		var ready struct{ Status string }
 		data, _ := os.ReadFile(stdout.Name())
-		return json.Unmarshal(data, &ready) == nil && ready.Status == "ready"
+		return json.Unmarshal(data, &ready) == nil && ready.Status == "ready" && ready.Endpoint != ""
 	}, 12*time.Second, 15*time.Millisecond)
-	return cmd.Process.Pid, stderr.Name(), stop
+	return cmd.Process.Pid, ready.Endpoint, stderr.Name(), stop
 }
 
 func composeTurns(log string) []peerEvent {

@@ -3,7 +3,7 @@ import type { Context } from '@opentelemetry/api'
 import type { WorkbenchRow, Page } from '../workbench'
 import { measureView, observerRequest } from './telemetry'
 
-export type Perspective = 'message' | 'router' | 'topic' | 'issue' | 'topic-conversation' | 'trace' | 'metrics'
+export type Perspective = 'message' | 'router' | 'topic' | 'issue' | 'topic-conversation' | 'trace' | 'metrics' | 'watchdog'
 export const defaultPerspective = 'topic-conversation'
 export type ViewProps = { query: URLSearchParams }
 export type MessageRecord = WorkbenchRow & {
