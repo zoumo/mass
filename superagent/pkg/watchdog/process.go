@@ -48,7 +48,8 @@ func startAgentGuard(executable, cwd string, env []string, progress *os.File) (c
 		return codex.StreamTransport{}, err
 	}
 	defer writer.Close()
-	cmd := exec.Command(self, AgentGuardCommand, executable)
+	// The lease controls the guard's lifetime so it can clean up the app-server group.
+	cmd := exec.CommandContext(context.Background(), self, AgentGuardCommand, executable)
 	cmd.Dir, cmd.Env, cmd.Stdout = cwd, env, writer
 	// A terminal interrupt is handled by Watchdog. The guard survives to
 	// close the native group when the Watchdog releases its lease.
@@ -105,7 +106,8 @@ func RunAgentGuard(executable string) error {
 		event.Released = true
 		return output.Encode(event)
 	}
-	cmd := exec.Command(executable, "app-server")
+	// The guard stops and waits for the whole app-server group.
+	cmd := exec.CommandContext(context.Background(), executable, "app-server")
 	cmd.Stdin, cmd.Stdout = os.Stdin, os.Stdout
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {

@@ -1,6 +1,7 @@
 package watchdog_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -70,7 +71,7 @@ func (p *fixtureProcess) stop(t *testing.T) error {
 
 func fixtureParentPID(t *testing.T, pid int) int {
 	t.Helper()
-	output, err := exec.Command("/bin/ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	output, err := exec.CommandContext(t.Context(), "/bin/ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
 	require.NoError(t, err)
 	parent, err := strconv.Atoi(strings.TrimSpace(string(output)))
 	require.NoError(t, err)
@@ -79,7 +80,10 @@ func fixtureParentPID(t *testing.T, pid int) int {
 }
 
 func fixtureProcessTree(root int) ([]int, error) {
-	output, err := exec.Command("/bin/ps", "-A", "-o", "pid=,ppid=").Output()
+	// Cleanup can inspect descendants after the test context is canceled.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "/bin/ps", "-A", "-o", "pid=,ppid=").Output()
 	if err != nil {
 		return nil, err
 	}
