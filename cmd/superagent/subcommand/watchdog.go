@@ -184,7 +184,7 @@ func (w *composeWatchdog) finish() bool {
 func (w *composeWatchdog) stop() error {
 	err := w.stopProcess(composeWatchdogShutdownTimeout)
 	if w.finish() {
-		return errors.Join(err, errors.New("Watchdog agent process release unconfirmed"))
+		return errors.Join(err, errors.New("watchdog agent process release unconfirmed"))
 	}
 	return err
 }

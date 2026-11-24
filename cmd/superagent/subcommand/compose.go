@@ -225,7 +225,7 @@ func runningComposeChildren(children []*childProcess) error {
 	return nil
 }
 
-func observeCompose(ctx context.Context, logger *slog.Logger, server *childProcess, triggers []*childProcess, watchdog *composeWatchdog) error {
+func observeCompose(ctx context.Context, logger *slog.Logger, server *childProcess, triggers []*childProcess, watchdogChild *composeWatchdog) error {
 	exits := make(chan *childProcess, len(triggers))
 	for _, child := range triggers {
 		go func() {
@@ -234,8 +234,8 @@ func observeCompose(ctx context.Context, logger *slog.Logger, server *childProce
 		}()
 	}
 	var watchdogDone <-chan struct{}
-	if watchdog != nil {
-		watchdogDone = watchdog.done
+	if watchdogChild != nil {
+		watchdogDone = watchdogChild.done
 	}
 	for {
 		select {
@@ -246,8 +246,8 @@ func observeCompose(ctx context.Context, logger *slog.Logger, server *childProce
 		case child := <-exits:
 			logger.Error("Trigger exited", "component", child.name, "error", child.unexpectedExit())
 		case <-watchdogDone:
-			logger.Error("Watchdog exited", "component", watchdog.name, "error", watchdog.unexpectedExit(),
-				"releaseUnconfirmed", watchdog.finish())
+			logger.Error("Watchdog exited", "component", watchdogChild.name, "error", watchdogChild.unexpectedExit(),
+				"releaseUnconfirmed", watchdogChild.finish())
 			watchdogDone = nil
 		}
 	}
