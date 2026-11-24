@@ -150,9 +150,9 @@ Use a positive Go duration string, such as `10m` or `1h`. Find each JSON result
 under `component: watchdog` in the Compose logs. On shutdown, Compose cancels
 the running check and waits for the Watchdog process to exit.
 
-Open **Watchdog** in Superagent Web to see the latest completed Compose check
-and follow links to its Topic or Issue. Compose keeps one result in memory and
-starts with an empty snapshot after restart.
+Open **Watchdog** at `/superagent/watchdog` to see the latest completed Compose
+check and follow links to its Topic or Issue. Compose keeps one result in memory
+and starts with an empty snapshot after restart.
 
 ## Run the stack with Compose
 

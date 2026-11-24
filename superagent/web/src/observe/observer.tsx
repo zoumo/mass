@@ -5,6 +5,7 @@ import { measureView, observerRequest } from './telemetry'
 
 export type Perspective = 'message' | 'router' | 'topic' | 'issue' | 'topic-conversation' | 'trace' | 'metrics' | 'watchdog'
 export const defaultPerspective = 'topic-conversation'
+export const watchdogPath = '/superagent/watchdog'
 export type ViewProps = { query: URLSearchParams }
 export type MessageRecord = WorkbenchRow & {
   id: string
@@ -14,6 +15,7 @@ export type MessageRecord = WorkbenchRow & {
 }
 
 export function viewHref(view: Perspective, id = '', filters: Record<string, string> = {}) {
+  if (view === 'watchdog') return watchdogPath
   const query = new URLSearchParams({ perspective: view })
   if (id) query.set('id', id)
   for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value)
@@ -25,7 +27,9 @@ export function navigate(href: string) {
   if (href === current) return
   const target = new URL(href, location.origin)
   const previous = new URL(current, location.origin)
-  const workspace = (url: URL) => url.searchParams.get('perspective') || url.searchParams.get('view') || defaultPerspective
+  const workspace = (url: URL) => url.pathname === watchdogPath
+    ? 'watchdog'
+    : url.searchParams.get('perspective') || url.searchParams.get('view') || defaultPerspective
   history.pushState({ ...history.state, observerPrevious: current }, '', href)
   if (workspace(target) !== workspace(previous)) window.scrollTo(0, 0)
   window.dispatchEvent(new PopStateEvent('popstate'))
@@ -35,8 +39,8 @@ const listenLocation = (onChange: () => void) => {
   window.addEventListener('popstate', onChange)
   return () => window.removeEventListener('popstate', onChange)
 }
-export function useQuery() {
-  return new URLSearchParams(useSyncExternalStore(listenLocation, () => location.search))
+export function useObserverLocation() {
+  return new URL(useSyncExternalStore(listenLocation, () => location.href))
 }
 
 export const RefreshContext = createContext({

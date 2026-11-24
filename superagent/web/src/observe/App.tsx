@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine, ShieldCheck } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { RefreshContext, defaultPerspective, navigate, useQuery, viewHref, type Perspective } from './observer'
+import { RefreshContext, defaultPerspective, navigate, useObserverLocation, viewHref, watchdogPath, type Perspective } from './observer'
 import MessageView from './MessageView'
 import RouterView from './RouterView'
 import TopicView from './TopicView'
@@ -26,11 +26,13 @@ const views = {
 }
 
 export default function App() {
-  const query = useQuery()
+  const route = useObserverLocation()
+  const query = route.searchParams
+  const onWatchdogPage = route.pathname === watchdogPath
   const collection = query.get('view') || ''
-  const diagnostics =
-    query.get('mode') === 'records' || (Boolean(collection) && !Object.hasOwn(previousViews, collection))
-  const key = query.get('perspective') || previousViews[collection] || defaultPerspective
+  const diagnostics = !onWatchdogPage &&
+    (query.get('mode') === 'records' || (Boolean(collection) && !Object.hasOwn(previousViews, collection)))
+  const key = onWatchdogPage ? 'watchdog' : query.get('perspective') || previousViews[collection] || defaultPerspective
   const view: Perspective = Object.hasOwn(views, key) ? (key as Perspective) : defaultPerspective
   const {
     component: View,
@@ -71,7 +73,7 @@ export default function App() {
     )
       return
     const url = new URL(link.href)
-    if (url.origin !== location.origin || url.pathname !== '/superagent/') return
+    if (url.origin !== location.origin || (url.pathname !== '/superagent/' && url.pathname !== watchdogPath)) return
     event.preventDefault()
     navigate(url.pathname + url.search)
   }

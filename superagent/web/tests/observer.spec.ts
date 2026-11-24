@@ -6,7 +6,12 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
  const { id: issueId, topicId } = issues.items[0]
  const observedAt = '2026-11-24T02:34:00Z'
  await page.goto(routing + '/superagent/')
- await page.getByRole('link', { name: 'Watchdog', exact: true }).click()
+ const watchdog = page.getByRole('link', { name: 'Watchdog', exact: true })
+ await expect(watchdog).toHaveAttribute('href', '/superagent/watchdog')
+ await watchdog.click()
+ await expect(page).toHaveURL(routing + '/superagent/watchdog')
+ await expect(page.getByRole('heading', { name: 'Watchdog', exact: true })).toBeVisible()
+ await page.reload()
  await expect(page.getByRole('heading', { name: 'Watchdog', exact: true })).toBeVisible()
  await expect(page.getByText('Watchdog 尚未启用。')).toBeVisible()
 
@@ -33,6 +38,7 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
  await expect(page).toHaveURL(routing + `/superagent/?perspective=issue&id=${issueId}`)
  await expect(page.getByRole('article', { name: '当前 Issue' })).toBeVisible()
  await page.goBack()
+ await expect(page).toHaveURL(routing + '/superagent/watchdog')
  await expect(page.getByText('有发现', { exact: true })).toBeVisible()
  finding = false
  await page.getByRole('button', { name: '刷新', exact: true }).click()
