@@ -1,5 +1,5 @@
-// claudereplay binds the generated UUID of a single live Claude user frame to
-// the UUID expected by a strict Testify replay of a consumer recording.
+// claudereplay binds Claude's live workspace and user UUID to the corresponding
+// values expected by a strict Testify replay of a consumer recording.
 package main
 
 import (
@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -30,10 +30,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if legacyPermissions {
 		args = args[1:]
 	}
+	var binding replayBinding
+	if len(args) > 0 && args[0] == "--workspace" {
+		if len(args) < 5 || !filepath.IsAbs(args[1]) || !filepath.IsAbs(args[2]) || !filepath.IsAbs(args[3]) || !filepath.IsAbs(args[4]) {
+			return errors.New("expected absolute paths for live workspace, captured claim request, claim response and system init")
+		}
+		binding.cwd = workspaceBinding{live: args[1], requestCWD: args[2], responseCWD: args[3], initCWD: args[4]}
+		args = args[5:]
+	}
 	if len(args) < 3 {
 		return errors.New("expected captured UUID, receipt path and Testify launcher")
 	}
-	binding := submissionBinding{captured: args[0]}
+	binding.captured = args[0]
 	if binding.captured != "" && !replay.ValidClaudeUserUUID(binding.captured) {
 		return errors.New("capture requires a canonical v4 UUID")
 	}
@@ -64,13 +72,64 @@ func (w *serializedWriter) Write(line []byte) (int, error) {
 	return w.destination.Write(line)
 }
 
-type submissionBinding struct {
+type replayBinding struct {
 	captured string
 	live     atomic.Pointer[rawjson.Value]
 	settings *json.Encoder
+	cwd      workspaceBinding
 }
 
-func (b *submissionBinding) forwardInput(source io.Reader, destination io.Writer) error {
+type workspaceBinding struct {
+	live        string
+	requestCWD  string
+	responseCWD string
+	initCWD     string
+	requestID   atomic.Pointer[string]
+	sessionID   string // Owned by the output relay.
+}
+
+func (b *workspaceBinding) bindRequest(frame, request rawjson.Value) (rawjson.Value, error) {
+	id := memberString(frame, "request_id")
+	if id == "" || memberString(request, "cwd") != b.live {
+		return rawjson.Value{}, errors.New("claim_session request must name the live workspace and have a request ID")
+	}
+	mapped, err := replaceString(frame, []string{"request", "cwd"}, b.requestCWD)
+	if err != nil {
+		return rawjson.Value{}, err
+	}
+	// Publish the request ID before forwarding so the response relay can match it.
+	if !b.requestID.CompareAndSwap(nil, &id) {
+		return rawjson.Value{}, errors.New("consumer recording expects one Claude claim_session request")
+	}
+	return mapped, nil
+}
+
+func (b *workspaceBinding) bindResponse(frame rawjson.Value) (rawjson.Value, error) {
+	id := b.requestID.Load()
+	response, _ := frame.Member("response")
+	if id == nil || memberString(response, "request_id") != *id || memberString(response, "subtype") != "success" {
+		return frame, nil
+	}
+	result, _ := response.Member("response")
+	sessionID := memberString(result, "session_id")
+	if sessionID == "" || memberString(result, "status") != "ok" || memberString(result, "cwd") != b.responseCWD {
+		return rawjson.Value{}, errors.New("claim_session response must confirm the captured cwd")
+	}
+	b.sessionID = sessionID
+	return replaceString(frame, []string{"response", "response", "cwd"}, b.live)
+}
+
+func (b *workspaceBinding) bindInit(frame rawjson.Value) (rawjson.Value, error) {
+	if b.sessionID == "" || memberString(frame, "session_id") != b.sessionID || memberString(frame, "subtype") != "init" {
+		return frame, nil
+	}
+	if memberString(frame, "cwd") != b.initCWD {
+		return rawjson.Value{}, errors.New("system init must confirm the captured cwd")
+	}
+	return replaceString(frame, []string{"cwd"}, b.live)
+}
+
+func (b *replayBinding) forwardInput(source io.Reader, destination io.Writer) error {
 	input := replaybridge.ProtocolLines(source)
 	settingsPending := b.settings != nil
 	for input.Scan() {
@@ -81,7 +140,15 @@ func (b *submissionBinding) forwardInput(source io.Reader, destination io.Writer
 		line := input.Bytes()
 		if memberString(frame, "type") == "control_request" {
 			request, _ := frame.Member("request")
-			if b.settings != nil && memberString(request, "subtype") == "get_settings" {
+			subtype := memberString(request, "subtype")
+			if b.cwd.live != "" && subtype == "claim_session" {
+				mapped, err := b.cwd.bindRequest(frame, request)
+				if err != nil {
+					return err
+				}
+				line = mapped.Raw()
+			}
+			if b.settings != nil && subtype == "get_settings" {
 				id := memberString(frame, "request_id")
 				if !settingsPending || id == "" || len(frame.Keys()) != 3 || len(request.Keys()) != 1 {
 					return errors.New("expected one legacy Claude startup settings request")
@@ -121,7 +188,7 @@ func (b *submissionBinding) forwardInput(source io.Reader, destination io.Writer
 	return nil
 }
 
-func (b *submissionBinding) bindUser(frame rawjson.Value) ([]byte, error) {
+func (b *replayBinding) bindUser(frame rawjson.Value) ([]byte, error) {
 	live, _ := frame.Member("uuid")
 	value, _ := live.String()
 	if !replay.ValidClaudeUserUUID(value) {
@@ -133,12 +200,8 @@ func (b *submissionBinding) bindUser(frame rawjson.Value) ([]byte, error) {
 	if b.captured == "" {
 		line, err = withoutUUID(frame)
 	} else {
-		captured, parseErr := rawjson.Parse([]byte(strconv.Quote(b.captured)))
-		if parseErr != nil {
-			return nil, parseErr
-		}
 		var mapped rawjson.Value
-		mapped, err = frame.Replace([]string{"uuid"}, captured)
+		mapped, err = replaceString(frame, []string{"uuid"}, b.captured)
 		line = mapped.Raw()
 	}
 	if err != nil {
@@ -160,8 +223,8 @@ func withoutUUID(frame rawjson.Value) ([]byte, error) {
 	return json.Marshal(fields)
 }
 
-func (b *submissionBinding) forwardOutput(source io.Reader, destination io.Writer) error {
-	if b.captured == "" && b.settings == nil {
+func (b *replayBinding) forwardOutput(source io.Reader, destination io.Writer) error {
+	if b.captured == "" && b.settings == nil && b.cwd.live == "" {
 		_, err := io.Copy(destination, source)
 		return err
 	}
@@ -170,6 +233,17 @@ func (b *submissionBinding) forwardOutput(source io.Reader, destination io.Write
 		frame, err := parseFrame(output.Bytes())
 		if err != nil {
 			return err
+		}
+		if b.cwd.live != "" {
+			switch memberString(frame, "type") {
+			case "control_response":
+				frame, err = b.cwd.bindResponse(frame)
+			case "system":
+				frame, err = b.cwd.bindInit(frame)
+			}
+			if err != nil {
+				return err
+			}
 		}
 		if b.captured != "" {
 			frame, err = b.mapServerUUID(frame, "user_message_uuid")
@@ -192,7 +266,7 @@ func (b *submissionBinding) forwardOutput(source io.Reader, destination io.Write
 	return output.Err()
 }
 
-func (b *submissionBinding) mapServerUUID(frame rawjson.Value, field string) (rawjson.Value, error) {
+func (b *replayBinding) mapServerUUID(frame rawjson.Value, field string) (rawjson.Value, error) {
 	if memberString(frame, field) != b.captured {
 		return frame, nil
 	}
@@ -207,6 +281,18 @@ func memberString(frame rawjson.Value, field string) string {
 	member, _ := frame.Member(field)
 	value, _ := member.String()
 	return value
+}
+
+func replaceString(frame rawjson.Value, path []string, text string) (rawjson.Value, error) {
+	encoded, err := json.Marshal(text)
+	if err != nil {
+		return rawjson.Value{}, err
+	}
+	value, err := rawjson.Parse(encoded)
+	if err != nil {
+		return rawjson.Value{}, err
+	}
+	return frame.Replace(path, value)
 }
 
 func parseFrame(line []byte) (rawjson.Value, error) {

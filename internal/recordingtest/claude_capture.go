@@ -33,6 +33,46 @@ func auditLegacyClaudeArgs(args []string, model string) error {
 	return nil
 }
 
+type claudeCaptureFrame struct {
+	Direction string `json:"direction"`
+	Channel   string `json:"channel"`
+	Wire      struct {
+		Type      string          `json:"type"`
+		UUID      json.RawMessage `json:"uuid"`
+		Subtype   string          `json:"subtype"`
+		SessionID string          `json:"session_id"`
+		Model     string          `json:"model"`
+		CWD       string          `json:"cwd"`
+		IsError   bool            `json:"is_error"`
+		HookID    string          `json:"hook_id"`
+		HookName  string          `json:"hook_name"`
+		HookEvent string          `json:"hook_event"`
+		Output    string          `json:"output"`
+		Stdout    string          `json:"stdout"`
+		Stderr    string          `json:"stderr"`
+		ExitCode  int             `json:"exit_code"`
+		Outcome   string          `json:"outcome"`
+		RequestID string          `json:"request_id"`
+		Request   struct {
+			Subtype   string          `json:"subtype"`
+			CWD       string          `json:"cwd"`
+			SessionID json.RawMessage `json:"session_id"`
+		} `json:"request"`
+		Response struct {
+			Subtype   string `json:"subtype"`
+			RequestID string `json:"request_id"`
+			Result    struct {
+				Status    string `json:"status"`
+				SessionID string `json:"session_id"`
+				CWD       string `json:"cwd"`
+			} `json:"response"`
+		} `json:"response"`
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	} `json:"wire"`
+}
+
 // auditClaudeCapture uses the protocol as evidence for consumer captures.
 // The native launcher arguments may be absent from the recording metadata.
 func auditClaudeCapture(material, model, sessionID, project string) error {
@@ -47,43 +87,7 @@ func auditClaudeCapture(material, model, sessionID, project string) error {
 	initializeRequested, initializeAccepted, claimRequested := false, false, false
 	claimed, input, identity, assistant, completed := false, false, false, false, false
 	for {
-		var frame struct {
-			Direction string `json:"direction"`
-			Wire      struct {
-				Type      string `json:"type"`
-				Subtype   string `json:"subtype"`
-				SessionID string `json:"session_id"`
-				Model     string `json:"model"`
-				CWD       string `json:"cwd"`
-				IsError   bool   `json:"is_error"`
-				HookID    string `json:"hook_id"`
-				HookName  string `json:"hook_name"`
-				HookEvent string `json:"hook_event"`
-				Output    string `json:"output"`
-				Stdout    string `json:"stdout"`
-				Stderr    string `json:"stderr"`
-				ExitCode  int    `json:"exit_code"`
-				Outcome   string `json:"outcome"`
-				RequestID string `json:"request_id"`
-				Request   struct {
-					Subtype   string          `json:"subtype"`
-					CWD       string          `json:"cwd"`
-					SessionID json.RawMessage `json:"session_id"`
-				} `json:"request"`
-				Response struct {
-					Subtype   string `json:"subtype"`
-					RequestID string `json:"request_id"`
-					Result    struct {
-						Status    string `json:"status"`
-						SessionID string `json:"session_id"`
-						CWD       string `json:"cwd"`
-					} `json:"response"`
-				} `json:"response"`
-				Message struct {
-					Content json.RawMessage `json:"content"`
-				} `json:"message"`
-			} `json:"wire"`
-		}
+		var frame claudeCaptureFrame
 		if err := decoder.Decode(&frame); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -211,47 +215,72 @@ func nativePathKey(value string) string {
 
 const claudeReplayReceipt = "claude-replay-complete"
 
-func capturedClaudeUserUUID(material string, legacy bool) (string, error) {
+type claudeReplayCapture struct {
+	userUUID         string
+	claimRequestCWD  string
+	claimResponseCWD string
+	initCWD          string
+}
+
+func readClaudeReplayCapture(material, project string, legacy bool) (claudeReplayCapture, error) {
 	file, err := os.Open(filepath.Join(material, "raw", "raw.jsonl"))
 	if err != nil {
-		return "", err
+		return claudeReplayCapture{}, err
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
-	var uuid string
+	var capture claudeReplayCapture
+	var claimID, sessionID string
 	userSeen := false
 	for {
-		var frame struct {
-			Direction string `json:"direction"`
-			Channel   string `json:"channel"`
-			Wire      struct {
-				Type string          `json:"type"`
-				UUID json.RawMessage `json:"uuid"`
-			} `json:"wire"`
-		}
+		var frame claudeCaptureFrame
 		if err := decoder.Decode(&frame); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return "", err
+			return claudeReplayCapture{}, err
 		}
-		if frame.Direction != "c2s" || frame.Channel != "protocol" || frame.Wire.Type != "user" {
+		if frame.Channel != "protocol" {
 			continue
 		}
-		if userSeen {
-			return "", errors.New("claude capture has more than one user input")
-		}
-		userSeen = true
-		if legacy {
-			if len(frame.Wire.UUID) != 0 {
-				return "", errors.New("legacy Claude capture unexpectedly has a user UUID")
+		wire := frame.Wire
+		switch {
+		case frame.Direction == "c2s" && wire.Type == "control_request" && wire.Request.Subtype == "claim_session":
+			if claimID != "" || wire.RequestID == "" || !filepath.IsAbs(wire.Request.CWD) || !sameNativePath(wire.Request.CWD, project) {
+				return claudeReplayCapture{}, errors.New("invalid captured Claude claim_session request")
 			}
-		} else if json.Unmarshal(frame.Wire.UUID, &uuid) != nil || !replay.ValidClaudeUserUUID(uuid) {
-			return "", errors.New("claude capture requires a canonical v4 user UUID")
+			claimID = wire.RequestID
+			capture.claimRequestCWD = wire.Request.CWD
+		case frame.Direction == "s2c" && wire.Type == "control_response" && claimID != "" && wire.Response.RequestID == claimID:
+			result := wire.Response.Result
+			if capture.claimResponseCWD != "" || wire.Response.Subtype != "success" || result.Status != "ok" ||
+				result.SessionID == "" || !filepath.IsAbs(result.CWD) || !sameNativePath(result.CWD, project) {
+				return claudeReplayCapture{}, errors.New("invalid captured Claude claim_session response")
+			}
+			capture.claimResponseCWD = result.CWD
+			sessionID = result.SessionID
+		case frame.Direction == "s2c" && wire.Type == "system" && wire.Subtype == "init":
+			if capture.initCWD != "" || sessionID == "" || wire.SessionID != sessionID ||
+				!filepath.IsAbs(wire.CWD) || !sameNativePath(wire.CWD, project) {
+				return claudeReplayCapture{}, errors.New("invalid captured Claude system init")
+			}
+			capture.initCWD = wire.CWD
+		case frame.Direction == "c2s" && wire.Type == "user":
+			if userSeen {
+				return claudeReplayCapture{}, errors.New("claude capture has more than one user input")
+			}
+			userSeen = true
+			if legacy {
+				if len(wire.UUID) != 0 {
+					return claudeReplayCapture{}, errors.New("legacy Claude capture unexpectedly has a user UUID")
+				}
+			} else if json.Unmarshal(wire.UUID, &capture.userUUID) != nil || !replay.ValidClaudeUserUUID(capture.userUUID) {
+				return claudeReplayCapture{}, errors.New("claude capture requires a canonical v4 user UUID")
+			}
 		}
 	}
-	if !userSeen {
-		return "", errors.New("claude capture has no user input")
+	if capture.initCWD == "" || !userSeen {
+		return claudeReplayCapture{}, errors.New("claude capture lacks system init or user input")
 	}
-	return uuid, nil
+	return capture, nil
 }
