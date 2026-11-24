@@ -26,6 +26,34 @@ func TestSQLiteAuthorityCannotBeRebuiltAfterLoss(t *testing.T) {
 	require.Error(t, err, "lost authority must not be recreated as an empty database")
 }
 
+func TestSQLiteAuthorityRejectsInvalidMarker(t *testing.T) {
+	dir := t.TempDir()
+	s, err := backend.Open(dir, metastore.Config{}, false)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	path := filepath.Join(dir, ".metadata-sqlite.json")
+	marker, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(path))
+	_, err = backend.Open(dir, metastore.Config{}, false)
+	require.ErrorContains(t, err, "missing or invalid SQLite authority identity")
+	require.NoFileExists(t, path)
+
+	invalid := []byte(`{"format":2}`)
+	require.NoError(t, os.WriteFile(path, invalid, 0o600))
+	_, err = backend.Open(dir, metastore.Config{}, true)
+	require.ErrorContains(t, err, "missing or invalid SQLite authority identity")
+	saved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, invalid, saved)
+
+	require.NoError(t, os.WriteFile(path, marker, 0o600))
+	reopened, err := backend.Open(dir, metastore.Config{}, false)
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+}
+
 func TestSelectedAuthorityFailsClosed(t *testing.T) {
 	for _, name := range []string{"sqlite", "file"} {
 		t.Run(name, func(t *testing.T) {
@@ -117,6 +145,33 @@ func (metaSuite *MetaStoreSuite) TestSessionVersionAndSpecIsolation() {
 	got, err := st.GetSession(resource.SessionRef{Namespace: "demo", Name: "saved"})
 	require.NoError(t, err)
 	require.Equal(t, saved, got)
+}
+
+func (metaSuite *MetaStoreSuite) TestConcurrentRuntimeUpdatesUseOneVersion() {
+	t := metaSuite.T()
+	s, _ := open(t, metaSuite.backend)
+	original, err := s.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "saved"}})
+	require.NoError(t, err)
+
+	results := make(chan error, 2)
+	for _, driverType := range []string{"codex", "claude"} {
+		go func() {
+			updated := original
+			updated.Spec.Type = driverType
+			_, err := s.UpdateRuntime(updated)
+			results <- err
+		}()
+	}
+	first, second := <-results, <-results
+	if first != nil {
+		first, second = second, first
+	}
+	require.NoError(t, first)
+	require.ErrorIs(t, second, store.ErrConflict)
+	saved, err := s.GetRuntime("saved")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, saved.Metadata.Generation)
+	require.NotEqual(t, original.Metadata.ResourceVersion, saved.Metadata.ResourceVersion)
 }
 
 func TestIndependentStoreLifecycles(t *testing.T) {
