@@ -19,6 +19,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/internal/testpeer"
+	massdserver "github.com/zoumo/mass/massd"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -408,11 +409,13 @@ func startNativeMassd(t *testing.T, massd string, spec resource.RuntimeSpec) (st
 				data, _ := os.ReadFile(log.Name())
 				t.Errorf("massd shutdown: %v\n%s", err, data)
 			}
-		case <-time.After(10 * time.Second):
+		// The CLI drains HTTP after the instance settles and closes its RPC connections.
+		case <-time.After(massdserver.ShutdownTimeout + 10*time.Second):
 			_ = cmd.Process.Kill()
 			<-done
 			_ = log.Close()
-			t.Error("massd did not settle")
+			data, _ := os.ReadFile(log.Name())
+			t.Errorf("massd did not settle:\n%s", data)
 		}
 		if startup.URL != "" {
 			c, err := client.New(startup.URL, "", client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
