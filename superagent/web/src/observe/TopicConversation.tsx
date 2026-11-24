@@ -94,9 +94,9 @@ function TopicWorkspace({ query, search }: ViewProps & { search: string }) {
       </div>
       {topics.error && <ReadError error={topics.error} stale={!!topics.data}/>}
       <ul className="conversation-topics">
-        {topics.data?.map(topic => <li key={topic.id}>
-          <a href={href(topic.id)} aria-current={topicId === topic.id ? 'true' : undefined}>
-            <span className="conversation-avatar" data-actor="topic"><Hash size={16}/></span>
+        {topics.data?.map(topic => <li key={topic.id} data-selected={topicId === topic.id}>
+          <ObjectAvatar {...topicParticipant(topic.id)}/>
+          <a className="conversation-topic-link" href={href(topic.id)} aria-current={topicId === topic.id ? 'true' : undefined}>
             <span className="conversation-topic-name">
               <strong title={topic.title}>{topic.title}</strong>
               <span className="conversation-topic-meta">
@@ -138,9 +138,6 @@ function Conversation({ topicId, filter, eventId, href }: ConversationProps) {
       <header className="conversation-group">
         <ObjectAvatar {...topicParticipant(topicId)}/>
         <div><h2>{topic.data?.title || topicId}</h2><code>{topicId}</code></div>
-        {import.meta.env.DEV && topic.data?.sessionBindingId && <Button asChild size="sm" variant="outline">
-          <a href={sessionChatHref(topic.data.sessionBindingId)}>直接对话</a>
-        </Button>}
         {topic.data?.status && <span className="conversation-status">{stateLabel(topic.data.status)}</span>}
       </header>
       <nav className="conversation-filters" aria-label="按消息类型筛选">
@@ -237,11 +234,11 @@ function Timeline({ timeline, eventId, eventHref }: {
 }
 
 function topicParticipant(id: string): Participant {
-  return { kind: 'topic', label: 'Topic Session', href: viewHref('topic', id), title: '查看 Topic · ' + id }
+  return { kind: 'topic', label: 'Topic Session', href: sessionChatHref('topic', id), title: '与 Topic Session 对话 · ' + id }
 }
 
 function issueParticipant(id: string, title: string): Participant {
-  return { kind: 'issue', label: 'Issue', href: viewHref('issue', id), title: '查看 Issue · ' + title }
+  return { kind: 'issue', label: 'Issue', href: sessionChatHref('issue', id), title: '与 Worker Session 对话 · ' + title }
 }
 
 function EventCard({ event, href, selected }: { event: ConversationEvent; href: string; selected: boolean }) {
@@ -252,7 +249,7 @@ function EventCard({ event, href, selected }: { event: ConversationEvent; href: 
       sender={topic} recipient={issueParticipant(event.issueId, event.title)} facts={[]}/>
   }
   if (event.kind === 'issue_session_dispatch' || event.kind === 'report') {
-    const issue: Participant = { kind: 'issue-session', label: 'Issue Session' }
+    const issue: Participant = { ...issueParticipant(event.issueId, event.title), kind: 'issue-session', label: 'Issue Session' }
     const dispatch = event.kind === 'issue_session_dispatch'
     const content = dispatch ? event.content : undefined
     const facts: { label: string; value: ReactNode }[] = [

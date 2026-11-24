@@ -1,4 +1,3 @@
-// Throwaway Web prototype. The transport speaks the existing MASS JSON-RPC v1 profile.
 export type SessionEvent = {
   eventId: string
   sessionId: string
@@ -70,160 +69,93 @@ export function conversationRows(events: SessionEvent[]) {
   return rows
 }
 
-type Notice = { method: string; params: { subscriptionId: string; event?: SessionEvent; error?: { message: string } } }
-type SessionResource = {
-  metadata: { uid: string; namespace: string; name: string }
-  status: { sessionId: string; state: string }
-}
-
-class RpcError extends Error {
-  constructor(message: string, readonly reason?: string) {
-    super(message)
-  }
-}
+type Frame = { kind: 'connected'; state: string } | { kind: 'event'; event: SessionEvent } | { kind: 'heartbeat' }
 
 const rawJSON = (JSON as typeof JSON & { rawJSON?: (source: string) => object }).rawJSON
 
-function readMessage(data: string) {
-  const message = JSON.parse(data)
-  const event = message.params?.event as SessionEvent | undefined
-  if (message.method === 'session.event' && event?.type === 'session.unsupported_native_event' && rawJSON) {
+function readFrame(data: string): Frame {
+  const frame = JSON.parse(data) as Frame
+  if (frame.kind === 'event' && frame.event.type === 'session.unsupported_native_event' && rawJSON) {
     // Preserve numeric tokens across JSON.parse and the expanded JSON preview.
     return JSON.parse(data, (_key, value: unknown, context?: { source?: string }) =>
       typeof value === 'number' && context?.source ? rawJSON(context.source) : value)
   }
-  return message
+  return frame
 }
 
-class RpcSocket {
-  readonly socket: WebSocket
-  private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>()
-  private counter = 0
-
-  constructor(path: string, notice: (message: Notice) => void, ended: () => void) {
-    this.socket = new WebSocket(new URL(path, location.origin.replace(/^http/, 'ws')))
-    this.socket.onmessage = ({ data }) => {
-      const message = readMessage(data)
-      if (message.method) { notice(message); return }
-      const request = this.pending.get(message.id)
-      if (!request) return
-      this.pending.delete(message.id)
-      if (message.error) request.reject(new RpcError(message.error.data?.message || message.error.message, message.error.data?.reason))
-      else request.resolve(message.result)
+async function* readFrames(body: NonNullable<Response['body']>) {
+  const reader = body.pipeThrough(new TextDecoderStream()).getReader()
+  try {
+    let partial = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return
+      const lines = (partial + value).split('\n')
+      partial = lines.pop() || ''
+      for (const line of lines) if (line) yield readFrame(line)
     }
-    this.socket.onclose = () => {
-      for (const request of this.pending.values()) request.reject(new Error('连接中断，未收到回执'))
-      this.pending.clear()
-      ended()
-    }
-  }
-
-  async initialize() {
-    await new Promise<void>((resolve, reject) => {
-      this.socket.addEventListener('open', () => resolve(), { once: true })
-      this.socket.addEventListener('close', () => reject(new Error('massd WebSocket 无法连接')), { once: true })
-    })
-    const result = await this.call<{ protocolVersion: string }>('initialize', { protocolVersion: '1' })
-    if (result.protocolVersion !== '1') throw new Error('massd 协议版本不匹配')
-  }
-
-  call<T>(method: string, params: Record<string, unknown>): Promise<T> {
-    if (this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('massd 连接已关闭'))
-    const id = ++this.counter
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: value => resolve(value as T), reject })
-      this.socket.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }))
-    })
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
   }
 }
 
 export function liveSession(binding: Binding, onEvent: (event: SessionEvent) => void, onEnd: (reason: string) => void) {
-  const session = { sessionId: binding.sessionId }
-  const params = { session }
-  const path = '/__prototype/massd-chat'
-  let subscriptionId = ''
-  let stopped = false
-  const close = () => {
-    stopped = true
-    control.socket.close()
-    observation.socket.close()
-  }
-  const end = (reason: string) => {
-    if (stopped) return
-    close()
-    onEnd(reason)
-  }
+  const path = '/v1/core/session-bindings/' + encodeURIComponent(binding.id) + '/chat'
+  const controller = new AbortController()
+  const { signal } = controller
   const matches = (e: SessionEvent) => e.sessionId === binding.sessionId && e.namespace === binding.namespace && e.sessionName === binding.name
-  const control = new RpcSocket(path, () => {}, () => end('控制连接已断开'))
-  const observation = new RpcSocket(path, ({ method, params }) => {
-    if (params.subscriptionId !== subscriptionId) return
-    if (method === 'subscription.closed') end(params.error?.message || '订阅已结束')
-    if (method === 'session.event' && params.event) {
-      if (matches(params.event)) onEvent(params.event)
-      else end('收到其他 Session 的事件，已关闭连接')
+  async function request(suffix: string, command?: Record<string, unknown>) {
+    const response = await fetch(path + suffix, {
+      method: command ? 'POST' : 'GET', signal, credentials: 'omit', mode: 'same-origin', redirect: 'error',
+      ...(command && { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(command) }),
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error?.message || `Session 请求失败（HTTP ${response.status}）`)
     }
-  }, () => end('事件流已中断'))
-  function verifyIdentity({ metadata, status }: SessionResource) {
-    if (metadata.uid !== binding.sessionUid || metadata.namespace !== binding.namespace || metadata.name !== binding.name || status.sessionId !== binding.sessionId) {
-      throw new Error('Core 绑定与 massd Session 身份不一致')
-    }
+    return response
   }
-  async function verify() {
-    const session = await control.call<SessionResource>('session.get', params)
-    verifyIdentity(session)
-    return session.status.state
+  async function control(command: Record<string, unknown>) {
+    const response = await request('', command)
+    return response.json()
   }
-  async function stateAfterClose() {
-    let state = await verify()
-    // Idle close can admit its fence before releasing the native Session.
-    for (let attempt = 0; state === 'closing' && attempt < 20; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 250))
-      state = await verify()
+  async function observe(frames: AsyncGenerator<Frame>) {
+    let reason = '事件流已中断'
+    try {
+      for await (const frame of frames) {
+        if (frame.kind !== 'event') continue
+        if (!matches(frame.event)) throw new Error('收到其他 Session 的事件，已关闭连接')
+        onEvent(frame.event)
+      }
+    } catch (error) {
+      if (error instanceof Error) reason = error.message
+    } finally {
+      if (!signal.aborted) onEnd(reason)
     }
-    if (state === 'closing') throw new Error('Session 正在回收，请稍后再发送')
-    return state
   }
   return {
     async connect() {
-      await Promise.all([control.initialize(), observation.initialize()])
-      await verify()
-      const result = await observation.call<{ subscriptionId: string }>('session.subscribe', params)
-      subscriptionId = result.subscriptionId
-      return verify()
+      const response = await request('/live')
+      if (!response.body) throw new Error('实时事件流不可用')
+      const frames = readFrames(response.body)
+      const first = (await frames.next()).value
+      if (!first || first.kind !== 'connected') {
+        await frames.return(undefined)
+        throw new Error('未收到 Session 订阅确认')
+      }
+      void observe(frames)
+      return first.state
     },
     async history(after?: string) {
-      const page = await control.call<{ events: SessionEvent[]; next?: string }>('session.history', { ...params, query: { limit: 100, ...(after ? { after } : {}) } })
+      const response = await request('/history' + (after ? '?' + new URLSearchParams({ cursor: after }) : ''))
+      const page = await response.json() as { events: SessionEvent[]; next?: string }
       if (!page.events.every(matches)) throw new Error('历史包含其他 Session 的事件')
       return page
     },
-    async prompt(value: string, onResuming?: () => void) {
-      const input = { content: [{ type: 'text', text: value }] }
-      if (await stateAfterClose() !== 'offline') {
-        try {
-          return await control.call('session.prompt', { ...params, input })
-        } catch (error) {
-          // This rejection happens before dispatch. Never replay an uncertain input.
-          if (!(error instanceof RpcError) || error.reason !== 'session_resume_required' || await stateAfterClose() !== 'offline') {
-            throw error
-          }
-        }
-      }
-      onResuming?.()
-      const result = await control.call<SessionResource & { initialInputReceipt?: { result: string } }>(
-        'session.resume', { ...params, input: { initialInput: input } },
-      )
-      verifyIdentity(result)
-      if (!result.initialInputReceipt?.result) throw new Error('Session 已恢复，发送结果待确认。请先查看事件流')
-      return result.initialInputReceipt
-    },
-    async cancel() {
-      await verify()
-      return control.call('session.cancel', params)
-    },
-    async answer(interaction: string, answer: unknown) {
-      await verify()
-      return control.call('session.answer', { ...params, interaction, answer })
-    },
-    close,
+    prompt: (value: string) => control({ action: 'prompt', text: value }),
+    cancel: () => control({ action: 'cancel' }),
+    answer: (interaction: string, answer: unknown) => control({ action: 'answer', interaction, answer }),
+    close: () => controller.abort(),
   }
 }

@@ -1,6 +1,5 @@
 import { defineConfig, type Plugin, type ProxyOptions } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
-import { readFileSync } from 'node:fs'
 
 const backendPaths = '^/(?:v1/(?:core/|telemetry/|mcp(?:\\?|$))|(?:status|livez|readyz)(?:\\?|$))'
 const backendPath = new RegExp(backendPaths)
@@ -54,42 +53,7 @@ function proxy(target: string, massd = false): ProxyOptions {
   }
 }
 
-// Explicitly enabled for a trusted single-user loopback development session.
-function prototypeChatProxy(): Record<string, ProxyOptions> {
-  const tokenFile = process.env.SUPERAGENT_CHAT_MASSD_TOKEN_FILE
-  if (!tokenFile) return {}
-  const target = new URL(process.env.SUPERAGENT_CHAT_MASSD_ENDPOINT ||
-    new URL('/massd/jsonrpc', process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370').href)
-  if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' ||
-      !['/massd/jsonrpc', '/jsonrpc'].includes(target.pathname) || target.username || target.password || target.search || target.hash) {
-    throw new Error('The prototype requires a loopback HTTP massd endpoint')
-  }
-  const token = readFileSync(tokenFile, 'utf8').trim()
-  if (!token || /\s/.test(token)) throw new Error('Invalid prototype massd token file')
-  return {
-    '^/__prototype/massd-chat$': {
-      target: target.origin,
-      ws: true,
-      changeOrigin: true,
-      rewrite: () => target.pathname,
-      bypass(req, res) {
-        const host = req.headers.host || ''
-        if (res || req.socket.remoteAddress !== '127.0.0.1' || !/^127\.0\.0\.1:\d+$/.test(host) ||
-            req.headers.origin !== `http://${host}`) return false
-      },
-      configure(server) {
-        server.on('proxyReqWs', out => {
-          for (const name of out.getHeaderNames()) {
-            if (['origin', 'cookie', 'forwarded'].includes(name) || name.startsWith('x-forwarded-')) out.removeHeader(name)
-          }
-          out.setHeader('Authorization', `Bearer ${token}`)
-        })
-      },
-    },
-  }
-}
-
-export default defineConfig(({ command }) => ({
+export default defineConfig({
   plugins: [sameOriginProxy(), tailwindcss()],
   base: '/superagent/',
   build: { outDir: 'dist' },
@@ -97,7 +61,6 @@ export default defineConfig(({ command }) => ({
     proxy: {
       [backendPaths]: proxy(process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370'),
       '/massd/': proxy(process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370', true),
-      ...(command === 'serve' ? prototypeChatProxy() : {}),
     },
   },
-}))
+})

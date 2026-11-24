@@ -12,7 +12,7 @@ import TraceView from './TraceView'
 import MetricsView from './MetricsView'
 
 const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
-const SessionChatPrototype = import.meta.env.DEV ? lazy(() => import('./session-chat/SessionChatPrototype')) : null
+const SessionChat = lazy(() => import('./session-chat/SessionChat'))
 
 const views = {
   'topic-conversation': { title: 'Topic 会话', subtitle: '', icon: MessagesSquare, component: TopicConversation },
@@ -26,8 +26,9 @@ const views = {
 
 export default function App() {
   const query = useQuery()
-  if (SessionChatPrototype && query.get('prototype') === 'session-chat') {
-    return <Suspense fallback={null}><SessionChatPrototype query={query}/></Suspense>
+  const chat = query.get('chat')
+  if (chat === 'topic' || chat === 'issue' || (import.meta.env.DEV && query.get('prototype') === 'session-chat')) {
+    return <Suspense fallback={null}><SessionChat query={query}/></Suspense>
   }
   return <ObserverApp query={query}/>
 }

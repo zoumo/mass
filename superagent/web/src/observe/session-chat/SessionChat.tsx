@@ -9,32 +9,37 @@ import './session-chat.css'
 
 const targetLabel = (role: string) => role === 'topic' ? 'Topic Session' : 'Worker Session'
 
-export default function SessionChatPrototype({ query }: ViewProps) {
-  const id = query.get('binding') || ''
-  const binding = useRecord<Binding>(id ? 'session-bindings/' + encodeURIComponent(id) : '')
-  const role = binding.data?.role === 'issue' ? 'issue' : 'topic'
-  const owner = useRecord<{ title: string; topicId?: string }>(binding.data?.ownerId ? `${role}s/${encodeURIComponent(binding.data.ownerId)}` : '')
+export default function SessionChat({ query }: ViewProps) {
+  const demo = import.meta.env.DEV && !query.has('chat')
+  const role = query.get('chat') === 'issue' ? 'issue' : 'topic'
+  const ownerID = query.get('id') || ''
+  const owner = useRecord<{ title: string; sessionBindingId?: string; currentSessionBindingId?: string }>(
+    !demo && ownerID ? `${role}s/${encodeURIComponent(ownerID)}` : '',
+  )
+  const bindingID = role === 'issue' ? owner.data?.currentSessionBindingId : owner.data?.sessionBindingId
+  const binding = useRecord<Binding>(bindingID ? 'session-bindings/' + encodeURIComponent(bindingID) : '')
   const [demoIndex, setDemoIndex] = useState(0)
-  const target = id ? binding.data : demoBindings[demoIndex]
-  const back = id && target ? viewHref(role === 'topic' ? 'topic-conversation' : 'issue', target.ownerId) : viewHref('topic-conversation')
-  const title = id ? owner.data?.title || target?.name : demoIndex === 0 ? '发布评审' : '检查 README'
+  const target = demo ? demoBindings[demoIndex] : binding.data
+  const back = demo ? viewHref('topic-conversation') : viewHref(role === 'topic' ? 'topic-conversation' : 'issue', ownerID)
+  const title = demo ? demoIndex === 0 ? '发布评审' : '检查 README' : owner.data?.title || target?.name
+  const ready = target?.sessionId && target.sessionUid && target.state === 'ready' &&
+    (demo || (target.ownerId === ownerID && target.role === role))
+  const unavailable = owner.error || binding.error || (ownerID && (owner.loading || (bindingID && binding.loading))
+    ? '正在读取 Session 绑定…' : '当前没有可用的 Session')
   return <div className="observer sc-observer">
     <header className="topbar">
       <div className="shell top-inner">
         <a href={back} className="brand"><ArrowLeft size={17}/> <strong>Superagent</strong><span className="brand-divider"/>Web</a>
-        {!id ? <nav className="sc-selector" aria-label="演示目标">
+        {demo ? <nav className="sc-selector" aria-label="演示目标">
           {demoBindings.map((entry, index) => <Button key={entry.id} size="sm" variant="ghost"
             aria-label={targetLabel(entry.role)} aria-pressed={demoIndex === index}
             onClick={() => setDemoIndex(index)}>{entry.role === 'topic' ? 'Topic' : 'Worker'}</Button>)}
-        </nav> : <div className="secondary"><a href={sessionChatDemoHref}><FlaskConical size={14}/> 交互演示</a></div>}
+        </nav> : import.meta.env.DEV && <div className="secondary"><a href={sessionChatDemoHref}><FlaskConical size={14}/> 交互演示</a></div>}
       </div>
     </header>
     <main className="shell sc-main">
-      {!target && <p className="panel sc-unavailable" role="status">{binding.error || '正在读取 Session 绑定…'}</p>}
-      {target && (!target.sessionId || !target.sessionUid || !['topic', 'issue'].includes(target.role) || target.state !== 'ready') &&
-        <p className="panel sc-unavailable" role="status">此绑定当前无法发起对话 · {target.state}</p>}
-      {target?.sessionId && target.sessionUid && ['topic', 'issue'].includes(target.role) && target.state === 'ready' &&
-        <Chat key={`${target.id}:${target.sessionUid}`} binding={target} title={title || target.name} demo={!id}/>}
+      {target && ready ? <Chat key={`${target.id}:${target.sessionUid}`} binding={target} title={title || target.name} demo={demo}/>
+        : <p className="panel sc-unavailable" role="status">{unavailable}</p>}
     </main>
   </div>
 }
@@ -65,7 +70,6 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [draft, setDraft] = useState('')
-  const [resuming, setResuming] = useState(false)
   const [raw, setRaw] = useState(false)
   const [receipt, setReceipt] = useState<Receipt>()
   const [pending, setPending] = useState<Record<string, boolean>>({})
@@ -112,7 +116,6 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
     setInitialWork('')
     setLive([])
     setPending({})
-    setResuming(false)
     setAnswered({})
     locks.current.clear()
     const receive = (event: SessionEvent) => setLive(previous => [...previous, event])
@@ -150,9 +153,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
     locks.current.add(key)
     setPending(previous => ({ ...previous, [key]: true }))
     try {
-      const result = action === 'prompt' ? await current.prompt(text(value), () => {
-        if (client.current === current) setResuming(true)
-      })
+      const result = action === 'prompt' ? await current.prompt(text(value))
         : action === 'cancel' ? await current.cancel()
         : await current.answer(interaction!, value)
       if (client.current !== current) return
@@ -165,7 +166,6 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
     } finally {
       if (client.current === current) {
         locks.current.delete(key)
-        if (action === 'prompt') setResuming(false)
         setPending(previous => ({ ...previous, [key]: false }))
       }
     }
@@ -271,7 +271,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
               }
             }}/>
           <div className="sc-composer-footer">
-            <span className="sc-status" data-state={ready ? work : connection}><i/>{ready && resuming && work !== 'running' ? '正在恢复 Session' : workLabel}</span>
+            <span className="sc-status" data-state={ready ? work : connection}><i/>{ready && pending.prompt && ['offline', 'closing'].includes(work) ? '正在恢复 Session' : workLabel}</span>
             <div className="sc-actions">
               <Button type="button" className="sc-cancel" variant="destructive" size="sm" disabled={!canCancel} onClick={() => void act('cancel')}><Square size={13}/> 取消工作</Button>
               <Button type="submit" className="sc-send" size="icon-sm" aria-label="发送" title="发送" disabled={!ready || pending.prompt || !draft.trim()}><ArrowUp size={17}/></Button>

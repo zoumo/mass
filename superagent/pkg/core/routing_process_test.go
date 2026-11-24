@@ -47,6 +47,7 @@ type routeDriver struct {
 	sources       map[string]events.Source
 	injectErr     error
 	injectReceipt runtime.InjectReceipt
+	answer        func(string, any) (runtime.Acceptance, error)
 }
 
 func (d *routeDriver) Events() (events.Stream, error) { return d.pipe, nil }
@@ -105,7 +106,12 @@ func (*routeDriver) Cancel(context.Context, string) (runtime.CancelReceipt, erro
 	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 }
 
-func (*routeDriver) AnswerInteraction(context.Context, string, string, any) (runtime.Acceptance, error) {
+func (d *routeDriver) AnswerInteraction(_ context.Context, _, ref string, answer any) (runtime.Acceptance, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.answer != nil {
+		return d.answer(ref, answer)
+	}
 	return runtime.Acceptance{}, errors.New("unexpected answer")
 }
 func (*routeDriver) CloseSession(context.Context, string) error { return nil }
