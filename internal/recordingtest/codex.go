@@ -315,7 +315,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 15 * time.Second
 	cmd.Dir = route.Workspace
-	cmd.Env = (runtime.ProcessConfig{EnvPolicy: "replace", Env: route.Env}).Environment(provider)
+	cmd.Env = (&runtime.ProcessConfig{EnvPolicy: "replace", Env: route.Env}).Environment(provider)
 	cmd.Stderr = log
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
@@ -433,12 +433,8 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		}
 	}()
 	env := map[string]string{}
-	for key, value := range route.Env {
-		env[key] = value
-	}
-	for key, value := range c.runtimeEnvironment {
-		env[key] = value
-	}
+	maps.Copy(env, route.Env)
+	maps.Copy(env, c.runtimeEnvironment)
 	require.NoError(t, api.CreateRuntime(h.ctx, resource.Runtime{Metadata: resource.Metadata{Name: "recording"}, Spec: resource.RuntimeSpec{Type: provider, Config: runtime.Config{"executable": executable, "envPolicy": "replace", "env": testpeer.RuntimeEnv(env)}}}, &rt))
 	require.NoError(t, api.StartRuntime(h.ctx, "recording", &rt))
 	require.Equal(t, "running", rt.Status.State)
@@ -768,7 +764,11 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 	if c.provider == "claude" {
 		require.NotEmpty(h.t, plan.CLIVersion)
 		executable = filepath.Join(session, "claude-mock-launcher")
-		capturedUUID, err := capturedClaudeUserUUID(material, c.legacyClaudeInput)
+		capture, err := readClaudeReplayCapture(material, plan.Project, c.legacyClaudeInput)
+		require.NoError(h.t, err)
+		// Testify retargets the route symlink when mock starts. Pin its prepared
+		// workspace so session claim and native init validate the same directory.
+		c.project, err = filepath.EvalSymlinks(prepared.Workspace)
 		require.NoError(h.t, err)
 		adapter := filepath.Join(session, "claude-replay")
 		h.command("go", "-C", h.root, "build", "-o", adapter, "../internal/recordingtest/cmd/claudereplay")
@@ -776,7 +776,9 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 		if c.legacyPermissions {
 			launcher += " --legacy-permissions"
 		}
-		launcher += " " + quote(capturedUUID) + " " +
+		launcher += " --workspace " + quote(c.project) + " " + quote(capture.claimRequestCWD) + " " +
+			quote(capture.claimResponseCWD) + " " + quote(capture.initCWD)
+		launcher += " " + quote(capture.userUUID) + " " +
 			quote(filepath.Join(session, claudeReplayReceipt)) + " " + quote(prepared.Connections[0].Launcher)
 		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '%s\\n' " + quote(plan.CLIVersion) + "; exit 0; fi\nexec " + launcher + " \"$@\"\n"
 		require.NoError(h.t, os.WriteFile(executable, []byte(script), 0o700))
