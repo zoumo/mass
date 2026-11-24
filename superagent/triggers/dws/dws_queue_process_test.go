@@ -27,12 +27,23 @@ func TestDWSDatabaseIdentityAndPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var journal string
-	var syncMode int
 	if err := queue.db.QueryRowContext(t.Context(), `PRAGMA journal_mode`).Scan(&journal); err != nil || journal != "wal" {
 		t.Fatalf("journal %q, %v", journal, err)
 	}
-	if err := queue.db.QueryRowContext(t.Context(), `PRAGMA synchronous`).Scan(&syncMode); err != nil || syncMode != 2 {
-		t.Fatalf("synchronous %d, %v", syncMode, err)
+	for name, want := range map[string]int{
+		"application_id": 0x44575354,
+		"user_version":   3,
+		"synchronous":    2,
+		"foreign_keys":   1,
+		"busy_timeout":   2000,
+	} {
+		var got int
+		if err := queue.db.QueryRowContext(t.Context(), `PRAGMA `+name).Scan(&got); err != nil || got != want {
+			t.Fatalf("%s = %d, want %d: %v", name, got, want, err)
+		}
+	}
+	if got := queue.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("maximum open connections = %d, want 1", got)
 	}
 	if _, _, err := queue.counts(); err != nil {
 		t.Fatal(err)
@@ -278,7 +289,7 @@ func TestDWSQueueWriteFailurePreservesCommittedRow(t *testing.T) {
 	if strings.Contains(trigger.Text(), "fixture write fault") || strings.Contains(trigger.Text(), "do not log this") {
 		t.Fatal("storage failure was not sanitized")
 	}
-	queue := dwsQueue{db: db}
+	queue := newDWSQueue(db, "")
 	pending, err := queue.pending(0)
 	if err != nil || len(pending) != 1 || pending[0].submission.Message.SourceMessageID != "committed" {
 		t.Fatalf("committed row unavailable: %+v, %v", pending, err)
@@ -310,7 +321,7 @@ func TestDWSQueueRetainsPermanentFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	queue := dwsQueue{db: db}
+	queue := newDWSQueue(db, "")
 	if pending, err := queue.pending(0); err != nil || len(pending) != 0 {
 		t.Fatalf("failed row remains at the pending head: %v", err)
 	}

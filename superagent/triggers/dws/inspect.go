@@ -7,9 +7,9 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"time"
 
-	"github.com/zoumo/mass/superagent/triggers/internal/triggerdb"
+	"github.com/zoumo/mass/superagent/triggers/dws/internal/queueent"
+	"github.com/zoumo/mass/superagent/triggers/dws/internal/queueent/submission"
 )
 
 // InspectEvidence reads adapter-owned state while the destination is offline.
@@ -36,6 +36,7 @@ func (c Component) InspectEvidence(w io.Writer) error {
 }
 
 func (q dwsQueue) inspect(store *sendEvidenceStore, enc *json.Encoder) error {
+	// Stream the evidence so an accumulated queue history fits in bounded memory.
 	rows, err := q.db.QueryContext(context.Background(), `SELECT sequence, observed_at, payload, coalesce(failure,'')
 		FROM dws_submissions ORDER BY sequence`)
 	if err != nil {
@@ -43,17 +44,13 @@ func (q dwsQueue) inspect(store *sendEvidenceStore, enc *json.Encoder) error {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var item dwsQueueItem
+		var sequence int64
 		var raw []byte
 		var at, status string
-		if err := rows.Scan(&item.sequence, &at, &raw, &status); err != nil {
+		if err := rows.Scan(&sequence, &at, &raw, &status); err != nil {
 			return err
 		}
-		item.observedAt, err = time.Parse(time.RFC3339Nano, at)
-		if err != nil {
-			return err
-		}
-		item.submission, err = decodeQueuedSubmission(raw)
+		item, err := decodeDWSQueueItem(sequence, at, raw)
 		if err != nil {
 			return err
 		}
@@ -88,20 +85,23 @@ func (c Component) ReleaseInput(nativeID, reason string) error {
 	if err != nil {
 		return err
 	}
-	return triggerdb.Transaction(queue.db, func(tx *sql.Tx) error {
-		var raw []byte
-		var at string
-		var item dwsQueueItem
-		if err := tx.QueryRowContext(context.Background(), `SELECT sequence, observed_at, payload FROM dws_submissions
-			WHERE account_id=? AND native_message_id=? AND failure IS NULL`, c.config.AccountID, nativeID).
-			Scan(&item.sequence, &at, &raw); err != nil {
-			return err
+	return queue.releaseInput(store, nativeID, reason)
+}
+
+func (q dwsQueue) releaseInput(store *sendEvidenceStore, nativeID, reason string) error {
+	ctx := context.Background()
+	return q.transaction(ctx, func(client *queueent.SubmissionClient) error {
+		row, err := client.Query().
+			Where(submission.AccountIDEQ(q.accountID), submission.NativeMessageIDEQ(nativeID), submission.FailureIsNil()).
+			Select(submission.FieldID, submission.FieldObservedAt, submission.FieldPayload).
+			Only(ctx)
+		if queueent.IsNotFound(err) {
+			return sql.ErrNoRows
 		}
-		item.observedAt, err = time.Parse(time.RFC3339Nano, at)
 		if err != nil {
 			return err
 		}
-		item.submission, err = decodeQueuedSubmission(raw)
+		item, err := decodeDWSQueueItem(row.ID, row.ObservedAt, row.Payload)
 		if err != nil {
 			return err
 		}
@@ -116,8 +116,7 @@ func (c Component) ReleaseInput(nativeID, reason string) error {
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(context.Background(), `UPDATE dws_submissions SET payload=? WHERE sequence=?`, payload, item.sequence)
-		return err
+		return client.Update().Where(submission.IDEQ(item.sequence)).SetPayload(payload).Exec(ctx)
 	})
 }
 
