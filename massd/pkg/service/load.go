@@ -36,6 +36,7 @@ type historyLoad struct {
 	capabilities      runtime.Capabilities
 	effectiveFeatures runtime.SessionFeatures
 	deliveryFailed    chan struct{}
+	completionSettled chan struct{}
 }
 
 func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (resource.SessionLoadAccepted, error) {
@@ -104,7 +105,13 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	if len(page.Events) != 0 || page.Next != "" {
 		return resource.SessionLoadAccepted{}, store.ErrConflict
 	}
-	load := &historyLoad{id: uuid.NewString(), done: make(chan struct{}), cleanupDone: make(chan struct{}), deliveryFailed: make(chan struct{})}
+	load := &historyLoad{
+		id:                uuid.NewString(),
+		done:              make(chan struct{}),
+		cleanupDone:       make(chan struct{}),
+		deliveryFailed:    make(chan struct{}),
+		completionSettled: make(chan struct{}),
+	}
 	load.status = resource.HistoryLoadStatus{LoadID: load.id, Phase: "accepted"}
 	initial := load.status
 	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Config: input.Config, Cwd: input.Cwd, Features: input.Features, MCPServers: input.MCPServers}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
@@ -312,10 +319,15 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 		}
 		if err == nil {
 			err = s.writeLoad(l)
-		}
-		if err == nil && h.status.Phase == "completed" {
-			h.complete.Store(true)
-			s.telemetry.finishLoad(h, run.provider, nil, "completed")
+			if h.status.Phase == "completed" {
+				if err == nil {
+					h.complete.Store(true)
+				}
+				close(h.completionSettled)
+				if err == nil {
+					s.telemetry.finishLoad(h, run.provider, nil, "completed")
+				}
+			}
 		}
 	}
 	failed := h.status.Error != nil

@@ -645,7 +645,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
-func (s *Service) controlWork(r resource.Session, opts sessionWorkOptions) (*runBinding, *lane, error) {
+func (s *Service) controlWork(ctx context.Context, r resource.Session, opts sessionWorkOptions) (*runBinding, *lane, error) {
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	var original *lane
@@ -655,6 +655,19 @@ func (s *Service) controlWork(r resource.Session, opts sessionWorkOptions) (*run
 	s.mu.Unlock()
 	if run == nil {
 		return nil, nil, sessionResumeRequired(r.Status.State)
+	}
+	if original != nil && original.load != nil && !original.load.complete.Load() {
+		load := original.load
+		status := r.Status.HistoryLoad
+		if status != nil && status.LoadID == load.id && status.DeliveryCompleted {
+			// The store can expose the completed row before the write returns
+			// to its owner. Wait for that result before checking lane admission.
+			select {
+			case <-load.completionSettled:
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+		}
 	}
 	run.admission.RLock()
 	s.mu.Lock()

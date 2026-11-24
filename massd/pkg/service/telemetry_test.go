@@ -81,7 +81,7 @@ func TestHistoryLoadTelemetrySettlesOnce(t *testing.T) {
 			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, st.Close()) })
-			svc, driver := ticket06FaultService(t, st, st.Events, f.configure)
+			svc, driver := ticket06FaultService(t, st.Meta, st.Events, f.configure)
 			ctx := ticket06FaultContext(t)
 			acceptedCtx, parent := f.traces.Tracer("test").Start(ctx, "session.load")
 			receipt, err := svc.LoadSession(acceptedCtx, resource.SessionLoad{
@@ -186,7 +186,7 @@ func TestEventFailureTelemetry(t *testing.T) {
 			if stage == "history_commit" {
 				history = &ticket06AppendFailure{EventStore: st.Events}
 			}
-			svc, driver := ticket06FaultService(t, st, history, f.configure)
+			svc, driver := ticket06FaultService(t, st.Meta, history, f.configure)
 			_, binding := ticket06FaultLoad(t, svc, driver)
 			ref := resource.SessionRef{SessionID: binding.id}
 			require.Eventually(t, func() bool {

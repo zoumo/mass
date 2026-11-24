@@ -14,6 +14,7 @@ import (
 	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
+	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
@@ -200,9 +201,9 @@ func ticket06FaultContext(t *testing.T) context.Context {
 	return ctx
 }
 
-func ticket06FaultService(t *testing.T, st *massdtest.FileStores, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
+func ticket06FaultService(t *testing.T, meta metastore.MetaStore, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
-	svc, d := ticket06FaultOwner(t, st, history, configure...)
+	svc, d := ticket06FaultOwner(t, meta, history, configure...)
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fault-peer", Config: runtime.Config{}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ticket06FaultContext(t), "agent")
@@ -210,14 +211,14 @@ func ticket06FaultService(t *testing.T, st *massdtest.FileStores, history events
 	return svc, d
 }
 
-func ticket06FaultOwner(t *testing.T, st *massdtest.FileStores, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
+func ticket06FaultOwner(t *testing.T, meta metastore.MetaStore, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
 	d := &ticket06FaultDriver{pipe: events.NewEventPipe(16), bindings: map[string]*ticket06FaultBinding{}, loading: make(chan *ticket06FaultBinding, 1)}
 	options := service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout}
 	for _, apply := range configure {
 		apply(&options)
 	}
-	svc := service.NewWithOptions(st.Meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}), options)
+	svc := service.NewWithOptions(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}), options)
 	t.Cleanup(func() {
 		// No OS resource is created by this peer. Even a red ownership assertion
 		// must end its public stream before Store teardown.
@@ -239,7 +240,7 @@ func TestTicket06CompletedLoadCancelCannotTouchLiveWork(t *testing.T) {
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st.Events)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	receipt, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved-first", events.UserMessage{MessageID: "saved-first", Content: []events.ContentBlock{events.Text("retained first page")}}, true))
@@ -265,11 +266,64 @@ func TestTicket06CompletedLoadCancelCannotTouchLiveWork(t *testing.T) {
 	require.True(t, r.Status.HistoryLoad.DeliveryCompleted)
 }
 
+type completionAckMeta struct {
+	metastore.MetaStore
+	gate *ticket06DrainGate
+}
+
+func (m *completionAckMeta) UpdateSession(r resource.Session) (resource.Session, error) {
+	saved, err := m.MetaStore.UpdateSession(r)
+	if err == nil && saved.Status.HistoryLoad != nil && saved.Status.HistoryLoad.DeliveryCompleted && saved.Status.State == events.Unknown {
+		m.gate.wait()
+	}
+	return saved, err
+}
+
+func TestCompletedLoadAcceptsWorkWhenCompletionWriteSettles(t *testing.T) {
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	gate := &ticket06DrainGate{entered: make(chan struct{}), release: make(chan struct{})}
+	svc, driver := ticket06FaultService(t, &completionAckMeta{MetaStore: st.Meta, gate: gate}, st.Events)
+	release := sync.OnceFunc(func() { close(gate.release) })
+	t.Cleanup(release)
+	_, binding := ticket06FaultLoad(t, svc, driver)
+	ctx := ticket06FaultContext(t)
+	require.NoError(t, driver.marker(ctx, binding, "native_completed"))
+	select {
+	case <-gate.entered:
+	case <-ctx.Done():
+		t.Fatal("completion write did not reach the acknowledgement gate")
+	}
+	ref := resource.SessionRef{SessionID: binding.id}
+	session, err := svc.GetSession(ref)
+	require.NoError(t, err)
+	require.True(t, session.Status.HistoryLoad.DeliveryCompleted)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.SendPrompt(ctx, ref, runtime.Input{Content: []events.ContentBlock{events.Text("first live input")}})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("prompt finished before the completion write settled: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("prompt did not finish after the completion write settled")
+	}
+}
+
 func TestTicket06FreshServiceRetainsUnresolvedLoadFence(t *testing.T) {
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st.Events)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	d.mu.Lock()
 	d.cleanupUnknown = true
 	d.mu.Unlock()
@@ -285,7 +339,7 @@ func TestTicket06FreshServiceRetainsUnresolvedLoadFence(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond)
 	// Construct a new owner from durable resources, with no original in-memory
 	// load lane. Unknown ownership must not be replaced by a new runtime.
-	fresh, _ := ticket06FaultOwner(t, st, st.Events)
+	fresh, _ := ticket06FaultOwner(t, st.Meta, st.Events)
 	_, err = fresh.StartRuntime(ticket06FaultContext(t), "agent")
 	require.Error(t, err, "fresh Service must retain the unresolved original runtime responsibility")
 	r, err := fresh.GetSession(ref)
@@ -339,7 +393,7 @@ func TestTicket06StopDuringPagingRetainsUnknownCleanup(t *testing.T) {
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st.Events)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	d.mu.Lock()
 	d.cleanupUnknown = true
 	d.mu.Unlock()
@@ -362,7 +416,7 @@ func TestTicket06CancelPagingRetainsPartialHistoryAndHealthyPeer(t *testing.T) {
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st.Events)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	receipt, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved-first", events.UserMessage{MessageID: "saved-first", Content: []events.ContentBlock{events.Text("retained first page")}}, true))
@@ -433,7 +487,7 @@ func TestTicket06CancelDuringLocalDrainPreservesAdmittedHistory(t *testing.T) {
 			if boundary == "append" {
 				history = &ticket06GatedHistory{EventStore: st.Events, gate: gate}
 			}
-			svc, d := ticket06FaultService(t, st, history)
+			svc, d := ticket06FaultService(t, st.Meta, history)
 			// Release before Service cleanup, including on a failed assertion.
 			var once sync.Once
 			release := func() { once.Do(func() { close(gate.release) }) }
