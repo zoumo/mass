@@ -237,7 +237,7 @@ func TestTicket04CodexCloseAndStopAfterUnsupportedItem(t *testing.T) {
 		stopRead()
 		<-readDone
 	})
-	failure := make(chan events.SessionError, 1)
+	fallback := make(chan events.UnsupportedNativeEvent, 1)
 	completed := make(chan struct{}, 1)
 	go func() {
 		defer close(readDone)
@@ -246,9 +246,9 @@ func TestTicket04CodexCloseAndStopAfterUnsupportedItem(t *testing.T) {
 			if nextErr != nil {
 				return
 			}
-			if problem, ok := event.Payload().(events.SessionError); ok {
+			if native, ok := event.Payload().(events.UnsupportedNativeEvent); ok {
 				select {
-				case failure <- problem:
+				case fallback <- native:
 				default:
 				}
 			}
@@ -268,8 +268,8 @@ func TestTicket04CodexCloseAndStopAfterUnsupportedItem(t *testing.T) {
 	_, err = d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
 	select {
-	case problem := <-failure:
-		require.Equal(t, "unsupported_native_event", problem.Reason)
+	case native := <-fallback:
+		require.Equal(t, "codex", native.AgentType)
 	case <-ctx(t).Done():
 		t.Fatal("unsupported native item diagnostic was not surfaced")
 	}

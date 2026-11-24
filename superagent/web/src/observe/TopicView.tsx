@@ -4,8 +4,9 @@ import { Activity, ChevronDown, CircleDot, Mail } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { formatTime, eventStatusLabel, messageBody, sourceLabel, stateLabel, type Page, type WorkbenchRow } from '../workbench'
 import ObjectWorkspace from './ObjectWorkspace'
+import { ObjectAvatar } from './ConversationCard'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
-import { usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './topic.css'
@@ -216,7 +217,8 @@ function TopicDetail({ id, filter }: {id: string; filter: keyof typeof categorie
   return <article aria-label="当前 Topic" className="message-detail topic-detail">
     {topic.error && <ReadError message={topic.error} stale={!!t}/>}
     {t ? <section className="panel detail-body">
-      <div className="source-line"><span className="source-tag">Topic</span><span>{stateLabel(t.status)}</span><CopyLink href={viewHref('topic', id, {filter: filter==='all' ? '' : filter})}/></div>
+      <div className="source-line"><ObjectAvatar kind="topic" label="Topic" href={sessionChatHref('topic', id)} title="与 Topic Session 对话"/>
+        <span className="source-tag">Topic</span><span>{stateLabel(t.status)}</span><CopyLink href={viewHref('topic', id, {filter: filter==='all' ? '' : filter})}/></div>
       <h2 tabIndex={-1}>{t.title || id}</h2>
       <p className="topic-goal"><span className="topic-goal-label">目标</span>{t.goal || '目标未记录'}</p>
       {t.completion && <details className="topic-acceptance"><summary>Topic 业务验收</summary>

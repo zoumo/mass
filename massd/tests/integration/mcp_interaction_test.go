@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -99,7 +100,7 @@ func TestClaudeMCPFormURLAndPermissionSettlement(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCodexMCPURLWithoutCompletionExpiresOnClose(t *testing.T) {
+func TestCodexMCPURLClosesWhenNativeRequestResolves(t *testing.T) {
 	var scenario map[string]any
 	raw, err := os.ReadFile("testdata/codex-question.json")
 	require.NoError(t, err)
@@ -116,6 +117,13 @@ func TestCodexMCPURLWithoutCompletionExpiresOnClose(t *testing.T) {
 	frames[9].(map[string]any)["wire"] = map[string]any{
 		"id": "question-1", "result": map[string]any{"action": "accept", "content": nil, "_meta": nil},
 	}
+	frames = slices.Insert(frames, 10, any(scenarioFrame(11, "server", map[string]any{
+		"method": "serverRequest/resolved", "params": map[string]any{"threadId": "codex-session", "requestId": "question-1"},
+	})))
+	for i, frame := range frames {
+		frame.(map[string]any)["ordinal"] = i + 1
+	}
+	scenario["frames"] = frames
 	svc, ref, sub := openMCPScenario(t, "codex", mock, scenario)
 	var urlRef events.InteractionRef
 	for {
@@ -129,22 +137,12 @@ func TestCodexMCPURLWithoutCompletionExpiresOnClose(t *testing.T) {
 			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
 			urlRef = payload.Interaction
 		case events.InteractionClosed:
-			t.Fatalf("URL closed before external completion or session release: %+v", payload)
-		case events.StateUpdate:
-			if urlRef == "" || payload.State == nil || *payload.State != events.Idle {
-				continue
-			}
+			require.Equal(t, urlRef, payload.Interaction)
+			require.Equal(t, events.InteractionAnswered, payload.Outcome)
+			require.Equal(t, "native_resolved", payload.Reason)
 			_, err := svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
-			for {
-				event, err := nextSubscription(sub, ctx(t))
-				require.NoError(t, err)
-				if closed, ok := event.Payload().(events.InteractionClosed); ok {
-					require.Equal(t, urlRef, closed.Interaction)
-					require.Equal(t, events.InteractionExpired, closed.Outcome)
-					return
-				}
-			}
+			return
 		}
 	}
 }

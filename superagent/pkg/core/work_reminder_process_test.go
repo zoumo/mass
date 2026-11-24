@@ -161,7 +161,12 @@ func TestReportReminderIssueIdle(t *testing.T) {
 		"item":          map[string]string{"type": "futureNativeItem", "id": "future-1"},
 	})
 	ev = nextNativeMethod(t, sub, "item/completed")
-	require.Equal(t, "unsupported_native_event", ev.Payload().(events.SessionError).Reason)
+	native, ok := ev.Payload().(events.UnsupportedNativeEvent)
+	require.True(t, ok, "unexpected event type %s", ev.Type())
+	require.Equal(t, "codex", native.AgentType)
+	require.Contains(t, string(native.Raw), `"type":"futureNativeItem"`)
+	require.False(t, ev.Persistent())
+	unsupportedEventID := ev.EventID
 	require.Equal(t, b.SessionID, ev.SessionID)
 	require.Equal(t, "work-two", ev.Meta["codex"].(map[string]any)["turnId"])
 
@@ -192,6 +197,7 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	require.NoError(t, massd.History(t.Context(), resource.SessionRef{SessionID: b.SessionID}, store.HistoryQuery{}, &history))
 	for _, historical := range history.Events {
 		require.NotEqual(t, ended.WorkObservation.End.EventID, historical.EventID)
+		require.NotEqual(t, unsupportedEventID, historical.EventID)
 	}
 	require.Equal(t, update.Issue, readRecord[core.Issue](t, p, "issues/"+work.Issue.ID))
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+topicBinding.OwnerID).Status)

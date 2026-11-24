@@ -17,9 +17,10 @@
   background: var(--canvas); border: 1px solid var(--line); border-radius: 6px; font-size: 12px;
 }
 .conversation-topics { list-style: none; padding: 6px; margin: 0; max-height: max(380px, calc(100dvh - 320px)); overflow: auto }
-.conversation-topics a { display: flex; gap: 8px; padding: 10px 8px; align-items: center; border: 1px solid transparent; border-radius: 7px }
-.conversation-topics a:hover { background: #112131 }
-.conversation-topics a[aria-current] { background: #10272e; border-color: #2a515b }
+.conversation-topics li { display: flex; gap: 8px; padding: 5px 8px; align-items: center; border: 1px solid transparent; border-radius: 7px }
+.conversation-topics li:hover { background: #112131 }
+.conversation-topics li[data-selected=true] { background: #10272e; border-color: #2a515b }
+.conversation-topic-link { flex: 1; min-width: 0; padding-block: 5px }
 .conversation-topic-name { min-width: 0; flex: 1; display: grid }
 .conversation-topic-name strong, .conversation-topic-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .conversation-topic-name strong { font-size: 13px }

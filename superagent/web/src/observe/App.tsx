@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type MouseEvent } from 'react'
+import { lazy, Suspense, useEffect, useState, type ComponentType, type MouseEvent } from 'react'
 import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { RefreshContext, navigate, observerHome, observerView, perspectives, perspectiveFromPath, useObserverLocation, viewHref, type Perspective, type ViewProps } from './observer'
@@ -11,6 +11,8 @@ import Diagnostics from './diagnostics/Diagnostics'
 import TraceView from './TraceView'
 import MetricsView from './MetricsView'
 import WatchdogView from './WatchdogView'
+
+const SessionChat = lazy(() => import('./session-chat/SessionChat'))
 
 const views = {
   'topic-conversation': { title: 'Topic 会话', subtitle: '', icon: MessagesSquare, component: TopicConversation },
@@ -25,6 +27,16 @@ const views = {
 
 export default function App() {
   const route = useObserverLocation()
+  const query = route.searchParams
+  const chat = query.get('chat')
+  const demo = import.meta.env.DEV && query.get('prototype') === 'session-chat'
+  if (route.pathname === observerHome && (chat === 'topic' || chat === 'issue' || demo)) {
+    return <Suspense fallback={null}><SessionChat query={query}/></Suspense>
+  }
+  return <ObserverApp route={route}/>
+}
+
+function ObserverApp({ route }: { route: URL }) {
   const query = route.searchParams
   const view = observerView(route)
   const diagnostics = view === 'diagnostics'

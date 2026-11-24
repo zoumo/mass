@@ -41,6 +41,7 @@ func (s *Server) registerSessionBindingOperations(api *httpAPI) {
 		api.registerRaw(view.operation, handler.ServeHTTP)
 		api.registerRaw(headOperation(view.operation), handler.ServeHTTP)
 	}
+	s.registerSessionChatOperations(api, bindingParam)
 
 	access := "Requires a Core operator Bearer credential and a direct loopback CLI connection."
 	api.registerRaw(huma.Operation{

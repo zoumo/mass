@@ -52,8 +52,9 @@ type HistoryReplay struct {
 
 func (HistoryReplay) eventType() string { return "session.history_replay" }
 
-// Payload is the envelope's payload slot. Live values must implement the SDK
-// agent.Payload closed union; HistoryReplay is MASS's only control branch.
+type UnsupportedNativeEvent = agent.UnsupportedNativeEventPayload
+
+// Payload holds an SDK payload or a MASS-specific event branch.
 type Payload any
 
 // SessionEvent is the only event model. Source stays private and unserialized.
@@ -137,6 +138,9 @@ func (e SessionEvent) Validate() error {
 	live, ok := e.payload.(agent.Payload)
 	if !ok {
 		return errors.New("unsupported payload branch")
+	}
+	if e.Replay != nil && e.Type() == string(agent.EventSessionUnsupportedNativeEvent) {
+		return errors.New("unsupported native events are live only")
 	}
 	return (agent.Event{
 		EventID:   e.EventID,
@@ -273,7 +277,7 @@ func (e SessionEvent) Clone() (SessionEvent, error) {
 	return out, err
 }
 
-// ValidType recognizes MASS history replay and the SDK's live event union.
+// ValidType recognizes the public Session event union.
 func ValidType(kind string) bool {
 	switch agent.EventType(kind) {
 	case agent.EventUserMessage,
@@ -286,6 +290,7 @@ func ValidType(kind string) bool {
 		agent.EventAgentToolCallChunk,
 		agent.EventSessionStateUpdate,
 		agent.EventSessionError,
+		agent.EventSessionUnsupportedNativeEvent,
 		agent.EventSessionInfoUpdate,
 		agent.EventSessionConfigOptionUpdate,
 		agent.EventSessionCommandsUpdate,

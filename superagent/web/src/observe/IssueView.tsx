@@ -6,7 +6,8 @@ import { formatTime, eventStatusLabel, stateLabel, type WorkbenchRow } from '../
 import ExecutionProfileFields from './ExecutionProfileFields'
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
-import { usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { ObjectAvatar } from './ConversationCard'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './issue.css'
@@ -135,7 +136,8 @@ function IssueDetail({ id, scope }: { id: string; scope: string }) {
   return <article aria-label="当前 Issue" className="issue-detail">
     {record.error && <p role="alert" className="read-error">{record.error} · 快照已过时</p>}
     <section className="panel issue-overview">
-      <div className="source-line"><span className="issue-status"><CircleDot size={14}/>{stateLabel(issue.status)}</span>
+      <div className="source-line"><ObjectAvatar kind="issue" label="Issue" href={sessionChatHref('issue', id)} title="与当前 Worker Session 对话"/>
+        <span className="issue-status"><CircleDot size={14}/>{stateLabel(issue.status)}</span>
         <a href={viewHref('topic', issue.topicId)}>{topic.data?.title || issue.topicId}<ChevronRight size={14}/></a></div>
       <div className="observable-actions"><CopyLink href={viewHref('issue',id,{topicId:scope})}/></div>
       <h2>{issue.title}</h2><p className="issue-goal">{issue.goal || '目标未记录'}</p>

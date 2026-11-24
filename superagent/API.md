@@ -140,6 +140,32 @@ check when available. Compose retains that check after Watchdog exits.
 Superagent Web serves `/superagent/` and its assets from a separate static
 service. The same-origin gateway forwards resource requests to Core.
 
+### Session chat
+
+The Topic and Issue avatars open the current Topic or Worker Session.
+Anyone who can reach Superagent Web can use Session chat through the same-origin
+gateway. Core uses its configured MASS client and checks the current binding
+and MASS Session identity on each request.
+
+| Method | Path suffix under `/v1/core/session-bindings/{bindingId}` | Result |
+| --- | --- | --- |
+| GET | `/chat/history` | MASS history page with an optional `cursor` query |
+| GET | `/chat/live` | NDJSON stream beginning with `connected` and the Session state, then `event` and `heartbeat` frames |
+| POST | `/chat` | MASS receipt for a `prompt`, `cancel`, or `answer` command |
+
+A command is a JSON object with `action` and its fields. `prompt` takes `text`.
+`cancel` takes no other fields and requires a running Session. `answer` takes
+`interaction` and `answer`. An offline Session resumes with the submitted
+prompt as its initial input. A caller should inspect the stream before
+resubmitting a command whose outcome is unknown.
+
+`session.unsupported_native_event` remains live-only. The `event` frame retains
+the MASS event envelope and the SDK payload with `agentType` and `raw`.
+Core applies its response credential
+redaction to chat responses.
+
+### Telemetry and resource associations
+
 `trace=true` includes saved Trace associations in supported Core resource
 reads. Topic activity timelines include the associations with each event.
 An Issue has a creation Trace link when Core saved its creation association.

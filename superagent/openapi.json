@@ -1,6 +1,21 @@
 {
   "components": {
     "schemas": {
+      "Acceptance": {
+        "additionalProperties": false,
+        "properties": {
+          "nativeAccepted": {
+            "type": "boolean"
+          },
+          "nativeRecorded": {
+            "type": "boolean"
+          },
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "BindingClose": {
         "additionalProperties": false,
         "properties": {
@@ -976,6 +991,70 @@
         ],
         "type": "object"
       },
+      "HistoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/SessionChatEventSchema"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next": {
+            "type": "string"
+          },
+          "syncedEventId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "events",
+          "syncedEventId"
+        ],
+        "type": "object"
+      },
+      "InputReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance": {
+            "$ref": "#/components/schemas/Acceptance"
+          },
+          "result": {
+            "type": "string"
+          },
+          "submission": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "submission",
+          "result",
+          "acceptance"
+        ],
+        "type": "object"
+      },
+      "InteractionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/Acceptance"
+          },
+          "interaction": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "interaction",
+          "evidence"
+        ],
+        "type": "object"
+      },
       "InternalEventReadProjection": {
         "additionalProperties": true,
         "properties": {
@@ -1929,6 +2008,24 @@
           "round",
           "reason",
           "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReplaySource": {
+        "additionalProperties": false,
+        "properties": {
+          "loadId": {
+            "type": "string"
+          },
+          "nativeParentId": {
+            "type": "string"
+          },
+          "nativeRecordId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "loadId"
         ],
         "type": "object"
       },
@@ -3887,6 +3984,96 @@
         },
         "required": [
           "sessionBinding"
+        ],
+        "type": "object"
+      },
+      "SessionChatCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "prompt",
+              "cancel",
+              "answer"
+            ],
+            "type": "string"
+          },
+          "answer": {},
+          "interaction": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "SessionChatEventSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_meta": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "replay": {
+            "$ref": "#/components/schemas/ReplaySource"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "sessionName": {
+            "type": "string"
+          },
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload",
+          "eventId",
+          "namespace",
+          "sessionName",
+          "sessionId",
+          "time"
+        ],
+        "type": "object"
+      },
+      "SessionChatFrame": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/SessionChatEventSchema"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
         ],
         "type": "object"
       },
@@ -8568,6 +8755,281 @@
           }
         },
         "summary": "Read SessionBinding",
+        "tags": [
+          "Core"
+        ]
+      }
+    },
+    "/v1/core/session-bindings/{bindingId}/chat": {
+      "post": {
+        "description": "A prompt resumes a verified offline Session with the submitted input.",
+        "operationId": "controlSessionChat",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionChatCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/InputReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CancelReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InteractionReceipt"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "MASS operation receipt"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid command or cursor"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Current Topic or Worker binding not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Session state or identity conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Session operation unavailable or outcome unconfirmed"
+          }
+        },
+        "summary": "Send, cancel or answer in a Topic or Worker chat",
+        "tags": [
+          "Core"
+        ]
+      }
+    },
+    "/v1/core/session-bindings/{bindingId}/chat/history": {
+      "get": {
+        "operationId": "getSessionChatHistory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque cursor returned by the preceding history page",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            },
+            "description": "Session chat history"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid command or cursor"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Current Topic or Worker binding not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Session state or identity conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Session operation unavailable or outcome unconfirmed"
+          }
+        },
+        "summary": "Read Topic or Worker chat history",
+        "tags": [
+          "Core"
+        ]
+      }
+    },
+    "/v1/core/session-bindings/{bindingId}/chat/live": {
+      "get": {
+        "operationId": "streamSessionChat",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "x-frame-schema": {
+                    "$ref": "#/components/schemas/SessionChatFrame"
+                  }
+                }
+              }
+            },
+            "description": "Connection state, Session events and heartbeats"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid command or cursor"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Current Topic or Worker binding not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Session state or identity conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Session operation unavailable or outcome unconfirmed"
+          }
+        },
+        "summary": "Stream Topic or Worker chat events",
         "tags": [
           "Core"
         ]

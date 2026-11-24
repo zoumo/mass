@@ -629,9 +629,6 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 			return ctx.Err()
 		}
 	}
-	if err := s.interactions.Expire(ctx, id, s.address, s.source, d.pipe.Send); err != nil {
-		return err
-	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err
 	}

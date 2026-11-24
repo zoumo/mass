@@ -106,8 +106,11 @@ func (s *Server) previewSessionBinding(w http.ResponseWriter, r *http.Request, i
 
 func matchesPreviewSession(ctx context.Context, c *client.Client, b SessionBinding, ref resource.SessionRef) bool {
 	var session resource.Session
-	return c.GetSession(ctx, ref, &session) == nil &&
-		session.Status.SessionID == b.SessionID && session.Metadata.UID == b.SessionUID &&
+	return c.GetSession(ctx, ref, &session) == nil && previewSessionMatches(session, b)
+}
+
+func previewSessionMatches(session resource.Session, b SessionBinding) bool {
+	return session.Status.SessionID == b.SessionID && session.Metadata.UID == b.SessionUID &&
 		session.Metadata.Namespace == b.Namespace && session.Metadata.Name == b.Name
 }
 
@@ -119,14 +122,7 @@ func (s *Server) streamSessionPreview(ctx context.Context, w http.ResponseWriter
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	controller := http.NewResponseController(w)
 	send := func(frame sessionPreviewFrame) bool {
-		body, err := s.responseJSON(ctx, frame)
-		if err != nil || controller.SetWriteDeadline(time.Now().Add(5*time.Second)) != nil {
-			return false
-		}
-		if _, err := io.WriteString(w, body+"\n"); err != nil {
-			return false
-		}
-		return controller.Flush() == nil && controller.SetWriteDeadline(time.Time{}) == nil
+		return s.writeSessionFrame(ctx, w, controller, frame)
 	}
 	if !send(sessionPreviewFrame{Kind: "connected"}) {
 		return
@@ -170,6 +166,17 @@ func (s *Server) streamSessionPreview(ctx context.Context, w http.ResponseWriter
 			return
 		}
 	}
+}
+
+func (s *Server) writeSessionFrame(ctx context.Context, w http.ResponseWriter, controller *http.ResponseController, frame any) bool {
+	body, err := s.responseJSON(ctx, frame)
+	if err != nil || controller.SetWriteDeadline(time.Now().Add(5*time.Second)) != nil {
+		return false
+	}
+	if _, err := io.WriteString(w, body+"\n"); err != nil {
+		return false
+	}
+	return controller.Flush() == nil && controller.SetWriteDeadline(time.Time{}) == nil
 }
 
 func projectPreviewEvent(e events.SessionEvent) sessionPreviewEvent {

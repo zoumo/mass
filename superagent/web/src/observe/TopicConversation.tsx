@@ -5,7 +5,7 @@ import { formatTime, eventStatusLabel, messageBody, sourceLabel, stateLabel, typ
 import CopyLink from './CopyLink'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { ObjectAvatar, ConversationCard, type Participant } from './ConversationCard'
-import { navigate, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
+import { navigate, sessionChatHref, usePages, useRecord, useRefresh, viewHref, type ViewProps } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './conversation.css'
 
@@ -19,7 +19,7 @@ const labels = {
 } as const
 type Filter = keyof typeof labels
 
-type Topic = { id: string; title: string; status: string; createdAt: string; lastMessageAt?: string }
+type Topic = { id: string; title: string; status: string; createdAt: string; lastMessageAt?: string; sessionBindingId?: string }
 type EventIdentity = { id: string; topicId: string; at: string; traceAssociations?: TraceAssociation[] }
 type IngressEvent = EventIdentity & {
   kind: 'router_routed' | 'thread_direct'; actor: 'router' | 'core'; summary?: string; status: string
@@ -94,9 +94,9 @@ function TopicWorkspace({ query, search }: ViewProps & { search: string }) {
       </div>
       {topics.error && <ReadError error={topics.error} stale={!!topics.data}/>}
       <ul className="conversation-topics">
-        {topics.data?.map(topic => <li key={topic.id}>
-          <a href={href(topic.id)} aria-current={topicId === topic.id ? 'true' : undefined}>
-            <span className="conversation-avatar" data-actor="topic"><Hash size={16}/></span>
+        {topics.data?.map(topic => <li key={topic.id} data-selected={topicId === topic.id}>
+          <ObjectAvatar {...topicParticipant(topic.id)}/>
+          <a className="conversation-topic-link" href={href(topic.id)} aria-current={topicId === topic.id ? 'true' : undefined}>
             <span className="conversation-topic-name">
               <strong title={topic.title}>{topic.title}</strong>
               <span className="conversation-topic-meta">
@@ -234,11 +234,11 @@ function Timeline({ timeline, eventId, eventHref }: {
 }
 
 function topicParticipant(id: string): Participant {
-  return { kind: 'topic', label: 'Topic Session', href: viewHref('topic', id), title: '查看 Topic · ' + id }
+  return { kind: 'topic', label: 'Topic Session', href: sessionChatHref('topic', id), title: '与 Topic Session 对话 · ' + id }
 }
 
 function issueParticipant(id: string, title: string): Participant {
-  return { kind: 'issue', label: 'Issue', href: viewHref('issue', id), title: '查看 Issue · ' + title }
+  return { kind: 'issue', label: 'Issue', href: sessionChatHref('issue', id), title: '与 Worker Session 对话 · ' + title }
 }
 
 function EventCard({ event, href, selected }: { event: ConversationEvent; href: string; selected: boolean }) {
@@ -249,7 +249,7 @@ function EventCard({ event, href, selected }: { event: ConversationEvent; href: 
       sender={topic} recipient={issueParticipant(event.issueId, event.title)} facts={[]}/>
   }
   if (event.kind === 'issue_session_dispatch' || event.kind === 'report') {
-    const issue: Participant = { kind: 'issue-session', label: 'Issue Session' }
+    const issue: Participant = { ...issueParticipant(event.issueId, event.title), kind: 'issue-session', label: 'Issue Session' }
     const dispatch = event.kind === 'issue_session_dispatch'
     const content = dispatch ? event.content : undefined
     const facts: { label: string; value: ReactNode }[] = [

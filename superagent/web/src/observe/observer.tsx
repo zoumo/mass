@@ -15,6 +15,9 @@ export type MessageRecord = WorkbenchRow & {
   eventId?: string
 }
 
+export const sessionChatDemoHref = '/superagent/?prototype=session-chat'
+export const sessionChatHref = (role: 'topic' | 'issue', id: string) => '/superagent/?' + new URLSearchParams({ chat: role, id })
+
 export function perspectiveFromPath(path: string): Perspective | undefined {
   return perspectives.find(view => path === observerHome + view)
 }
