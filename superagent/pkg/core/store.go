@@ -22,6 +22,8 @@ import (
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	coreent "github.com/zoumo/mass/superagent/pkg/core/internal/ent"
 )
 
 const (
@@ -34,6 +36,7 @@ const (
 type Store struct {
 	config               Config
 	db                   *sql.DB
+	entities             *coreent.Client
 	lock                 *os.File
 	mu                   sync.Mutex
 	telemetry            *coreTelemetry
@@ -113,6 +116,7 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, storageError()
 	}
 	s.db.SetMaxOpenConns(1)
+	s.entities = newCoreEntClient(s.db)
 
 	txCtx := ctx
 	buildExistingIndexes := false
@@ -199,10 +203,8 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		defer cancelBuild()
 	}
 	if !hasHeader || buildExistingIndexes {
-		for _, index := range queryIndexes {
-			if _, err := tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS "+index.name+" ON "+index.definition); err != nil {
-				return nil, storageError()
-			}
+		if _, err := tx.ExecContext(ctx, queryIndexSchema); err != nil {
+			return nil, storageError()
 		}
 	}
 	if ctx.Err() != nil {
@@ -219,9 +221,9 @@ func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 }
 
 func missingQueryIndexes(ctx context.Context, db *sql.DB) (bool, error) {
-	names := make([]any, 0, len(queryIndexes))
-	for _, index := range queryIndexes {
-		names = append(names, index.name)
+	names := make([]any, 0, len(queryIndexNames))
+	for _, name := range queryIndexNames {
+		names = append(names, name)
 	}
 	var installed int
 	err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type='index'
@@ -505,6 +507,7 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 	case "topics", "issues", "reports":
 		table, timeCol, idCol = kind, "created_at", "id"
 	case "scheduled-tasks":
+		// Keep the shared snapshot and cursor semantics for collection reads.
 		table, timeCol, idCol = "scheduled_tasks", "created_at", "id"
 	case "pull-requests":
 		table, timeCol, idCol = "work_pull_requests", "created_at", "id"
@@ -720,6 +723,9 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Session
 		if err := checkBinding(ctx, tx, *binding); err != nil {
 			return nil, err
 		}
+	}
+	if kind == "scheduled-tasks" && source == nil && !observerTrace {
+		return readScheduledTaskBody(ctx, tx, id, binding)
 	}
 	var body []byte
 	args = append(append(projectionArgs(kind, binding), id), args...)

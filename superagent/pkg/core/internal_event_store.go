@@ -10,17 +10,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/events"
 )
 
-const internalEventSchema = `
-CREATE TABLE internal_events (
- event_id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL,
- content TEXT CHECK (content IS NULL OR (` + structuredContentObjectCheck + `)),
- body TEXT, refs TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL,
- status TEXT NOT NULL CHECK(status IN ('pending','dispatching','sent','superseded')), sent_at TEXT
-);
-CREATE INDEX internal_events_pending ON internal_events(` + eventRecipientKind + `, ` + eventRecipientOwner + `)
- WHERE status IN ('pending','dispatching');
-`
-
 const contextSupplement = "context_supplement"
 
 const (

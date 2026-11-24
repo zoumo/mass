@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
+
+	coreent "github.com/zoumo/mass/superagent/pkg/core/internal/ent"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/scheduledtask"
 )
 
 // Configured external Sources cannot use the Core namespace.
@@ -21,6 +24,8 @@ type dueScheduledTask struct {
 	runAt    string
 }
 
+// Read the JSON revision without loading task bodies. Match the due index
+// predicate and order so the scan visits tasks in next-run and sequence order.
 func dueScheduledTasks(ctx context.Context, db interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, cutoff time.Time,
@@ -50,12 +55,13 @@ func recoverScheduledTasks(ctx context.Context, tx *sql.Tx, startedAt time.Time)
 	if err != nil {
 		return err
 	}
+	tasks := entClientForTx(tx).ScheduledTask
 	for _, candidate := range missed {
-		task, err := readScheduledTask(ctx, tx, "id=?", candidate.id)
+		task, err := readScheduledTask(ctx, tasks, scheduledtask.BusinessIDEQ(candidate.id))
 		if err != nil {
 			return err
 		}
-		if err := task.advance(ctx, tx, startedAt.Add(-time.Nanosecond), startedAt); err != nil {
+		if err := task.advance(ctx, tasks, startedAt.Add(-time.Nanosecond), startedAt); err != nil {
 			return err
 		}
 	}
@@ -100,7 +106,8 @@ func (s *Store) fireScheduledTask(ctx context.Context, candidate dueScheduledTas
 		return storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	task, err := readScheduledTask(ctx, tx, "id=? AND deleted_at IS NULL", candidate.id)
+	tasks := entClientForTx(tx).ScheduledTask
+	task, err := readScheduledTask(ctx, tasks, scheduledtask.BusinessIDEQ(candidate.id), scheduledtask.DeletedAtIsNil())
 	if errorCode(err) == "not_found" {
 		return nil
 	}
@@ -126,7 +133,7 @@ func (s *Store) fireScheduledTask(ctx context.Context, candidate dueScheduledTas
 	if advanceAt.Before(at) {
 		advanceAt = at
 	}
-	if err := task.advance(ctx, tx, advanceAt, advanceAt); err != nil {
+	if err := task.advance(ctx, tasks, advanceAt, advanceAt); err != nil {
 		return err
 	}
 	commitGate("scheduled_task_before_commit")
@@ -137,7 +144,7 @@ func (s *Store) fireScheduledTask(ctx context.Context, candidate dueScheduledTas
 	return nil
 }
 
-func (t *scheduledTaskRecord) advance(ctx context.Context, tx *sql.Tx, after, at time.Time) error {
+func (t *scheduledTaskRecord) advance(ctx context.Context, tasks *coreent.ScheduledTaskClient, after, at time.Time) error {
 	if t.Schedule.Type == "once" {
 		t.end(at)
 	} else {
@@ -151,7 +158,7 @@ func (t *scheduledTaskRecord) advance(ctx context.Context, tx *sql.Tx, after, at
 			t.NextRunAt, t.UpdatedAt = next.UTC().Format(utcTimestamp), at.UTC().Format(utcTimestamp)
 		}
 	}
-	return t.save(ctx, tx)
+	return t.save(ctx, tasks)
 }
 
 func (s *Store) startScheduledTaskTrigger(ctx context.Context, tx *sql.Tx, task scheduledTaskRecord, operation string) (context.Context, func(string)) {
@@ -183,7 +190,8 @@ func (s *Store) triggerScheduledTask(ctx context.Context, taskID, operationID st
 	if errorCode(err) != "not_found" {
 		return Receipt{}, err
 	}
-	task, err := readScheduledTask(ctx, tx, "id=? AND deleted_at IS NULL", taskID)
+	tasks := entClientForTx(tx).ScheduledTask
+	task, err := readScheduledTask(ctx, tasks, scheduledtask.BusinessIDEQ(taskID), scheduledtask.DeletedAtIsNil())
 	if err != nil {
 		return Receipt{}, err
 	}
