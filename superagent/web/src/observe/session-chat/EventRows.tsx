@@ -211,11 +211,11 @@ export function EventRows({ events, ...reply }: ReplyProps & { events: SessionEv
             body = <><p className="sc-event-title">{text(payload.message)}</p>{!!payload.reason && <code>{text(payload.reason)}</code>}</>
             break
           case 'session.unsupported_native_event': {
-            const native = record(payload.event)
+            const native = record(payload.raw)
             const name = text(native.method) || [text(native.type), text(native.subtype)].filter(Boolean).join(' / ')
             body = <details className="sc-event-json">
               <summary><code>{[text(payload.agentType), name].filter(Boolean).join(' · ')}</code></summary>
-              <pre>{json(payload.event)}</pre>
+              <pre>{json(payload.raw)}</pre>
             </details>
             break
           }

@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/massd/pkg/events"
@@ -15,25 +13,15 @@ import (
 )
 
 // Interactions remembers the kind of each live request on one SDK Session.
-// The SDK owns native answer authority. MASS keeps accepted URL flows pending
-// when the SDK closes only its request/response exchange.
+// The SDK owns native answer authority and settlement.
 type Interactions struct {
 	mu      sync.Mutex
 	pending map[agent.InteractionRef]*interaction
 }
 
 type interaction struct {
-	kind         agent.InteractionKind
-	claudeURL    claudeElicitation
-	answering    bool
-	acceptURL    bool
-	acknowledged bool
-	completed    bool
-}
-
-type claudeElicitation struct {
-	server string
-	id     string
+	kind      agent.InteractionKind
+	answering bool
 }
 
 func (p *Interactions) Answer(ctx context.Context, session agent.Session, ref agent.InteractionRef, value any, mapNativeError func(error) error) (runtime.Acceptance, error) {
@@ -57,18 +45,14 @@ func (p *Interactions) Answer(ctx context.Context, session agent.Session, ref ag
 		return runtime.Acceptance{}, runtime.FailedPrecondition("interaction is no longer answerable")
 	}
 	entry.answering = true
-	if url, ok := answer.(agent.URLAnswer); ok {
-		entry.acceptURL = url.Outcome == agent.URLAccept
-	}
 	p.mu.Unlock()
 
 	receipt, err := session.Answer(ctx, ref, answer)
 	sent := receipt.Acceptance.Sent != nil && *receipt.Acceptance.Sent
 	if err != nil && !sent && agent.CodeOf(err) != agent.ErrorOutcomeUnknown {
 		p.mu.Lock()
-		if p.pending[ref] == entry && !entry.acknowledged && !entry.completed {
+		if p.pending[ref] == entry {
 			entry.answering = false
-			entry.acceptURL = false
 		}
 		p.mu.Unlock()
 	}
@@ -131,7 +115,7 @@ func parseAnswer(kind agent.InteractionKind, value any) (agent.Answer, error) {
 	return answer, nil
 }
 
-func (p *Interactions) observe(event events.SessionEvent) (events.SessionEvent, bool, error) {
+func (p *Interactions) observe(event events.SessionEvent) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	switch payload := event.Payload().(type) {
@@ -140,125 +124,11 @@ func (p *Interactions) observe(event events.SessionEvent) (events.SessionEvent, 
 			p.pending = make(map[agent.InteractionRef]*interaction)
 		}
 		if _, exists := p.pending[payload.Interaction]; exists {
-			return events.SessionEvent{}, false, errors.New("SDK reused a live interaction reference")
+			return errors.New("SDK reused a live interaction reference")
 		}
-		entry := &interaction{kind: payload.Request.Kind}
-		if payload.Request.Kind == agent.InteractionURL {
-			entry.claudeURL = claudeURLRequest(event)
-		}
-		p.pending[payload.Interaction] = entry
+		p.pending[payload.Interaction] = &interaction{kind: payload.Request.Kind}
 	case events.InteractionClosed:
-		if entry := p.pending[payload.Interaction]; entry != nil {
-			if entry.completed {
-				delete(p.pending, payload.Interaction)
-				return events.SessionEvent{}, false, nil
-			}
-			if entry.acceptURL && payload.Outcome == agent.InteractionAnswered {
-				entry.acknowledged = true
-				return events.SessionEvent{}, false, nil
-			}
-			delete(p.pending, payload.Interaction)
-		}
-	case events.UnsupportedNativeEvent:
-		if payload.AgentType == "claude" {
-			return p.claudeCompletion(event, payload.Event)
-		}
-	}
-	return event, true, nil
-}
-
-func claudeURLRequest(event events.SessionEvent) claudeElicitation {
-	meta, _ := event.Meta["claude"].(map[string]any)
-	if meta["type"] != "control_request" || meta["subtype"] != "elicitation" {
-		return claudeElicitation{}
-	}
-	raw, _ := meta["raw"].(map[string]any)
-	request, _ := raw["request"].(map[string]any)
-	server, _ := request["mcp_server_name"].(string)
-	id, _ := request["elicitation_id"].(string)
-	return claudeElicitation{server: server, id: id}
-}
-
-func (p *Interactions) claudeCompletion(event events.SessionEvent, raw json.RawMessage) (events.SessionEvent, bool, error) {
-	meta, _ := event.Meta["claude"].(map[string]any)
-	if meta["type"] != "system" || meta["subtype"] != "elicitation_complete" {
-		return event, true, nil
-	}
-	var completion struct {
-		SessionID string `json:"session_id"`
-		Server    string `json:"mcp_server_name"`
-		ID        string `json:"elicitation_id"`
-	}
-	if json.Unmarshal(raw, &completion) != nil || completion.SessionID != event.SessionID || completion.Server == "" || completion.ID == "" {
-		return event, true, nil
-	}
-	var match agent.InteractionRef
-	for ref, entry := range p.pending {
-		if entry.claudeURL != (claudeElicitation{server: completion.Server, id: completion.ID}) {
-			continue
-		}
-		if match != "" {
-			return event, true, nil
-		}
-		match = ref
-	}
-	if match == "" || !p.pending[match].acceptURL {
-		return event, true, nil
-	}
-	entry := p.pending[match]
-	if entry.completed {
-		return events.SessionEvent{}, false, nil
-	}
-	identity, err := uuid.NewRandom()
-	if err != nil {
-		return events.SessionEvent{}, false, err
-	}
-	// The SDK diagnostic supplies native evidence for a separate MASS
-	// lifecycle event. Do not reuse the diagnostic's event identity.
-	base := event.EventBase
-	base.EventID = identity.String()
-	base.Meta = nil
-	closed, err := events.NewEvent(base, events.InteractionClosed{
-		Interaction: match,
-		Outcome:     agent.InteractionCompleted,
-	}, event.Source())
-	if err != nil {
-		return events.SessionEvent{}, false, err
-	}
-	if entry.acknowledged {
-		delete(p.pending, match)
-	} else {
-		// The matching native completion can precede the SDK's acknowledgment.
-		// Keep the reference only to absorb that later closure.
-		entry.completed = true
-	}
-	return closed, true, nil
-}
-
-// Expire emits lifecycle evidence only after the owner has released the native
-// Session and drained observation. A failed send leaves the entry retryable.
-func (p *Interactions) Expire(ctx context.Context, sessionID string, address runtime.Address, source events.Source, sink Sink) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for ref, entry := range p.pending {
-		if !entry.acceptURL || entry.completed {
-			continue
-		}
-		id, err := uuid.NewRandom()
-		if err != nil {
-			return err
-		}
-		event, err := events.NewEvent(events.EventBase{
-			EventID: id.String(), Time: time.Now().UTC(), SessionID: sessionID,
-			Namespace: address.Namespace, SessionName: address.SessionName,
-		}, events.InteractionClosed{Interaction: ref, Outcome: agent.InteractionExpired, Reason: "session_closed"}, source)
-		if err != nil {
-			return err
-		}
-		if err := sink(ctx, event); err != nil {
-			return err
-		}
-		delete(p.pending, ref)
+		delete(p.pending, payload.Interaction)
 	}
 	return nil
 }

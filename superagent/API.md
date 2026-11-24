@@ -152,7 +152,8 @@ prompt as its initial input. A caller should inspect the stream before
 resubmitting a command whose outcome is unknown.
 
 `session.unsupported_native_event` remains live-only. The `event` frame retains
-the MASS event envelope and payload. Core applies its response credential
+the MASS event envelope and the SDK payload with `agentType` and `raw`.
+Core applies its response credential
 redaction to chat responses.
 
 ### Telemetry and resource associations

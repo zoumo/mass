@@ -169,7 +169,7 @@ settled:
 				} `json:"item"`
 			} `json:"params"`
 		}
-		s.Require().NoError(json.Unmarshal(event.Payload().(events.UnsupportedNativeEvent).Event, &notification))
+		s.Require().NoError(json.Unmarshal(event.Payload().(events.UnsupportedNativeEvent).Raw, &notification))
 		s.Equal("item/completed", notification.Method)
 		s.Equal(want.nativeType, notification.Params.Item.Type)
 

@@ -164,7 +164,7 @@ func TestReportReminderIssueIdle(t *testing.T) {
 	native, ok := ev.Payload().(events.UnsupportedNativeEvent)
 	require.True(t, ok, "unexpected event type %s", ev.Type())
 	require.Equal(t, "codex", native.AgentType)
-	require.Contains(t, string(native.Event), `"type":"futureNativeItem"`)
+	require.Contains(t, string(native.Raw), `"type":"futureNativeItem"`)
 	require.False(t, ev.Persistent())
 	unsupportedEventID := ev.EventID
 	require.Equal(t, b.SessionID, ev.SessionID)

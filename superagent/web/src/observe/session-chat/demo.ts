@@ -63,7 +63,7 @@ export function demoSession(binding: Binding, emit: (event: SessionEvent) => voi
     }
     emit(event('session.unsupported_native_event', {
       agentType: 'codex',
-      event: {
+      raw: {
         method: 'thread/readState/changed',
         params: { threadId: binding.sessionId, readState: { revision: run, firstUnread: null } },
       },
