@@ -1224,6 +1224,55 @@
         ],
         "type": "object"
       },
+      "IssueSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked": {
+            "type": "boolean"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "currentSessionBindingId": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "goalRevision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "topicId": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topicId",
+          "title",
+          "goal",
+          "goalRevision",
+          "currentSessionBindingId",
+          "status",
+          "updatedAt",
+          "blocked",
+          "completed"
+        ],
+        "type": "object"
+      },
       "JSONRPCError": {
         "additionalProperties": false,
         "properties": {
@@ -5052,6 +5101,9 @@
           "recommendation": {
             "type": "string"
           },
+          "releaseUnconfirmed": {
+            "type": "boolean"
+          },
           "status": {
             "enum": [
               "finding",
@@ -5079,10 +5131,14 @@
           },
           "latest": {
             "$ref": "#/components/schemas/WatchdogCheck"
+          },
+          "running": {
+            "type": "boolean"
           }
         },
         "required": [
-          "enabled"
+          "enabled",
+          "running"
         ],
         "type": "object"
       },
@@ -6157,6 +6213,16 @@
             }
           },
           {
+            "description": "Use summary for bounded current Issue facts",
+            "explode": false,
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "description": "Use summary for bounded current Issue facts",
+              "type": "string"
+            }
+          },
+          {
             "in": "path",
             "name": "issueId",
             "required": true,
@@ -6170,7 +6236,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueReadProjection"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/IssueReadProjection"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IssueSummary"
+                    }
+                  ]
                 }
               }
             },
@@ -6231,6 +6304,16 @@
             "name": "trace",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Use summary for bounded current Issue facts",
+            "explode": false,
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "description": "Use summary for bounded current Issue facts",
+              "type": "string"
             }
           },
           {

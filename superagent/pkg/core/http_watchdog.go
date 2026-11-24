@@ -12,17 +12,19 @@ const watchdogReadPath = coreResourcePrefix + "watchdog"
 
 type WatchdogSnapshot struct {
 	Enabled bool           `json:"enabled"`
+	Running bool           `json:"running"`
 	Latest  *WatchdogCheck `json:"latest,omitempty"`
 }
 
 type WatchdogCheck struct {
-	ObservedAt     time.Time `json:"observedAt"`
-	Status         string    `json:"status" enum:"finding,no_finding,incomplete"`
-	Reason         string    `json:"reason"`
-	TopicID        string    `json:"topicId,omitempty"`
-	IssueID        string    `json:"issueId,omitempty"`
-	Judgment       string    `json:"judgment,omitempty"`
-	Recommendation string    `json:"recommendation,omitempty"`
+	ReleaseUnconfirmed bool      `json:"releaseUnconfirmed,omitempty"`
+	ObservedAt         time.Time `json:"observedAt"`
+	Status             string    `json:"status" enum:"finding,no_finding,incomplete"`
+	Reason             string    `json:"reason"`
+	TopicID            string    `json:"topicId,omitempty"`
+	IssueID            string    `json:"issueId,omitempty"`
+	Judgment           string    `json:"judgment,omitempty"`
+	Recommendation     string    `json:"recommendation,omitempty"`
 }
 
 func (s *Server) registerWatchdogRead(api *httpAPI) {

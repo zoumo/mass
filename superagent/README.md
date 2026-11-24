@@ -126,7 +126,9 @@ bin/superagent watchdog --endpoint http://127.0.0.1:24370
 The Watchdog checks for an unaccepted, current `ready` Report whose notification
 reached MASS at least 30 minutes ago. It prints one JSON result with a `finding`,
 `no_finding`, or `incomplete` status. Use `reason` to distinguish outcomes such
-as no eligible Report, insufficient evidence, or a timeout.
+as no eligible Report, insufficient evidence, or a timeout. The result includes
+`releaseUnconfirmed` if Watchdog cannot confirm that the Codex process group
+has exited.
 
 When a Report needs review, the Watchdog starts `codex app-server` in a temporary
 directory. Use `--codex-bin` to select a different executable. It uses
@@ -146,13 +148,15 @@ watchdog:
 
 Compose starts Watchdog after Core is ready. Watchdog checks current state
 immediately and waits `interval` after each round, including failed rounds.
-Use a positive Go duration string, such as `10m` or `1h`. Find each JSON result
-under `component: watchdog` in the Compose logs. On shutdown, Compose cancels
-the running check and waits for the Watchdog process to exit.
+Use a positive Go duration string, such as `10m` or `1h`. Under
+`component: watchdog`, the Compose logs record the outcome and resource IDs.
+On shutdown, Compose cancels the active check and waits for Watchdog and the
+Codex process group to exit.
 
-Open **Watchdog** at `/superagent/watchdog` to see the latest completed Compose
-check and follow links to its Topic or Issue. Compose keeps one result in memory
-and starts with an empty snapshot after restart.
+Open **Watchdog** at `/superagent/watchdog` to see whether Watchdog is running
+and read the latest completed check. Use the Topic and Issue links to review
+its judgment and recommendation in context. Compose keeps the latest result
+after Watchdog exits and starts with an empty snapshot after restart.
 
 ## Run the stack with Compose
 

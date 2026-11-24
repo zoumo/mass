@@ -10,10 +10,16 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -38,8 +44,10 @@ func TestMain(m *testing.M) {
 func TestWatchdogProcess(t *testing.T) {
 	binary := superagentBinary(t)
 	endpoint, db := runCore(t)
+	require.Equal(t, core.WatchdogSnapshot{}, readWatchdogSnapshot(t, endpoint))
 	seedReports(t, db)
 	codex, log := peerFixture(t, "suspected_missed_acceptance")
+	descendants := wrapPeer(t, codex)
 	first := runCLI(t, binary, endpoint, codex)
 	require.Equal(t, "finding", first.Status, "%+v", first)
 	require.Equal(t, "suspected_missed_acceptance", first.Reason)
@@ -72,6 +80,7 @@ func TestWatchdogProcess(t *testing.T) {
 	}
 	require.NotEqual(t, events[2].ThreadID, events[5].ThreadID)
 	require.NotEqual(t, events[0].Home, events[3].Home)
+	assertFixtureReleased(t, descendantPIDs(descendants), 2)
 }
 
 func TestWatchdogOutcomes(t *testing.T) {
@@ -128,34 +137,127 @@ func TestWatchdogStopsCodex(t *testing.T) {
 	for _, reason := range []string{"timed_out", "canceled"} {
 		t.Run(reason, func(t *testing.T) {
 			codex, log := peerFixture(t, "hang")
-			if reason == "timed_out" {
-				result := runCLI(t, binary, endpoint, codex, "--timeout=3s")
-				require.Equal(t, "incomplete", result.Status)
-				require.Equal(t, reason, result.Reason)
-				require.False(t, result.ReleaseUnconfirmed)
-			} else {
-				cmd := watchdogCommand(t, binary, endpoint, codex)
-				var stdout, stderr bytes.Buffer
-				cmd.Stdout, cmd.Stderr = &stdout, &stderr
-				require.NoError(t, cmd.Start())
-				t.Cleanup(func() { _ = cmd.Process.Kill() })
-				require.Eventually(t, func() bool {
-					data, _ := os.ReadFile(log)
-					return bytes.Contains(data, []byte(`"method":"turn/start"`))
-				}, 10*time.Second, 20*time.Millisecond)
-				require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
-				require.NoError(t, cmd.Wait(), stderr.String())
-				result := decodeResult(t, stdout.Bytes())
-				require.Equal(t, "incomplete", result.Status)
-				require.Equal(t, reason, result.Reason)
-				require.False(t, result.ReleaseUnconfirmed)
+			descendants := wrapPeer(t, codex)
+			extra := []string{"--timeout=3s"}
+			if reason == "canceled" {
+				extra = nil
 			}
+			cmd := watchdogCommand(t, binary, endpoint, codex, extra...)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			process := startFixtureProcess(t, cmd)
+			awaitComposeTurn(t, log, 1)
+			if reason == "canceled" {
+				require.NoError(t, syscall.Kill(-cmd.Process.Pid, syscall.SIGINT))
+				require.NoError(t, process.wait(10*time.Second))
+			} else {
+				require.NoError(t, process.wait(10*time.Second))
+			}
+			result := decodeResult(t, stdout.Bytes())
+			require.Equal(t, "incomplete", result.Status)
+			require.Equal(t, reason, result.Reason)
+			require.False(t, result.ReleaseUnconfirmed)
 			events := readPeerEvents(t, log)
 			require.Len(t, events, 3)
-			require.ErrorIs(t, syscall.Kill(events[0].PID, 0), syscall.ESRCH)
+			assertFixtureReleased(t, []int{events[0].PID, events[0].ParentPID}, 2)
+			assertFixtureReleased(t, descendantPIDs(descendants), 1)
 			require.NoDirExists(t, events[0].Home)
 		})
 	}
+}
+
+func TestWatchdogContinuesAfterCandidateChanges(t *testing.T) {
+	binary := superagentBinary(t)
+	for _, scenario := range []string{"stale", "read_failed"} {
+		t.Run(scenario, func(t *testing.T) {
+			endpoint, db := runCore(t)
+			seedReports(t, db)
+			target, err := url.Parse(endpoint)
+			require.NoError(t, err)
+			proxy := &httputil.ReverseProxy{Rewrite: func(request *httputil.ProxyRequest) { request.SetURL(target) }}
+			var activityRead atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/core/topics/mass-t1/activity" && activityRead.CompareAndSwap(false, true) && scenario == "stale" {
+					if _, err := db.ExecContext(r.Context(), `UPDATE issues SET body=json_set(body,'$.status','completed') WHERE id='mass-t1-i9'`); err != nil {
+						http.Error(w, "fixture update failed", http.StatusInternalServerError)
+						return
+					}
+				}
+				if r.URL.Path == "/v1/core/issues/mass-t1-i9" && activityRead.Load() && scenario == "read_failed" {
+					http.Error(w, "fixture read failed", http.StatusServiceUnavailable)
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			t.Cleanup(server.Close)
+			codex, log := peerFixture(t, "suspected_missed_acceptance")
+			result := runCLI(t, binary, server.URL, codex)
+			require.True(t, activityRead.Load())
+			if scenario == "read_failed" {
+				require.Equal(t, "core_read_failed", result.Reason)
+				require.NoFileExists(t, log)
+				return
+			}
+			require.Equal(t, "finding", result.Status)
+			require.Equal(t, "mass-t1-i8-r1", result.ReportID)
+			require.Len(t, readPeerEvents(t, log), 3, "only the backup gets an Agent session")
+		})
+	}
+}
+
+func TestWatchdogReadsIssueWithLargeReportHistory(t *testing.T) {
+	binary := superagentBinary(t)
+	endpoint, db := runCore(t)
+	seedReports(t, db)
+	for i := range 11 {
+		report := core.Report{
+			ID: fmt.Sprintf("historical-%d", i), IssueID: "mass-t1-i9", TopicID: "mass-t1",
+			Sequence: int64(61 + i), Revision: 0, Kind: "ready", Historical: true,
+			CreatedAt: time.Now().Add(-3 * time.Hour).Format(time.RFC3339Nano),
+			Details:   strings.Repeat("x", 850<<10),
+		}
+		body, err := json.Marshal(report)
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `UPDATE issues SET body=json_insert(body,'$.reports[#]',json(?)) WHERE id='mass-t1-i9'`, string(body))
+		require.NoError(t, err)
+	}
+	for _, view := range []struct {
+		query  string
+		method string
+		status int
+	}{
+		{"", http.MethodGet, http.StatusOK},
+		{"?view=summary", http.MethodGet, http.StatusOK},
+		{"?view=summary", http.MethodHead, http.StatusOK},
+		{"?view=unknown", http.MethodGet, http.StatusBadRequest},
+	} {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, view.method, endpoint+"/v1/core/issues/mass-t1-i9"+view.query, http.NoBody)
+		require.NoError(t, err)
+		response, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, response.Body.Close())
+		require.NoError(t, err)
+		require.Equal(t, view.status, response.StatusCode)
+		if view.query == "" {
+			require.Greater(t, len(body), 8<<20)
+		} else if view.method == http.MethodHead {
+			require.Empty(t, body)
+		} else if view.status == http.StatusOK {
+			require.Less(t, len(body), 2000)
+			var summary core.IssueSummary
+			require.NoError(t, json.Unmarshal(body, &summary))
+			require.Equal(t, "mass-t1-i9", summary.ID)
+			require.Equal(t, "Confirm the fixture output is healthy.", summary.Goal)
+			require.NotContains(t, string(body), `"reports"`)
+		}
+	}
+	codex, _ := peerFixture(t, "suspected_missed_acceptance")
+	result := runCLI(t, binary, endpoint, codex)
+	require.Equal(t, "finding", result.Status, "%+v", result)
+	require.Equal(t, "mass-t1-i9-r1", result.ReportID)
 }
 
 // Opt in to a real model turn using the caller's existing Codex authentication.
@@ -275,7 +377,7 @@ func seedReports(t *testing.T, db *sql.DB) {
 
 func watchdogCommand(t *testing.T, binary, endpoint, codex string, extra ...string) *exec.Cmd {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 150*time.Second)
 	t.Cleanup(cancel)
 	args := append([]string{"watchdog", "--endpoint", endpoint, "--codex-bin", codex}, extra...)
 	return exec.CommandContext(ctx, binary, args...)
@@ -286,10 +388,12 @@ func runCLI(t *testing.T, binary, endpoint, codex string, extra ...string) watch
 	cmd := watchdogCommand(t, binary, endpoint, codex, extra...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	stdout, err := cmd.Output()
-	require.NoError(t, err, stderr.String())
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	process := startFixtureProcess(t, cmd)
+	require.NoError(t, process.wait(150*time.Second))
 	require.Empty(t, stderr.String())
-	return decodeResult(t, stdout)
+	return decodeResult(t, stdout.Bytes())
 }
 
 func decodeResult(t *testing.T, output []byte) watchdog.Result {
@@ -330,7 +434,47 @@ func peerFixture(t *testing.T, outcome string) (string, string) {
 	t.Setenv("MASS_TOKEN", "fixture-core-credential")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	t.Setenv("no_proxy", "fixture.local")
-	return executable, filepath.Join(dir, "peer.ndjson")
+	log := filepath.Join(dir, "peer.ndjson")
+	t.Cleanup(func() {
+		pids := make(map[int]struct{})
+		for _, event := range fixtureEvents(log) {
+			if event.PID > 0 && event.ParentPID > 0 {
+				pids[event.PID] = struct{}{}
+				pids[event.ParentPID] = struct{}{}
+			}
+		}
+		owned := make([]int, 0, len(pids))
+		for pid := range pids {
+			owned = append(owned, pid)
+		}
+		releaseFixturePIDs(t, owned)
+	})
+	return executable, log
+}
+
+func wrapPeer(t *testing.T, codex string) string {
+	t.Helper()
+	dir := filepath.Dir(codex)
+	log := filepath.Join(dir, "descendants")
+	require.NoError(t, os.Rename(codex, filepath.Join(dir, "peer")))
+	require.NoError(t, os.WriteFile(codex, []byte(`#!/bin/sh
+/bin/sleep 300 </dev/null >/dev/null 2>&1 &
+printf '%s\n' "$!" >> "${0%/*}/descendants"
+exec "${0%/*}/peer" "$@"
+`), 0o700))
+	t.Cleanup(func() { releaseFixturePIDs(t, descendantPIDs(log)) })
+	return log
+}
+
+func descendantPIDs(log string) []int {
+	data, _ := os.ReadFile(log)
+	var pids []int
+	for _, raw := range strings.Fields(string(data)) {
+		if pid, err := strconv.Atoi(raw); err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 func readPeerEvents(t *testing.T, log string) []peerEvent {
@@ -365,6 +509,7 @@ func codexPeer() error {
 	if err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintln(os.Stderr, "fixture-native-stderr")
 	pid := os.Getpid()
 	threadID := "fixture-thread-" + strconv.Itoa(pid)
 	turn := map[string]any{"id": "fixture-turn", "status": "inProgress", "items": []any{}}

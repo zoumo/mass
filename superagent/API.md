@@ -116,6 +116,7 @@ Brackets indicate an optional detail path.
 | Topics | `/v1/core/topics[/{topicId}]` |
 | Topic activity and conversation | `/v1/core/topics/{topicId}/activity` |
 | Issues | `/v1/core/issues[/{issueId}]` |
+| Current Issue facts | `/v1/core/issues/{issueId}?view=summary` |
 | Reports | `/v1/core/reports[/{reportId}]` |
 | Internal Events | `/v1/core/internal-events[/{eventId}]` |
 | Session Bindings | `/v1/core/session-bindings[/{bindingId}]` |
@@ -123,10 +124,18 @@ Brackets indicate an optional detail path.
 | Live Session preview | `/v1/core/session-bindings/{bindingId}/live` |
 | Trace | `/v1/telemetry/traces/{traceId}` |
 | Performance | `/v1/telemetry/performance` |
+| Watchdog | `/v1/core/watchdog` |
 
 Percent-encode the Thread ID as one path segment. Topic and Issue details
 contain PR links. Thread details contain subscriptions. Trigger Message
 details contain routing relations.
+
+The Issue summary includes the current goal, its revision, and the current
+Session Binding ID. It exposes blockers and completion as `blocked` and
+`completed`. The title and goal are limited to 1,500 characters each.
+
+The Watchdog snapshot includes `enabled`, `running`, and the latest completed
+check when available. Compose retains that check after Watchdog exits.
 
 Superagent Web serves `/superagent/` and its assets from a separate static
 service. The same-origin gateway forwards resource requests to Core.

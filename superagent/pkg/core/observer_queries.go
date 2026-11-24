@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 )
 
 type CoreStatus struct {
@@ -106,4 +108,24 @@ const internalEventProjection = `json_patch(json_object(
 
 func workNotificationProjection(table, field string) string {
 	return "(SELECT " + internalEventProjection + " FROM internal_events WHERE event_id=json_extract(" + table + ".body,'$." + field + "'))"
+}
+
+func (s *Store) issueSummary(ctx context.Context, id string) (json.RawMessage, error) {
+	var body []byte
+	// Project from the stored Issue without expanding its Report or event history.
+	err := s.db.QueryRowContext(ctx, `SELECT json_object(
+ 'id',id,'topicId',topic_id,'title',substr(coalesce(body->>'$.title',''),1,1500),
+ 'goal',substr(coalesce(body->>'$.goal',''),1,1500),'goalRevision',coalesce(body->>'$.goalRevision',0),
+ 'currentSessionBindingId',coalesce(body->>'$.currentSessionBindingId',''),
+ 'status',coalesce(body->>'$.status',''),'updatedAt',coalesce(body->>'$.updatedAt',''),
+ 'blocked',json(CASE WHEN json_array_length(body,'$.blockers')>0 THEN 'true' ELSE 'false' END),
+ 'completed',json(CASE WHEN body->>'$.completion' IS NOT NULL THEN 'true' ELSE 'false' END))
+ FROM issues WHERE id=?`, id).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, problem("not_found", "resource not found in current scope")
+	}
+	if err != nil {
+		return nil, storageError()
+	}
+	return body, nil
 }

@@ -4,6 +4,7 @@ package watchdog
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 )
 
@@ -18,6 +19,9 @@ type Options struct {
 	Endpoint string
 	CodexBin string
 	Timeout  time.Duration
+	// Compose provides an owned workspace root and a private result stream.
+	WorkDir       string
+	ProcessOutput *os.File
 }
 
 type Result struct {
@@ -63,7 +67,7 @@ func (o Options) Run(ctx context.Context) Result {
 	}
 
 	result.Delivery = &evidence.Delivery
-	assessment, err, releaseUnconfirmed := judge(ctx, o.CodexBin, evidence)
+	assessment, err, releaseUnconfirmed := judge(ctx, o, evidence)
 	result.ReleaseUnconfirmed = releaseUnconfirmed
 	switch {
 	case errors.Is(err, errInvalidOutput):

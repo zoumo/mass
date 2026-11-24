@@ -28,6 +28,7 @@ type Check = {
   observedAt: string
   status: keyof typeof statuses
   reason: string
+  releaseUnconfirmed?: boolean
   topicId?: string
   issueId?: string
   judgment?: string
@@ -36,7 +37,7 @@ type Check = {
 
 export default function WatchdogView() {
   const { online } = useRefresh()
-  const record = useRecord<{ enabled: boolean; latest?: Check }>('watchdog')
+  const record = useRecord<{ enabled: boolean; running: boolean; latest?: Check }>('watchdog')
   const latest = record.data?.latest
   return <>
     {online && record.loading && !record.data && !record.error &&
@@ -44,8 +45,9 @@ export default function WatchdogView() {
     {record.error && <p className="read-error" role="alert">
       巡检结果读取失败 · {record.error}{record.data && ' · 快照已过时'}
     </p>}
-    {record.data && !latest && <p className="panel empty">
-      {record.data.enabled ? '等待首轮巡检完成。' : 'Watchdog 尚未启用。'}
+    {record.data && <p className="panel empty" role="status">
+      {!record.data.enabled ? 'Watchdog 尚未启用。' : !record.data.running ? 'Watchdog 已停止。'
+        : latest ? 'Watchdog 正在运行。' : 'Watchdog 正在运行，等待首轮巡检完成。'}
     </p>}
     {latest && <section className="panel watchdog-check" aria-labelledby="watchdog-latest">
       <header className="panel-heading">
@@ -58,6 +60,9 @@ export default function WatchdogView() {
           <dd><time dateTime={latest.observedAt} title={latest.observedAt}>{formatTime(latest.observedAt)}</time></dd>
         </div>
         <div><dt>结果</dt><dd>{reasons[latest.reason] ?? latest.reason}</dd></div>
+        {latest.releaseUnconfirmed && latest.reason !== 'release_unconfirmed' && <div>
+          <dt>进程回收</dt><dd>{reasons.release_unconfirmed}</dd>
+        </div>}
         {latest.judgment && <div>
           <dt>{latest.status === 'finding' ? '发现' : '判断'}</dt>
           <dd>{latest.judgment}</dd>

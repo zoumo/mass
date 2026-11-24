@@ -42,8 +42,8 @@ type assessment struct {
 	Recommendation string `json:"recommendation"`
 }
 
-func judge(ctx context.Context, executable string, evidence *evidence) (result assessment, err error, releaseUnconfirmed bool) {
-	executable, err = exec.LookPath(executable)
+func judge(ctx context.Context, options Options, evidence *evidence) (result assessment, err error, releaseUnconfirmed bool) {
+	executable, err := exec.LookPath(options.CodexBin)
 	if err != nil {
 		return assessment{}, err, false
 	}
@@ -51,7 +51,7 @@ func judge(ctx context.Context, executable string, evidence *evidence) (result a
 	if err != nil {
 		return assessment{}, err, false
 	}
-	workspace, err := os.MkdirTemp("", "superagent-watchdog-")
+	workspace, err := os.MkdirTemp(options.WorkDir, "superagent-watchdog-")
 	if err != nil {
 		return assessment{}, err, false
 	}
@@ -76,22 +76,27 @@ func judge(ctx context.Context, executable string, evidence *evidence) (result a
 		return assessment{}, err, false
 	}
 
-	client, err := codex.NewStdio(ctx, codex.StdioOptions{
-		Executable: executable,
-		Args:       []string{"app-server"},
-		Env:        env,
-		Dir:        cwd,
+	transport, err := startAgentGuard(executable, cwd, env, options.ProcessOutput)
+	if err != nil {
+		return assessment{}, err, false
+	}
+	defer func() {
+		_ = transport.Writer.Close()
+		_ = transport.Reader.Close()
+		wait, cancel := context.WithTimeout(context.Background(), AgentGuardTimeout)
+		defer cancel()
+		releaseUnconfirmed = transport.Wait(wait) != nil
+	}()
+	client, err := codex.NewStreams(ctx, codex.StreamOptions{
+		Limits: codex.Limits{ShutdownTimeout: AgentGuardTimeout},
 		Initialize: types.InitializeParams{
 			ClientInfo: types.ClientInfo{Name: "superagent-watchdog", Version: "1"},
 		},
-	})
+	}, transport)
 	if err != nil {
-		// Initialization errors do not carry the SDK's close result.
-		return assessment{}, err, true
+		return assessment{}, err, false
 	}
-	defer func() {
-		releaseUnconfirmed = client.Close() != nil
-	}()
+	defer func() { _ = client.Close() }()
 	session, err := codex.Open(ctx, codex.SessionOptions{
 		Client: client,
 		Thread: types.ThreadStartParams{

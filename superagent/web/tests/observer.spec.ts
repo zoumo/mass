@@ -16,6 +16,7 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
  await expect(page.getByText('Watchdog 尚未启用。')).toBeVisible()
 
  let finding = true
+ let running = true
  await page.route('**/v1/core/watchdog', async route => {
   expect(route.request().method()).toBe('GET')
   expect(route.request().headers()['authorization']).toBeUndefined()
@@ -23,9 +24,10 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
    ? { observedAt, status: 'finding', reason: 'suspected_missed_acceptance', topicId, issueId,
        judgment: 'Report 已送达，尚无验收记录。', recommendation: '请复核 Report。' }
    : { observedAt, status: 'no_finding', reason: 'no_candidate' }
-  await route.fulfill({ json: { enabled: true, latest } })
+  await route.fulfill({ json: { enabled: true, running, latest } })
  })
  await page.getByRole('button', { name: '刷新', exact: true }).click()
+ await expect(page.getByText('Watchdog 正在运行。')).toBeVisible()
  await expect(page.getByText('有发现', { exact: true })).toBeVisible()
  await expect(page.locator('time')).toHaveAttribute('datetime', observedAt)
  await expect(page.getByText('Report 已送达，尚无验收记录。')).toBeVisible()
@@ -40,6 +42,11 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
  await page.goBack()
  await expect(page).toHaveURL(routing + '/superagent/watchdog')
  await expect(page.getByText('有发现', { exact: true })).toBeVisible()
+ running = false
+ await page.getByRole('button', { name: '刷新', exact: true }).click()
+ await expect(page.getByText('Watchdog 已停止。')).toBeVisible()
+ await expect(page.getByText('请复核 Report。')).toBeVisible()
+ running = true
  finding = false
  await page.getByRole('button', { name: '刷新', exact: true }).click()
  await expect(page.getByText('没有待巡检的 Report')).toBeVisible()

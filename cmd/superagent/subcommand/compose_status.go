@@ -30,14 +30,15 @@ type triggerStatusTarget struct {
 }
 
 type composeStatusServer struct {
-	mu        sync.RWMutex
-	targets   map[string]triggerStatusTarget
-	watchdog  core.WatchdogSnapshot
-	server    *http.Server
-	client    *http.Client
-	directory string
-	socket    string
-	done      chan struct{}
+	mu            sync.RWMutex
+	targets       map[string]triggerStatusTarget
+	watchdog      core.WatchdogSnapshot
+	watchdogChild *childProcess
+	server        *http.Server
+	client        *http.Client
+	directory     string
+	socket        string
+	done          chan struct{}
 }
 
 func startComposeStatus(ctx context.Context, enabled []composeTrigger, watchdogEnabled bool) (*composeStatusServer, error) {
@@ -99,6 +100,13 @@ func (s *composeStatusServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	if r.URL.Path == composeWatchdogPath {
 		snapshot := s.watchdog
+		if s.watchdogChild != nil {
+			select {
+			case <-s.watchdogChild.done:
+			default:
+				snapshot.Running = true
+			}
+		}
 		s.mu.RUnlock()
 		writeComposeStatus(w, snapshot)
 		return
@@ -122,6 +130,12 @@ func writeComposeStatus(w http.ResponseWriter, snapshot any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
+}
+
+func (s *composeStatusServer) registerWatchdog(child *childProcess) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.watchdogChild = child
 }
 
 func (s *composeStatusServer) recordWatchdog(check core.WatchdogCheck) {

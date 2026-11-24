@@ -3,7 +3,7 @@ import type { Context } from '@opentelemetry/api'
 import type { WorkbenchRow, Page } from '../workbench'
 import { measureView, observerRequest } from './telemetry'
 
-const perspectives = ['topic-conversation', 'message', 'router', 'topic', 'issue', 'trace', 'metrics', 'watchdog'] as const
+export const perspectives = ['topic-conversation', 'message', 'router', 'topic', 'issue', 'trace', 'metrics', 'watchdog'] as const
 export type Perspective = typeof perspectives[number]
 const defaultPerspective = 'topic-conversation'
 export const observerHome = '/superagent/'

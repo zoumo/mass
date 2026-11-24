@@ -27,6 +27,7 @@ import (
 	"github.com/zoumo/mass/massd"
 	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
 	"github.com/zoumo/mass/superagent/pkg/core"
+	"github.com/zoumo/mass/superagent/pkg/watchdog"
 )
 
 const (
@@ -91,6 +92,11 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		diagnostics = &composeDiagnostics{output: diagnostics}
 	}
 
+	if config.watchdogInterval > 0 {
+		if err := watchdog.ReapOrphans(); err != nil {
+			return fmt.Errorf("cannot configure Watchdog process reaping: %w", err)
+		}
+	}
 	statusServer, err := startComposeStatus(ctx, triggers, config.watchdogInterval > 0)
 	if err != nil {
 		return err
@@ -173,16 +179,14 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	if err := runningComposeChildren(children); err != nil {
 		return err
 	}
-	var watchdogChild *childProcess
+	var watchdogChild *composeWatchdog
 	if config.watchdogInterval > 0 {
-		watchdogChild, err = startComposeWatchdog(superagent, coreEndpoint, config.watchdogInterval, sharedEnvironment, diagnostics, statusServer.recordWatchdog)
+		watchdogChild, err = startComposeWatchdog(superagent, coreEndpoint, config.watchdogInterval, statusServer.directory, sharedEnvironment, diagnostics, statusServer.recordWatchdog)
 		if err != nil {
 			return err
 		}
-		defer func() {
-			result = errors.Join(result, watchdogChild.stop(composeWatchdogShutdownTimeout))
-			<-watchdogChild.readDone
-		}()
+		statusServer.registerWatchdog(watchdogChild.childProcess)
+		defer func() { result = errors.Join(result, watchdogChild.stop()) }()
 	}
 	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(addresses); err != nil {
 		return err
@@ -221,7 +225,7 @@ func runningComposeChildren(children []*childProcess) error {
 	return nil
 }
 
-func observeCompose(ctx context.Context, logger *slog.Logger, server *childProcess, triggers []*childProcess, watchdog *childProcess) error {
+func observeCompose(ctx context.Context, logger *slog.Logger, server *childProcess, triggers []*childProcess, watchdog *composeWatchdog) error {
 	exits := make(chan *childProcess, len(triggers))
 	for _, child := range triggers {
 		go func() {
@@ -242,7 +246,8 @@ func observeCompose(ctx context.Context, logger *slog.Logger, server *childProce
 		case child := <-exits:
 			logger.Error("Trigger exited", "component", child.name, "error", child.unexpectedExit())
 		case <-watchdogDone:
-			logger.Error("Watchdog exited", "component", watchdog.name, "error", watchdog.unexpectedExit())
+			logger.Error("Watchdog exited", "component", watchdog.name, "error", watchdog.unexpectedExit(),
+				"releaseUnconfirmed", watchdog.finish())
 			watchdogDone = nil
 		}
 	}
@@ -297,6 +302,10 @@ func (d *childProcess) stop(grace time.Duration) error {
 		}
 		_ = d.stdout.Close()
 	}()
+	return d.stopProcess(grace)
+}
+
+func (d *childProcess) stopProcess(grace time.Duration) error {
 	select {
 	case <-d.done:
 		return nil

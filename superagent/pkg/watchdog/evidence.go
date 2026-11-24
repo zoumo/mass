@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,19 +27,6 @@ const (
 type reportView struct {
 	core.Report
 	Current bool `json:"current"`
-}
-
-type issueView struct {
-	ID               string           `json:"id"`
-	TopicID          string           `json:"topicId"`
-	Title            string           `json:"title"`
-	Goal             string           `json:"goal"`
-	GoalRevision     int              `json:"goalRevision"`
-	CurrentBindingID string           `json:"currentSessionBindingId"`
-	Status           string           `json:"status"`
-	UpdatedAt        string           `json:"updatedAt"`
-	Blockers         []core.Blocker   `json:"blockers,omitempty"`
-	Completion       *core.Completion `json:"completion,omitempty"`
 }
 
 type eventView struct {
@@ -71,12 +59,12 @@ type activityView struct {
 }
 
 type evidence struct {
-	Delivery      Delivery       `json:"delivery"`
-	ObservedAt    time.Time      `json:"observedAt"`
-	Issue         issueView      `json:"issue"`
-	Report        core.Report    `json:"report"`
-	Notification  eventView      `json:"notification"`
-	TopicActivity []activityView `json:"recentTopicActivity"`
+	Delivery      Delivery          `json:"delivery"`
+	ObservedAt    time.Time         `json:"observedAt"`
+	Issue         core.IssueSummary `json:"issue"`
+	Report        core.Report       `json:"report"`
+	Notification  eventView         `json:"notification"`
+	TopicActivity []activityView    `json:"recentTopicActivity"`
 }
 
 type page[T any] struct {
@@ -132,7 +120,7 @@ func (r reader) read(ctx context.Context, path string, query url.Values, out any
 
 func (r reader) collect(ctx context.Context, observed time.Time) (*evidence, error) {
 	query := url.Values{"limit": {"50"}, "preview": {"true"}}
-	var selected *evidence
+	var candidates []candidate
 	seen := make(map[string]bool)
 	for {
 		var reports page[reportView]
@@ -157,16 +145,7 @@ func (r reader) collect(ctx context.Context, observed time.Time) (*evidence, err
 				IssueID: report.IssueID, TopicID: report.TopicID, GoalRevision: report.Revision,
 				ReportID: report.ID, EventID: notification.ID, SentAt: notification.SentAt.UTC(),
 			}
-			if selected != nil && !earlier(delivery, selected.Delivery) {
-				continue
-			}
-			var issue issueView
-			if err := r.read(ctx, "issues/"+url.PathEscape(report.IssueID), nil, &issue); err != nil {
-				return nil, err
-			}
-			if issue.matches(report) {
-				selected = &evidence{Delivery: delivery, ObservedAt: observed, Notification: *notification}
-			}
+			candidates = append(candidates, candidate{delivery: delivery, notification: *notification})
 		}
 		if reports.NextCursor == "" {
 			break
@@ -177,36 +156,58 @@ func (r reader) collect(ctx context.Context, observed time.Time) (*evidence, err
 		seen[reports.NextCursor] = true
 		query.Set("cursor", reports.NextCursor)
 	}
-	if selected == nil {
-		return nil, nil
+	sort.Slice(candidates, func(i, j int) bool { return earlier(candidates[i].delivery, candidates[j].delivery) })
+	for _, candidate := range candidates {
+		selected, err := r.collectCandidate(ctx, observed, candidate)
+		if selected != nil || err != nil {
+			return selected, err
+		}
 	}
+	return nil, nil
+}
 
+type candidate struct {
+	delivery     Delivery
+	notification eventView
+}
+
+func (r reader) collectCandidate(ctx context.Context, observed time.Time, candidate candidate) (*evidence, error) {
+	delivery := candidate.delivery
 	var report reportView
-	if err := r.read(ctx, "reports/"+url.PathEscape(selected.Delivery.ReportID), nil, &report); err != nil {
+	if err := r.read(ctx, "reports/"+url.PathEscape(delivery.ReportID), nil, &report); err != nil {
 		return nil, err
 	}
-	delivery := selected.Delivery
 	if !report.eligible() || report.ID != delivery.ReportID || report.EventID != delivery.EventID ||
 		report.IssueID != delivery.IssueID || report.TopicID != delivery.TopicID || report.Revision != delivery.GoalRevision {
 		return nil, nil
 	}
+	var issue core.IssueSummary
+	issuePath := "issues/" + url.PathEscape(delivery.IssueID)
+	issueQuery := url.Values{"view": {"summary"}}
+	if err := r.read(ctx, issuePath, issueQuery, &issue); err != nil {
+		return nil, err
+	}
+	if !issueMatches(issue, report) {
+		return nil, nil
+	}
 	var activity page[activityView]
-	if err := r.read(ctx, "topics/"+url.PathEscape(selected.Delivery.TopicID)+"/activity", url.Values{"limit": {"10"}}, &activity); err != nil {
+	if err := r.read(ctx, "topics/"+url.PathEscape(delivery.TopicID)+"/activity", url.Values{"limit": {"10"}}, &activity); err != nil {
 		return nil, err
 	}
 	if activity.Items == nil {
 		return nil, errors.New("activity page is missing items")
 	}
 	// Read acceptance and goal facts again after the activity fetch.
-	var issue issueView
-	if err := r.read(ctx, "issues/"+url.PathEscape(selected.Delivery.IssueID), nil, &issue); err != nil {
+	if err := r.read(ctx, issuePath, issueQuery, &issue); err != nil {
 		return nil, err
 	}
-	if !issue.matches(report) {
+	if !issueMatches(issue, report) {
 		return nil, nil
 	}
-	selected.TopicActivity = activity.Items[:min(10, len(activity.Items))]
-	selected.Report, selected.Issue = report.Report, issue
+	selected := &evidence{
+		Delivery: delivery, ObservedAt: observed, Issue: issue, Report: report.Report,
+		Notification: candidate.notification, TopicActivity: activity.Items[:min(10, len(activity.Items))],
+	}
 	selected.boundText()
 	return selected, nil
 }
@@ -235,9 +236,9 @@ func (r reportView) eligible() bool {
 		r.ID != "" && r.IssueID != "" && r.TopicID != "" && r.EventID != "" && r.SessionBindingID != ""
 }
 
-func (i issueView) matches(r reportView) bool {
+func issueMatches(i core.IssueSummary, r reportView) bool {
 	return i.ID == r.IssueID && i.TopicID == r.TopicID && i.GoalRevision == r.Revision &&
-		i.CurrentBindingID == r.SessionBindingID && i.Status == "active" && i.Completion == nil && len(i.Blockers) == 0
+		i.CurrentSessionBindingID == r.SessionBindingID && i.Status == "active" && !i.Completed && !i.Blocked
 }
 
 func earlier(a, b Delivery) bool {

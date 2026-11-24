@@ -1,7 +1,7 @@
-import { useEffect, useState, type MouseEvent } from 'react'
-import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine, ShieldCheck } from 'lucide-react'
+import { useEffect, useState, type ComponentType, type MouseEvent } from 'react'
+import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { RefreshContext, navigate, observerHome, observerView, perspectiveFromPath, useObserverLocation, viewHref, type Perspective } from './observer'
+import { RefreshContext, navigate, observerHome, observerView, perspectives, perspectiveFromPath, useObserverLocation, viewHref, type Perspective, type ViewProps } from './observer'
 import MessageView from './MessageView'
 import RouterView from './RouterView'
 import TopicView from './TopicView'
@@ -21,7 +21,7 @@ const views = {
   trace: { title: 'Trace', subtitle: '调用链', icon: ListTree, component: TraceView },
   metrics: { title: 'Metrics', subtitle: '', icon: BarChart3, component: MetricsView },
   watchdog: { title: 'Watchdog', subtitle: '', icon: ShieldCheck, component: WatchdogView },
-}
+} satisfies Record<Perspective, { title: string; subtitle: string; icon: LucideIcon; component: ComponentType<ViewProps> }>
 
 export default function App() {
   const route = useObserverLocation()
@@ -98,7 +98,7 @@ export default function App() {
         </header>
         <nav className="tabs" aria-label="观察视角">
           <div className="shell tab-inner">
-            {(Object.keys(views) as Perspective[]).map((name) => {
+            {perspectives.map((name) => {
               const TabIcon = views[name].icon
               return (
                 <a
