@@ -35,14 +35,14 @@ func decodeProcessEnvList[T any](field string, value any) ([]T, error) {
 }
 
 // The SDK exposes file value resolution through its stdio environment model.
-func (o ProcessConfig) environmentSource() []mcp.Server {
+func (o *ProcessConfig) environmentSource() []mcp.Server {
 	return []mcp.Server{{
 		Name: "runtime", Transport: mcp.TransportStdio, Command: "agent",
 		Env: o.envEntries, EnvFrom: o.envFrom,
 	}}
 }
 
-func (o ProcessConfig) validateEnvironment() error {
+func (o *ProcessConfig) validateEnvironment() error {
 	if err := mcp.ValidateServers(o.environmentSource()); err != nil {
 		return errors.New(processEnvironmentMessage(err))
 	}

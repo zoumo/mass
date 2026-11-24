@@ -315,7 +315,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 15 * time.Second
 	cmd.Dir = route.Workspace
-	cmd.Env = (runtime.ProcessConfig{EnvPolicy: "replace", Env: route.Env}).Environment(provider)
+	cmd.Env = (&runtime.ProcessConfig{EnvPolicy: "replace", Env: route.Env}).Environment(provider)
 	cmd.Stderr = log
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
