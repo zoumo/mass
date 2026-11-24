@@ -80,15 +80,19 @@ func ensureSubscription(ctx context.Context, tx *sql.Tx, sub Subscription) (stri
 func acceptRoute(ctx context.Context, tx *sql.Tx, m Message, eventID, at string) error {
 	var count int
 	var topicID string
-	err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(min(topic_id),'') FROM thread_subscriptions WHERE thread_id=?`, m.ThreadID).Scan(&count, &topicID)
+	if m.scheduled != nil && m.scheduled.topicID != "" {
+		return routeAcceptedMessage(ctx, tx, m, m.scheduled.topicID, eventID, "scheduled task owner", at)
+	}
+	subscriptions := `SELECT count(*),coalesce(min(topic_id),'') FROM thread_subscriptions WHERE thread_id=?`
+	if m.scheduled != nil {
+		subscriptions += ` AND EXISTS (SELECT 1 FROM topics WHERE id=thread_subscriptions.topic_id AND body->>'$.status'='active')`
+	}
+	err := tx.QueryRowContext(ctx, subscriptions, m.ThreadID).Scan(&count, &topicID)
 	if err != nil {
 		return storageError()
 	}
 	if count == 1 {
-		if _, err := recordRoutedMessage(ctx, tx, m.ID, m.ThreadID, topicID, eventID, "single subscription", at, "core"); err != nil {
-			return err
-		}
-		return setRoutingState(ctx, tx, m.ID, "routed")
+		return routeAcceptedMessage(ctx, tx, m, topicID, eventID, "single subscription", at)
 	}
 	d := internalEvent{
 		ID: eventID, Kind: routeRequestKind,
@@ -99,6 +103,13 @@ func acceptRoute(ctx context.Context, tx *sql.Tx, m Message, eventID, at string)
 		return err
 	}
 	return setRoutingState(ctx, tx, m.ID, "pending")
+}
+
+func routeAcceptedMessage(ctx context.Context, tx *sql.Tx, m Message, topicID, eventID, reason, at string) error {
+	if _, err := recordRoutedMessage(ctx, tx, m.ID, m.ThreadID, topicID, eventID, reason, at, "core"); err != nil {
+		return err
+	}
+	return setRoutingState(ctx, tx, m.ID, "routed")
 }
 
 func setRoutingState(ctx context.Context, tx *sql.Tx, messageID, state string) error {

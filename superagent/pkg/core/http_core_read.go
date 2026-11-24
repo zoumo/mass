@@ -25,7 +25,7 @@ func isTrustedResourceRead(path string) bool {
 	}
 	collection, suffix, _ := strings.Cut(rest, "/")
 	switch collection {
-	case "trigger-messages", "outbox-messages", "threads", "topics", "issues", "reports", "timers", "internal-events":
+	case "trigger-messages", "outbox-messages", "threads", "topics", "issues", "reports", "internal-events":
 		return true
 	case "session-bindings":
 		_, view, _ := strings.Cut(suffix, "/")
@@ -64,11 +64,6 @@ type issueReadInput struct {
 type reportReadInput struct {
 	Trace string `query:"trace" hidden:"true"`
 	ID    string `path:"reportId"`
-}
-
-type timerReadInput struct {
-	Trace string `query:"trace" hidden:"true"`
-	ID    string `path:"timerId"`
 }
 
 type internalEventReadInput struct {
@@ -117,7 +112,6 @@ func (s *Server) registerCoreReadResources(api *httpAPI) {
 	issuePreview := *api.huma.OpenAPI().Components.Schemas.SchemaFromRef(issue.Ref)
 	issuePreview.Required = slices.DeleteFunc(slices.Clone(issuePreview.Required), func(field string) bool { return field == "goal" })
 	report := api.projectionSchema(reflect.TypeFor[reportReadProjection]())
-	timer := api.projectionSchema(reflect.TypeFor[timerReadProjection]())
 	event := api.projectionSchema(reflect.TypeFor[internalEventReadProjection]())
 	binding := api.projectionSchema(reflect.TypeFor[bindingReadProjection]())
 	topicSummary := api.schema(reflect.TypeFor[topicConversationSummary]())
@@ -131,7 +125,6 @@ func (s *Server) registerCoreReadResources(api *httpAPI) {
 		queryString("topicId", "Filter Issues by Topic"), queryString("messageId", "Filter Issues by a material referencing this Trigger Message"),
 	})
 	s.registerCoreList(api, "reports", "Reports", pageSchema(report), []*huma.Param{queryString("issueId", "Filter Reports by Issue")})
-	s.registerCoreList(api, "timers", "Timers", pageSchema(timer), []*huma.Param{queryString("topicId", "Filter Timers by Topic")})
 	s.registerCoreList(api, "internal-events", "InternalEvents", pageSchema(event), []*huma.Param{
 		queryString("issueId", "Filter Internal Events referencing this Issue"),
 		queryString("messageId", "Filter routing events referencing this Trigger Message, including Topic titles in previews"),
@@ -142,7 +135,6 @@ func (s *Server) registerCoreReadResources(api *httpAPI) {
 	registerCoreRecord(s, api, "topics/{topicId}", "Topic", topic, func(in *topicReadInput) (string, string) { return in.ID, "" })
 	registerCoreRecord(s, api, "issues/{issueId}", "Issue", issue, func(in *issueReadInput) (string, string) { return in.ID, in.Trace })
 	registerCoreRecord(s, api, "reports/{reportId}", "Report", report, func(in *reportReadInput) (string, string) { return in.ID, in.Trace })
-	registerCoreRecord(s, api, "timers/{timerId}", "Timer", timer, func(in *timerReadInput) (string, string) { return in.ID, in.Trace })
 	registerCoreRecord(s, api, "internal-events/{eventId}", "InternalEvent", event, func(in *internalEventReadInput) (string, string) { return in.ID, in.Trace })
 	registerCoreRecord(s, api, "session-bindings/{bindingId}", "SessionBinding", binding, func(in *bindingReadInput) (string, string) { return in.ID, in.Trace })
 
@@ -178,7 +170,7 @@ func (s *Server) registerCoreList(api *httpAPI, kind, name string, schema *huma.
 	}
 	params := append([]*huma.Param{limitParam}, filters...)
 	switch kind {
-	case "issues", "reports", "timers", "session-bindings", "internal-events":
+	case "issues", "reports", "session-bindings", "internal-events":
 		params = append(params, queryBoolean("preview", "Return the resource preview projection"), traceQuery())
 	}
 	registerJSONRead(s, api, huma.Operation{

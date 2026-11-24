@@ -780,15 +780,20 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	queueInternal(t, p, newInternalEvent("browser-accepted", "context_supplement", eventParty{Kind: "router"}))
 	waitWorkEvent(t, p, "browser-accepted", "sent")
 	topicToken := roleToken(t, f, topic)
-	timerRequest := timerInput("observer-timer", timerFuture)
-	timerRequest.Materials = []core.Material{{Label: "Archive checklist", URI: "artifacts/archive-checklist.md"}}
-	timer := roleWork[core.Timer](t, p, topicToken, "schedule_followup", timerRequest)
-	roleWork[core.Timer](t, p, topicToken, "timer_update", core.UpdateTimerRequest{
-		CancelTimerRequest: cancelTimerInput("observer-timer-update", timer),
-		DueAt:              timerPast, Content: "Review the archived build.", Materials: timerRequest.Materials,
+	taskRequest := scheduledTaskInput("observer-scheduled-task", scheduledTaskLater)
+	task := roleWork[core.ScheduledTask](t, p, topicToken, "create_scheduled_task", taskRequest)
+	content := []events.ContentBlock{events.Text("Review the archived build.")}
+	roleWork[core.ScheduledTask](t, p, topicToken, "update_scheduled_task", core.UpdateScheduledTaskRequest{
+		ScheduledTaskRevision: scheduledTaskRevision("observer-scheduled-task-update", task),
+		ScheduledTaskChanges: core.ScheduledTaskChanges{
+			Schedule: &core.ScheduledTaskSchedule{Type: "once", RunAt: scheduledTaskPast}, Content: &content,
+		},
 	})
-	firedTimer := waitTimer(t, p, timer.ID, "fired")
-	waitTimerEvent(t, p, firedTimer.Followup.ID, "sent")
+	waitScheduledTask(t, p, topicToken, task.ID, "completed")
+	scheduledMessage := readRecord[struct{ Items []core.Message }](t, p, "trigger-messages?order=newest&limit=1").Items[0]
+	require.Equal(t, "core:scheduled-task", scheduledMessage.Source)
+	require.Equal(t, content, scheduledMessage.Content)
+	waitWorkEvent(t, p, scheduledMessage.EventID, "sent")
 	create := issueInput(f.dir, "observer-issue")
 	create.Title = "Verify sample build"
 	create.Goal = "Run the sample build and inspect its exit code."

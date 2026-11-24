@@ -40,7 +40,7 @@ func checkStackStatus(t *testing.T, endpoint, overall, massd, github, dws string
 	require.NoError(t, json.Unmarshal(body, &got))
 	require.Equal(t, overall, got.Status)
 	require.Equal(t, "ready", got.Core.Status)
-	require.NotNil(t, got.Core.TimerStates)
+	require.NotNil(t, got.Core.ScheduledTaskStates)
 	require.Equal(t, massd, got.Massd.Status)
 	require.Equal(t, github, got.Triggers.GitHub.Status)
 	require.Equal(t, dws, got.Triggers.DWS.Status)

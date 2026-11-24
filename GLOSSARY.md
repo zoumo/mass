@@ -120,6 +120,8 @@ _Avoid_: 将实时事件流等同于完整会话历史或可靠消费进度。
 
 **Issue Session**：Issue 通过当前 SessionBinding 使用的 MASS Session。它接收启动指令、后续指令和补充材料，并按实际采用的目标版本提交 Report。
 
+**ScheduledTask（定时任务）**：Core 保存的单次或周期调度定义。内置定时 Trigger 每次激活产生一条 Trigger Message。Topic 创建的任务归该 Topic 所有，Operator 可以创建独立任务。
+
 **Internal Event（内部事件）**：Superagent 发给一个 Router Session、Topic Session 或 Issue Session 的结构化输入，例如路由请求、消息、执行输入或通知。每个事件有稳定身份，向同一接收方重试时沿用该身份。
 
 ## 消费与观察

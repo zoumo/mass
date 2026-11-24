@@ -1,4 +1,4 @@
-import { stateLabel, eventStatusLabel, type WorkbenchRow } from '../../workbench'
+import { stateLabel, type WorkbenchRow } from '../../workbench'
 import type { StructuredBody } from '../StructuredContent'
 
 export type DiagnosticRow = WorkbenchRow & {
@@ -15,8 +15,6 @@ export type DiagnosticRow = WorkbenchRow & {
     resolution?: { reason: string; at: string; messageId?: string }
   }[]
   latestRequirementsNotification?: DiagnosticRow
-  followup?: DiagnosticRow
-  triggerMessageId?: string
   workObservation?: {
     state: string
     observedAt: string
@@ -65,8 +63,6 @@ export type DiagnosticRow = WorkbenchRow & {
   workspace?: string
   content?: string | StructuredBody
   preview?: string
-  dueAt?: string
-  firedAt?: string
   details?: string
   eventId?: string
   sessionId?: string
@@ -85,7 +81,7 @@ export type DiagnosticRow = WorkbenchRow & {
   event_id?: string
   ownerId?: string
 }
-const workKinds = ['issues', 'reports', 'timers'] as const
+const workKinds = ['issues', 'reports'] as const
 export const kinds = [
   'messages',
   'threads',
@@ -103,7 +99,6 @@ const collectionLabels: Record<Kind, string> = {
   topics: 'Topic',
   issues: 'Issue',
   reports: '报告',
-  timers: '定时器',
   'session-bindings': '会话绑定',
   'internal-events': '内部事件',
 }
@@ -118,10 +113,6 @@ export const reminderBasis: Record<string, string> = {
 
 export const replyLabel = (status?: string) =>
   status === 'sent' ? '已发送' : status === 'pending' ? '待发送' : stateLabel(status)
-export function followupLabel(followup?: DiagnosticRow) {
-  return followup ? eventStatusLabel(followup.status) : '—'
-}
-
 export const identity = (row: DiagnosticRow) => String(row.event_id || row.id || '')
 
 export type Filter = 'topicId' | 'issueId' | 'messageId' | 'threadId'

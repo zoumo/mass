@@ -40,7 +40,6 @@ type internalEvent struct {
 	Report         json.RawMessage         `json:"report,omitempty"`
 	Messages       []json.RawMessage       `json:"messages,omitempty"`
 	MessageContent []attachedMessage       `json:"messageContent,omitempty"`
-	Followup       json.RawMessage         `json:"followup,omitempty"`
 }
 
 type internalEventRow struct {

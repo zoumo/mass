@@ -117,7 +117,6 @@ Brackets indicate an optional detail path.
 | Topic activity and conversation | `/v1/core/topics/{topicId}/activity` |
 | Issues | `/v1/core/issues[/{issueId}]` |
 | Reports | `/v1/core/reports[/{reportId}]` |
-| Timers | `/v1/core/timers[/{timerId}]` |
 | Internal Events | `/v1/core/internal-events[/{eventId}]` |
 | Session Bindings | `/v1/core/session-bindings[/{bindingId}]` |
 | Stored Session history | `/v1/core/session-bindings/{bindingId}/history` |
@@ -227,8 +226,8 @@ query scope and first-page watermarks.
 admission and database access. It returns `503` when admission is closed.
 `GET /status` returns Core, massd, and the built-in GitHub and DWS Trigger
 states. Core includes Router preparation, Topic and Issue states, unknown
-native stops and echoes, and counts by Internal Event, Outbox, and Timer
-state. Standalone Core reports the Trigger states as `not_managed`. Compose
+native stops and echoes, Internal Event and Outbox counts, and
+`core.scheduledTaskStates`. Standalone Core reports the Trigger states as `not_managed`. Compose
 adds their observed states. An unavailable component can make `/status`
 report `degraded` while `/readyz` remains ready.
 
@@ -251,14 +250,14 @@ and the Session acceptance timestamp.
 
 Lists return `{"items":[...],"nextCursor":"opaque"}`. Default limit 50,
 valid range 1–200. Trigger Messages and Outbox history accept an exact
-`threadId`. Issues, Timers, and Outbox history accept `topicId`. Reports,
+`threadId`. Issues and Outbox history accept `topicId`. Reports,
 Session Bindings, and Internal Events accept `issueId`. Internal Events and
 Outbox history accept `messageId`. Issues accept `messageId` to select Issues
 with matching materials across Topics. Supply one parent filter at a time.
 Message-filtered Issue and Internal Event previews include available Topic
 names. Internal Event previews mark recorded goal updates with `goalUpdate`
 and include the target revision. Supported lists accept `preview=true` for
-compact rows. Message, reply, and Timer previews contain up to 240
+compact rows. Message and reply previews contain up to 240
 characters. A Message preview uses the first nonblank text block or lists
 its content types. Open a record by ID for its
 full `content` and diagnostic `_meta` when present. Continuation
@@ -458,7 +457,7 @@ reopens. Treat SessionBinding IDs as opaque. A Report has its own ID and referen
 its Topic notification with `eventId`.
 
 All changes require an `operationId`. Creation tools such as `create_issue`
-and `schedule_followup` use it within the authenticated SessionBinding to
+and `create_scheduled_task` use it within the authenticated SessionBinding to
 identify the same resource on an identical retry. Reusing a creation key
 with different parameters returns `conflict`.
 
@@ -733,48 +732,84 @@ Core records the operation before issuing lifecycle calls. A pending recovery
 holds the current binding in `recovering`. Inspect the binding for its latest recovery or retry with the same
 arguments. The latest completed recovery returns its saved result on replay.
 
-## Topic Timers
+## Scheduled tasks
 
-Only the current Topic binding may manage its Timers. The Topic must be active.
-MCP clients call these tools through `/v1/mcp`.
+A `ScheduledTask` generates a Trigger Message at each planned time. Core
+stores the task's `content` as the same ordered content blocks accepted by
+Trigger Message submission. Core gives the task a stable Thread and stores
+one Trigger Message and its initial Internal Event per activation. The
+Trigger Message source is `core:scheduled-task`.
 
-Use `schedule_followup`, `update_followup`, or `cancel_followup`. Call
-`tools/list` for the current tool schemas.
+### Schedule and state
 
-`dueAt` accepts RFC3339 with `Z` or a numeric offset and up to nine fractional
-digits. The record stores the UTC instant. Content must be nonblank. Materials
-use the Issue material shape and the same Topic scope for Message references.
-Replaying the original `schedule_followup` request with the same binding and
-operation ID returns the followup in its current state. Reusing that operation
-ID with different parameters returns `conflict`. Updates and cancellations
-compare the current revision. A stale revision returns `conflict`.
-Changes to a current `fired`, `canceled` or `invalidated` Timer
-fail with `failed_precondition`. Use a new `schedule_followup` for another followup.
+| Type | Example | Meaning |
+| --- | --- | --- |
+| `once` | `{"type":"once","runAt":"2030-01-01T09:00:00+08:00"}` | Run once at an RFC3339 instant with a zone offset. |
+| `interval` | `{"type":"interval","every":"30m"}` | Run after each fixed Go duration from activation of the rule. |
+| `daily` | `{"type":"daily","times":["09:00","18:00"],"timezone":"Asia/Shanghai"}` | Run at the selected local times. |
+| `weekly` | `{"type":"weekly","weekdays":["mon","fri"],"times":["09:00"],"timezone":"Asia/Shanghai"}` | Run on the selected weekdays. |
+| `monthly` | `{"type":"monthly","days":[1,-1],"times":["09:00"],"timezone":"Asia/Shanghai"}` | Run on the selected dates. Negative dates count back from month end. Dates absent from a month are skipped. |
+| `cron` | `{"type":"cron","expression":"0 9 * * 1-5","timezone":"Asia/Shanghai"}` | Run on the five-field cron rule. If both the day-of-month and weekday fields are restricted, either may match. |
 
-Core scans on startup and every 250 ms while execution is enabled. A valid past
-time is eligible on the next scan. The first valid transaction to commit
-decides a race between firing, updating, canceling and Topic termination.
-Firing keeps the selected revision and commits `firedAt`, the task Thread,
-its Topic subscription, and one Trigger Message with its routing event in
-the same transaction. The internal source is `core:timer`. The task provides
-its final Thread ID and uses its task ID as `sourceMessageId`. The Message
-contains the followup reason in a text block. The `followup` field in the
-`routed_message` and Topic `get_message` results gives the task ID, revision,
-due time, and material references from the scheduled task.
+Calendar rules accept a positive `every` count of days, weeks or months and
+default to `1`. They count periods from the activation of the rule, with weeks
+starting on Monday. Calendar and cron rules use explicit IANA time zones. Core
+skips missing wall-clock times during daylight saving changes and uses the
+first occurrence of a repeated wall-clock time. A valid past `once.runAt`
+is eligible on the next scan when created while Core is online.
 
-The single-subscription rule routes the Message to its Topic via StartOrSteer.
-Use `get_topic` with `include: ["followups"]` to check the current task.
+`active` tasks have a `nextRunAt`. Pausing a task clears `nextRunAt`, and
+resuming it selects the next valid time. On restart or resume, Core skips
+elapsed times. A one-time task reaches `completed` when its scheduled time is
+accepted or skipped, or when its Topic lifecycle closes. `completed` describes
+scheduling. Follow the Message's Internal Event for delivery evidence.
 
-Completing or canceling the Topic atomically invalidates scheduled Timers and
-supersedes unconfirmed followup events. Accepted events and their
-Message and Thread remain readable. Reopening preserves the task and event
-history. On restart, due scheduled Timers can fire and valid unconfirmed
-events use the same event ID on retry.
+### Topic MCP
 
-`get_topic` with `include: ["followups"]` lists followups in the bound Topic.
-`GET /v1/core/timers?topicId={topicId}` and `observe timers --topic-id TOPIC_ID` expose the
-revision, due and fired times, state, `triggerMessageId`, `threadId` and
-`followup` routing event.
+Use `create_scheduled_task`, `get_scheduled_task`, `update_scheduled_task`,
+and `delete_scheduled_task`. Call `tools/list` for their schemas. Use
+`get_topic` with `include: ["scheduledTasks"]` to list task definitions.
+
+Core derives `{type:"topic",id}` in `owner` from the Topic binding. Topic
+reads and mutations are scoped to this owner. Use `expectedRevision` for
+updates and deletion. To pause or resume, update `status` to `paused` or
+`active`. Changing only `content` keeps the existing schedule. A currently
+active lifecycle can delete its Topic's task from an earlier lifecycle.
+
+An active Topic receives its task's Message through `routed_message` and
+StartOrSteer. When the event carries a reference, use the existing
+`get_message` tool for the content blocks. Closing the Topic settles its
+tasks and supersedes unconfirmed delivery events for that lifecycle.
+
+### Local Operator HTTP and CLI
+
+Connect directly to loopback Core and send the configured Operator Bearer.
+An Operator can create and manage tasks with an omitted `owner`, read all
+task definitions and histories, and trigger an active task immediately.
+Independent task messages route to a sole active subscriber or to the Router.
+
+| Method and path | Input or behavior |
+| --- | --- |
+| `GET` or `HEAD /v1/core/scheduled-tasks` | List task definitions. Filter by `ownerType=topic` with `ownerId`. |
+| `POST /v1/core/scheduled-tasks` | Create a task with `operationId`, `schedule`, and `content`. |
+| `GET` or `HEAD /v1/core/scheduled-tasks/{scheduledTaskId}` | Read a task definition. |
+| `PATCH /v1/core/scheduled-tasks/{scheduledTaskId}` | Supply `expectedRevision` and one or more of `schedule`, `content`, or `status`. |
+| `DELETE /v1/core/scheduled-tasks/{scheduledTaskId}?expectedRevision=1` | Delete an independent task definition. |
+| `POST /v1/core/scheduled-tasks/{scheduledTaskId}/trigger` | Supply `operationId`. Return a Trigger Message acceptance receipt. |
+| `GET` or `HEAD /v1/core/scheduled-tasks/{scheduledTaskId}/trigger-messages` | List a task's messages, including for a deleted task. An unknown task ID returns `404`. |
+| `GET` or `HEAD /v1/core/trigger-messages?scheduledTaskId=…` | Filter the default Trigger Message list by task. |
+| `GET` or `HEAD /v1/core/trigger-messages?source=core:scheduled-task` | Filter the default list by exact source. Combine with `scheduledTaskId` to narrow it. |
+
+A manual trigger leaves the planned time intact and replays the same receipt
+for the same task and `operationId`. Trigger Message history returns the
+content and task ID captured at acceptance. Use `eventId` to inspect the
+Internal Event. The Web shows normal messages and delivery records, with task
+counts by state in its status summary.
+
+With `--operator-token-file`, use `superagent scheduled-tasks list`,
+`superagent scheduled-tasks get TASK_ID`, `superagent scheduled-tasks
+trigger-messages TASK_ID`, or `superagent scheduled-tasks trigger TASK_ID
+--operation-id OPERATION_ID`.
 
 ## Pull request registration and subscriptions
 

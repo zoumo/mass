@@ -52,6 +52,12 @@ type Message struct {
 	ReceivedAt        string                `json:"receivedAt"`
 	Acceptance        string                `json:"acceptance"`
 	EventID           string                `json:"eventId,omitempty"`
+	scheduled         *scheduledTaskActivation
+}
+
+type scheduledTaskActivation struct {
+	taskID, topicID, method, scheduledFor string
+	revision                              int
 }
 
 var _ AgentPromptView = Message{}

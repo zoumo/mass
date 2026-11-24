@@ -154,8 +154,8 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if c.Massd == nil && !composed {
 			return c, problem("invalid_argument", "sessions require massd configuration")
 		}
-	} else if (!composed && c.Massd != nil) || c.OperatorTokenFile != "" {
-		return c, problem("invalid_argument", "massd and operatorTokenFile require sessions configuration")
+	} else if !composed && c.Massd != nil {
+		return c, problem("invalid_argument", "massd requires sessions configuration")
 	}
 	if c.Massd != nil && v.IsSet("massd") {
 		var massd MassdConfig
@@ -200,7 +200,7 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if err != nil {
 			return c, err
 		}
-		if c.operatorToken == c.Massd.token {
+		if c.Massd != nil && c.operatorToken == c.Massd.token {
 			return c, problem("invalid_argument", "operator token must be distinct from the massd token")
 		}
 	}
@@ -221,7 +221,7 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		}
 	}
 	if c.operatorToken != "" && !net.ParseIP(host).IsLoopback() {
-		return c, problem("invalid_argument", "operator recovery requires a loopback Core listener")
+		return c, problem("invalid_argument", "operator access requires a loopback Core listener")
 	}
 	seenSource := map[string]string{}
 	seenAccount := map[string]string{}

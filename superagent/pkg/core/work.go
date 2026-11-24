@@ -161,14 +161,12 @@ func (s *Store) workCommand(ctx context.Context, b SessionBinding, tool string, 
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r CompleteIssueRequest) string { return r.OperationID }, completeIssue)
 	case "topic_complete":
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r CompleteRequest) string { return r.OperationID }, completeTopic)
-	case "timer_set":
-		return decodeWorkCommand(ctx, s, b, tool, raw, func(r SetTimerRequest) string { return r.OperationID }, setTimer)
-	case "timer_update":
-		return decodeWorkCommand(ctx, s, b, tool, raw, func(r UpdateTimerRequest) string { return r.OperationID },
-			func(r UpdateTimerRequest) workMutation { return changeTimer(r.CancelTimerRequest, &r) })
-	case "timer_cancel":
-		return decodeWorkCommand(ctx, s, b, tool, raw, func(r CancelTimerRequest) string { return r.OperationID },
-			func(r CancelTimerRequest) workMutation { return changeTimer(r, nil) })
+	case "create_scheduled_task":
+		return decodeWorkCommand(ctx, s, b, tool, raw, func(r CreateScheduledTaskRequest) string { return r.OperationID }, createScheduledTask)
+	case "update_scheduled_task":
+		return decodeWorkCommand(ctx, s, b, tool, raw, func(r UpdateScheduledTaskRequest) string { return r.OperationID }, updateScheduledTask)
+	case "delete_scheduled_task":
+		return decodeWorkCommand(ctx, s, b, tool, raw, func(r ScheduledTaskRevision) string { return r.OperationID }, deleteScheduledTask)
 	case "issue_cancel", "issue_reopen":
 		return decodeWorkCommand(ctx, s, b, tool, raw, func(r IssueLifecycleRequest) string { return r.OperationID },
 			func(r IssueLifecycleRequest) workMutation { return changeIssueLifecycle(tool, r) })
@@ -190,7 +188,15 @@ func decodeWorkCommand[T any](ctx context.Context, s *Store, b SessionBinding, k
 
 type workMutation func(context.Context, *sql.Tx, SessionBinding) (any, error)
 
-func (s *Store) commitWork(ctx context.Context, b SessionBinding, kind, operationID string, apply workMutation) (_ json.RawMessage, retErr error) {
+func (s *Store) commitWork(ctx context.Context, b SessionBinding, kind, operationID string, apply workMutation) (json.RawMessage, error) {
+	return s.commitWorkMutation(ctx, b, kind, operationID, kind != "submit_report", apply)
+}
+
+func (s *Store) commitScheduledTaskOperator(ctx context.Context, kind, operationID string, apply workMutation) (json.RawMessage, error) {
+	return s.commitWorkMutation(ctx, SessionBinding{Role: "operator"}, kind, operationID, false, apply)
+}
+
+func (s *Store) commitWorkMutation(ctx context.Context, b SessionBinding, kind, operationID string, requireBinding bool, apply workMutation) (_ json.RawMessage, retErr error) {
 	if operation := workTraceOperation(kind); operation != "" {
 		var finish func(string)
 		ctx, finish = s.telemetry.startOperation(ctx, operation, b.Role)
@@ -206,7 +212,7 @@ func (s *Store) commitWork(ctx context.Context, b SessionBinding, kind, operatio
 	if strings.TrimSpace(operationID) == "" {
 		return nil, problem("invalid_argument", "operationId is required")
 	}
-	if kind != "submit_report" {
+	if requireBinding {
 		if err := checkBinding(ctx, tx, b); err != nil {
 			return nil, err
 		}
@@ -245,6 +251,12 @@ func workTraceOperation(tool string) string {
 		return "issue.complete"
 	case "topic_complete":
 		return "topic.complete"
+	case "create_scheduled_task":
+		return "scheduled_task.create"
+	case "update_scheduled_task":
+		return "scheduled_task.update"
+	case "delete_scheduled_task":
+		return "scheduled_task.delete"
 	default:
 		return ""
 	}
@@ -520,7 +532,7 @@ func completeTopic(r CompleteRequest) workMutation {
 		}
 		t.Status, t.UpdatedAt = "completed", at
 		t.Revision++
-		if err := invalidateTimers(ctx, tx, t.ID, at); err != nil {
+		if err := closeTopicScheduledTasks(ctx, tx, t.ID, t.LifecycleGeneration, at); err != nil {
 			return nil, err
 		}
 

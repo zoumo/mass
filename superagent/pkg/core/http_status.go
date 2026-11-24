@@ -76,7 +76,7 @@ func (s *Server) registerStatus(api *httpAPI) {
 	huma.Register(api.huma, huma.Operation{
 		Method: http.MethodGet, Path: "/status", OperationID: "getStackStatus", Tags: []string{"Status"},
 		Summary:     "Read Core, massd and built-in Trigger status",
-		Description: "Returns partial status when a component is unavailable. In standalone Core, GitHub and DWS are not managed. Timer state is reported by Core.",
+		Description: "Returns partial status when a component is unavailable. In standalone Core, GitHub and DWS are not managed. Core reports ScheduledTask states.",
 		Responses: map[string]*huma.Response{
 			"403": api.coreError("Core request origin not allowed"),
 		},
@@ -105,7 +105,7 @@ func (s *Server) stackStatus(ctx context.Context) stackStatus {
 		status.Core = coreComponentStatus{CoreStatus: CoreStatus{
 			Status: "unavailable", Ingress: "unavailable",
 			TopicStates: map[string]int{}, IssueStates: map[string]int{}, EventStates: map[string]int{},
-			OutboxStates: map[string]int{}, TimerStates: map[string]int{},
+			OutboxStates: map[string]int{}, ScheduledTaskStates: map[string]int{},
 		}}
 	}
 	probes.Wait()

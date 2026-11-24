@@ -14,7 +14,6 @@ const apiCollections = new Set([
   'outbox',
   'reports',
   'threads',
-  'timers',
   'topics',
 ])
 

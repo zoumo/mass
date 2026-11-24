@@ -398,6 +398,13 @@
           "router": {
             "type": "string"
           },
+          "scheduledTaskStates": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
           "schemaVersion": {
             "format": "int64",
             "type": "integer"
@@ -408,13 +415,6 @@
               "unavailable"
             ],
             "type": "string"
-          },
-          "timerStates": {
-            "additionalProperties": {
-              "format": "int64",
-              "type": "integer"
-            },
-            "type": "object"
           },
           "topicStates": {
             "additionalProperties": {
@@ -437,7 +437,7 @@
           "issueStates",
           "eventStates",
           "outboxStates",
-          "timerStates",
+          "scheduledTaskStates",
           "unknownStops"
         ],
         "type": "object"
@@ -451,6 +451,456 @@
         },
         "required": [
           "error"
+        ],
+        "type": "object"
+      },
+      "CreateScheduledTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "text",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "image",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "audio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "resource": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blob": {
+                          "type": "string"
+                        },
+                        "mimeType": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "uri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "uri"
+                      ],
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "resource"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icons": {
+                      "items": {
+                        "$ref": "#/components/schemas/ResourceIcon"
+                      },
+                      "type": "array"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "resource_link",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "uri",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "schedule": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "runAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "once",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "runAt"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "description": "Positive Go duration, e.g. 30m or 2h.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "interval",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "every"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "daily",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "weekly",
+                    "type": "string"
+                  },
+                  "weekdays": {
+                    "items": {
+                      "enum": [
+                        "sun",
+                        "mon",
+                        "tue",
+                        "wed",
+                        "thu",
+                        "fri",
+                        "sat"
+                      ],
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "weekdays"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "days": {
+                    "items": {
+                      "description": "Positive days count from the start of the month. Negative days count from the end.",
+                      "maximum": 31,
+                      "minimum": -31,
+                      "not": {
+                        "const": 0
+                      },
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "monthly",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "days"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expression": {
+                    "description": "Five fields in order: minute, hour, day of month, calendar month, and weekday (0 is Sunday).",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "cron",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "expression",
+                  "timezone"
+                ],
+                "type": "object"
+              }
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "operationId",
+          "schedule",
+          "content"
         ],
         "type": "object"
       },
@@ -1840,6 +2290,1499 @@
         ],
         "type": "object"
       },
+      "ScheduledTask": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "text",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "image",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "audio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "resource": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blob": {
+                          "type": "string"
+                        },
+                        "mimeType": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "uri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "uri"
+                      ],
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "resource"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icons": {
+                      "items": {
+                        "$ref": "#/components/schemas/ResourceIcon"
+                      },
+                      "type": "array"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "resource_link",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "uri",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "nextRunAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ScheduledTaskOwner"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "schedule": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "runAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "once",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "runAt"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "description": "Positive Go duration, e.g. 30m or 2h.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "interval",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "every"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "daily",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "weekly",
+                    "type": "string"
+                  },
+                  "weekdays": {
+                    "items": {
+                      "enum": [
+                        "sun",
+                        "mon",
+                        "tue",
+                        "wed",
+                        "thu",
+                        "fri",
+                        "sat"
+                      ],
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "weekdays"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "days": {
+                    "items": {
+                      "description": "Positive days count from the start of the month. Negative days count from the end.",
+                      "maximum": 31,
+                      "minimum": -31,
+                      "not": {
+                        "const": 0
+                      },
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "monthly",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "days"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expression": {
+                    "description": "Five fields in order: minute, hour, day of month, calendar month, and weekday (0 is Sunday).",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "cron",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "expression",
+                  "timezone"
+                ],
+                "type": "object"
+              }
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused",
+              "completed"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "schedule",
+          "content",
+          "status",
+          "revision",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "ScheduledTaskDeletion": {
+        "additionalProperties": false,
+        "properties": {
+          "scheduledTaskId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduledTaskId"
+        ],
+        "type": "object"
+      },
+      "ScheduledTaskOwner": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "topic"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object"
+      },
+      "ScheduledTaskPatch": {
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "schedule"
+            ]
+          },
+          {
+            "required": [
+              "content"
+            ]
+          },
+          {
+            "required": [
+              "status"
+            ]
+          }
+        ],
+        "properties": {
+          "content": {
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "text",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "image",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "audio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "resource": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blob": {
+                          "type": "string"
+                        },
+                        "mimeType": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "uri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "uri"
+                      ],
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "resource"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icons": {
+                      "items": {
+                        "$ref": "#/components/schemas/ResourceIcon"
+                      },
+                      "type": "array"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "resource_link",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "uri",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "expectedRevision": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schedule": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "runAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "once",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "runAt"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "description": "Positive Go duration, e.g. 30m or 2h.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "interval",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "every"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "daily",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "weekly",
+                    "type": "string"
+                  },
+                  "weekdays": {
+                    "items": {
+                      "enum": [
+                        "sun",
+                        "mon",
+                        "tue",
+                        "wed",
+                        "thu",
+                        "fri",
+                        "sat"
+                      ],
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "weekdays"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "days": {
+                    "items": {
+                      "description": "Positive days count from the start of the month. Negative days count from the end.",
+                      "maximum": 31,
+                      "minimum": -31,
+                      "not": {
+                        "const": 0
+                      },
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "monthly",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "days"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expression": {
+                    "description": "Five fields in order: minute, hour, day of month, calendar month, and weekday (0 is Sunday).",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "cron",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "expression",
+                  "timezone"
+                ],
+                "type": "object"
+              }
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "ScheduledTaskReadProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "text",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "image",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "data": {
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "audio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "data",
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "resource": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blob": {
+                          "type": "string"
+                        },
+                        "mimeType": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "uri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "uri"
+                      ],
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "resource"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "annotations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "audience": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "lastModified": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icons": {
+                      "items": {
+                        "$ref": "#/components/schemas/ResourceIcon"
+                      },
+                      "type": "array"
+                    },
+                    "mimeType": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "resource_link",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "uri",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "nextRunAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ScheduledTaskOwner"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "schedule": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "runAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "once",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "runAt"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "description": "Positive Go duration, e.g. 30m or 2h.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "interval",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "every"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "daily",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "weekly",
+                    "type": "string"
+                  },
+                  "weekdays": {
+                    "items": {
+                      "enum": [
+                        "sun",
+                        "mon",
+                        "tue",
+                        "wed",
+                        "thu",
+                        "fri",
+                        "sat"
+                      ],
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "weekdays"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "days": {
+                    "items": {
+                      "description": "Positive days count from the start of the month. Negative days count from the end.",
+                      "maximum": 31,
+                      "minimum": -31,
+                      "not": {
+                        "const": 0
+                      },
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "every": {
+                    "default": 1,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "times": {
+                    "items": {
+                      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "monthly",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "timezone",
+                  "times",
+                  "days"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expression": {
+                    "description": "Five fields in order: minute, hour, day of month, calendar month, and weekday (0 is Sunday).",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "description": "IANA time zone, e.g. Asia/Shanghai.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "cron",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "expression",
+                  "timezone"
+                ],
+                "type": "object"
+              }
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused",
+              "completed"
+            ],
+            "type": "string"
+          },
+          "traceAssociations": {
+            "items": {
+              "$ref": "#/components/schemas/MessageTrace"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "schedule",
+          "content",
+          "status",
+          "revision",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "ScheduledTaskTriggerInput": {
+        "additionalProperties": false,
+        "properties": {
+          "operationId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId"
+        ],
+        "type": "object"
+      },
       "SessionBinding": {
         "additionalProperties": false,
         "properties": {
@@ -2469,115 +4412,6 @@
           "createdAt",
           "lastMessageAt",
           "subscriptions"
-        ],
-        "type": "object"
-      },
-      "TimerFollowupProjection": {
-        "additionalProperties": false,
-        "properties": {
-          "event_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "messageId": {
-            "type": "string"
-          },
-          "sentAt": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": "string"
-          },
-          "topicId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "event_id",
-          "kind",
-          "status",
-          "sentAt",
-          "messageId",
-          "topicId"
-        ],
-        "type": "object"
-      },
-      "TimerReadProjection": {
-        "additionalProperties": true,
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "createdAt": {
-            "type": "string"
-          },
-          "dueAt": {
-            "type": "string"
-          },
-          "firedAt": {
-            "type": "string"
-          },
-          "followup": {
-            "$ref": "#/components/schemas/TimerFollowupProjection"
-          },
-          "id": {
-            "type": "string"
-          },
-          "materials": {
-            "items": {
-              "$ref": "#/components/schemas/Material"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "revision": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "status": {
-            "type": "string"
-          },
-          "threadId": {
-            "type": "string"
-          },
-          "topicGeneration": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "topicId": {
-            "type": "string"
-          },
-          "triggerMessageId": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "updatedAt": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "topicId",
-          "topicGeneration",
-          "revision",
-          "dueAt",
-          "content",
-          "type",
-          "status",
-          "createdAt",
-          "updatedAt"
         ],
         "type": "object"
       },
@@ -3334,6 +5168,9 @@
               "null"
             ]
           },
+          "scheduledTaskId": {
+            "type": "string"
+          },
           "source": {
             "type": "string"
           },
@@ -3724,7 +5561,7 @@
     },
     "/status": {
       "get": {
-        "description": "Returns partial status when a component is unavailable. In standalone Core, GitHub and DWS are not managed. Timer state is reported by Core.",
+        "description": "Returns partial status when a component is unavailable. In standalone Core, GitHub and DWS are not managed. Core reports ScheduledTask states.",
         "operationId": "getStackStatus",
         "responses": {
           "200": {
@@ -5475,6 +7312,997 @@
         ]
       }
     },
+    "/v1/core/scheduled-tasks": {
+      "get": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "listScheduledTasks",
+        "parameters": [
+          {
+            "description": "Maximum records per page",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest for newest-first order",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Owner type. Use topic with ownerId",
+            "in": "query",
+            "name": "ownerType",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Owner ID. Supply with ownerType",
+            "in": "query",
+            "name": "ownerId",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/ScheduledTask"
+                      },
+                      "type": "array"
+                    },
+                    "nextCursor": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Operator credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "List scheduled tasks",
+        "tags": [
+          "Operator"
+        ]
+      },
+      "head": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "listScheduledTasksHead",
+        "parameters": [
+          {
+            "description": "Maximum records per page",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest for newest-first order",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Owner type. Use topic with ownerId",
+            "in": "query",
+            "name": "ownerType",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Owner ID. Supply with ownerType",
+            "in": "query",
+            "name": "ownerId",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Operator credential required"
+          },
+          "403": {
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "List scheduled tasks",
+        "tags": [
+          "Operator"
+        ]
+      },
+      "post": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "createScheduledTask",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduledTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledTask"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Operator credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request conflicts with the current task or operation"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "Create an independent scheduled task",
+        "tags": [
+          "Operator"
+        ]
+      }
+    },
+    "/v1/core/scheduled-tasks/{scheduledTaskId}": {
+      "delete": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "deleteScheduledTask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scheduledTaskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expectedRevision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledTaskDeletion"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Operator credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request conflicts with the current task or operation"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "Delete an independent scheduled task",
+        "tags": [
+          "Operator"
+        ]
+      },
+      "get": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "getScheduledTask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scheduledTaskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include recorded Trace associations",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledTaskReadProjection"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Operator credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "Read a scheduled task",
+        "tags": [
+          "Operator"
+        ]
+      },
+      "head": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "getScheduledTaskHead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scheduledTaskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include recorded Trace associations",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Operator credential required"
+          },
+          "403": {
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "Read a scheduled task",
+        "tags": [
+          "Operator"
+        ]
+      },
+      "patch": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "updateScheduledTask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scheduledTaskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledTaskPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledTask"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Operator credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request conflicts with the current task or operation"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "Update an independent scheduled task",
+        "tags": [
+          "Operator"
+        ]
+      }
+    },
+    "/v1/core/scheduled-tasks/{scheduledTaskId}/trigger": {
+      "post": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "triggerScheduledTask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scheduledTaskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledTaskTriggerInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Operator credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request conflicts with the current task or operation"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "Trigger an active scheduled task immediately",
+        "tags": [
+          "Operator"
+        ]
+      }
+    },
+    "/v1/core/scheduled-tasks/{scheduledTaskId}/trigger-messages": {
+      "get": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "listScheduledTaskTriggerMessages",
+        "parameters": [
+          {
+            "description": "Page size. Defaults to 50, or 20 for the Router view",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same view and filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest-first ordering in the default view",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "enum": [
+                "newest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Read compact rows where supported",
+            "in": "query",
+            "name": "preview",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduledTaskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagePageTriggerMessageRecord"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Operator credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "List Trigger Messages produced by a scheduled task",
+        "tags": [
+          "Operator"
+        ]
+      },
+      "head": {
+        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "operationId": "listScheduledTaskTriggerMessagesHead",
+        "parameters": [
+          {
+            "description": "Page size. Defaults to 50, or 20 for the Router view",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation for the same view and filters",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Use newest-first ordering in the default view",
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "enum": [
+                "newest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Read compact rows where supported",
+            "in": "query",
+            "name": "preview",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include Trace associations where available",
+            "in": "query",
+            "name": "trace",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduledTaskId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Operator credential required"
+          },
+          "403": {
+            "description": "Request outside its authorized scope"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "operatorBearer": []
+          }
+        ],
+        "summary": "List Trigger Messages produced by a scheduled task",
+        "tags": [
+          "Operator"
+        ]
+      }
+    },
     "/v1/core/session-bindings": {
       "get": {
         "operationId": "listSessionBindings",
@@ -6748,327 +9576,6 @@
         ]
       }
     },
-    "/v1/core/timers": {
-      "get": {
-        "operationId": "listTimers",
-        "parameters": [
-          {
-            "description": "Maximum records per page",
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Filter Timers by Topic",
-            "in": "query",
-            "name": "topicId",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Return the resource preview projection",
-            "in": "query",
-            "name": "preview",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Include recorded Trace associations",
-            "in": "query",
-            "name": "trace",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Opaque cursor returned by the preceding page",
-            "explode": false,
-            "in": "query",
-            "name": "cursor",
-            "schema": {
-              "description": "Opaque cursor returned by the preceding page",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Use newest to read in reverse chronological order",
-            "explode": false,
-            "in": "query",
-            "name": "order",
-            "schema": {
-              "description": "Use newest to read in reverse chronological order",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "properties": {
-                    "items": {
-                      "items": {
-                        "$ref": "#/components/schemas/TimerReadProjection"
-                      },
-                      "type": "array"
-                    },
-                    "nextCursor": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "items"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Invalid query, filter, path parameter or cursor"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Resource query unavailable"
-          }
-        },
-        "summary": "List timers",
-        "tags": [
-          "Core"
-        ]
-      },
-      "head": {
-        "operationId": "listTimersHead",
-        "parameters": [
-          {
-            "description": "Maximum records per page",
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Filter Timers by Topic",
-            "in": "query",
-            "name": "topicId",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Return the resource preview projection",
-            "in": "query",
-            "name": "preview",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Include recorded Trace associations",
-            "in": "query",
-            "name": "trace",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Opaque cursor returned by the preceding page",
-            "explode": false,
-            "in": "query",
-            "name": "cursor",
-            "schema": {
-              "description": "Opaque cursor returned by the preceding page",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Use newest to read in reverse chronological order",
-            "explode": false,
-            "in": "query",
-            "name": "order",
-            "schema": {
-              "description": "Use newest to read in reverse chronological order",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "description": "Invalid query, filter, path parameter or cursor"
-          },
-          "403": {
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "503": {
-            "description": "Resource query unavailable"
-          }
-        },
-        "summary": "List timers",
-        "tags": [
-          "Core"
-        ]
-      }
-    },
-    "/v1/core/timers/{timerId}": {
-      "get": {
-        "operationId": "getTimer",
-        "parameters": [
-          {
-            "description": "Include recorded Trace associations",
-            "in": "query",
-            "name": "trace",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "path",
-            "name": "timerId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TimerReadProjection"
-                }
-              }
-            },
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Invalid query, filter, path parameter or cursor"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Resource not found"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Resource query unavailable"
-          }
-        },
-        "summary": "Read Timer",
-        "tags": [
-          "Core"
-        ]
-      },
-      "head": {
-        "operationId": "getTimerHead",
-        "parameters": [
-          {
-            "description": "Include recorded Trace associations",
-            "in": "query",
-            "name": "trace",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "path",
-            "name": "timerId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "description": "Invalid query, filter, path parameter or cursor"
-          },
-          "403": {
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "404": {
-            "description": "Resource not found"
-          },
-          "503": {
-            "description": "Resource query unavailable"
-          }
-        },
-        "summary": "Read Timer",
-        "tags": [
-          "Core"
-        ]
-      }
-    },
     "/v1/core/topics": {
       "get": {
         "operationId": "listTopics",
@@ -7620,7 +10127,7 @@
     },
     "/v1/core/trigger-messages": {
       "get": {
-        "description": "The default view and the Router view use the trusted-read boundary. A sourceMessageId lookup requires a valid Source bearer and returns only the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access over direct loopback. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
         "operationId": "listTriggerMessages",
         "parameters": [
           {
@@ -7702,6 +10209,22 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Exact Source in the default view. Requires Operator access",
+            "in": "query",
+            "name": "source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact scheduled task ID in the default view. Requires Operator access",
+            "in": "query",
+            "name": "scheduledTaskId",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -7780,6 +10303,9 @@
           {
             "sourceBearer": []
           },
+          {
+            "operatorBearer": []
+          },
           {}
         ],
         "summary": "List Trigger Messages, query the Router view or read a Source receipt",
@@ -7787,6 +10313,16 @@
           "Core"
         ],
         "x-conditional-security": {
+          "scheduledTaskId": [
+            {
+              "operatorBearer": []
+            }
+          ],
+          "source": [
+            {
+              "operatorBearer": []
+            }
+          ],
           "sourceMessageId": [
             {
               "sourceBearer": []
@@ -7795,7 +10331,7 @@
         }
       },
       "head": {
-        "description": "The default view and the Router view use the trusted-read boundary. A sourceMessageId lookup requires a valid Source bearer and returns only the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access over direct loopback. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
         "operationId": "listTriggerMessagesHead",
         "parameters": [
           {
@@ -7877,6 +10413,22 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Exact Source in the default view. Requires Operator access",
+            "in": "query",
+            "name": "source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact scheduled task ID in the default view. Requires Operator access",
+            "in": "query",
+            "name": "scheduledTaskId",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -7903,6 +10455,9 @@
           {
             "sourceBearer": []
           },
+          {
+            "operatorBearer": []
+          },
           {}
         ],
         "summary": "List Trigger Messages, query the Router view or read a Source receipt",
@@ -7910,6 +10465,16 @@
           "Core"
         ],
         "x-conditional-security": {
+          "scheduledTaskId": [
+            {
+              "operatorBearer": []
+            }
+          ],
+          "source": [
+            {
+              "operatorBearer": []
+            }
+          ],
           "sourceMessageId": [
             {
               "sourceBearer": []
