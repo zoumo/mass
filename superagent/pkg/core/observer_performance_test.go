@@ -1,7 +1,6 @@
 package core
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -63,12 +62,10 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(reader.client.CloseIdleConnections)
 
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "observer.sqlite"))
+	store, err := Open(Config{DataDir: t.TempDir()})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.ExecContext(t.Context(), schema)
-	require.NoError(t, err)
-	server := &Server{observerTraces: reader, store: &Store{db: db}}
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	server := &Server{observerTraces: reader, store: store}
 	response := httptest.NewRecorder()
 	api := server.newHTTPAPI()
 	api.router.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, telemetryPerformancePath+"?window=15m", http.NoBody))
@@ -98,12 +95,9 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 }
 
 func TestObserverPerformanceScopesOpenTelemetryQueries(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "metrics.sqlite"))
+	store, err := Open(Config{DataDir: t.TempDir()})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.ExecContext(t.Context(), schema)
-	require.NoError(t, err)
-	store := &Store{db: db}
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
 	const total = `sum by (superagent_role) (rate(superagent_mcp_tool_duration_count{service_name="superagent-core",superagent_tool="update_topic"}[5m]))`
 	const failed = `sum by (superagent_role) (rate(superagent_mcp_tool_duration_count{service_name="superagent-core",superagent_tool="update_topic",superagent_outcome!="ok"}[5m]))`
