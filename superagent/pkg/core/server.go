@@ -325,24 +325,14 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 		}
 		body = strings.ReplaceAll(body, needle, "[redacted]")
 	}
-	rows, queryErr := s.store.db.QueryContext(ctx, "SELECT token FROM session_bindings")
-	if queryErr != nil {
-		return "", queryErr
+	roleTokens, err := s.store.bindingTokens(ctx)
+	if err != nil {
+		return "", err
 	}
-	for rows.Next() {
-		var token string
-		if scanErr := rows.Scan(&token); scanErr != nil {
-			_ = rows.Close()
-			return "", scanErr
-		}
+	for _, token := range roleTokens {
 		if token != "" {
 			body = strings.ReplaceAll(body, token, "[redacted]")
 		}
-	}
-	queryErr = rows.Err()
-	_ = rows.Close()
-	if queryErr != nil {
-		return "", queryErr
 	}
 	return body, nil
 }

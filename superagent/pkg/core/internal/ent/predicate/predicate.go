@@ -6,5 +6,26 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// InternalEvent is the predicate function for internalevent builders.
+type InternalEvent func(*sql.Selector)
+
+// Issue is the predicate function for issue builders.
+type Issue func(*sql.Selector)
+
+// Outbox is the predicate function for outbox builders.
+type Outbox func(*sql.Selector)
+
 // ScheduledTask is the predicate function for scheduledtask builders.
 type ScheduledTask func(*sql.Selector)
+
+// SessionBinding is the predicate function for sessionbinding builders.
+type SessionBinding func(*sql.Selector)
+
+// Thread is the predicate function for thread builders.
+type Thread func(*sql.Selector)
+
+// Topic is the predicate function for topic builders.
+type Topic func(*sql.Selector)
+
+// TriggerMessage is the predicate function for triggermessage builders.
+type TriggerMessage func(*sql.Selector)

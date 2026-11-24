@@ -16,23 +16,22 @@ type RuntimeBindingRelease struct {
 	Close            BindingClose `json:"close"`
 }
 
-// A shared Runtime stop can account for another retired binding only if Core
-// recorded the same Runtime instance and massd verifies that binding offline.
-func (s *Server) observeRuntimeReleases(ctx context.Context, c *client.Client, rt resource.Runtime, targetID string) []RuntimeBindingRelease {
-	type candidate struct {
-		binding SessionBinding
-		spec    resource.SessionSpec
-	}
-	rows, err := s.store.db.QueryContext(ctx, `SELECT body,spec FROM session_bindings WHERE state='revoked' AND id<>?
+type runtimeReleaseCandidate struct {
+	binding SessionBinding
+	spec    resource.SessionSpec
+}
+
+func (s *Store) runtimeReleaseCandidates(ctx context.Context, targetID, runtimeUID, runtimeVersion string) []runtimeReleaseCandidate {
+	rows, err := s.db.QueryContext(ctx, `SELECT body,spec FROM session_bindings WHERE state='revoked' AND id<>?
  AND json_extract(body,'$.runtimeUid')=? AND json_extract(body,'$.runtimeResourceVersion')=?
  AND json_type(body,'$.close') IS NULL AND NOT COALESCE(json_extract(body,'$.previousOwnerUnknown'),0)`,
-		targetID, rt.Metadata.UID, rt.Metadata.ResourceVersion)
+		targetID, runtimeUID, runtimeVersion)
 	if err != nil {
 		return nil
 	}
-	var candidates []candidate
+	var candidates []runtimeReleaseCandidate
 	for rows.Next() {
-		var entry candidate
+		var entry runtimeReleaseCandidate
 		var b, spec []byte
 		if rows.Scan(&b, &spec) != nil || json.Unmarshal(b, &entry.binding) != nil ||
 			json.Unmarshal(spec, &entry.spec) != nil {
@@ -46,6 +45,13 @@ func (s *Server) observeRuntimeReleases(ctx context.Context, c *client.Client, r
 	if err != nil || closeErr != nil {
 		return nil
 	}
+	return candidates
+}
+
+// A shared Runtime stop can account for another retired binding only if Core
+// recorded the same Runtime instance and massd verifies that binding offline.
+func (s *Server) observeRuntimeReleases(ctx context.Context, c *client.Client, rt resource.Runtime, targetID string) []RuntimeBindingRelease {
+	candidates := s.store.runtimeReleaseCandidates(ctx, targetID, rt.Metadata.UID, rt.Metadata.ResourceVersion)
 	var releases []RuntimeBindingRelease
 	for _, entry := range candidates {
 		b := entry.binding

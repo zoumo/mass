@@ -7,6 +7,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	entissue "github.com/zoumo/mass/superagent/pkg/core/internal/ent/issue"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/triggermessage"
 )
 
 type Report struct {
@@ -64,9 +68,7 @@ type ReportRequest struct {
 }
 
 func loadIssueBinding(ctx context.Context, tx *sql.Tx, id string) (SessionBinding, error) {
-	var binding SessionBinding
-	err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=? AND role='issue'", &binding, id)
-	return binding, err
+	return readBinding(ctx, entClientForTx(tx).SessionBinding, sessionbinding.BusinessIDEQ(id), sessionbinding.RoleEQ("issue"))
 }
 
 func boundIssue(ctx context.Context, tx *sql.Tx, b SessionBinding) (Issue, error) {
@@ -74,8 +76,7 @@ func boundIssue(ctx context.Context, tx *sql.Tx, b SessionBinding) (Issue, error
 	if b.Role != "issue" || b.OwnerID != b.IssueID {
 		return issue, problem("forbidden", "SessionBinding does not own an Issue")
 	}
-	err := readJSON(ctx, tx, "SELECT body FROM issues WHERE id=? AND topic_id=?", &issue, b.OwnerID, b.TopicID)
-	return issue, err
+	return readIssue(ctx, tx, b.OwnerID, entissue.TopicIDEQ(b.TopicID))
 }
 
 func issueForBinding(ctx context.Context, tx *sql.Tx, b SessionBinding) (Issue, error) {
@@ -135,8 +136,8 @@ func (s *Store) queryBoundIssue(ctx context.Context, b SessionBinding, tool stri
 	if !slices.ContainsFunc(issue.Materials, func(m Material) bool { return m.MessageID == query.MessageID }) {
 		return nil, problem("not_found", "Message is not a material of the bound Issue")
 	}
-	var message Message
-	err = readJSON(ctx, tx, "SELECT body FROM trigger_messages WHERE id=?", &message, query.MessageID)
+	messages := entClientForTx(tx).TriggerMessage
+	message, err := readTriggerMessage(ctx, messages.Query().Where(triggermessage.BusinessIDEQ(query.MessageID)))
 	if err != nil {
 		return nil, err
 	}

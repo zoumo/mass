@@ -12,7 +12,14 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/internalevent"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/issue"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/outbox"
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/scheduledtask"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/thread"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/topic"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/triggermessage"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -73,7 +80,14 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			scheduledtask.Table: scheduledtask.ValidColumn,
+			internalevent.Table:  internalevent.ValidColumn,
+			issue.Table:          issue.ValidColumn,
+			outbox.Table:         outbox.ValidColumn,
+			scheduledtask.Table:  scheduledtask.ValidColumn,
+			sessionbinding.Table: sessionbinding.ValidColumn,
+			thread.Table:         thread.ValidColumn,
+			topic.Table:          topic.ValidColumn,
+			triggermessage.Table: triggermessage.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	coreent "github.com/zoumo/mass/superagent/pkg/core/internal/ent"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/triggermessage"
 )
 
 const (
@@ -265,6 +266,10 @@ func checkDatabaseIdentity(version, app uint32) error {
 	return nil
 }
 
+func (s *Store) ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func (s *Store) Close() error {
 	var err error
 	if s.queueRegistration != nil {
@@ -316,20 +321,20 @@ func (s *Store) submitMessage(ctx context.Context, source Source, message Messag
 // state with the same Message, Thread and delivery facts as channel intake.
 func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Message, canonical []byte) (Receipt, error) {
 	var result Receipt
-	var fingerprint, saved []byte
-	var stored Message
-	err := tx.QueryRowContext(ctx, "SELECT canonical,body FROM trigger_messages WHERE source=? AND account_id=? AND native_id=?",
-		source.Source, source.AccountID, m.SourceMessageID).Scan(&fingerprint, &saved)
+	messages := entClientForTx(tx).TriggerMessage
+	previous, err := triggerMessageByNativeID(messages, source.Source, source.AccountID, m.SourceMessageID).
+		Select(triggermessage.FieldCanonical, triggermessage.FieldBody).Only(ctx)
 	if err == nil {
-		if !bytes.Equal(fingerprint, canonical) {
+		if !bytes.Equal(previous.Canonical, canonical) {
 			return result, problem("conflict", "sourceMessageId already has different business content")
 		}
-		if json.Unmarshal(saved, &stored) != nil {
-			return result, storageError()
+		stored, err := decodeEntityJSON[Message](previous.Body, nil)
+		if err != nil {
+			return result, err
 		}
 		return messageReceipt(stored, true), nil
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !coreent.IsNotFound(err) {
 		return result, storageError()
 	}
 	if m.InReplyToOutboxID != "" {
@@ -344,22 +349,32 @@ func admitTriggerMessage(ctx context.Context, tx *sql.Tx, source Source, m Messa
 	if err := upsertThread(ctx, tx, m.ThreadID, at, at); err != nil {
 		return Receipt{}, err
 	}
-	var taskID, taskRevision, trigger, scheduledFor any
+	create := messages.Create().SetSource(source.Source).SetAccountID(source.AccountID).
+		SetNativeID(m.SourceMessageID).SetThreadID(m.ThreadID).SetAcceptedAt(at).
+		SetCanonical(canonical).SetBody([]byte("{}"))
 	if activation := m.scheduled; activation != nil {
-		taskID, taskRevision, trigger = activation.taskID, activation.revision, activation.method
+		create.SetScheduledTaskID(activation.taskID).SetScheduledTaskRevision(activation.revision).
+			SetScheduledTrigger(triggermessage.ScheduledTrigger(activation.method))
 		if activation.scheduledFor != "" {
-			scheduledFor = activation.scheduledFor
+			create.SetScheduledFor(activation.scheduledFor)
 		}
 	}
-	if err := tx.QueryRowContext(ctx, `INSERT INTO trigger_messages(source,account_id,native_id,thread_id,accepted_at,canonical,body,
- scheduled_task_id,scheduled_task_revision,scheduled_trigger,scheduled_for)
- VALUES(?,?,?,?,?,?,'{}',?,?,?,?) RETURNING id`,
-		source.Source, source.AccountID, m.SourceMessageID, m.ThreadID, at, canonical,
-		taskID, taskRevision, trigger, scheduledFor).Scan(&m.ID); err != nil {
+	row, err := create.Save(ctx)
+	if err != nil {
 		return Receipt{}, storageError()
 	}
-	if err := putJSON(ctx, tx, "UPDATE trigger_messages SET body=?2 WHERE id=?1", m, m.ID); err != nil {
-		return Receipt{}, err
+	// The SQLite-generated business ID belongs in the body and routing refs.
+	stored, err := messages.Query().Where(triggermessage.IDEQ(row.ID)).Select(triggermessage.FieldBusinessID).Only(ctx)
+	if err != nil || stored.BusinessID == "" {
+		return Receipt{}, storageError()
+	}
+	m.ID = stored.BusinessID
+	body, err := json.Marshal(m)
+	if err != nil {
+		return Receipt{}, storageError()
+	}
+	if err := messages.Update().Where(triggermessage.IDEQ(row.ID)).SetBody(body).Exec(ctx); err != nil {
+		return Receipt{}, storageError()
 	}
 	if err := messageAdmission.save(ctx, tx, m.ID, 0); err != nil {
 		return Receipt{}, err
@@ -375,19 +390,15 @@ func messageReceipt(m Message, duplicate bool) Receipt {
 }
 
 func (s *Store) channelMessageReceipt(ctx context.Context, source Source, nativeID string) (Receipt, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	m, err := readTriggerMessage(ctx, triggerMessageByNativeID(s.entities.TriggerMessage, source.Source, source.AccountID, nativeID))
 	if err != nil {
-		return Receipt{}, storageError()
-	}
-	defer func() { _ = tx.Rollback() }()
-	var m Message
-	if err := readJSON(ctx, tx, "SELECT body FROM trigger_messages WHERE source=? AND account_id=? AND native_id=?",
-		&m, source.Source, source.AccountID, nativeID); err != nil {
 		return Receipt{}, err
 	}
 	return messageReceipt(m, false), nil
 }
 
+// The conditional UPSERT preserves created_at and the last source input on
+// subscription-only writes, including an INSERT attempt on existing rows.
 func upsertThread(ctx context.Context, tx *sql.Tx, threadID, createdAt, lastMessageAt string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO threads(id,source,native_id,created_at,last_message_at) VALUES(?,'',?,?,?)
  ON CONFLICT(id) DO UPDATE SET last_message_at=excluded.last_message_at WHERE excluded.last_message_at<>''`,
@@ -723,6 +734,9 @@ func (s *Store) getRecord(ctx context.Context, kind, id string, binding *Session
 		if err := checkBinding(ctx, tx, *binding); err != nil {
 			return nil, err
 		}
+	}
+	if kind == "threads" && binding == nil && source == nil && !observerTrace {
+		return readThreadRecord(ctx, tx, id)
 	}
 	if kind == "scheduled-tasks" && source == nil && !observerTrace {
 		return readScheduledTaskBody(ctx, tx, id, binding)

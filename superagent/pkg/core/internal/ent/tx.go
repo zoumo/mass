@@ -12,8 +12,22 @@ import (
 // Tx is a transactional client that is created by calling Client.Tx().
 type Tx struct {
 	config
+	// InternalEvent is the client for interacting with the InternalEvent builders.
+	InternalEvent *InternalEventClient
+	// Issue is the client for interacting with the Issue builders.
+	Issue *IssueClient
+	// Outbox is the client for interacting with the Outbox builders.
+	Outbox *OutboxClient
 	// ScheduledTask is the client for interacting with the ScheduledTask builders.
 	ScheduledTask *ScheduledTaskClient
+	// SessionBinding is the client for interacting with the SessionBinding builders.
+	SessionBinding *SessionBindingClient
+	// Thread is the client for interacting with the Thread builders.
+	Thread *ThreadClient
+	// Topic is the client for interacting with the Topic builders.
+	Topic *TopicClient
+	// TriggerMessage is the client for interacting with the TriggerMessage builders.
+	TriggerMessage *TriggerMessageClient
 
 	// lazily loaded.
 	client     *Client
@@ -145,7 +159,14 @@ func (tx *Tx) Client() *Client {
 }
 
 func (tx *Tx) init() {
+	tx.InternalEvent = NewInternalEventClient(tx.config)
+	tx.Issue = NewIssueClient(tx.config)
+	tx.Outbox = NewOutboxClient(tx.config)
 	tx.ScheduledTask = NewScheduledTaskClient(tx.config)
+	tx.SessionBinding = NewSessionBindingClient(tx.config)
+	tx.Thread = NewThreadClient(tx.config)
+	tx.Topic = NewTopicClient(tx.config)
+	tx.TriggerMessage = NewTriggerMessageClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.
@@ -155,7 +176,7 @@ func (tx *Tx) init() {
 // of them in order to commit or rollback the transaction.
 //
 // If a closed transaction is embedded in one of the generated entities, and the entity
-// applies a query, for example: ScheduledTask.QueryXXX(), the query will be executed
+// applies a query, for example: InternalEvent.QueryXXX(), the query will be executed
 // through the driver which created this transaction.
 //
 // Note that txDriver is not goroutine safe.

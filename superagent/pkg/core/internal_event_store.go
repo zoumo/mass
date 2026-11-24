@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/internalevent"
 )
 
 const contextSupplement = "context_supplement"
@@ -195,14 +196,30 @@ func enqueueInternalEvent(ctx context.Context, tx *sql.Tx, d internalEvent) erro
 	if err := checkEventIdentity(ctx, tx, d.Recipient, true); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(d)
-	if err != nil {
-		return problem("invalid_argument", "invalid internal event JSON content")
+	// Identities and references contain only strings and integers.
+	sender, _ := json.Marshal(d.Sender)
+	recipient, _ := json.Marshal(d.Recipient)
+	create := entClientForTx(tx).InternalEvent.Create().SetID(d.ID).SetKind(d.Kind).
+		SetSender(string(sender)).SetRecipient(string(recipient)).SetStatus(internalevent.StatusPending)
+	if len(d.Refs) > 0 {
+		refs, _ := json.Marshal(d.Refs)
+		create.SetRefs(string(refs))
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO internal_events(event_id,kind,sender,recipient,content,body,refs,created_at,status)
- VALUES(?1,?2,?3->'$.sender',?3->'$.recipient',?3->'$.content',?3->'$.body',coalesce(?3->'$.refs','[]'),?4,'pending')`,
-		d.ID, d.Kind, string(raw), now())
-	if err != nil {
+	if d.Content != nil {
+		content, err := json.Marshal(d.Content)
+		if err != nil {
+			return problem("invalid_argument", "invalid internal event JSON content")
+		}
+		create.SetContent(string(content))
+	}
+	if len(d.Body) > 0 {
+		body, err := json.Marshal(d.Body)
+		if err != nil {
+			return problem("invalid_argument", "invalid internal event JSON content")
+		}
+		create.SetBody(string(body))
+	}
+	if err := create.SetCreatedAt(now()).Exec(ctx); err != nil {
 		return storageError()
 	}
 	return internalEnqueue.save(ctx, tx, d.ID, 0)
@@ -211,8 +228,8 @@ func enqueueInternalEvent(ctx context.Context, tx *sql.Tx, d internalEvent) erro
 func checkEventIdentity(ctx context.Context, tx *sql.Tx, r eventIdentity, recipient bool) error {
 	switch r.Kind {
 	case "topic":
-		var topic Topic
-		return readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, r.TopicID)
+		_, err := readTopic(ctx, tx, r.TopicID)
+		return err
 	case "issue":
 		binding, err := loadIssueBinding(ctx, tx, r.SessionBindingID)
 		if err != nil {
@@ -270,9 +287,9 @@ func (s *Store) getInternalEvent(ctx context.Context, b SessionBinding, id strin
 // supersedeInternalEvent fences an unconfirmed item. A late receipt cannot
 // change its state and a confirmed item retains its acceptance history.
 func supersedeInternalEvent(ctx context.Context, tx *sql.Tx, id string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE internal_events SET status='superseded'
- WHERE event_id=? AND status IN ('pending','dispatching')`, id)
-	return err
+	return entClientForTx(tx).InternalEvent.Update().Where(internalevent.IDEQ(id),
+		internalevent.StatusIn(internalevent.StatusPending, internalevent.StatusDispatching)).
+		SetStatus(internalevent.StatusSuperseded).Exec(ctx)
 }
 
 func supersedeIssueBindingEvents(ctx context.Context, tx *sql.Tx, sessionBindingID string) error {

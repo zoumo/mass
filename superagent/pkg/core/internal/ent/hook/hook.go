@@ -9,6 +9,42 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent"
 )
 
+// The InternalEventFunc type is an adapter to allow the use of ordinary
+// function as InternalEvent mutator.
+type InternalEventFunc func(context.Context, *ent.InternalEventMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f InternalEventFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.InternalEventMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.InternalEventMutation", m)
+}
+
+// The IssueFunc type is an adapter to allow the use of ordinary
+// function as Issue mutator.
+type IssueFunc func(context.Context, *ent.IssueMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f IssueFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.IssueMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.IssueMutation", m)
+}
+
+// The OutboxFunc type is an adapter to allow the use of ordinary
+// function as Outbox mutator.
+type OutboxFunc func(context.Context, *ent.OutboxMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f OutboxFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.OutboxMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OutboxMutation", m)
+}
+
 // The ScheduledTaskFunc type is an adapter to allow the use of ordinary
 // function as ScheduledTask mutator.
 type ScheduledTaskFunc func(context.Context, *ent.ScheduledTaskMutation) (ent.Value, error)
@@ -19,6 +55,54 @@ func (f ScheduledTaskFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Valu
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ScheduledTaskMutation", m)
+}
+
+// The SessionBindingFunc type is an adapter to allow the use of ordinary
+// function as SessionBinding mutator.
+type SessionBindingFunc func(context.Context, *ent.SessionBindingMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SessionBindingFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SessionBindingMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SessionBindingMutation", m)
+}
+
+// The ThreadFunc type is an adapter to allow the use of ordinary
+// function as Thread mutator.
+type ThreadFunc func(context.Context, *ent.ThreadMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ThreadFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ThreadMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ThreadMutation", m)
+}
+
+// The TopicFunc type is an adapter to allow the use of ordinary
+// function as Topic mutator.
+type TopicFunc func(context.Context, *ent.TopicMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f TopicFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.TopicMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TopicMutation", m)
+}
+
+// The TriggerMessageFunc type is an adapter to allow the use of ordinary
+// function as TriggerMessage mutator.
+type TriggerMessageFunc func(context.Context, *ent.TriggerMessageMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f TriggerMessageFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.TriggerMessageMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TriggerMessageMutation", m)
 }
 
 // Condition is a hook condition function.

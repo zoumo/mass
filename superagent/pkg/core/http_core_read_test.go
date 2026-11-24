@@ -20,9 +20,14 @@ func startCoreResourceFixture(t *testing.T) (*Server, *httptest.Server) {
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "core.sqlite"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	db.SetMaxOpenConns(1)
 	_, err = db.ExecContext(t.Context(), schema+";"+traceAssociationSchema)
 	require.NoError(t, err)
-	s := &Server{store: &Store{db: db, hasTraceAssociations: true, telemetry: newCoreTelemetry(TelemetryOptions{})}}
+	store := &Store{
+		db: db, entities: newCoreEntClient(db),
+		hasTraceAssociations: true, telemetry: newCoreTelemetry(TelemetryOptions{}),
+	}
+	s := &Server{store: store}
 	httpServer := httptest.NewUnstartedServer(nil)
 	s.listener = httpServer.Listener
 	httpServer.Config.Handler = s.guardHTTP(s.newHTTPAPI().router)

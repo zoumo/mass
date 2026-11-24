@@ -265,7 +265,7 @@ func (s *Store) recordIssueObservation(ctx context.Context, b SessionBinding, ev
 }
 
 func saveWorkObservation(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
-	return putJSON(ctx, tx, "UPDATE session_bindings SET body=?2 WHERE id=?1", b, b.ID)
+	return saveBindingBody(ctx, tx, b)
 }
 
 func enqueueReportReminder(ctx context.Context, tx *sql.Tx, x *SessionBinding, issue Issue) error {

@@ -3,18 +3,57 @@
 package ent
 
 import (
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/internalevent"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/issue"
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/scheduledtask"
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/schema"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/thread"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/topic"
 )
 
 // The init function reads all schema descriptors with runtime code
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	internaleventFields := schema.InternalEvent{}.Fields()
+	_ = internaleventFields
+	// internaleventDescRefs is the schema descriptor for refs field.
+	internaleventDescRefs := internaleventFields[6].Descriptor()
+	// internalevent.DefaultRefs holds the default value on creation for the refs field.
+	internalevent.DefaultRefs = internaleventDescRefs.Default.(string)
+	issueFields := schema.Issue{}.Fields()
+	_ = issueFields
+	// issueDescNumber is the schema descriptor for number field.
+	issueDescNumber := issueFields[2].Descriptor()
+	// issue.NumberValidator is a validator for the "number" field. It is called by the builders before save.
+	issue.NumberValidator = issueDescNumber.Validators[0].(func(int64) error)
+	// issueDescReportCreations is the schema descriptor for report_creations field.
+	issueDescReportCreations := issueFields[8].Descriptor()
+	// issue.DefaultReportCreations holds the default value on creation for the report_creations field.
+	issue.DefaultReportCreations = issueDescReportCreations.Default.(string)
 	scheduledtaskFields := schema.ScheduledTask{}.Fields()
 	_ = scheduledtaskFields
 	// scheduledtaskDescTopicGeneration is the schema descriptor for topic_generation field.
 	scheduledtaskDescTopicGeneration := scheduledtaskFields[4].Descriptor()
 	// scheduledtask.DefaultTopicGeneration holds the default value on creation for the topic_generation field.
 	scheduledtask.DefaultTopicGeneration = scheduledtaskDescTopicGeneration.Default.(int)
+	sessionbindingFields := schema.SessionBinding{}.Fields()
+	_ = sessionbindingFields
+	// sessionbindingDescNextAttemptAt is the schema descriptor for next_attempt_at field.
+	sessionbindingDescNextAttemptAt := sessionbindingFields[9].Descriptor()
+	// sessionbinding.DefaultNextAttemptAt holds the default value on creation for the next_attempt_at field.
+	sessionbinding.DefaultNextAttemptAt = sessionbindingDescNextAttemptAt.Default.(string)
+	threadFields := schema.Thread{}.Fields()
+	_ = threadFields
+	// threadDescSubscriptions is the schema descriptor for subscriptions field.
+	threadDescSubscriptions := threadFields[6].Descriptor()
+	// thread.DefaultSubscriptions holds the default value on creation for the subscriptions field.
+	thread.DefaultSubscriptions = threadDescSubscriptions.Default.(string)
+	topicFields := schema.Topic{}.Fields()
+	_ = topicFields
+	// topicDescIssueNumber is the schema descriptor for issue_number field.
+	topicDescIssueNumber := topicFields[6].Descriptor()
+	// topic.DefaultIssueNumber holds the default value on creation for the issue_number field.
+	topic.DefaultIssueNumber = topicDescIssueNumber.Default.(int64)
 }

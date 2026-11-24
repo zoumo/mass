@@ -3,11 +3,11 @@ package core
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"io"
 	"strings"
+
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
 )
 
 func decodeStrict(data []byte, v any) error {
@@ -29,15 +29,11 @@ func (s *Store) authenticateRole(ctx context.Context, header string) (SessionBin
 	}
 	token := strings.TrimPrefix(header, "Bearer ")
 	// Secret lookup stays inside Core; no capability material is included in projections.
-	var data []byte
-	err := s.db.QueryRowContext(ctx, "SELECT body FROM session_bindings WHERE token=?", token).Scan(&data)
-	if errors.Is(err, sql.ErrNoRows) {
+	b, err := readBinding(ctx, s.entities.SessionBinding, sessionbinding.TokenEQ(token))
+	if errorCode(err) == "not_found" {
 		return b, problem("unauthorized", "invalid role credential")
 	}
-	if err != nil || json.Unmarshal(data, &b) != nil {
-		return b, storageError()
-	}
-	return b, nil
+	return b, err
 }
 
 func (s *Server) callRoleTool(ctx context.Context, b SessionBinding, tool string, raw []byte) (any, error) {
