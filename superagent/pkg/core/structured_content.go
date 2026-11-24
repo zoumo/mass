@@ -6,9 +6,6 @@ import (
 	"strings"
 )
 
-const structuredContentObjectCheck = `CASE WHEN typeof(content)='text' AND json_valid(content)
- THEN json_type(content)='object' ELSE 0 END`
-
 type StructuredContent struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`

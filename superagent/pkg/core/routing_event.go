@@ -20,36 +20,6 @@ const (
 	returnedEventID   = "json_extract(refs,'$[1].id')"
 )
 
-const routingViews = `
-CREATE INDEX internal_events_route_message ON internal_events(` + routingMessageID + `)
- WHERE kind IN ('routed_message','route_request');
-CREATE UNIQUE INDEX internal_events_return ON internal_events(` + returnedEventID + `)
- WHERE kind='route_request' AND ` + returnedEventID + ` IS NOT NULL;
-
-CREATE VIEW thread_subscriptions AS
- SELECT t.seq, t.id AS thread_id, json_extract(sub.value,'$.id') AS id,
- json_extract(sub.value,'$.topicId') AS topic_id,
- json_extract(sub.value,'$.createdAt') AS created_at, sub.value AS body
- FROM threads t,json_each(t.subscriptions) sub;
-
-CREATE VIEW routing_events AS
- SELECT rowid AS seq, event_id, kind, created_at, status, sent_at, sender, recipient, content, body, refs,
- ` + routingMessageID + ` AS message_id, ` + returnedEventID + ` AS returned_event_id,
- coalesce(json_extract(recipient,'$.topic_id'),json_extract(sender,'$.topic_id')) AS topic_id
- FROM internal_events WHERE kind IN ('routed_message','route_request');
-
-CREATE VIEW routing_relations AS
- SELECT d.seq,d.event_id AS id,d.message_id,d.topic_id,d.created_at,
- json_object('id',d.event_id,'messageId',d.message_id,'topicId',d.topic_id,'createdAt',d.created_at,
- 'action',CASE d.kind WHEN 'routed_message' THEN 'received' ELSE 'returned' END,
- 'status',d.status,'eventId',coalesce(d.returned_event_id,d.event_id),'reason',json_extract(d.body,'$'),
- 'returned',json(CASE WHEN EXISTS(SELECT 1 FROM internal_events r WHERE r.kind='route_request'
- AND ` + returnedEventID + `=d.event_id) THEN 'true' ELSE 'false' END)) AS body
- FROM routing_events d WHERE d.topic_id IS NOT NULL;
-
-CREATE VIEW topic_message_history AS
- SELECT message_id,topic_id FROM routing_events WHERE kind='routed_message';`
-
 const routingRound = `(1
  + (SELECT count(*) FROM routing_events
  WHERE kind='route_request' AND message_id=trigger_messages.id AND returned_event_id IS NOT NULL))`

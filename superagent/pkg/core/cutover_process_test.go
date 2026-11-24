@@ -157,6 +157,13 @@ func assertCutoverSchema(t *testing.T, path string) {
 	check("SELECT name FROM pragma_table_info('outbox') ORDER BY cid", []string{"id", "message_id", "content", "status", "receipt", "blocker_ref"})
 	check("SELECT name FROM pragma_table_info('internal_events') ORDER BY cid",
 		[]string{"event_id", "kind", "sender", "recipient", "content", "body", "refs", "created_at", "status", "sent_at"})
+	check(`SELECT name||':'||hidden FROM pragma_table_xinfo('scheduled_tasks') ORDER BY cid`,
+		[]string{
+			"seq:0", "id:3", "owner_type:0", "owner_id:0", "topic_generation:0", "created_at:0", "schedule_anchor:0",
+			"deleted_at:0", "body:0", "status:3", "next_run_at:3", "creation_key:0", "creation_digest:0",
+		})
+	check(`SELECT name||':'||partial FROM pragma_index_list('scheduled_tasks') WHERE origin='c' ORDER BY name`,
+		[]string{"scheduled_tasks_due:1", "scheduled_tasks_owner:1"})
 	check(`SELECT m.name||'.'||f."from"||' -> '||f."table"||'.'||f."to"
  FROM sqlite_schema m,pragma_foreign_key_list(m.name) f WHERE m.type='table' ORDER BY 1`,
 		[]string{
@@ -164,6 +171,9 @@ func assertCutoverSchema(t *testing.T, path string) {
 			"trigger_messages.scheduled_task_id -> scheduled_tasks.id", "trigger_messages.thread_id -> threads.id",
 		})
 	check(`SELECT "table" FROM pragma_foreign_key_check`, nil)
+	db.SetMaxOpenConns(1)
+	_, err = db.ExecContext(t.Context(), `PRAGMA foreign_keys=ON`)
+	require.NoError(t, err)
 	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tx.Rollback()) }()
@@ -175,6 +185,37 @@ func assertCutoverSchema(t *testing.T, path string) {
 	}
 	_, err = tx.ExecContext(t.Context(), insert, nil, time.Now().UTC().Format(time.RFC3339Nano))
 	require.NoError(t, err)
+	assertScheduledTaskConstraints(t, tx)
+}
+
+func assertScheduledTaskConstraints(t *testing.T, tx *sql.Tx) {
+	t.Helper()
+	const insert = `INSERT INTO scheduled_tasks(owner_type,owner_id,created_at,schedule_anchor,body,creation_key,creation_digest)
+ VALUES(?1,?2,?3,?3,?4,?5,'digest')`
+	const at = "2026-11-25T09:00:00.000000000Z"
+	active := []byte(`{"status":"active","nextRunAt":"` + at + `"}`)
+	var seq, generation int
+	var id, status, nextRunAt, bodyType string
+	err := tx.QueryRowContext(t.Context(),
+		insert+` RETURNING seq,id,topic_generation,status,next_run_at,typeof(body)`, nil, nil, at, active, "key").
+		Scan(&seq, &id, &generation, &status, &nextRunAt, &bodyType)
+	require.NoError(t, err)
+	require.Equal(t, "mass-st"+strconv.Itoa(seq), id)
+	require.Zero(t, generation)
+	require.Equal(t, "active", status)
+	require.Equal(t, at, nextRunAt)
+	require.Equal(t, "blob", bodyType)
+
+	_, err = tx.ExecContext(t.Context(), insert, nil, nil, at, active, "key")
+	require.ErrorContains(t, err, "UNIQUE constraint failed: scheduled_tasks.creation_key")
+	_, err = tx.ExecContext(t.Context(), insert, "topic", "mass-t0", at, active, "missing-topic")
+	require.ErrorContains(t, err, "FOREIGN KEY constraint failed")
+	_, err = tx.ExecContext(t.Context(), insert, "topic", nil, at, active, "unpaired-owner")
+	require.ErrorContains(t, err, "CHECK constraint failed")
+	_, err = tx.ExecContext(t.Context(), insert, nil, nil, at, []byte(`{}`), "missing-status")
+	require.ErrorContains(t, err, "NOT NULL constraint failed: scheduled_tasks.status")
+	_, err = tx.ExecContext(t.Context(), insert, nil, nil, at, []byte(`{"status":"active"}`), "missing-next-run")
+	require.ErrorContains(t, err, "CHECK constraint failed")
 }
 
 func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
