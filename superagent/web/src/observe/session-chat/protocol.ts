@@ -43,7 +43,7 @@ export const eventLabels: Record<string, string> = {
   'session.interaction_closed': '交互结算',
 }
 
-export const workLabels: Record<string, string> = { idle: '空闲', running: '运行中', requires_action: '等待交互' }
+export const workLabels: Record<string, string> = { idle: '空闲', running: '运行中', requires_action: '等待交互', offline: '离线', closing: '正在回收' }
 export const text = (value: unknown) => typeof value === 'string' ? value : ''
 export const record = (value: unknown) => value && typeof value === 'object' ? value as Record<string, unknown> : {}
 export const list = (value: unknown) => Array.isArray(value) ? value.map(record) : []
@@ -71,6 +71,16 @@ export function conversationRows(events: SessionEvent[]) {
 }
 
 type Notice = { method: string; params: { subscriptionId: string; event?: SessionEvent; error?: { message: string } } }
+type SessionResource = {
+  metadata: { uid: string; namespace: string; name: string }
+  status: { sessionId: string; state: string }
+}
+
+class RpcError extends Error {
+  constructor(message: string, readonly reason?: string) {
+    super(message)
+  }
+}
 
 const rawJSON = (JSON as typeof JSON & { rawJSON?: (source: string) => object }).rawJSON
 
@@ -98,7 +108,7 @@ class RpcSocket {
       const request = this.pending.get(message.id)
       if (!request) return
       this.pending.delete(message.id)
-      if (message.error) request.reject(new Error(message.error.data?.message || message.error.message))
+      if (message.error) request.reject(new RpcError(message.error.data?.message || message.error.message, message.error.data?.reason))
       else request.resolve(message.result)
     }
     this.socket.onclose = () => {
@@ -153,13 +163,25 @@ export function liveSession(binding: Binding, onEvent: (event: SessionEvent) => 
       else end('收到其他 Session 的事件，已关闭连接')
     }
   }, () => end('事件流已中断'))
-  async function verify() {
-    const result = await control.call<{ metadata: { uid: string; namespace: string; name: string }; status: { sessionId: string; state: string } }>('session.get', params)
-    const { metadata, status } = result
+  function verifyIdentity({ metadata, status }: SessionResource) {
     if (metadata.uid !== binding.sessionUid || metadata.namespace !== binding.namespace || metadata.name !== binding.name || status.sessionId !== binding.sessionId) {
       throw new Error('Core 绑定与 massd Session 身份不一致')
     }
-    return status.state
+  }
+  async function verify() {
+    const session = await control.call<SessionResource>('session.get', params)
+    verifyIdentity(session)
+    return session.status.state
+  }
+  async function stateAfterClose() {
+    let state = await verify()
+    // Idle close can admit its fence before releasing the native Session.
+    for (let attempt = 0; state === 'closing' && attempt < 20; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+      state = await verify()
+    }
+    if (state === 'closing') throw new Error('Session 正在回收，请稍后再发送')
+    return state
   }
   return {
     async connect() {
@@ -174,9 +196,25 @@ export function liveSession(binding: Binding, onEvent: (event: SessionEvent) => 
       if (!page.events.every(matches)) throw new Error('历史包含其他 Session 的事件')
       return page
     },
-    async prompt(value: string) {
-      await verify()
-      return control.call('session.prompt', { ...params, input: { content: [{ type: 'text', text: value }] } })
+    async prompt(value: string, onResuming?: () => void) {
+      const input = { content: [{ type: 'text', text: value }] }
+      if (await stateAfterClose() !== 'offline') {
+        try {
+          return await control.call('session.prompt', { ...params, input })
+        } catch (error) {
+          // This rejection happens before dispatch. Never replay an uncertain input.
+          if (!(error instanceof RpcError) || error.reason !== 'session_resume_required' || await stateAfterClose() !== 'offline') {
+            throw error
+          }
+        }
+      }
+      onResuming?.()
+      const result = await control.call<SessionResource & { initialInputReceipt?: { result: string } }>(
+        'session.resume', { ...params, input: { initialInput: input } },
+      )
+      verifyIdentity(result)
+      if (!result.initialInputReceipt?.result) throw new Error('Session 已恢复，发送结果待确认。请先查看事件流')
+      return result.initialInputReceipt
     },
     async cancel() {
       await verify()

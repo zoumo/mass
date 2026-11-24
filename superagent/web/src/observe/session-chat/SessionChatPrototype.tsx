@@ -65,6 +65,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [draft, setDraft] = useState('')
+  const [resuming, setResuming] = useState(false)
   const [raw, setRaw] = useState(false)
   const [receipt, setReceipt] = useState<Receipt>()
   const [pending, setPending] = useState<Record<string, boolean>>({})
@@ -111,6 +112,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
     setInitialWork('')
     setLive([])
     setPending({})
+    setResuming(false)
     setAnswered({})
     locks.current.clear()
     const receive = (event: SessionEvent) => setLive(previous => [...previous, event])
@@ -148,7 +150,9 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
     locks.current.add(key)
     setPending(previous => ({ ...previous, [key]: true }))
     try {
-      const result = action === 'prompt' ? await current.prompt(text(value))
+      const result = action === 'prompt' ? await current.prompt(text(value), () => {
+        if (client.current === current) setResuming(true)
+      })
         : action === 'cancel' ? await current.cancel()
         : await current.answer(interaction!, value)
       if (client.current !== current) return
@@ -161,6 +165,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
     } finally {
       if (client.current === current) {
         locks.current.delete(key)
+        if (action === 'prompt') setResuming(false)
         setPending(previous => ({ ...previous, [key]: false }))
       }
     }
@@ -266,7 +271,7 @@ function Chat({ binding, title, demo }: { binding: Binding; title: string; demo:
               }
             }}/>
           <div className="sc-composer-footer">
-            <span className="sc-status" data-state={ready ? work : connection}><i/>{workLabel}</span>
+            <span className="sc-status" data-state={ready ? work : connection}><i/>{ready && resuming && work !== 'running' ? '正在恢复 Session' : workLabel}</span>
             <div className="sc-actions">
               <Button type="button" className="sc-cancel" variant="destructive" size="sm" disabled={!canCancel} onClick={() => void act('cancel')}><Square size={13}/> 取消工作</Button>
               <Button type="submit" className="sc-send" size="icon-sm" aria-label="发送" title="发送" disabled={!ready || pending.prompt || !draft.trim()}><ArrowUp size={17}/></Button>
