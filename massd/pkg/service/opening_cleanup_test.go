@@ -78,7 +78,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 					if mode == "timeout" {
 						ending = "echo ready > '" + ready + "'\nwhile read -r request; do :; done\n"
 					}
-					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\n"+ending), 0o700))
+					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request || exit 1\n"+ending), 0o700))
 				}
 				var factory runtime.Factory = claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}
 				if kind == "codex" {
@@ -97,9 +97,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if mode == "timeout" {
-					var expire context.CancelFunc
-					ctx, expire = context.WithTimeout(ctx, 2*time.Second)
-					defer expire()
+					ctx = deadlineAfterOpeningReady(ctx, ready)
 				}
 				_, failure := driver.Start(ctx)
 				if failure == nil {
@@ -130,6 +128,53 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 			})
 		}
 	}
+}
+
+// openingDeadline gives the SDK one context across process launch and
+// initialization. Its own Done channel propagates the readiness-triggered
+// deadline to contexts derived by the SDK.
+type openingDeadline struct {
+	context.Context
+	done chan struct{}
+	err  error
+}
+
+func (c *openingDeadline) Done() <-chan struct{} { return c.done }
+
+func (c *openingDeadline) Value(key any) any {
+	// Preserve values while deriving the cancellation cause from this context.
+	return context.WithoutCancel(c.Context).Value(key)
+}
+
+func (c *openingDeadline) Err() error {
+	select {
+	case <-c.done:
+		return c.err
+	default:
+		return nil
+	}
+}
+
+func deadlineAfterOpeningReady(ctx context.Context, ready string) context.Context {
+	deadline := &openingDeadline{Context: ctx, done: make(chan struct{})}
+	go func() {
+		defer close(deadline.done)
+		poll := time.NewTicker(time.Millisecond)
+		defer poll.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				deadline.err = ctx.Err()
+				return
+			case <-poll.C:
+				if _, err := os.Stat(ready); err == nil {
+					deadline.err = context.DeadlineExceeded
+					return
+				}
+			}
+		}
+	}()
+	return deadline
 }
 
 func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
