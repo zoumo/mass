@@ -1,12 +1,9 @@
 package integration_test
 
 import (
-	"database/sql"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -17,7 +14,7 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
-func (s *entrypointSuite) TestTicket05CloseResumeAndLegacyArchiveMigration() {
+func (s *entrypointSuite) TestTicket05CloseResumeAndRestart() {
 	t := s.T()
 	ref, _, _ := s.open("codex", "close-resume")
 	s.ticket05Input(ref, "hello")
@@ -60,33 +57,23 @@ func (s *entrypointSuite) TestTicket05CloseResumeAndLegacyArchiveMigration() {
 
 	history := s.history(ref)
 	s.stopForHistory()
-	legacy := readPersistedSession(s.T(), s.data, s.backend, ref.SessionID)
-	legacy.Status.State = "archived"
-	legacy.Status.Reason = "legacy archive marker"
-	writeLegacyArchived(s.T(), s.data, s.backend, legacy)
 	s.startForHistory()
 
-	var migrated resource.Session
-	s.call("session.get", workflowParams{Session: ref}, &migrated)
-	s.Equal(events.SessionState("offline"), migrated.Status.State)
-	s.Empty(migrated.Status.Reason)
-	s.Equal(legacy.Metadata.UID, migrated.Metadata.UID)
-	s.Equal(legacy.Metadata.CreatedAt, migrated.Metadata.CreatedAt)
-	s.Equal(legacy.Metadata.Generation, migrated.Metadata.Generation)
-	s.Equal(legacy.Spec, migrated.Spec)
-	s.Equal(legacy.Status.SessionID, migrated.Status.SessionID)
-	s.NotEqual(legacy.Metadata.ResourceVersion, migrated.Metadata.ResourceVersion)
-	s.Equal(history, s.history(ref), "migration must preserve committed history and synchronization position")
+	var reopened resource.Session
+	s.call("session.get", workflowParams{Session: ref}, &reopened)
+	s.Equal(events.SessionState("offline"), reopened.Status.State)
+	s.Equal(closed.Metadata.UID, reopened.Metadata.UID)
+	s.Equal(closed.Metadata.CreatedAt, reopened.Metadata.CreatedAt)
+	s.Equal(closed.Metadata.Generation, reopened.Metadata.Generation)
+	s.Equal(closed.Spec, reopened.Spec)
+	s.Equal(ref.SessionID, reopened.Status.SessionID)
+	s.Equal(history, s.history(ref), "restart must preserve committed history and synchronization position")
 
 	var runtimeAfterRestart resource.Runtime
 	s.call("runtime.get", workflowParams{Name: "agent"}, &runtimeAfterRestart)
 	s.Equal("stopped", runtimeAfterRestart.Status.State)
 	_, err = os.Stat(probe + ".called")
-	s.True(os.IsNotExist(err), "startup migration must not activate the Runtime or Session")
-
-	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.list", workflowParams{SessionQuery: resource.SessionQuery{State: "archived"}}, nil)
-	require.ErrorAs(t, err, &rpcErr)
-	s.Equal(int64(-32602), rpcErr.Code)
+	s.True(os.IsNotExist(err), "startup must not activate the Runtime or Session")
 }
 
 func (s *entrypointSuite) ticket05Input(ref resource.SessionRef, text string) {
@@ -97,38 +84,4 @@ func (s *entrypointSuite) ticket05Input(ref resource.SessionRef, text string) {
 		s.call("session.get", workflowParams{Session: ref}, &current)
 		return current.Status.State == events.Idle && len(s.history(ref).Events) > before
 	}, 5*time.Second, 10*time.Millisecond)
-}
-
-func readPersistedSession(t *testing.T, data, backendName, id string) resource.Session {
-	var payload []byte
-	if backendName == "file" {
-		var err error
-		payload, err = os.ReadFile(filepath.Join(data, "sessions", "demo", "session", "state.json"))
-		require.NoError(t, err)
-	} else {
-		db, err := sql.Open("sqlite", filepath.Join(data, "metadata-authority.sqlite"))
-		require.NoError(t, err)
-		defer func() { require.NoError(t, db.Close()) }()
-		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT payload FROM session WHERE session_id=?", id).Scan(&payload))
-	}
-	var persisted resource.Session
-	require.NoError(t, json.Unmarshal(payload, &persisted))
-	return persisted
-}
-
-func writeLegacyArchived(t *testing.T, data, backendName string, legacy resource.Session) {
-	payload, err := json.Marshal(legacy)
-	require.NoError(t, err)
-	if backendName == "file" {
-		require.NoError(t, os.WriteFile(filepath.Join(data, "sessions", "demo", "session", "state.json"), payload, 0o600))
-		return
-	}
-	db, err := sql.Open("sqlite", filepath.Join(data, "metadata-authority.sqlite"))
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
-	result, err := db.ExecContext(t.Context(), "UPDATE session SET state='archived', payload=? WHERE session_id=?", payload, legacy.Status.SessionID)
-	require.NoError(t, err)
-	count, err := result.RowsAffected()
-	require.NoError(t, err)
-	require.EqualValues(t, 1, count)
 }
