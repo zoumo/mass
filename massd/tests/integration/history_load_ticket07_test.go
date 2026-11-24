@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
@@ -29,7 +30,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -93,10 +93,10 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 		t.Cleanup(func() { require.NoError(t, records.Close()) })
 		meta, history = metadata, records
 	} else {
-		st, err := file.Open(t.TempDir(), false)
+		st, err := massdtest.OpenFileStores(t.TempDir(), false)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, st.Close()) })
-		meta, history = st, st
+		meta, history = st.Meta, st.Events
 	}
 	if setup.history != nil {
 		history = setup.history(history)

@@ -7,26 +7,26 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type SessionIdentitySuite struct {
 	suite.Suite
 	svc *service.Service
-	st  *file.Store
+	st  *massdtest.FileStores
 }
 
 func (s *SessionIdentitySuite) SetupTest() {
-	st, err := file.Open(s.T().TempDir(), false)
+	st, err := massdtest.OpenFileStores(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.st = st
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
-	s.svc = service.New(st, st, nil)
+	s.svc = service.New(st.Meta, st.Events, nil)
 }
 
 func (s *SessionIdentitySuite) TestUUIDCreateNameRejectedBeforeRuntimeAccess() {
@@ -44,7 +44,7 @@ func (s *SessionIdentitySuite) TestUUIDCreateNameRejectedBeforeRuntimeAccess() {
 func TestSessionIdentitySuite(t *testing.T) { suite.Run(t, new(SessionIdentitySuite)) }
 
 func (s *SessionIdentitySuite) seed(ns, name, id string) resource.Session {
-	r, err := s.st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: ns, Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent"}, Status: resource.SessionStatus{SessionID: id, State: "offline"}})
+	r, err := s.st.Meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: ns, Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent"}, Status: resource.SessionStatus{SessionID: id, State: "offline"}})
 	s.Require().NoError(err)
 	return r
 }
@@ -147,7 +147,7 @@ func (f failingIDDirectory) GetSession(ref resource.SessionRef) (resource.Sessio
 
 func (s *SessionIdentitySuite) TestNameHitDoesNotHideDirectoryFailure() {
 	s.seed("one", "demo", "native")
-	svc := service.New(failingIDDirectory{s.st}, s.st, nil)
+	svc := service.New(failingIDDirectory{s.st.Meta}, s.st.Events, nil)
 	_, err := svc.ResolveSession("one", "demo")
 	s.Require().ErrorContains(err, "injected directory failure")
 	s.NotErrorIs(err, store.ErrNotFound)

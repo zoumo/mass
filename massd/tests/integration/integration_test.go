@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -27,7 +28,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type IntegrationSuite struct{ suite.Suite }
@@ -173,15 +173,15 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	c := ctx(t)
 	path, work := scenario(t)
 	dir := t.TempDir()
-	st, err := file.Open(dir, false)
+	st, err := massdtest.OpenFileStores(dir, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	registry := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	gate := &identityGate{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &identityGate{MetaStore: st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
 	defer release()
-	svc := service.New(gate, st, registry)
+	svc := service.New(gate, st.Events, registry)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 	require.NoError(t, err)
@@ -211,8 +211,12 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	}
 	_, err = svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	require.ErrorIs(t, err, store.ErrNotFound)
-	_, err = st.ListHistory("codex-session", store.HistoryQuery{})
+	_, err = svc.ListHistoryEvents(resource.SessionRef{SessionID: "codex-session"}, store.HistoryQuery{})
 	require.ErrorIs(t, err, store.ErrNotFound)
+	uncommitted, err := st.Events.ListHistory("codex-session", store.HistoryQuery{})
+	require.NoError(t, err)
+	require.Empty(t, uncommitted.Events)
+	require.Nil(t, uncommitted.SyncedEventID)
 	release()
 	var opened createdResult
 	select {
@@ -283,9 +287,9 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 			if event.Type() != "agent.tool_call" {
 				require.Equal(t, time.Date(2026, 10, 20, 1, 2, 3, 0, time.UTC), event.Time)
 			} // Read through a newly opened file Store immediately on publication.
-			reopened, err := file.Open(dir, true)
+			reopened, err := massdtest.OpenFileStores(dir, true)
 			require.NoError(t, err)
-			page, err := reopened.ListHistory(event.SessionID, store.HistoryQuery{})
+			page, err := reopened.Events.ListHistory(event.SessionID, store.HistoryQuery{})
 			require.NoError(t, err)
 			require.NoError(t, reopened.Close())
 			found := false
@@ -322,20 +326,20 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	for _, event := range page.Events {
 		require.True(t, event.Persistent())
 	}
-	progress, err := st.Append(session.Status.SessionID, persisted)
+	progress, err := st.Events.Append(session.Status.SessionID, persisted)
 	require.NoError(t, err)
 	require.Equal(t, page.SyncedEventID, progress)
-	page2, err := st.ListHistory(session.Status.SessionID, store.HistoryQuery{})
+	page2, err := st.Events.ListHistory(session.Status.SessionID, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page2.Events, 4)
 	require.NoError(t, sub.Close())
 	t.Log("PASS separate input, typed events, delta-only previews, commit-before-publish, UUID retry")
 	require.NoError(t, svc.Shutdown(c))
 	require.NoError(t, st.Close())
-	reopened, err := file.Open(dir, true)
+	reopened, err := massdtest.OpenFileStores(dir, true)
 	require.NoError(t, err)
 	defer reopened.Close()
-	offline := service.New(reopened, reopened, nil)
+	offline := service.New(reopened.Meta, reopened.Events, nil)
 	savedID, err := offline.GetSession(id)
 	require.NoError(t, err)
 	savedName, err := offline.GetSession(name)

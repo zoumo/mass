@@ -134,8 +134,7 @@ type SessionPage struct {
 }
 
 // ValidateSessionState accepts only current public Session states. Empty is a
-// query wildcard; archived remains readable as legacy data but is never written
-// or selected through the current API.
+// query wildcard.
 func ValidateSessionState(state events.SessionState) error {
 	switch state {
 	case "", "offline", "opening", "idle", "running", "requires_action", "closing", "unknown":

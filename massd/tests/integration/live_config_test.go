@@ -20,6 +20,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/client"
@@ -29,7 +30,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 	"github.com/zoumo/mass/massd/tests/integration/testdata/clipeer"
 )
@@ -265,14 +265,14 @@ func liveConfigHTTP(t *testing.T, kind string, allowShutdownError ...bool) (*ser
 	require.NoError(t, err)
 	peer := newConfigNativePeer(t, kind, cwd)
 	configDir := t.TempDir()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	var factory runtime.Factory = codex.Factory{RecoveryDir: t.TempDir()}
 	if kind == "claude" {
 		factory = claude.Factory{RecoveryDir: t.TempDir()}
 	}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{kind: configNativeFactory{Factory: factory, peer: peer}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{kind: configNativeFactory{Factory: factory, peer: peer}}))
 	t.Cleanup(func() {
 		err := svc.Shutdown(ctx(t))
 		if len(allowShutdownError) > 0 && allowShutdownError[0] {

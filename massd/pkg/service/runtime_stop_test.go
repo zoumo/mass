@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -19,7 +20,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -139,12 +139,12 @@ type RuntimeStopSuite struct {
 func TestRuntimeStopSuite(t *testing.T) { suite.Run(t, new(RuntimeStopSuite)) }
 func (s *RuntimeStopSuite) SetupTest() {
 	s.unknown = false
-	st, err := file.Open(s.T().TempDir(), false)
+	st, err := massdtest.OpenFileStores(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	s.factory = &stopFactory{}
-	s.history = &recoveryHistory{EventStore: st, entered: make(chan struct{}), release: make(chan struct{})}
-	s.meta = &stopMeta{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	s.history = &recoveryHistory{EventStore: st.Events, entered: make(chan struct{}), release: make(chan struct{})}
+	s.meta = &stopMeta{MetaStore: st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
 	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": s.factory}))
 	s.T().Cleanup(func() {
 		for _, d := range s.factory.drivers {

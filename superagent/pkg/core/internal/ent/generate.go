@@ -1,3 +1,3 @@
 package ent
 
-//go:generate go run ./entgen
+//go:generate go run ../../../../../internal/entgen

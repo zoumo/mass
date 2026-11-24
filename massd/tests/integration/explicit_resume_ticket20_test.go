@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -27,7 +28,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -112,7 +112,7 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 			work, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
 			native := t.TempDir()
-			st, err := file.Open(t.TempDir(), false)
+			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
 			vault := t.TempDir()
@@ -128,7 +128,7 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 			key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(work, "-")
 			project := filepath.Join(config, "projects", key)
 			require.NoError(t, os.MkdirAll(project, 0o700))
-			svc := service.New(st, st, runtime.NewRegistry(factories))
+			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(factories))
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -264,7 +264,7 @@ type ticket20Fixture struct {
 
 func ticket20Open(t *testing.T, f *ticket20Fixture, create bool) {
 	t.Helper()
-	st, err := file.Open(f.data, false)
+	st, err := massdtest.OpenFileStores(f.data, false)
 	require.NoError(t, err)
 	closeStore := sync.OnceFunc(func() { assert.NoError(t, st.Close()) })
 	t.Cleanup(closeStore)
@@ -274,11 +274,11 @@ func ticket20Open(t *testing.T, f *ticket20Fixture, create bool) {
 			factories[kind] = f.wrapFactory(factory)
 		}
 	}
-	var meta metastore.MetaStore = st
+	var meta metastore.MetaStore = st.Meta
 	if f.wrapMetadata != nil {
 		meta = f.wrapMetadata(meta)
 	}
-	f.svc = service.New(meta, st, runtime.NewRegistry(factories))
+	f.svc = service.New(meta, st.Events, runtime.NewRegistry(factories))
 	svc := f.svc
 	closeService := sync.OnceFunc(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -9,8 +9,6 @@ import (
 	"log"
 	"reflect"
 
-	"github.com/zoumo/mass/superagent/triggers/github/internal/ent/migrate"
-
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
@@ -23,8 +21,6 @@ import (
 // Client is the client that holds all ent builders.
 type Client struct {
 	config
-	// Schema is the client for creating, migrating and dropping schema.
-	Schema *migrate.Schema
 	// Pending is the client for interacting with the Pending builders.
 	Pending *PendingClient
 	// RateLimit is the client for interacting with the RateLimit builders.
@@ -41,7 +37,6 @@ func NewClient(opts ...Option) *Client {
 }
 
 func (c *Client) init() {
-	c.Schema = migrate.NewSchema(c.driver)
 	c.Pending = NewPendingClient(c.config)
 	c.RateLimit = NewRateLimitClient(c.config)
 	c.Repository = NewRepositoryClient(c.config)

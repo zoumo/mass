@@ -107,7 +107,7 @@ consumer exit, check that consumer through DWS before restarting.
 
 1. Copy [the GitHub example](github.config.example.yaml) to your run directory.
    Choose repository filters or omit `repositories` for all accessible
-   repositories. Remove legacy `match` settings. A repository prompt affects
+   repositories. A repository prompt affects
    newly queued Messages.
 2. Supply a classic personal access token with `notifications` or `repo` scope
    through `githubTokenEnv`. Private repositories and their Actions readback

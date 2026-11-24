@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
@@ -27,7 +28,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -141,10 +141,10 @@ func ticket08HTTP(t *testing.T, kind string, gate *ticket08Gate, configure ...fu
 	binary, err := os.ReadFile(ticket08Binary)
 	require.NoError(t, err)
 	t.Logf("owned authored peer sha256=%x", sha256.Sum256(binary))
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	gate.EventStore = st
+	gate.EventStore = st.Events
 	var native runtime.Factory = codex.Factory{RecoveryDir: t.TempDir()}
 	if kind == "claude" {
 		native = claude.Factory{RecoveryDir: t.TempDir()}
@@ -161,7 +161,7 @@ func ticket08HTTP(t *testing.T, kind string, gate *ticket08Gate, configure ...fu
 			option(d)
 		}
 	}
-	svc := service.New(st, gate, runtime.NewRegistry(map[string]runtime.Factory{kind: ticket08Factory{native, requests, wrappedOption}}))
+	svc := service.New(st.Meta, gate, runtime.NewRegistry(map[string]runtime.Factory{kind: ticket08Factory{native, requests, wrappedOption}}))
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	evidence := t.TempDir()

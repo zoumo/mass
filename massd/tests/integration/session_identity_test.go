@@ -11,11 +11,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -81,11 +81,11 @@ func identityOnlyScenario(t *testing.T, id string) (string, string) {
 func TestRPCCreateWaitsForIdentityAndReturnsRawID(t *testing.T) {
 	c := ctx(t)
 	dir := t.TempDir()
-	st, err := file.Open(dir, false)
+	st, err := massdtest.OpenFileStores(dir, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	gate := &identityGate{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
-	svc := service.New(gate, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
+	gate := &identityGate{MetaStore: st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
+	svc := service.New(gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	path, work := identityOnlyScenario(t, "a/b %空间")
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})

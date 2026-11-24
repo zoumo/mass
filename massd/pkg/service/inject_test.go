@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type injectWorkDriver struct {
@@ -40,13 +40,13 @@ func (injectWorkFactory) Validate(runtime.Config) error                        {
 func (f injectWorkFactory) New(string, runtime.Config) (runtime.Driver, error) { return f.d, nil }
 func injectService(t *testing.T, d runtime.Driver, options ...service.Options) (*service.Service, resource.SessionRef) {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	registry := runtime.NewRegistry(map[string]runtime.Factory{"fixture": injectWorkFactory{d}})
-	svc := service.New(st, st, registry)
+	svc := service.New(st.Meta, st.Events, registry)
 	if len(options) > 0 {
-		svc = service.NewWithOptions(st, st, registry, options[0])
+		svc = service.NewWithOptions(st.Meta, st.Events, registry, options[0])
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

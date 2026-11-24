@@ -18,11 +18,11 @@ import (
 	metricsvc "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type serviceTelemetryFixture struct {
@@ -78,10 +78,10 @@ func TestHistoryLoadTelemetrySettlesOnce(t *testing.T) {
 	for _, phase := range []string{"completed", "failed", "canceled"} {
 		t.Run(phase, func(t *testing.T) {
 			f := newServiceTelemetryFixture(t)
-			st, err := file.Open(t.TempDir(), false)
+			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, st.Close()) })
-			svc, driver := ticket06FaultService(t, st, st, f.configure)
+			svc, driver := ticket06FaultService(t, st, st.Events, f.configure)
 			ctx := ticket06FaultContext(t)
 			acceptedCtx, parent := f.traces.Tracer("test").Start(ctx, "session.load")
 			receipt, err := svc.LoadSession(acceptedCtx, resource.SessionLoad{
@@ -179,12 +179,12 @@ func TestEventFailureTelemetry(t *testing.T) {
 			require.NoError(t, err)
 			periodic := sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(time.Hour))
 			f := newServiceTelemetryFixture(t, sdkmetric.WithReader(periodic))
-			st, err := file.Open(t.TempDir(), false)
+			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, st.Close()) })
-			var history eventstore.EventStore = st
+			var history eventstore.EventStore = st.Events
 			if stage == "history_commit" {
-				history = &ticket06AppendFailure{EventStore: st}
+				history = &ticket06AppendFailure{EventStore: st.Events}
 			}
 			svc, driver := ticket06FaultService(t, st, history, f.configure)
 			_, binding := ticket06FaultLoad(t, svc, driver)

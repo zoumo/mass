@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
-
 	"github.com/zoumo/mass/superagent/triggers/internal/trigger"
 )
 
@@ -26,7 +24,6 @@ type githubConfig struct {
 	PollSeconds           int                `yaml:"pollIntervalSeconds"`
 	RequestMillis         int                `yaml:"requestTimeoutMillis"`
 	Repositories          []githubRepository `yaml:"repositories"`
-	LegacyMatch           yaml.Node          `yaml:"match,omitempty"`
 }
 
 type githubRepository struct {
@@ -47,9 +44,6 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 	if section != nil {
 		c.CoreEndpoint = coreEndpoint
 		c.DatabasePath = trigger.ResolveSectionPath(path, c.DatabasePath)
-	}
-	if c.LegacyMatch.Kind != 0 {
-		return c, errors.New("GitHub match is no longer supported; use repositories to filter Notifications")
 	}
 	if c.PollSeconds == 0 {
 		c.PollSeconds = 60

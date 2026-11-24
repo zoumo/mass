@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/events"
@@ -24,7 +25,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 // This subprocess is a synthetic native protocol peer, not a model. It
@@ -115,10 +115,10 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				require.NoError(t, err)
 				peer := filepath.Join(dir, "peer")
 				require.NoError(t, os.WriteFile(peer, fmt.Appendf(nil, "#!/bin/sh\nexec %q -test.run=^TestPendingNativeCreatePeer$ -- \"$@\"\n", binary), 0o700))
-				st, err := file.Open(filepath.Join(dir, "store"), false)
+				st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 				require.NoError(t, err)
 				reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}})
-				svc := service.New(st, st, reg)
+				svc := service.New(st.Meta, st.Events, reg)
 				pid := 0
 				t.Cleanup(func() {
 					// Emergency cleanup is not evidence that product stop succeeded.

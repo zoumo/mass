@@ -93,27 +93,6 @@ func TestSelectedAuthorityFailsClosed(t *testing.T) {
 	}
 }
 
-func TestLegacyMetadataReplicaIsNotAuthority(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "metadata.sqlite")
-	legacy := []byte("legacy derived database bytes")
-	require.NoError(t, os.WriteFile(path, legacy, 0o600))
-	_, err := backend.Open(dir, metastore.Config{}, false)
-	require.Error(t, err)
-	saved, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, legacy, saved)
-	// File authority does not open, delete or require the old projection.
-	s, err := backend.Open(dir, metastore.Config{Backend: "file"}, false)
-	require.NoError(t, err)
-	_, err = s.CreateSession(session("demo", "saved", "native"))
-	require.NoError(t, err)
-	require.NoError(t, s.Close())
-	saved, err = os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, legacy, saved)
-}
-
 func (metaSuite *MetaStoreSuite) TestSessionVersionAndSpecIsolation() {
 	t := metaSuite.T()
 	st, dir := open(t, metaSuite.backend)

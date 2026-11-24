@@ -65,10 +65,6 @@ func TestGitHubConfigAndOptionalContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, legacy := range []string{"match: {}\n", "match: {labels: [ci]}\n", "match: null\n"} {
-		triggertest.Write(t, path, append(append([]byte(nil), data...), legacy...))
-		require.ErrorContains(t, configCheck(path), "match is no longer supported")
-	}
 	triggertest.Write(t, path, append(data, []byte("githubEndpoint: http://127.0.0.1:1\n")...))
 	if _, err := loadGitHubConfig(path, nil, ""); err == nil {
 		t.Fatal("accepted an alternate GitHub endpoint in YAML")
@@ -121,10 +117,10 @@ func TestGitHubCheckProbesNotifications(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	triggertest.Write(t, path, append(data, []byte("match: {labels: [ci]}\n")...))
+	triggertest.Write(t, path, append(data, []byte("unknownOption: true\n")...))
 	out, err := exec.CommandContext(t.Context(), githubTestBinary(t), "triggers", "github", "check", "--config", path).CombinedOutput()
 	require.Error(t, err)
-	require.Contains(t, string(out), "match is no longer supported")
+	require.Contains(t, string(out), "invalid configuration YAML on line")
 }
 
 // The local proxy refuses the HTTPS tunnel before the client can send a token.

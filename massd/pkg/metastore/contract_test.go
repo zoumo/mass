@@ -199,48 +199,33 @@ func TestRejectIllegalPersistentSessionIDs(t *testing.T) {
 	}
 }
 
-func TestArchivedSessionStateIsReadOnlyLegacyInput(t *testing.T) {
+func TestRejectUnsupportedSessionState(t *testing.T) {
 	for _, name := range []string{"sqlite", "file"} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			s, err := backend.Open(dir, metastore.Config{Backend: name}, false)
+			s, dir := open(t, name)
+			created, err := s.CreateSession(session("default", "saved", "native"))
 			require.NoError(t, err)
-			created, err := s.CreateSession(session("default", "legacy", "legacy-id"))
-			require.NoError(t, err)
-			require.NoError(t, s.Close())
+			invalid := created
+			invalid.Status.State = "archived"
 
-			legacy := created
-			legacy.Status.State = "archived"
-			writeLegacyArchived(t, dir, name, legacy)
-
-			s, err = backend.Open(dir, metastore.Config{Backend: name}, false)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, s.Close()) }()
-			got, err := s.GetSession(resource.SessionRef{SessionID: "legacy-id"})
-			require.NoError(t, err)
-			require.Equal(t, legacy, got, "legacy archived data remains readable for startup migration")
-
-			_, err = s.UpdateSession(legacy)
+			_, err = s.UpdateSession(invalid)
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
-			_, err = s.ListSessions(resource.SessionQuery{State: "archived"})
+			_, err = s.ListSessions(resource.SessionQuery{State: invalid.Status.State})
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
-
 			forged := session("default", "forged", "forged-id")
-			forged.Status.State = "archived"
+			forged.Status.State = invalid.Status.State
 			_, err = s.CreateSession(forged)
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
+			require.NoError(t, s.Close())
 
-			legacy.Status.State = "offline"
-			updated, err := s.UpdateSession(legacy)
-			require.NoError(t, err)
-			require.Equal(t, events.SessionState("offline"), updated.Status.State)
-			require.Equal(t, legacy.Metadata.UID, updated.Metadata.UID)
-			require.Equal(t, legacy.Spec, updated.Spec)
+			writeArchivedState(t, dir, name, invalid)
+			_, err = backend.Open(dir, metastore.Config{Backend: name}, false)
+			require.ErrorContains(t, err, "invalid stored Session state")
 		})
 	}
 }
 
-func writeLegacyArchived(t *testing.T, dir, backendName string, legacy resource.Session) {
+func writeArchivedState(t *testing.T, dir, backendName string, legacy resource.Session) {
 	t.Helper()
 	switch backendName {
 	case "sqlite":

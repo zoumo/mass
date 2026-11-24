@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -36,7 +36,7 @@ type overloadDriver struct {
 }
 
 func TestOverloadTotalRetentionExhaustionRetainsOriginalDelivery(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	defer st.Close()
 	gate := make(chan struct{})
@@ -44,7 +44,7 @@ func TestOverloadTotalRetentionExhaustionRetainsOriginalDelivery(t *testing.T) {
 	defer release.Do(func() { close(gate) })
 	d := &overloadDriver{pipe: events.NewEventPipe(128), source: events.NewSource(), peerSource: events.NewSource(), count: 320}
 	d.unknown.Store(true)
-	svc := service.New(st, &overloadStore{EventStore: st, gate: gate}, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
+	svc := service.New(st.Meta, &overloadStore{EventStore: st.Events, gate: gate}, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	defer func() { release.Do(func() { close(gate) }); d.unknown.Store(false); _ = svc.Shutdown(ctx) }()
@@ -186,7 +186,7 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 		required := mode == "required"
 		for _, unknown := range []bool{false, true} {
 			t.Run(fmt.Sprint(mode, "/releaseUnknown=", unknown), func(t *testing.T) {
-				st, err := file.Open(t.TempDir(), false)
+				st, err := massdtest.OpenFileStores(t.TempDir(), false)
 				require.NoError(t, err)
 				defer st.Close()
 				gate := make(chan struct{})
@@ -194,13 +194,13 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				defer release.Do(func() { close(gate) })
 				d := &overloadDriver{pipe: events.NewEventPipe(128), source: events.NewSource(), peerSource: events.NewSource()}
 				d.unknown.Store(unknown)
-				var history eventstore.EventStore = st
-				faultStore := &overloadStore{EventStore: st, gate: gate, failed: make(chan struct{})}
+				var history eventstore.EventStore = st.Events
+				faultStore := &overloadStore{EventStore: st.Events, gate: gate, failed: make(chan struct{})}
 				faultStore.unavailable.Store(mode == "unavailable")
 				if !required {
 					history = faultStore
 				}
-				svc := service.New(st, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
+				svc := service.New(st.Meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
 				ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 				defer cancel()
 				defer func() {

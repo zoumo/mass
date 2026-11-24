@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -31,10 +31,10 @@ type pendingRestoreRPCFixture struct {
 
 func newPendingRestoreRPCFixture(t *testing.T) *pendingRestoreRPCFixture {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	original, err := st.CreateSession(resource.Session{
+	original, err := st.Meta.CreateSession(resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "original"},
 		Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}},
 		Status:   resource.SessionStatus{SessionID: "original", State: "offline"},
@@ -48,7 +48,7 @@ func newPendingRestoreRPCFixture(t *testing.T) *pendingRestoreRPCFixture {
 		unknownOpening: true,
 	}
 	release := sync.OnceFunc(func() { close(driver.release) })
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{driver}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{driver}}))
 	t.Cleanup(func() {
 		release()
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)

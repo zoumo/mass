@@ -16,13 +16,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -119,11 +119,11 @@ func ticket18Rejected(t *testing.T, bin, choices, reason string) {
 func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name string, kind events.PermissionOptionKind, scope events.PermissionScope, rejectReason string) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := file.Open(filepath.Join(dir, "store"), false)
+	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "recovery")}})
-	svc := service.NewWithPolicy(st, st, reg, nil)
+	svc := service.NewWithPolicy(st.Meta, st.Events, reg, nil)
 	// Independent finalizers: a failed shutdown assertion must not skip store close
 	// or process readback, including on the deliberately failing RED run.
 	t.Cleanup(func() {

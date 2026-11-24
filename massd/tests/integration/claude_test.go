@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/replay"
 	"github.com/zoumo/mass/internal/testpeer/startup"
@@ -30,7 +31,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type ClaudeSuite struct{ suite.Suite }
@@ -625,14 +625,14 @@ func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *r
 func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, observation *codexTurnObservation) (*service.Service, *runtime.Registry, string) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := file.Open(dir, false)
+	st, err := massdtest.OpenFileStores(dir, false)
 	require.NoError(t, err)
 	var codexFactory runtime.Factory = codex.Factory{RecoveryDir: filepath.Join(dir, "private")}
 	if observation != nil {
 		codexFactory = observedCodexFactory{Factory: codexFactory, observation: observation}
 	}
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codexFactory})
-	svc := service.NewWithPolicy(st, st, reg, policy)
+	svc := service.NewWithPolicy(st.Meta, st.Events, reg, policy)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, reg, dir
 }
@@ -733,9 +733,9 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 					}
 					if e.Persistent() {
 						// Every publication is already readable, with the same UUID and payload.
-						reopened, err := file.Open(dir, true)
+						reopened, err := massdtest.OpenFileStores(dir, true)
 						require.NoError(t, err)
-						page, err := reopened.ListHistory(e.SessionID, store.HistoryQuery{})
+						page, err := reopened.Events.ListHistory(e.SessionID, store.HistoryQuery{})
 						require.NoError(t, err)
 						require.NoError(t, reopened.Close())
 						a, err := json.Marshal(e)
@@ -838,12 +838,12 @@ func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation(
 	_, err = svc.CloseSession(ctx(t), resource.SessionRef{SessionID: second.Status.SessionID})
 	require.NoError(t, err)
 	path, work := nativeScenario(t, "claude", "missing-disconnect")
-	missingStore, err := file.Open(t.TempDir(), false)
+	missingStore, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	missingReg := runtime.NewRegistry(map[string]runtime.Factory{
 		"claude": claude.Factory{RecoveryDir: t.TempDir()},
 	})
-	missing := service.NewWithPolicy(missingStore, missingStore, missingReg, prototype.AutoApprovePermissions)
+	missing := service.NewWithPolicy(missingStore.Meta, missingStore.Events, missingReg, prototype.AutoApprovePermissions)
 	t.Cleanup(func() {
 		if shutdownErr := missing.Shutdown(ctx(t)); shutdownErr != nil {
 			assert.ErrorContains(t, shutdownErr, "close_failed")

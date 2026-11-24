@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 // This peer controls the public Driver stream, not Service delivery internals.
@@ -200,7 +200,7 @@ func ticket06FaultContext(t *testing.T) context.Context {
 	return ctx
 }
 
-func ticket06FaultService(t *testing.T, st *file.Store, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
+func ticket06FaultService(t *testing.T, st *massdtest.FileStores, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
 	svc, d := ticket06FaultOwner(t, st, history, configure...)
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fault-peer", Config: runtime.Config{}}})
@@ -210,14 +210,14 @@ func ticket06FaultService(t *testing.T, st *file.Store, history eventstore.Event
 	return svc, d
 }
 
-func ticket06FaultOwner(t *testing.T, st *file.Store, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
+func ticket06FaultOwner(t *testing.T, st *massdtest.FileStores, history eventstore.EventStore, configure ...func(*service.Options)) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
 	d := &ticket06FaultDriver{pipe: events.NewEventPipe(16), bindings: map[string]*ticket06FaultBinding{}, loading: make(chan *ticket06FaultBinding, 1)}
 	options := service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout}
 	for _, apply := range configure {
 		apply(&options)
 	}
-	svc := service.NewWithOptions(st, history, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}), options)
+	svc := service.NewWithOptions(st.Meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}), options)
 	t.Cleanup(func() {
 		// No OS resource is created by this peer. Even a red ownership assertion
 		// must end its public stream before Store teardown.
@@ -236,10 +236,10 @@ func ticket06FaultOwner(t *testing.T, st *file.Store, history eventstore.EventSt
 }
 
 func TestTicket06CompletedLoadCancelCannotTouchLiveWork(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st)
+	svc, d := ticket06FaultService(t, st, st.Events)
 	receipt, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved-first", events.UserMessage{MessageID: "saved-first", Content: []events.ContentBlock{events.Text("retained first page")}}, true))
@@ -266,10 +266,10 @@ func TestTicket06CompletedLoadCancelCannotTouchLiveWork(t *testing.T) {
 }
 
 func TestTicket06FreshServiceRetainsUnresolvedLoadFence(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st)
+	svc, d := ticket06FaultService(t, st, st.Events)
 	d.mu.Lock()
 	d.cleanupUnknown = true
 	d.mu.Unlock()
@@ -285,7 +285,7 @@ func TestTicket06FreshServiceRetainsUnresolvedLoadFence(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond)
 	// Construct a new owner from durable resources, with no original in-memory
 	// load lane. Unknown ownership must not be replaced by a new runtime.
-	fresh, _ := ticket06FaultOwner(t, st, st)
+	fresh, _ := ticket06FaultOwner(t, st, st.Events)
 	_, err = fresh.StartRuntime(ticket06FaultContext(t), "agent")
 	require.Error(t, err, "fresh Service must retain the unresolved original runtime responsibility")
 	r, err := fresh.GetSession(ref)
@@ -336,10 +336,10 @@ func ticket06FaultHistory(t *testing.T, svc *service.Service, ref resource.Sessi
 }
 
 func TestTicket06StopDuringPagingRetainsUnknownCleanup(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st)
+	svc, d := ticket06FaultService(t, st, st.Events)
 	d.mu.Lock()
 	d.cleanupUnknown = true
 	d.mu.Unlock()
@@ -359,10 +359,10 @@ func TestTicket06StopDuringPagingRetainsUnknownCleanup(t *testing.T) {
 }
 
 func TestTicket06CancelPagingRetainsPartialHistoryAndHealthyPeer(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st)
+	svc, d := ticket06FaultService(t, st, st.Events)
 	receipt, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved-first", events.UserMessage{MessageID: "saved-first", Content: []events.ContentBlock{events.Text("retained first page")}}, true))
@@ -425,13 +425,13 @@ func (h *ticket06GatedPublication) Handle(e events.SessionEvent) error {
 func TestTicket06CancelDuringLocalDrainPreservesAdmittedHistory(t *testing.T) {
 	for _, boundary := range []string{"append", "required-publish"} {
 		t.Run(boundary, func(t *testing.T) {
-			st, err := file.Open(t.TempDir(), false)
+			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, st.Close()) })
 			gate := &ticket06DrainGate{entered: make(chan struct{}), release: make(chan struct{})}
-			var history eventstore.EventStore = st
+			var history eventstore.EventStore = st.Events
 			if boundary == "append" {
-				history = &ticket06GatedHistory{EventStore: st, gate: gate}
+				history = &ticket06GatedHistory{EventStore: st.Events, gate: gate}
 			}
 			svc, d := ticket06FaultService(t, st, history)
 			// Release before Service cleanup, including on a failed assertion.

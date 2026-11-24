@@ -2,15 +2,12 @@ package service_test
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	eventfile "github.com/zoumo/mass/massd/pkg/eventstore/file"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -18,20 +15,19 @@ import (
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 func TestTicket05ArchivedIsNotAPublicSessionFilter(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 
-	svc := service.New(st, st, nil)
+	svc := service.New(st.Meta, st.Events, nil)
 	_, err = svc.ListSessions(resource.SessionQuery{State: events.SessionState("archived")})
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 }
 
-func TestTicket05PrepareMigratesLegacyArchive(t *testing.T) {
+func TestPreparePreservesHistoryLoadAcrossRestart(t *testing.T) {
 	for _, backendName := range []string{"sqlite", "file"} {
 		t.Run(backendName, func(t *testing.T) {
 			dir := t.TempDir()
@@ -54,12 +50,12 @@ func TestTicket05PrepareMigratesLegacyArchive(t *testing.T) {
 				CleanupCompleted:     true,
 				LastCommittedEventID: "event-17",
 			}
-			legacy, err := meta.CreateSession(resource.Session{
-				Metadata: resource.Metadata{Namespace: "one", Name: "legacy"},
+			completed, err := meta.CreateSession(resource.Session{
+				Metadata: resource.Metadata{Namespace: "one", Name: "completed"},
 				Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic", SystemPrompt: "preserved"}},
 				Status: resource.SessionStatus{
 					HistoryLoad: completedLoad,
-					SessionID:   "native/legacy",
+					SessionID:   "native/completed",
 					State:       "offline",
 				},
 			})
@@ -72,7 +68,7 @@ func TestTicket05PrepareMigratesLegacyArchive(t *testing.T) {
 				LastCommittedEventID: "event-9",
 			}
 			pending, err := meta.CreateSession(resource.Session{
-				Metadata: resource.Metadata{Namespace: "one", Name: "legacy-pending"},
+				Metadata: resource.Metadata{Namespace: "one", Name: "pending"},
 				Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic"}},
 				Status: resource.SessionStatus{
 					HistoryLoad: pendingLoad,
@@ -82,18 +78,6 @@ func TestTicket05PrepareMigratesLegacyArchive(t *testing.T) {
 			})
 			require.NoError(t, err)
 			require.NoError(t, meta.Close())
-
-			legacy.Status.State = "archived"
-			legacy.Status.Reason = "legacy archive marker"
-			legacy.Status.AppliedGeneration = 4
-			legacy.Status.RuntimeGeneration = 3
-			legacy.Status.Capabilities = runtime.Capabilities{"input": true}
-			legacy.Status.EffectiveFeatures = &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)}
-			writeLegacySessionState(t, dir, backendName, legacy)
-
-			pending.Status.State = "archived"
-			pending.Status.Reason = "legacy archive marker"
-			writeLegacySessionState(t, dir, backendName, pending)
 
 			meta, err = backend.Open(dir, metastore.Config{Backend: backendName}, false)
 			require.NoError(t, err)
@@ -110,23 +94,11 @@ func TestTicket05PrepareMigratesLegacyArchive(t *testing.T) {
 				require.NoError(t, svc.Shutdown(ctx))
 			})
 			require.NoError(t, svc.Prepare(context.Background()))
-			require.Zero(t, factory.created.Load(), "migration must not construct a Driver")
+			require.Zero(t, factory.created.Load(), "preparation must not construct a Driver")
 
-			migrated, err := svc.GetSession(resource.SessionRef{SessionID: legacy.Status.SessionID})
+			retained, err := svc.GetSession(resource.SessionRef{SessionID: completed.Status.SessionID})
 			require.NoError(t, err)
-			require.Equal(t, events.SessionState("offline"), migrated.Status.State)
-			require.Empty(t, migrated.Status.Reason)
-			require.Zero(t, migrated.Status.AppliedGeneration)
-			require.Zero(t, migrated.Status.RuntimeGeneration)
-			require.Nil(t, migrated.Status.Capabilities)
-			require.Nil(t, migrated.Status.EffectiveFeatures)
-			require.Equal(t, legacy.Status.HistoryLoad, migrated.Status.HistoryLoad)
-			require.Equal(t, legacy.Metadata.UID, migrated.Metadata.UID)
-			require.Equal(t, legacy.Metadata.CreatedAt, migrated.Metadata.CreatedAt)
-			require.Equal(t, legacy.Metadata.Generation, migrated.Metadata.Generation)
-			require.Equal(t, legacy.Spec, migrated.Spec)
-			require.Equal(t, legacy.Status.SessionID, migrated.Status.SessionID)
-			require.NotEqual(t, legacy.Metadata.ResourceVersion, migrated.Metadata.ResourceVersion)
+			require.Equal(t, completed, retained)
 
 			preserved, err := svc.GetSession(resource.SessionRef{SessionID: pending.Status.SessionID})
 			require.NoError(t, err)
@@ -141,32 +113,10 @@ func TestTicket05PrepareMigratesLegacyArchive(t *testing.T) {
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 
 			require.NoError(t, svc.Prepare(context.Background()))
-			again, err := svc.GetSession(resource.SessionRef{SessionID: legacy.Status.SessionID})
+			again, err := svc.GetSession(resource.SessionRef{SessionID: completed.Status.SessionID})
 			require.NoError(t, err)
-			require.Equal(t, migrated.Metadata.ResourceVersion, again.Metadata.ResourceVersion)
+			require.Equal(t, retained.Metadata.ResourceVersion, again.Metadata.ResourceVersion)
 			require.Zero(t, factory.created.Load())
 		})
-	}
-}
-
-func writeLegacySessionState(t *testing.T, dir, backendName string, legacy resource.Session) {
-	t.Helper()
-	payload, err := json.Marshal(legacy)
-	require.NoError(t, err)
-	switch backendName {
-	case "sqlite":
-		db, err := sql.Open("sqlite", filepath.Join(dir, "metadata-authority.sqlite"))
-		require.NoError(t, err)
-		defer func() { require.NoError(t, db.Close()) }()
-		result, err := db.ExecContext(t.Context(), "UPDATE session SET state='archived', payload=? WHERE session_id=?", payload, legacy.Status.SessionID)
-		require.NoError(t, err)
-		count, err := result.RowsAffected()
-		require.NoError(t, err)
-		require.EqualValues(t, 1, count)
-	case "file":
-		path := filepath.Join(dir, "sessions", legacy.Metadata.Namespace, legacy.Metadata.Name, "state.json")
-		require.NoError(t, os.WriteFile(path, payload, 0o600))
-	default:
-		t.Fatalf("unknown backend %q", backendName)
 	}
 }

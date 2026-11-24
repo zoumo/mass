@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
@@ -24,7 +25,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -58,15 +58,15 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			bin := filepath.Join(peerDir, "peer")
 			out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/lifecycle-peer").CombinedOutput()
 			require.NoError(t, err, string(out))
-			st, err := file.Open(filepath.Join(ownedRoot, "data"), false)
+			st, err := massdtest.OpenFileStores(filepath.Join(ownedRoot, "data"), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
-			gate := &nativeOverloadGate{EventStore: st, release: make(chan struct{})}
+			gate := &nativeOverloadGate{EventStore: st.Events, release: make(chan struct{})}
 			var once sync.Once
 			release := func() { once.Do(func() { close(gate.release) }) }
 			defer release()
 			reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}})
-			svc := service.New(st, gate, reg)
+			svc := service.New(st.Meta, gate, reg)
 			pidFile := filepath.Join(ownedRoot, "owned-pid")
 			expectProcesses := false
 			t.Cleanup(func() {

@@ -2,7 +2,6 @@ package file
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,8 +16,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/massd/pkg/events"
-	"github.com/zoumo/mass/massd/pkg/resource"
-	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/massd/pkg/internal/fileio"
 	"github.com/zoumo/mass/massd/pkg/store"
 )
 
@@ -26,7 +24,6 @@ type appendSuite struct {
 	suite.Suite
 	st  *Store
 	dir string
-	r   resource.Session
 }
 
 func TestAppendSuite(t *testing.T) { suite.Run(t, new(appendSuite)) }
@@ -35,8 +32,6 @@ func (s *appendSuite) SetupTest() {
 	s.dir = s.T().TempDir()
 	var err error
 	s.st, err = Open(s.dir, false)
-	s.Require().NoError(err)
-	s.r, err = s.st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "codex", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic"}}, Status: resource.SessionStatus{SessionID: "native", State: events.Unknown}})
 	s.Require().NoError(err)
 	owned := s.st
 	s.T().Cleanup(func() { s.Require().NoError(owned.Close()) })
@@ -104,7 +99,7 @@ func (s *appendSuite) TestFailuresRecoverWithoutHistoricalPayloadCopiesOrDuplica
 				second := s.fact("second committed event")
 				_, err := s.st.Append("native", []events.SessionEvent{old, second})
 				s.Require().NoError(err)
-				path := s.st.historyPath(s.r)
+				path := s.st.historyPath(s.st.identities["native"])
 				before, err := os.Stat(path)
 				s.Require().NoError(err)
 				prefix, err := os.ReadFile(path)
@@ -120,9 +115,9 @@ func (s *appendSuite) TestFailuresRecoverWithoutHistoricalPayloadCopiesOrDuplica
 				s.Require().ErrorContains(err, "outcome_unknown", "writer stays sealed")
 				_, err = s.st.ListHistory("native", store.HistoryQuery{})
 				s.Require().ErrorContains(err, "outcome_unknown")
-				intentPath := filepath.Join(s.dir, ".append.pending.json")
+				intentPath := filepath.Join(s.dir, ".events.append.pending.json")
 				var intent appendIntent
-				s.Require().NoError(readJSON(intentPath, &intent))
+				s.Require().NoError(fileio.ReadJSON(intentPath, &intent))
 				s.Equal(int64(len(prefix)), intent.Offset)
 				s.NotContains(string(intent.Data), "historical-only")
 				s.NotContains(string(intent.Data), old.EventID)
@@ -184,8 +179,8 @@ func (s *appendSuite) TestConflictingTailAndCommittedPrefixArePreserved() {
 			_, err = s.st.Append("native", []events.SessionEvent{s.fact("new-marker")})
 			s.Require().ErrorContains(err, "outcome_unknown")
 			var intent appendIntent
-			s.Require().NoError(readJSON(filepath.Join(s.dir, ".append.pending.json"), &intent))
-			path := s.st.historyPath(s.r)
+			s.Require().NoError(fileio.ReadJSON(filepath.Join(s.dir, ".events.append.pending.json"), &intent))
+			path := s.st.historyPath(s.st.identities["native"])
 			content, err := os.ReadFile(path)
 			s.Require().NoError(err)
 			if conflict == "tail" {
@@ -197,60 +192,14 @@ func (s *appendSuite) TestConflictingTailAndCommittedPrefixArePreserved() {
 			s.Require().NoError(s.st.Close())
 			_, err = Open(s.dir, false)
 			s.Require().Error(err)
-			s.Contains(err.Error(), map[string]string{"tail": "tail differs", "prefix": "prefix does not match"}[conflict])
+			s.Contains(err.Error(), map[string]string{"tail": "tail differs", "prefix": "committed history checkpoint mismatch"}[conflict])
 			after, err := os.ReadFile(path)
 			s.Require().NoError(err)
 			s.Equal(content, after, "recovery must not truncate divergent bytes")
-			_, err = os.Stat(filepath.Join(s.dir, ".append.pending.json"))
+			_, err = os.Stat(filepath.Join(s.dir, ".events.append.pending.json"))
 			s.Require().NoError(err, "retain unresolved append evidence")
 		})
 	}
-}
-
-func (s *appendSuite) TestStartupValidatesDiskAndMetadataRedoDoesNotContainHistory() {
-	old := s.fact("unique-historical-body")
-	_, err := s.st.Append("native", []events.SessionEvent{old})
-	s.Require().NoError(err)
-	path := s.st.historyPath(s.r)
-	before, err := os.Stat(path)
-	s.Require().NoError(err)
-	content, err := os.ReadFile(path)
-	s.Require().NoError(err)
-	// A metadata-only failed create must not serialize any old event payload.
-	blocked := filepath.Join(s.dir, "sessions", "default", "blocked", "state.json")
-	s.Require().NoError(os.MkdirAll(blocked, 0o700))
-	r := s.r
-	r.Metadata = resource.Metadata{Namespace: "default", Name: "blocked"}
-	r.Status.SessionID = "other-native"
-	_, err = s.st.CreateSession(r)
-	s.Require().ErrorContains(err, "outcome_unknown")
-	pending, err := os.ReadFile(filepath.Join(s.dir, ".pending.json"))
-	s.Require().NoError(err)
-	s.NotContains(string(pending), "unique-historical-body")
-	s.NotContains(string(pending), old.EventID)
-	var metadata map[string]any
-	s.Require().NoError(json.Unmarshal(pending, &metadata))
-	s.NotContains(metadata["next"].(map[string]any), "history")
-	s.Require().NoError(os.Remove(blocked))
-	s.Require().NoError(s.st.Reconcile())
-	after, err := os.Stat(path)
-	s.Require().NoError(err)
-	s.True(os.SameFile(before, after))
-	s.Equal(before.ModTime(), after.ModTime())
-	// Runtime reads use the verified SQL replica; reopening still validates all
-	// authoritative file records before exposing any history.
-	changed := bytes.Replace(content, []byte("unique-historical-body"), []byte("broken-historical-body"), 1)
-	s.Require().NoError(os.WriteFile(path, changed, 0o600))
-	page, err := s.st.ListHistory("native", store.HistoryQuery{})
-	s.Require().NoError(err)
-	s.Require().Len(page.Events, 1)
-	s.Equal(old.EventID, page.Events[0].EventID)
-	s.Require().ErrorContains(s.st.Reconcile(), "committed history prefix changed")
-	s.Require().NoError(s.st.Close())
-	// Syntactically invalid committed history is rejected even with a complete cache.
-	s.Require().NoError(os.WriteFile(path, append(changed, []byte("broken\n")...), 0o600))
-	_, err = Open(s.dir, false)
-	s.Require().Error(err)
 }
 
 func (s *appendSuite) TestSnapshotReadersAndConflictingBatch() {
@@ -274,7 +223,7 @@ func (s *appendSuite) TestSnapshotReadersAndConflictingBatch() {
 	page, err = s.st.ListHistory("native", store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(page.Events, 2)
-	_, err = os.Stat(filepath.Join(s.dir, ".append.pending.json"))
+	_, err = os.Stat(filepath.Join(s.dir, ".events.append.pending.json"))
 	s.True(os.IsNotExist(err), fmt.Sprint(err))
 }
 
@@ -330,13 +279,11 @@ func TestAppendProcessCrashRecovery(t *testing.T) {
 			dir := t.TempDir()
 			st, err := Open(dir, false)
 			require.NoError(t, err)
-			r, err := st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "codex"}, Status: resource.SessionStatus{SessionID: "native", State: events.Unknown}})
-			require.NoError(t, err)
 			old, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: "default", SessionName: "demo", SessionID: "native", ItemID: "old-item", Time: time.Now().UTC()}, events.AgentMessage{MessageID: "old-message", Content: []events.ContentBlock{events.Text("old committed event")}}, events.NewSource())
 			require.NoError(t, err)
 			_, err = st.Append("native", []events.SessionEvent{old})
 			require.NoError(t, err)
-			path := st.historyPath(r)
+			path := st.historyPath(st.identities["native"])
 			before, err := os.Stat(path)
 			require.NoError(t, err)
 			require.NoError(t, st.Close())
@@ -351,7 +298,7 @@ func TestAppendProcessCrashRecovery(t *testing.T) {
 			_, err = Open(dir, true)
 			require.ErrorContains(t, err, "writable reopen required")
 			var intent appendIntent
-			require.NoError(t, readJSON(filepath.Join(dir, ".append.pending.json"), &intent))
+			require.NoError(t, fileio.ReadJSON(filepath.Join(dir, ".events.append.pending.json"), &intent))
 			st, err = Open(dir, false)
 			require.NoError(t, err)
 			defer st.Close()
@@ -366,7 +313,7 @@ func TestAppendProcessCrashRecovery(t *testing.T) {
 			after, err := os.Stat(path)
 			require.NoError(t, err)
 			require.True(t, os.SameFile(before, after))
-			_, err = os.Stat(filepath.Join(dir, ".append.pending.json"))
+			_, err = os.Stat(filepath.Join(dir, ".events.append.pending.json"))
 			require.True(t, os.IsNotExist(err))
 		})
 	}

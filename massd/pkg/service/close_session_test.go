@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type closeDriver struct {
@@ -208,7 +208,7 @@ func (f closeFactory) New(string, runtime.Config) (runtime.Driver, error) {
 
 type closeFixture struct {
 	driver *closeDriver
-	store  *file.Store
+	store  *massdtest.FileStores
 	svc    *service.Service
 	ref    resource.SessionRef
 }
@@ -219,7 +219,7 @@ func newCloseFixture(t *testing.T) *closeFixture {
 
 func newCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore) metastore.MetaStore) *closeFixture {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	d := &closeDriver{
@@ -232,11 +232,11 @@ func newCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore) metast
 		closeRelease:  make(chan struct{}),
 		emitOpenIdle:  true,
 	}
-	var meta metastore.MetaStore = st
+	var meta metastore.MetaStore = st.Meta
 	if wrap != nil {
 		meta = wrap(meta)
 	}
-	svc := service.New(meta, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}))
+	svc := service.New(meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}))
 	t.Cleanup(func() {
 		d.releasePrompt()
 		d.releaseResume()
@@ -291,12 +291,12 @@ func (m *failHistoryCleanupMeta) UpdateSession(r resource.Session) (resource.Ses
 
 func (f *closeFixture) setState(t *testing.T, state events.SessionState) {
 	t.Helper()
-	_, err := f.store.UpdateSession(mustSession(t, f.svc, f.ref))
+	_, err := f.store.Meta.UpdateSession(mustSession(t, f.svc, f.ref))
 	require.NoError(t, err)
 	current, err := f.svc.GetSession(f.ref)
 	require.NoError(t, err)
 	current.Status.State = state
-	_, err = f.store.UpdateSession(current)
+	_, err = f.store.Meta.UpdateSession(current)
 	require.NoError(t, err)
 }
 
@@ -443,7 +443,7 @@ func TestCloseFailureFencesThenExplicitRetrySucceeds(t *testing.T) {
 
 func TestCloseUnknownWithoutHandleCompletesOfflineCleanup(t *testing.T) {
 	f := newCloseFixture(t)
-	_, err := f.store.CreateSession(resource.Session{
+	_, err := f.store.Meta.CreateSession(resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "detached"},
 		Spec:     resource.SessionSpec{RuntimeRef: "agent"},
 		Status:   resource.SessionStatus{SessionID: "detached", State: events.Unknown, AppliedGeneration: 1},
