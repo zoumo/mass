@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { stateLabel, eventStatusLabel } from '../../workbench'
-import { navigate, usePages, useRecord, useRefresh, viewHref } from '../observer'
+import { navigate, observerView, usePages, useRecord, useRefresh, viewHref } from '../observer'
 import RecordDetail from './RecordDetail'
 import { TraceLinks } from '../TraceLinks'
 import {
@@ -154,9 +154,7 @@ export default function Diagnostics({ query }: { query: URLSearchParams }) {
   }, [kind, id])
   function close() {
     const previous = history.state?.observerPrevious
-    const previousQuery = previous && new URL(previous,location.origin).searchParams
-    const fromWorkspace = previousQuery && !previousQuery.has('mode') &&
-      (!previousQuery.has('view') || Object.hasOwn(workViews, previousQuery.get('view') || ''))
+    const fromWorkspace = previous && observerView(new URL(previous, location.origin)) !== 'diagnostics'
     if (previous === href(kind, filter, scope) || fromWorkspace) {
       history.back()
       return

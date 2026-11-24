@@ -7,7 +7,6 @@ const perspectives = ['topic-conversation', 'message', 'router', 'topic', 'issue
 export type Perspective = typeof perspectives[number]
 const defaultPerspective = 'topic-conversation'
 export const observerHome = '/superagent/'
-const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
 export type ViewProps = { query: URLSearchParams }
 export type MessageRecord = WorkbenchRow & {
   id: string
@@ -23,12 +22,10 @@ export function perspectiveFromPath(path: string): Perspective | undefined {
 export function observerView(url: URL): Perspective | 'diagnostics' {
   const fromPath = perspectiveFromPath(url.pathname)
   if (fromPath) return fromPath
-  const collection = url.searchParams.get('view') || ''
-  if (url.searchParams.get('mode') === 'records' || (collection && !Object.hasOwn(previousViews, collection))) {
+  if (url.searchParams.get('mode') === 'records' || url.searchParams.get('view')) {
     return 'diagnostics'
   }
-  const requested = url.searchParams.get('perspective') || previousViews[collection]
-  return perspectives.find(view => view === requested) || defaultPerspective
+  return defaultPerspective
 }
 
 export function viewHref(view: Perspective, id = '', filters: Record<string, string> = {}) {

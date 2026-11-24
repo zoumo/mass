@@ -59,7 +59,7 @@ test('shows structured Message body and attachment types while retaining Thread 
   const record = await response.json()
   await route.fulfill({ response, json: { ...record, content } })
  })
- const url = `/superagent/?perspective=message&id=${id}`
+ const url = `/superagent/message?id=${id}`
  await page.goto(url)
  await page.getByText('查看全文', { exact: true }).click()
  await expect(page.getByTestId('message-body')).toHaveText('Inspect the attached log.\nConfirm the exit code.')
