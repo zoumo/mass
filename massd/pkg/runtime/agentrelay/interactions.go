@@ -159,9 +159,9 @@ func (p *Interactions) observe(event events.SessionEvent) (events.SessionEvent, 
 			}
 			delete(p.pending, payload.Interaction)
 		}
-	case events.SessionError:
-		if payload.Reason == unsupportedNativeEventReason {
-			return p.claudeCompletion(event)
+	case events.UnsupportedNativeEvent:
+		if payload.AgentType == "claude" {
+			return p.claudeCompletion(event, payload.Event)
 		}
 	}
 	return event, true, nil
@@ -179,20 +179,22 @@ func claudeURLRequest(event events.SessionEvent) claudeElicitation {
 	return claudeElicitation{server: server, id: id}
 }
 
-func (p *Interactions) claudeCompletion(event events.SessionEvent) (events.SessionEvent, bool, error) {
+func (p *Interactions) claudeCompletion(event events.SessionEvent, raw json.RawMessage) (events.SessionEvent, bool, error) {
 	meta, _ := event.Meta["claude"].(map[string]any)
 	if meta["type"] != "system" || meta["subtype"] != "elicitation_complete" {
 		return event, true, nil
 	}
-	raw, _ := meta["raw"].(map[string]any)
-	server, _ := raw["mcp_server_name"].(string)
-	id, _ := raw["elicitation_id"].(string)
-	if raw["session_id"] != event.SessionID || server == "" || id == "" {
+	var completion struct {
+		SessionID string `json:"session_id"`
+		Server    string `json:"mcp_server_name"`
+		ID        string `json:"elicitation_id"`
+	}
+	if json.Unmarshal(raw, &completion) != nil || completion.SessionID != event.SessionID || completion.Server == "" || completion.ID == "" {
 		return event, true, nil
 	}
 	var match agent.InteractionRef
 	for ref, entry := range p.pending {
-		if entry.claudeURL != (claudeElicitation{server: server, id: id}) {
+		if entry.claudeURL != (claudeElicitation{server: completion.Server, id: completion.ID}) {
 			continue
 		}
 		if match != "" {

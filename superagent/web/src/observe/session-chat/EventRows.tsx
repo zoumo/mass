@@ -210,6 +210,15 @@ export function EventRows({ events, ...reply }: ReplyProps & { events: SessionEv
           case 'session.error':
             body = <><p className="sc-event-title">{text(payload.message)}</p>{!!payload.reason && <code>{text(payload.reason)}</code>}</>
             break
+          case 'session.unsupported_native_event': {
+            const native = record(payload.event)
+            const name = text(native.method) || [text(native.type), text(native.subtype)].filter(Boolean).join(' / ')
+            body = <details className="sc-event-json">
+              <summary><code>{[text(payload.agentType), name].filter(Boolean).join(' · ')}</code></summary>
+              <pre>{json(payload.event)}</pre>
+            </details>
+            break
+          }
           case 'session.history_replay':
             status = text(payload.phase)
             body = <>
@@ -261,7 +270,7 @@ export function EventRows({ events, ...reply }: ReplyProps & { events: SessionEv
           <time dateTime={item.time}>{clock.format(new Date(item.time))}</time>
         </div>
         <div className="sc-event-body">{body}</div>
-        <details className="sc-event-json"><summary>原始字段 <code>{type}</code></summary><pre>{json(item)}</pre></details>
+        {type !== 'session.unsupported_native_event' && <details className="sc-event-json"><summary>原始字段 <code>{type}</code></summary><pre>{json(item)}</pre></details>}
       </li>
     })}
   </ol>

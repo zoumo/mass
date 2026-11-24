@@ -135,19 +135,13 @@ func (r *Relay) setErr(err error) {
 	r.mu.Unlock()
 }
 
-// MapEvent preserves SDK identity and metadata in the MASS envelope and
-// projects unsupported native event diagnostics into session.error.
+// MapEvent preserves SDK identity and projects native fallback events into
+// the public MASS payload.
 func MapEvent(address runtime.Address, source events.Source, event agent.Event) (events.SessionEvent, error) {
 	if err := event.Validate(); err != nil {
 		return events.SessionEvent{}, MapError(err)
 	}
-	payload := event.Payload
-	if event.Type() == agent.EventSessionUnsupportedNativeEvent {
-		payload = events.SessionError{
-			Reason:  unsupportedNativeEventReason,
-			Message: "Agent SDK could not convert the native event",
-		}
-	}
+	var payload events.Payload = event.Payload
 	var meta map[string]any
 	if event.Meta != nil {
 		normalized, err := normalizeJSON(event.Meta)
@@ -155,6 +149,34 @@ func MapEvent(address runtime.Address, source events.Source, event agent.Event) 
 			return events.SessionEvent{}, runtime.InvalidArgument("agent event metadata is not valid JSON")
 		}
 		meta = normalized.(map[string]any)
+	}
+	if event.Type() == agent.EventSessionUnsupportedNativeEvent {
+		// The validated SDK union accepts both value and pointer payloads.
+		var provider string
+		switch native := event.Payload.(type) {
+		case agent.UnsupportedNativeEventPayload:
+			provider = native.Provider
+		case *agent.UnsupportedNativeEventPayload:
+			provider = native.Provider
+		}
+		nativeMeta, _ := meta[provider].(map[string]any)
+		raw, ok := nativeMeta["raw"].(map[string]any)
+		if provider != "" && ok && raw != nil {
+			encoded, err := json.Marshal(raw)
+			if err != nil {
+				return events.SessionEvent{}, runtime.InvalidArgument("native event is not valid JSON")
+			}
+			payload = events.UnsupportedNativeEvent{AgentType: provider, Event: encoded}
+			delete(nativeMeta, "raw")
+			if len(nativeMeta) == 0 {
+				delete(meta, provider)
+			}
+		} else {
+			payload = events.SessionError{
+				Reason:  unsupportedNativeEventReason,
+				Message: "Agent SDK could not convert the native event",
+			}
+		}
 	}
 	mapped, err := events.NewEvent(events.EventBase{
 		EventID:     event.EventID,

@@ -114,10 +114,12 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string, wantDiagno
 		s.Equal(ref.SessionID, e.SessionID)
 		s.Require().NotEqual("user.message", e.Type(), "a mixed supported/unsupported message must not be partially emitted")
 		switch problem := e.Payload().(type) {
-		case events.SessionError:
-			s.Equal("unsupported_native_event", problem.Reason)
-			s.NotEmpty(problem.Message)
+		case events.UnsupportedNativeEvent:
+			s.Equal("codex", problem.AgentType)
+			s.False(e.Persistent())
 			diagnostics = append(diagnostics, e)
+		case events.SessionError:
+			s.FailNow("native fallback was surfaced as a Session error", "%+v", problem)
 		case events.AgentMessage:
 			s.Equal([]events.ContentBlock{events.Text("complete answer")}, problem.Content)
 			answered = true
@@ -158,8 +160,18 @@ settled:
 		s.Equal(want.itemID, event.ItemID)
 		meta := event.Meta["codex"].(map[string]any)
 		s.Equal("item/completed", meta["method"])
-		item := meta["raw"].(map[string]any)["params"].(map[string]any)["item"].(map[string]any)
-		s.Equal(want.nativeType, item["type"])
+		s.NotContains(meta, "raw")
+		var notification struct {
+			Method string `json:"method"`
+			Params struct {
+				Item struct {
+					Type string `json:"type"`
+				} `json:"item"`
+			} `json:"params"`
+		}
+		s.Require().NoError(json.Unmarshal(event.Payload().(events.UnsupportedNativeEvent).Event, &notification))
+		s.Equal("item/completed", notification.Method)
+		s.Equal(want.nativeType, notification.Params.Item.Type)
 
 		wantAttrs := []attribute.KeyValue{
 			attribute.String("provider", "codex"),
@@ -178,6 +190,7 @@ settled:
 	s.Require().NoError(c.History(ctx(s.T()), ref, store.HistoryQuery{}, &history))
 	for _, e := range history.Events {
 		s.NotEqual("user.message", e.Type(), "no lossy partial text in public history")
+		s.NotEqual("session.unsupported_native_event", e.Type())
 	}
 	_, err = s.svc.CloseSession(ctx(s.T()), ref)
 	s.Require().NoError(err)

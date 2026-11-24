@@ -61,6 +61,13 @@ export function demoSession(binding: Binding, emit: (event: SessionEvent) => voi
       }
       emit(row)
     }
+    emit(event('session.unsupported_native_event', {
+      agentType: 'codex',
+      event: {
+        method: 'thread/readState/changed',
+        params: { threadId: binding.sessionId, readState: { revision: run, firstUnread: null } },
+      },
+    }))
   }
   return {
     async connect() { return 'idle' },

@@ -52,8 +52,16 @@ type HistoryReplay struct {
 
 func (HistoryReplay) eventType() string { return "session.history_replay" }
 
-// Payload is the envelope's payload slot. Live values must implement the SDK
-// agent.Payload closed union; HistoryReplay is MASS's only control branch.
+type UnsupportedNativeEvent struct {
+	AgentType string          `json:"agentType"`
+	Event     json.RawMessage `json:"event"`
+}
+
+func (UnsupportedNativeEvent) eventType() string {
+	return string(agent.EventSessionUnsupportedNativeEvent)
+}
+
+// Payload holds an SDK payload or a MASS-specific event branch.
 type Payload any
 
 // SessionEvent is the only event model. Source stays private and unserialized.
@@ -73,6 +81,9 @@ func NewEvent(base EventBase, payload Payload, source Source) (SessionEvent, err
 func (e SessionEvent) Type() string {
 	if replay, ok := historyPayload(e.payload); ok {
 		return replay.eventType()
+	}
+	if native, ok := e.payload.(UnsupportedNativeEvent); ok {
+		return native.eventType()
 	}
 	live, ok := e.payload.(agent.Payload)
 	if !ok {
@@ -109,6 +120,13 @@ func (e SessionEvent) Validate() error {
 	if e.Replay != nil && e.Replay.LoadID == "" {
 		return errors.New("missing replay loadId")
 	}
+	if native, ok := e.payload.(UnsupportedNativeEvent); ok {
+		raw := bytes.TrimSpace(native.Event)
+		if native.AgentType == "" || e.Replay != nil || len(raw) == 0 || raw[0] != '{' || !json.Valid(raw) {
+			return errors.New("invalid live native event")
+		}
+		return CheckDynamicJSON(e.Meta)
+	}
 	if replay, ok := historyPayload(e.payload); ok {
 		if err := CheckDynamicJSON(e.Meta); err != nil {
 			return err
@@ -138,6 +156,9 @@ func (e SessionEvent) Validate() error {
 	if !ok {
 		return errors.New("unsupported payload branch")
 	}
+	if e.Type() == string(agent.EventSessionUnsupportedNativeEvent) {
+		return errors.New("native event requires the MASS payload")
+	}
 	return (agent.Event{
 		EventID:   e.EventID,
 		SessionID: e.SessionID,
@@ -158,6 +179,13 @@ func (e SessionEvent) MarshalJSON() ([]byte, error) {
 			Type    string        `json:"type"`
 			Payload HistoryReplay `json:"payload"`
 		}{EventBase: e.EventBase, Type: replay.eventType(), Payload: replay})
+	}
+	if native, ok := e.payload.(UnsupportedNativeEvent); ok {
+		return json.Marshal(struct {
+			EventBase
+			Type    string                 `json:"type"`
+			Payload UnsupportedNativeEvent `json:"payload"`
+		}{EventBase: e.EventBase, Type: native.eventType(), Payload: native})
 	}
 	live := e.payload.(agent.Payload)
 	encoded, err := json.Marshal(agent.Event{
@@ -204,6 +232,20 @@ func (e *SessionEvent) UnmarshalJSON(data []byte) error {
 	}
 	if len(raw.Payload) == 0 || bytes.Equal(bytes.TrimSpace(raw.Payload), []byte("null")) {
 		return errors.New("missing event payload")
+	}
+	if raw.Type == string(agent.EventSessionUnsupportedNativeEvent) {
+		var native UnsupportedNativeEvent
+		decoder := json.NewDecoder(bytes.NewReader(raw.Payload))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&native); err != nil {
+			return err
+		}
+		event, err := NewEvent(raw.EventBase, native, Source{})
+		if err != nil {
+			return err
+		}
+		*e = event
+		return nil
 	}
 	if raw.Type == "session.history_replay" {
 		var replay HistoryReplay
@@ -273,7 +315,7 @@ func (e SessionEvent) Clone() (SessionEvent, error) {
 	return out, err
 }
 
-// ValidType recognizes MASS history replay and the SDK's live event union.
+// ValidType recognizes the public Session event union.
 func ValidType(kind string) bool {
 	switch agent.EventType(kind) {
 	case agent.EventUserMessage,
@@ -286,6 +328,7 @@ func ValidType(kind string) bool {
 		agent.EventAgentToolCallChunk,
 		agent.EventSessionStateUpdate,
 		agent.EventSessionError,
+		agent.EventSessionUnsupportedNativeEvent,
 		agent.EventSessionInfoUpdate,
 		agent.EventSessionConfigOptionUpdate,
 		agent.EventSessionCommandsUpdate,

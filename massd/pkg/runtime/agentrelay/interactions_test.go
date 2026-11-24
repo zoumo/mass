@@ -2,6 +2,7 @@ package agentrelay
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -12,6 +13,29 @@ import (
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 )
+
+func TestUnsupportedNativeEventPreservesJSONOnTheWire(t *testing.T) {
+	raw := json.RawMessage(`{"method":"hook/completed","params":{"future":[null,9007199254740993]}}`)
+	source := events.NewSource()
+	native := agent.Event{
+		EventID: uuid.NewString(), Time: time.Now().UTC(), SessionID: "native",
+		Payload: agent.UnsupportedNativeEventPayload{Provider: "codex", NativeMethod: "hook/completed"},
+		Meta:    map[string]any{"codex": map[string]any{"raw": raw}},
+	}
+	mapped, err := MapEvent(runtime.Address{Namespace: "one", SessionName: "chat"}, source, native)
+	require.NoError(t, err)
+	require.False(t, mapped.Persistent())
+	require.Empty(t, mapped.Meta)
+	require.Equal(t, raw, native.Meta["codex"].(map[string]any)["raw"])
+	wire, err := json.Marshal(mapped)
+	require.NoError(t, err)
+	require.Contains(t, string(wire), `"payload":{"agentType":"codex","event":`+string(raw)+`}`)
+	cloned, err := mapped.Clone()
+	require.NoError(t, err)
+	require.Equal(t, events.UnsupportedNativeEvent{AgentType: "codex", Event: raw}, cloned.Payload())
+	require.Equal(t, native.EventID, cloned.EventID)
+	require.Equal(t, source, cloned.Source())
+}
 
 type interactionAnswerer struct {
 	agent.Session
@@ -70,13 +94,14 @@ func TestURLClosesOnCorrelatedCompletionInEitherOrder(t *testing.T) {
 			require.Equal(t, native.EventID, mapped.EventID)
 			require.Equal(t, native.Time, mapped.Time)
 			require.Equal(t, native.SessionID, mapped.SessionID)
-			require.Equal(t, native.Meta, mapped.Meta)
+			require.Equal(t, map[string]any{"claude": map[string]any{"type": "system", "subtype": "elicitation_complete"}}, mapped.Meta)
+			require.Equal(t, "claude", mapped.Payload().(events.UnsupportedNativeEvent).AgentType)
 			return mapped
 		}
 		got, publish, err := pending.observe(completion("other-flow"))
 		require.NoError(t, err)
 		require.True(t, publish)
-		require.Equal(t, "unsupported_native_event", got.Payload().(events.SessionError).Reason)
+		require.Equal(t, string(agent.EventSessionUnsupportedNativeEvent), got.Type())
 
 		if !early {
 			_, publish, err = pending.observe(ack)
@@ -102,7 +127,7 @@ func TestURLClosesOnCorrelatedCompletionInEitherOrder(t *testing.T) {
 		got, publish, err = pending.observe(completion("flow-id"))
 		require.NoError(t, err)
 		require.True(t, publish)
-		require.Equal(t, "unsupported_native_event", got.Payload().(events.SessionError).Reason)
+		require.Equal(t, string(agent.EventSessionUnsupportedNativeEvent), got.Type())
 
 		require.NoError(t, pending.Expire(t.Context(), "native", address, source,
 			func(context.Context, events.SessionEvent) error {

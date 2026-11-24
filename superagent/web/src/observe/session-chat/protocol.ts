@@ -33,6 +33,7 @@ export const eventLabels: Record<string, string> = {
   'agent.tool_result': '工具结果',
   'session.state_update': '工作状态',
   'session.error': 'Session 错误',
+  'session.unsupported_native_event': '未映射的原生事件',
   'session.info_update': 'Session 信息',
   'session.config_option_update': '配置快照',
   'session.available_commands_update': '可用命令',
@@ -71,6 +72,19 @@ export function conversationRows(events: SessionEvent[]) {
 
 type Notice = { method: string; params: { subscriptionId: string; event?: SessionEvent; error?: { message: string } } }
 
+const rawJSON = (JSON as typeof JSON & { rawJSON?: (source: string) => object }).rawJSON
+
+function readMessage(data: string) {
+  const message = JSON.parse(data)
+  const event = message.params?.event as SessionEvent | undefined
+  if (message.method === 'session.event' && event?.type === 'session.unsupported_native_event' && rawJSON) {
+    // Preserve numeric tokens across JSON.parse and the expanded JSON preview.
+    return JSON.parse(data, (_key, value: unknown, context?: { source?: string }) =>
+      typeof value === 'number' && context?.source ? rawJSON(context.source) : value)
+  }
+  return message
+}
+
 class RpcSocket {
   readonly socket: WebSocket
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>()
@@ -79,7 +93,7 @@ class RpcSocket {
   constructor(path: string, notice: (message: Notice) => void, ended: () => void) {
     this.socket = new WebSocket(new URL(path, location.origin.replace(/^http/, 'ws')))
     this.socket.onmessage = ({ data }) => {
-      const message = JSON.parse(data)
+      const message = readMessage(data)
       if (message.method) { notice(message); return }
       const request = this.pending.get(message.id)
       if (!request) return
