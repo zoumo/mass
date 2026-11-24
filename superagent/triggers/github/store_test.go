@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggerdb"
 )
@@ -91,6 +93,15 @@ func TestGitHubSQLiteQueueRetainsFIFOAndPayloadAcrossRestart(t *testing.T) {
 	if queued, err := store.commitReadback(c, repo, scope, stream, observations, time.Time{}, nil); err != nil || queued != 2 {
 		t.Fatalf("scan queued %d items: %v", queued, err)
 	}
+	// Replaying stale progress must fail on the pending message identity.
+	// It must also roll back a snapshot written earlier in the retry.
+	retry := []githubObservation{{Key: "silent", Data: json.RawMessage(`{}`), UpdatedAt: now}, observations[0]}
+	_, err = store.commitReadback(c, repo, scope, stream, retry, time.Time{}, nil)
+	require.ErrorContains(t, err, "UNIQUE constraint failed: github_pending.repository, github_pending.message_id")
+	items, err := store.scopeItems(repo.Repository, scope)
+	require.NoError(t, err)
+	require.NotContains(t, items, "silent")
+
 	first, err := store.pendingHead(repo.Repository)
 	if err != nil || !bytes.Contains(first.payload, []byte("Analyzed first")) {
 		t.Fatalf("head was not first observation: %v", err)
@@ -113,7 +124,7 @@ func TestGitHubSQLiteQueueRetainsFIFOAndPayloadAcrossRestart(t *testing.T) {
 	if err != nil || replayed.sequence != first.sequence || !bytes.Equal(replayed.payload, first.payload) {
 		t.Fatalf("pending head changed across restart: %v", err)
 	}
-	saved, err := readGitHubDelivery(store.db, repo.Repository)
+	saved, err := store.delivery(repo.Repository)
 	if err != nil || saved.Backlog != 2 || saved.DeliveryFailures != 1 ||
 		saved.LastDeliveryError != delivery.LastDeliveryError || !saved.NextDeliveryAt.Equal(delivery.NextDeliveryAt) {
 		t.Fatalf("delivery backoff changed across restart: %+v, %v", saved, err)
@@ -126,7 +137,7 @@ func TestGitHubSQLiteQueueRetainsFIFOAndPayloadAcrossRestart(t *testing.T) {
 	if err != nil || second.sequence <= first.sequence || !bytes.Contains(second.payload, []byte("Analyzed second")) {
 		t.Fatalf("FIFO did not advance to the second observation: %v", err)
 	}
-	saved, err = readGitHubDelivery(store.db, repo.Repository)
+	saved, err = store.delivery(repo.Repository)
 	if err != nil || saved.Backlog != 1 || saved.Accepted != 1 || saved.Duplicates != 1 || saved.LastReceipt != receipt {
 		t.Fatalf("acknowledgement did not persist receipt and remove head: %+v, %v", saved, err)
 	}
@@ -176,5 +187,61 @@ func TestGitHubSQLiteReadbackRollbackKeepsNotificationRetryable(t *testing.T) {
 	saved, err = store.stream(repo.Repository, scope)
 	if err != nil || saved.Active || saved.ItemCount != 2 || !saved.LastSuccessAt.Equal(now) {
 		t.Fatalf("successful readback did not advance progress: %+v, %v", saved, err)
+	}
+}
+
+func TestGitHubSQLiteCompositeCheckpoints(t *testing.T) {
+	c := githubConfig{AccountID: "account", InstanceID: "github", DatabasePath: filepath.Join(t.TempDir(), "github.sqlite")}
+	store, closeDB, err := openGitHubStore(c)
+	require.NoError(t, err)
+	defer closeDB()
+
+	now := time.Now().UTC()
+	ctx := t.Context()
+	for _, item := range []struct{ repository, id string }{
+		{"demo/first", "123"}, {"demo/second", "123"}, {"demo/first", "456"},
+	} {
+		require.NoError(t, triggerdb.Transaction(store.db, func(tx *sql.Tx) error {
+			notice := githubNotice{ID: item.id, Number: 42, UpdatedAt: now}
+			return saveGitHubNotice(tx, item.repository, now, notice)
+		}))
+		scope := githubNoticePrefix + item.id
+		state, err := store.stream(item.repository, scope)
+		require.NoError(t, err)
+		require.Equal(t, 1, state.ItemCount)
+
+		repo := githubRepository{Repository: item.repository}
+		baseline := []githubObservation{{Key: "object", Data: json.RawMessage(`{}`), UpdatedAt: now}}
+		for range 2 {
+			queued, err := store.commitReadback(c, repo, scope, state, baseline, time.Time{}, nil)
+			require.NoError(t, err)
+			require.Zero(t, queued)
+		}
+		state, err = store.stream(item.repository, scope)
+		require.NoError(t, err)
+		require.Equal(t, 2, state.ItemCount)
+		_, err = store.pendingHead(item.repository)
+		require.ErrorIs(t, err, sql.ErrNoRows)
+	}
+
+	_, err = store.db.ExecContext(ctx, `INSERT INTO github_streams (repository, scope, kind, active, enabled_at)
+		VALUES ('demo/first', 'notification/123', 'discussion', 1, 0)`)
+	require.ErrorContains(t, err, "UNIQUE constraint failed: github_streams.repository, github_streams.scope")
+	_, err = store.db.ExecContext(ctx, `INSERT INTO github_snapshots (repository, scope, object_key, version, updated_at, data)
+		VALUES ('demo/first', 'notification/123', 'object', 0, 0, '{}')`)
+	require.ErrorContains(t, err, "UNIQUE constraint failed: github_snapshots.repository, github_snapshots.scope, github_snapshots.object_key")
+	_, err = store.db.ExecContext(ctx, `DELETE FROM github_snapshots WHERE repository = 'demo/first'
+		AND scope = 'notification/123' AND object_key = 'object'`)
+	require.NoError(t, err)
+
+	state, err := store.stream("demo/first", "notification/123")
+	require.NoError(t, err)
+	require.Equal(t, 1, state.ItemCount)
+	for _, item := range []struct{ repository, scope string }{
+		{"demo/second", "notification/123"}, {"demo/first", "notification/456"},
+	} {
+		state, err := store.stream(item.repository, item.scope)
+		require.NoError(t, err)
+		require.Equal(t, 2, state.ItemCount)
 	}
 }
