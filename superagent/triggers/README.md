@@ -146,12 +146,16 @@ notification to resume tracking. See the [PR routing contract](../API.md#pull-re
 
 ## Replace deployed Triggers
 
-When switching an existing installation to `threadId`, stop the old Triggers
-and configure a fresh `databasePath` for each adapter. For DWS,
-choose a path with a fresh adjacent `.dws-sends` directory and use a fresh
-`feedback.statePath` if reactions are enabled. Keep the former state paths for
-reference. The Triggers require SQLite schema 3. On subsequent restarts, use the same paths to recover queued Messages,
-GitHub checkpoints, and DWS send evidence.
+For a fresh rollout, stop the old Triggers and keep their data paths for
+reference. Configure an unused `databasePath` for each new Trigger. For DWS,
+use a path with an unused adjacent `.dws-sends` directory and an unused
+`feedback.statePath` if reactions are enabled. Each Trigger creates a SQLite
+schema 3 database.
+
+On restart, use the same paths and source, account, and instance IDs to
+recover queued Messages, GitHub checkpoints, and DWS send evidence. Check
+the Trigger's local status for readiness and backlog. Read a delivered
+Message's receipt from Core by its original `sourceMessageId`.
 
 Run `make test-superagent` to exercise Core and the Triggers with local channel
 fixtures. Use `bin/superagent triggers --help` to discover the command groups.
