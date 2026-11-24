@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type RuntimeConfigSuite struct {
@@ -22,10 +22,10 @@ type RuntimeConfigSuite struct {
 }
 
 func (s *RuntimeConfigSuite) SetupTest() {
-	st, err := file.Open(s.T().TempDir(), false)
+	st, err := massdtest.OpenFileStores(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
-	s.svc = service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": configFactory{}}))
+	s.svc = service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": configFactory{}}))
 }
 
 type configFactory struct{}
@@ -139,10 +139,10 @@ func (s *RuntimeConfigSuite) TestSessionDefaultsAreValidatedOnRuntimeCreateAndUp
 func TestRuntimeConfigSuite(t *testing.T) { suite.Run(t, new(RuntimeConfigSuite)) }
 
 func TestRuntimeCanStartAfterReplacingPersistedLegacyEnvironment(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	_, err = st.CreateRuntime(resource.Runtime{
+	_, err = st.Meta.CreateRuntime(resource.Runtime{
 		Metadata: resource.Metadata{Name: "agent"},
 		Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
 			"executable": "/agent", "env": map[string]any{"SETTING": "legacy"},
@@ -152,7 +152,7 @@ func TestRuntimeCanStartAfterReplacingPersistedLegacyEnvironment(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{}}))
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx)) })
 	_, err = svc.StartRuntime(ctx, "agent")
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/internal/testpeer/startup"
 	"github.com/zoumo/mass/massd/pkg/events"
@@ -32,7 +33,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 const pendingRestoreSessionID = "19191919-1919-4191-8191-191919191919"
@@ -265,10 +265,10 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	t.Logf("owned peer executable sha256=%x temporary root=%s", sha256.Sum256(binary), dir)
 	peer := filepath.Join(dir, "peer")
 	require.NoError(t, os.WriteFile(peer, fmt.Appendf(nil, "#!/bin/sh\nexec %q -test.run=^TestPendingNativeRestorePeer$ -- \"$@\"\n", bin), 0o700))
-	st, err := file.Open(filepath.Join(dir, "store"), false)
+	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
 	t.Cleanup(func() {
 		// RED cleanup is external recovery, never proof of product Stop success.
 		for _, phase := range []string{"create", "resume"} {
@@ -463,16 +463,16 @@ func (d *pendingRestoreDriver) ResumeSession(ctx context.Context, id string, a r
 }
 
 func TestPendingRestoreCancellationIsNotReleaseProof(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	// Seed an offline catalog entry through the public store interface. There is
 	// no prior delivery lane or native process in this release-unknown fixture.
-	original, err := st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}, Status: resource.SessionStatus{SessionID: "original", State: "offline"}})
+	original, err := st.Meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}, Status: resource.SessionStatus{SessionID: "original", State: "offline"}})
 	require.NoError(t, err)
 	d := &pendingRestoreDriver{recoveryDriver: &recoveryDriver{pipe: events.NewEventPipe(16)}, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), unknownOpening: true}
 	release := sync.OnceFunc(func() { close(d.release) })
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
 	t.Cleanup(func() {
 		release()
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -561,13 +561,13 @@ func (f pendingRestoreFactory) New(string, runtime.Config) (runtime.Driver, erro
 func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unknown=%t", unknown), func(t *testing.T) {
-			st, err := file.Open(t.TempDir(), false)
+			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
 			d := &pendingRestoreDriver{recoveryDriver: &recoveryDriver{pipe: events.NewEventPipe(16)}, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), unknown: unknown}
 			release := sync.OnceFunc(func() { close(d.release) })
 			t.Cleanup(func() { d.pipe.End(nil) })
-			svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
+			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
 			t.Cleanup(func() {
 				d.allowCleanup.Store(true)
 				release()

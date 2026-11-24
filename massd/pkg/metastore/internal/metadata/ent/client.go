@@ -9,8 +9,6 @@ import (
 	"log"
 	"reflect"
 
-	"github.com/zoumo/mass/massd/pkg/metastore/internal/metadata/ent/migrate"
-
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
@@ -21,8 +19,6 @@ import (
 // Client is the client that holds all ent builders.
 type Client struct {
 	config
-	// Schema is the client for creating, migrating and dropping schema.
-	Schema *migrate.Schema
 	// RuntimeRecord is the client for interacting with the RuntimeRecord builders.
 	RuntimeRecord *RuntimeRecordClient
 	// Session is the client for interacting with the Session builders.
@@ -37,7 +33,6 @@ func NewClient(opts ...Option) *Client {
 }
 
 func (c *Client) init() {
-	c.Schema = migrate.NewSchema(c.driver)
 	c.RuntimeRecord = NewRuntimeRecordClient(c.config)
 	c.Session = NewSessionClient(c.config)
 }

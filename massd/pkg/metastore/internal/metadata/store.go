@@ -106,6 +106,9 @@ func (s *Store) validate() error {
 		if k != key(r.Metadata.Namespace, r.Metadata.Name) || !fileio.SafeComponent(r.Metadata.Namespace) || !fileio.SafeComponent(r.Metadata.Name) || r.Metadata.UID == "" || r.Metadata.ResourceVersion == "" || r.Metadata.Generation == 0 || r.Metadata.CreatedAt.IsZero() || resource.ValidateSessionID(r.Status.SessionID) != nil {
 			return errors.New("invalid session record")
 		}
+		if err := resource.ValidateSessionState(r.Status.State); err != nil {
+			return fmt.Errorf("invalid stored Session state: %w", err)
+		}
 		if _, ok := ids[r.Status.SessionID]; ok {
 			return errors.New("duplicate native session identity")
 		}

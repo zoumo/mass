@@ -14,7 +14,7 @@ import (
 	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
-func TestOpenSessionWithRemovedTurnEvidence(t *testing.T) {
+func TestSessionDecodeRejectsUnknownStatusFields(t *testing.T) {
 	for _, mode := range []string{"sqlite", "file", "file pending commit"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
@@ -32,7 +32,7 @@ func TestOpenSessionWithRemovedTurnEvidence(t *testing.T) {
 			})
 			require.NoError(t, err)
 			path := filepath.Join(dir, "sessions", "one", "original", "state.json")
-			legacy := []byte(`"reconciledTurn":{"turnId":"turn-original","status":"completed"},"sessionId":"original"`)
+			invalid := []byte(`"reconciledTurn":null,"sessionId":"original"`)
 			sessionID := []byte(`"sessionId":"original"`)
 			var record any = session
 			if mode == "file pending commit" {
@@ -44,7 +44,7 @@ func TestOpenSessionWithRemovedTurnEvidence(t *testing.T) {
 			payload, err := json.Marshal(record)
 			require.NoError(t, err)
 			require.Equal(t, 1, bytes.Count(payload, sessionID))
-			payload = bytes.Replace(payload, sessionID, legacy, 1)
+			payload = bytes.Replace(payload, sessionID, invalid, 1)
 			pending := filepath.Join(dir, ".pending.json")
 			switch mode {
 			case "sqlite":
@@ -57,42 +57,13 @@ func TestOpenSessionWithRemovedTurnEvidence(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 
-			reopened, err := open(dir, false)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
-			ref := resource.SessionRef{SessionID: session.Status.SessionID}
-			got, err := reopened.GetSession(ref)
-			require.NoError(t, err)
-			require.Equal(t, session, got)
-			jsonResponse, err := json.Marshal(got)
-			require.NoError(t, err)
-			require.NotContains(t, string(jsonResponse), `"reconciledTurn"`)
+			_, err = open(dir, false)
+			require.ErrorContains(t, err, `unknown field "reconciledTurn"`)
 			if mode == "file pending commit" {
-				require.NoFileExists(t, pending)
-				body, err := os.ReadFile(path)
+				saved, err := os.ReadFile(pending)
 				require.NoError(t, err)
-				require.NotContains(t, string(body), `"reconciledTurn"`)
+				require.Equal(t, payload, saved)
 			}
-
-			got.Status.State = "offline"
-			got.Status.Reason = ""
-			updated, err := reopened.UpdateSession(got)
-			require.NoError(t, err)
-			require.Equal(t, got.Status, updated.Status)
-			var rewritten []byte
-			if mode == "sqlite" {
-				err = reopened.sql.conn.QueryRowContext(t.Context(), "SELECT payload FROM session WHERE session_id=?", session.Status.SessionID).Scan(&rewritten)
-			} else {
-				rewritten, err = os.ReadFile(path)
-			}
-			require.NoError(t, err)
-			require.NotContains(t, string(rewritten), `"reconciledTurn"`)
 		})
 	}
-}
-
-func TestStoredSessionRejectsOtherUnknownFields(t *testing.T) {
-	var session storedSession
-	err := fileio.Decode([]byte(`{"status":{"reconciledTurn":null,"unexpected":true}}`), &session)
-	require.ErrorContains(t, err, `unknown field "unexpected"`)
 }

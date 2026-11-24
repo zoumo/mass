@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -17,7 +18,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 // Fault/timing fixture only. Native recovery evidence lives in vertical tests.
@@ -128,14 +128,14 @@ type RecoverySuite struct {
 }
 
 func (s *RecoverySuite) SetupTest() {
-	st, err := file.Open(s.T().TempDir(), false)
+	st, err := massdtest.OpenFileStores(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	s.d = &recoveryDriver{pipe: events.NewEventPipe(32), closeEntered: make(chan context.Context, 16), closeRelease: make(chan struct{})}
 	var once sync.Once
 	s.release = func() { once.Do(func() { close(s.d.closeRelease) }) }
-	s.meta = &recoveryMeta{MetaStore: st}
-	s.history = &recoveryHistory{EventStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	s.meta = &recoveryMeta{MetaStore: st.Meta}
+	s.history = &recoveryHistory{EventStore: st.Events, entered: make(chan struct{}), release: make(chan struct{})}
 	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": recoveryFactory{s.d}}))
 	s.T().Cleanup(func() {
 		s.release()

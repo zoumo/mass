@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 // Contract fault fixture, not native Agent evidence: a Driver returns an illegal
@@ -61,13 +61,13 @@ func TestInvalidRestoreIdentityRetainsRetryableCleanup(t *testing.T) {
 		t.Run(id, func(t *testing.T) {
 			c, cancel := context.WithTimeout(context.Background(), time.Second*5)
 			defer cancel()
-			st, err := file.Open(t.TempDir(), false)
+			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, st.Close()) })
-			original, err := st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}, Status: resource.SessionStatus{SessionID: "original", State: "offline"}})
+			original, err := st.Meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}, Status: resource.SessionStatus{SessionID: "original", State: "offline"}})
 			require.NoError(t, err)
 			driver := &invalidRestoreDriver{pipe: events.NewEventPipe(1), id: id}
-			svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fault": invalidRestoreFactory{driver}}))
+			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": invalidRestoreFactory{driver}}))
 			t.Cleanup(func() {
 				cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancelCleanup()

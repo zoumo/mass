@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
@@ -29,10 +29,10 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 	peer := filepath.Join(dir, "peer")
 	pidFile := filepath.Join(dir, "pid")
 	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\nexit 1\n"), 0o700))
-	st, err := file.Open(filepath.Join(dir, "store"), false)
+	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
 	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -136,10 +136,10 @@ func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
 	dir := t.TempDir()
 	peer, ready, pidFile := filepath.Join(dir, "peer"), filepath.Join(dir, "ready"), filepath.Join(dir, "pid")
 	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\necho ready > '"+ready+"'\nwhile read -r request; do :; done\n"), 0o700))
-	st, err := file.Open(filepath.Join(dir, "store"), false)
+	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
 	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -9,8 +9,6 @@ import (
 	"log"
 	"reflect"
 
-	"github.com/zoumo/mass/superagent/triggers/dws/internal/queueent/migrate"
-
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
@@ -20,8 +18,6 @@ import (
 // Client is the client that holds all ent builders.
 type Client struct {
 	config
-	// Schema is the client for creating, migrating and dropping schema.
-	Schema *migrate.Schema
 	// Submission is the client for interacting with the Submission builders.
 	Submission *SubmissionClient
 }
@@ -34,7 +30,6 @@ func NewClient(opts ...Option) *Client {
 }
 
 func (c *Client) init() {
-	c.Schema = migrate.NewSchema(c.driver)
 	c.Submission = NewSubmissionClient(c.config)
 }
 

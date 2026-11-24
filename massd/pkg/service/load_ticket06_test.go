@@ -8,12 +8,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type loadDriver struct {
@@ -59,11 +59,11 @@ func (loadFactory) Validate(runtime.Config) error                        { retur
 func (f loadFactory) New(string, runtime.Config) (runtime.Driver, error) { return f.d, nil }
 
 func TestLoadAcceptedBeforeNativeReadAndOutlivesRequest(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	d := &loadDriver{pipe: events.NewEventPipe(16), entered: make(chan context.Context, 1), release: make(chan struct{})}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": loadFactory{d}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": loadFactory{d}}))
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(context.Background(), "agent")

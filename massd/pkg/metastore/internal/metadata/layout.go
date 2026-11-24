@@ -27,28 +27,6 @@ type metadataIntent struct {
 	Created map[string]bool `json:"created"`
 }
 
-func (i *metadataIntent) UnmarshalJSON(b []byte) error {
-	type intentFields metadataIntent
-	wire := struct {
-		*intentFields
-		Next struct {
-			*snapshot
-			Sessions map[string]storedSession `json:"sessions"`
-		} `json:"next"`
-	}{intentFields: (*intentFields)(i)}
-	wire.Next.snapshot = &i.Next
-	if err := fileio.Decode(b, &wire); err != nil {
-		return err
-	}
-	if wire.Next.Sessions != nil {
-		i.Next.Sessions = make(map[string]resource.Session, len(wire.Next.Sessions))
-		for key, r := range wire.Next.Sessions {
-			i.Next.Sessions[key] = resource.Session(r)
-		}
-	}
-	return nil
-}
-
 type sessionIndexEntry struct {
 	Namespace  string `json:"namespace"`
 	Name       string `json:"name"`
@@ -152,10 +130,8 @@ func (s *Store) load(write bool) error {
 	var header storeFile
 	err = fileio.ReadJSON(filepath.Join(s.dir, ".store.json"), &header)
 	if os.IsNotExist(err) && write {
-		for _, legacy := range []string{"state.json", "runtime.json", "runtime.jsonl", filepath.Join("data", "state.json")} {
-			if _, err := os.Lstat(filepath.Join(s.dir, legacy)); !os.IsNotExist(err) {
-				return errors.New("legacy state.json layout is unsupported; existing data was not migrated")
-			}
+		if _, err := os.Lstat(filepath.Join(s.dir, "runtime.jsonl")); !os.IsNotExist(err) {
+			return errors.New("runtime resources without .store.json")
 		}
 		// Shared directories may contain only independently owned event logs.
 		err := s.walkSessions(func(path, _, _ string) error {
@@ -192,7 +168,7 @@ func (s *Store) load(write bool) error {
 		next.Runtimes[r.Metadata.Name] = r
 	}
 	if err := s.walkSessions(func(path, namespace, name string) error {
-		var r storedSession
+		var r resource.Session
 		if err := fileio.ReadJSON(filepath.Join(path, "state.json"), &r); err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -202,7 +178,7 @@ func (s *Store) load(write bool) error {
 		if r.Metadata.Namespace != namespace || r.Metadata.Name != name {
 			return errors.New("session directory identity mismatch")
 		}
-		next.Sessions[key(namespace, name)] = resource.Session(r)
+		next.Sessions[key(namespace, name)] = r
 		return nil
 	}); err != nil {
 		return err

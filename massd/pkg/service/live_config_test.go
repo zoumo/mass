@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -58,9 +58,9 @@ type liveConfigFactory struct{ runtime.Driver }
 
 func (liveConfigFactory) Validate(runtime.Config) error                        { return nil }
 func (f liveConfigFactory) New(string, runtime.Config) (runtime.Driver, error) { return f.Driver, nil }
-func newLiveConfigService(t *testing.T, optional bool, options ...service.Options) (*service.Service, *file.Store, *liveConfigDriver, resource.SessionRef) {
+func newLiveConfigService(t *testing.T, optional bool, options ...service.Options) (*service.Service, *massdtest.FileStores, *liveConfigDriver, resource.SessionRef) {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	driver := &liveConfigDriver{closeDriver: &closeDriver{pipe: events.NewEventPipe(64)}, requests: make(chan configDispatch, 16)}
@@ -69,9 +69,9 @@ func newLiveConfigService(t *testing.T, optional bool, options ...service.Option
 		selected = driver.closeDriver
 	}
 	registry := runtime.NewRegistry(map[string]runtime.Factory{"fixture": liveConfigFactory{selected}})
-	svc := service.New(st, st, registry)
+	svc := service.New(st.Meta, st.Events, registry)
 	if len(options) > 0 {
-		svc = service.NewWithOptions(st, st, registry, options[0])
+		svc = service.NewWithOptions(st.Meta, st.Events, registry, options[0])
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -103,7 +103,7 @@ func TestLiveSessionConfigurationServiceAdmission(t *testing.T) {
 		r, err := svc.GetSession(ref)
 		require.NoError(t, err)
 		r.Status.State = state
-		_, err = st.UpdateSession(r)
+		_, err = st.Meta.UpdateSession(r)
 		require.NoError(t, err)
 		receipt, err := svc.SetSessionConfig(t.Context(), ref, change)
 		require.Error(t, err)
@@ -123,7 +123,7 @@ func TestLiveSessionConfigurationServiceAdmission(t *testing.T) {
 		r, err := svc.GetSession(ref)
 		require.NoError(t, err)
 		r.Status.State = state
-		_, err = st.UpdateSession(r)
+		_, err = st.Meta.UpdateSession(r)
 		require.NoError(t, err)
 		done := make(chan error, 1)
 		go func() { _, err := svc.SetSessionConfig(t.Context(), ref, change); done <- err }()
@@ -145,7 +145,7 @@ func TestLiveSessionConfigurationServiceAdmission(t *testing.T) {
 	r, err := svc.GetSession(ref)
 	require.NoError(t, err)
 	r.Status.State = events.Unknown
-	_, err = st.UpdateSession(r)
+	_, err = st.Meta.UpdateSession(r)
 	require.NoError(t, err)
 	_, err = svc.SetSessionConfig(t.Context(), ref, change)
 	require.Error(t, err)
@@ -235,7 +235,7 @@ func TestLiveSessionConfigurationIncompleteLoadAndObservedUnknown(t *testing.T) 
 	require.NoError(t, err)
 	loaded := accepted.Session
 	loaded.Status.State = events.Idle
-	_, err = st.UpdateSession(loaded)
+	_, err = st.Meta.UpdateSession(loaded)
 	require.NoError(t, err)
 	change := runtime.ConfigChange{ID: agent.ConfigModel, Value: "literal"}
 	_, err = svc.SetSessionConfig(t.Context(), resource.SessionRef{SessionID: loaded.Status.SessionID}, change)

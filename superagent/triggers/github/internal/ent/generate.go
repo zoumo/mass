@@ -1,3 +1,3 @@
 package ent
 
-//go:generate go tool ent generate ./schema
+//go:generate go run ../../../../../internal/entgen

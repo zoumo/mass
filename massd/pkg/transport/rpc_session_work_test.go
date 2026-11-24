@@ -14,11 +14,11 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -182,13 +182,13 @@ type sessionWorkRPCFixture struct {
 
 func newSessionWorkRPCFixture(t *testing.T) *sessionWorkRPCFixture {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	driver := &sessionWorkRPCDriver{
 		pipe:          events.NewEventPipe(32),
 		cancelReceipt: runtime.CancelReceipt{Result: "noActiveWork"},
 	}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
 		"fixture": sessionWorkRPCFactory{driver: driver},
 	}))
 	t.Cleanup(func() {

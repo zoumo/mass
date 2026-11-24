@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -24,7 +25,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -34,11 +34,11 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	for _, mode := range []string{"proof", "different", "no-start", "conflict", "prior-work", "retired", "unproven", "child-first", "child", "unlinked-start", "child-start", "foreign-start", "stopped-preview", "repeated-start", "saturation"} {
 		t.Run(mode, func(t *testing.T) {
-			st, err := file.Open(t.TempDir(), false)
+			st, err := massdtest.OpenFileStores(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
 			registry := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: t.TempDir()}})
-			svc := service.New(st, st, registry)
+			svc := service.New(st.Meta, st.Events, registry)
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()

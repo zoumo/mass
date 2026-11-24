@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
@@ -28,13 +29,12 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
 type failureSuite struct {
 	suite.Suite
-	st      *file.Store
+	st      *massdtest.FileStores
 	meta    metastore.MetaStore
 	svc     *service.Service
 	reg     *runtime.Registry
@@ -46,10 +46,10 @@ func TestFailureSuite(t *testing.T) { suite.Run(t, new(failureSuite)) }
 func (s *failureSuite) SetupTest() {
 	dir := s.T().TempDir()
 	var err error
-	s.st, err = file.Open(dir, false)
+	s.st, err = massdtest.OpenFileStores(dir, false)
 	s.Require().NoError(err)
 	s.reg = runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	s.meta = s.st
+	s.meta = s.st.Meta
 	s.svc = nil
 	s.unknown = false
 }
@@ -107,7 +107,7 @@ func (s *failureSuite) until(sub *service.Subscription, state events.SessionStat
 }
 
 func (s *failureSuite) cancel(kind string) {
-	s.start(kind, "cancel", s.st)
+	s.start(kind, "cancel", s.st.Events)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
@@ -147,7 +147,7 @@ func (s *failureSuite) sessionObservation(ref resource.SessionRef) runtime.Sessi
 }
 
 func (s *failureSuite) disconnect(kind string) {
-	s.start(kind, "disconnect", s.st)
+	s.start(kind, "disconnect", s.st.Events)
 	s.unknown = true
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
@@ -185,7 +185,7 @@ func (s *failureSuite) disconnect(kind string) {
 	s.Equal("stopping", r.Status.State)
 	_, err = s.svc.StartRuntime(ctx(s.T()), "agent")
 	s.Require().Error(err)
-	cold := service.New(s.st, s.st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: s.T().TempDir()}, "claude": claude.Factory{RecoveryDir: s.T().TempDir()}}))
+	cold := service.New(s.st.Meta, s.st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: s.T().TempDir()}, "claude": claude.Factory{RecoveryDir: s.T().TempDir()}}))
 	_, err = cold.StartRuntime(ctx(s.T()), "agent")
 	s.Require().ErrorContains(err, "previous runtime release")
 	if kind == "codex" {
@@ -203,7 +203,7 @@ func (s *failureSuite) disconnect(kind string) {
 func (s *failureSuite) TestCodexDisconnect()  { s.disconnect("codex") }
 func (s *failureSuite) TestClaudeDisconnect() { s.disconnect("claude") }
 func (s *failureSuite) TestUnknownInputIsNotResent() {
-	s.start("codex", "unknown-input", s.st)
+	s.start("codex", "unknown-input", s.st.Events)
 	s.unknown = true
 	ref := s.open("demo")
 	_, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
@@ -232,7 +232,7 @@ func (g *unknownAppend) Append(id string, records []events.SessionEvent) (*strin
 }
 
 func (s *failureSuite) TestUnknownAppendExplicitSettlement() {
-	fault := &unknownAppend{EventStore: s.st, entered: make(chan struct{})}
+	fault := &unknownAppend{EventStore: s.st.Events, entered: make(chan struct{})}
 	s.start("codex", "basic", fault)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
@@ -255,16 +255,16 @@ func (s *failureSuite) TestUnknownAppendExplicitSettlement() {
 		}
 	}
 	s.Require().NoError(sub.Err())
-	page, err := s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
+	page, err := s.st.Events.ListHistory(ref.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 1)
 	original := page.Events[0].EventID
 	s.Require().Eventually(func() bool { return s.svc.ReconcileHistory(ctx(s.T()), ref) == nil }, time.Second, 5*time.Millisecond)
 	s.Require().Eventually(func() bool {
-		p, e := s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
+		p, e := s.st.Events.ListHistory(ref.SessionID, store.HistoryQuery{})
 		return e == nil && len(p.Events) == 4
 	}, time.Second, 5*time.Millisecond)
-	page, err = s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
+	page, err = s.st.Events.ListHistory(ref.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Equal(original, page.Events[0].EventID)
 	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("sealed")}})
@@ -286,7 +286,7 @@ func (g *slowAppend) Append(id string, records []events.SessionEvent) (*string, 
 }
 
 func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
-	gate := &slowAppend{EventStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &slowAppend{EventStore: s.st.Events, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
@@ -305,10 +305,10 @@ func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
 	s.input(b)
 	s.until(sub, events.Running)
 	s.until(sub, events.Idle)
-	p, err := s.st.ListHistory(b.SessionID, store.HistoryQuery{})
+	p, err := s.st.Events.ListHistory(b.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(p.Events, 4)
-	p, err = s.st.ListHistory(a.SessionID, store.HistoryQuery{})
+	p, err = s.st.Events.ListHistory(a.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Empty(p.Events)
 	release()
@@ -320,7 +320,7 @@ func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
 }
 
 func (s *failureSuite) TestLateCreateKeepsOriginalReservation() {
-	s.start("codex", "late-create", s.st)
+	s.start("codex", "late-create", s.st.Events)
 	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, err := s.svc.CreateSession(short, s.spec("a"))
@@ -339,7 +339,7 @@ func (s *failureSuite) TestLateCreateKeepsOriginalReservation() {
 }
 
 func (s *failureSuite) TestOldWorkCannotControlNewWork() {
-	s.start("codex", "old-work", s.st)
+	s.start("codex", "old-work", s.st.Events)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
@@ -362,7 +362,7 @@ func (s *failureSuite) TestOldWorkCannotControlNewWork() {
 }
 
 func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
-	gate := &slowAppend{EventStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &slowAppend{EventStore: s.st.Events, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
@@ -386,7 +386,7 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	deadline := time.Now().Add(20 * time.Second)
 	count := 0
 	for time.Now().Before(deadline) {
-		p, e := s.st.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 1000})
+		p, e := s.st.Events.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 1000})
 		s.Require().NoError(e)
 		count = len(p.Events)
 		if count == 160 {
@@ -417,7 +417,7 @@ func (s *failureSuite) requireHistoryAfterTurn(ref resource.SessionRef, count in
 }
 
 func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
-	s.start("codex", "slow-subscriber", s.st)
+	s.start("codex", "slow-subscriber", s.st.Events)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
@@ -434,7 +434,7 @@ func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 }
 
 func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
-	s.start("codex", "stop-permission", s.st)
+	s.start("codex", "stop-permission", s.st.Events)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
@@ -473,12 +473,12 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 }
 
 func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {
-	gate := &identityGate{MetaStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &identityGate{MetaStore: s.st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
 	s.meta = gate
-	s.start("claude", "early", s.st)
+	s.start("claude", "early", s.st.Events)
 	done := make(chan struct {
 		session resource.Session
 		err     error
@@ -495,14 +495,14 @@ func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {
 	case <-ctx(s.T()).Done():
 		s.FailNow("identity gate")
 	}
-	_, err := s.st.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
+	_, err := s.st.Meta.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().ErrorIs(err, store.ErrNotFound)
 	release()
 	created := <-done
 	s.Require().NoError(created.err)
 	sessionID := created.session.Status.SessionID
 	s.Require().Eventually(func() bool {
-		p, e := s.st.ListHistory(sessionID, store.HistoryQuery{})
+		p, e := s.st.Events.ListHistory(sessionID, store.HistoryQuery{})
 		return e == nil && len(p.Events) == 3
 	}, time.Second, 5*time.Millisecond)
 	s.T().Log("PASS SDK-native pre-init complete facts stay bounded and invisible until persistent identity commit")
@@ -515,7 +515,7 @@ func (s *failureSuite) TestResumeEarlyCapacityFailsExplicitlyAndReleases() {
 	bin := filepath.Join(root, "resume-overflow-peer")
 	out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 	s.Require().NoError(err, "%s", out)
-	s.svc = service.New(s.meta, s.st, s.reg)
+	s.svc = service.New(s.meta, s.st.Events, s.reg)
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
 		"executable": bin, "scenario": path, "env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": config}),
 	}}})
@@ -524,7 +524,7 @@ func (s *failureSuite) TestResumeEarlyCapacityFailsExplicitlyAndReleases() {
 	s.Require().NoError(err)
 	ref := s.open("demo")
 	s.Require().Eventually(func() bool {
-		page, err := s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
+		page, err := s.st.Events.ListHistory(ref.SessionID, store.HistoryQuery{})
 		return err == nil && len(page.Events) == 3
 	}, time.Second, 5*time.Millisecond)
 	_, err = s.svc.CloseSession(ctx(s.T()), ref)
@@ -545,18 +545,18 @@ func (s *failureSuite) TestResumeEarlyCapacityFailsExplicitlyAndReleases() {
 	current, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("offline"), current.Status.State)
-	page, err := s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
+	page, err := s.st.Events.ListHistory(ref.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(page.Events, 3)
 }
 
 func (s *failureSuite) TestCancellationDuringIdentityCommitSettlesOriginalOwner() {
-	gate := &identityGate{MetaStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &identityGate{MetaStore: s.st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
 	s.meta = gate
-	s.start("claude", "early", s.st)
+	s.start("claude", "early", s.st.Events)
 	caller, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -576,13 +576,13 @@ func (s *failureSuite) TestCancellationDuringIdentityCommitSettlesOriginalOwner(
 	r, err := s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("offline"), r.Status.State)
-	p, err := s.st.ListHistory(r.Status.SessionID, store.HistoryQuery{})
+	p, err := s.st.Events.ListHistory(r.Status.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(p.Events, 3)
 }
 
 func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
-	s.start("codex", "late-answer", s.st)
+	s.start("codex", "late-answer", s.st.Events)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
@@ -625,14 +625,14 @@ func (g *unknownIdentity) CreateSession(r resource.Session) (resource.Session, e
 }
 
 func (s *failureSuite) TestUnknownIdentityCommitReconcilesOriginalFacts() {
-	identity := &unknownIdentity{MetaStore: s.st}
+	identity := &unknownIdentity{MetaStore: s.st.Meta}
 	s.meta = identity
-	s.start("claude", "early", s.st)
+	s.start("claude", "early", s.st.Events)
 	_, err := s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
 	s.Require().ErrorContains(err, "unknown identity commit")
 	_, err = s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
 	s.Require().ErrorIs(err, store.ErrConflict)
-	page, err := s.st.ListHistory(identity.id, store.HistoryQuery{})
+	page, err := s.st.Events.ListHistory(identity.id, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Empty(page.Events)
 	err = s.svc.ReconcileOpening(ctx(s.T()), "agent", runtime.Address{Namespace: "default", SessionName: "demo"})
@@ -640,14 +640,14 @@ func (s *failureSuite) TestUnknownIdentityCommitReconcilesOriginalFacts() {
 	r, err := s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("offline"), r.Status.State)
-	page, err = s.st.ListHistory(r.Status.SessionID, store.HistoryQuery{})
+	page, err = s.st.Events.ListHistory(r.Status.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(page.Events, 3)
 	s.T().Log("PASS unknown identity commit preserves reservation and early facts until explicit original-owner readback and release")
 }
 
 func (s *failureSuite) TestConcurrentStopSharesOriginalResponsibility() {
-	s.start("codex", "cancel", s.st)
+	s.start("codex", "cancel", s.st.Events)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
@@ -749,7 +749,7 @@ func requireNoError(t *testing.T, err error) {
 }
 
 func (s *failureSuite) TestSubscriptionOverflowIsExplicit() {
-	s.start("codex", "slow-subscriber", s.st)
+	s.start("codex", "slow-subscriber", s.st.Events)
 	ref := s.open("demo")
 	s.input(ref)
 	s.requireHistoryAfterTurn(ref, 140)

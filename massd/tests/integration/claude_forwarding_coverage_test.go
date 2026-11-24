@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/prototype"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -18,7 +19,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -64,14 +64,14 @@ func (s forwardingNotificationStream) Next(ctx context.Context) (events.SessionE
 }
 
 func TestClaudeAssignedRootForwardingGapSurvivesRPCNotifications(t *testing.T) {
-	authority, err := file.Open(t.TempDir(), false)
+	authority, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, authority.Close()) })
 	releaseEvents := make(chan struct{})
 	release := sync.OnceFunc(func() { close(releaseEvents) })
 	defer release()
 	factory := forwardingNotificationFactory{Factory: claude.Factory{RecoveryDir: t.TempDir()}, release: releaseEvents}
-	svc := service.NewWithPolicy(authority, authority, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}), prototype.AutoApprovePermissions)
+	svc := service.NewWithPolicy(authority.Meta, authority.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}), prototype.AutoApprovePermissions)
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

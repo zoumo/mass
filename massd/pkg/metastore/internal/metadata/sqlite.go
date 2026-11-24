@@ -114,11 +114,11 @@ func (s *Store) openSQL() error {
 		if s.readOnly {
 			return os.ErrNotExist
 		}
-		// Legacy projections and resource files require an explicit migration. Never
-		// reclassify them, and never start an empty authority beside existing data.
-		for _, name := range []string{"metadata.sqlite", ".store.json", ".pending.json", "state.json", "runtime.json", "runtime.jsonl", "session_index.jsonl", filepath.Join("data", "state.json")} {
+		// Refuse a directory owned by the file MetaStore, even when its
+		// identity marker is missing or a commit is still pending.
+		for _, name := range []string{".store.json", ".pending.json", "runtime.jsonl", "session_index.jsonl"} {
 			if _, err := os.Lstat(filepath.Join(s.dir, name)); !os.IsNotExist(err) {
-				return errors.New("existing metadata requires explicit migration to SQLite authority")
+				return errors.New("existing file metadata requires explicit migration to SQLite authority")
 			}
 		}
 		if err := s.walkSessions(func(path, _, _ string) error {
@@ -212,11 +212,11 @@ func (s *Store) readSQL(tx *sql.Tx) error {
 		return err
 	}
 	for _, row := range sessions {
-		var r storedSession
+		var r resource.Session
 		if err := fileio.Decode(row.Payload, &r); err != nil {
 			return err
 		}
-		s.data.Sessions[key(r.Metadata.Namespace, r.Metadata.Name)] = resource.Session(r)
+		s.data.Sessions[key(r.Metadata.Namespace, r.Metadata.Name)] = r
 	}
 	return s.validate()
 }
