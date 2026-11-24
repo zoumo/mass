@@ -42,7 +42,7 @@ func TestTicket06FailedPublicationCannotBeOvertaken(t *testing.T) {
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st.Events)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.Eventually(t, func() bool { r, e := svc.GetSession(ref); return e == nil && r.Status.HistoryLoad.NativeResumed }, time.Second, time.Millisecond)
@@ -64,7 +64,7 @@ func TestTicket06UnexpectedDriverEOFIsNotHistoryCompletion(t *testing.T) {
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st.Events)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved", events.AgentMessage{MessageID: "saved", Content: []events.ContentBlock{events.Text("partial")}}, true))
@@ -138,7 +138,7 @@ func TestTicket06AppendFailureRequiresExplicitOriginalUUIDSettlement(t *testing.
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, &ticket06AppendFailure{EventStore: st.Events})
+	svc, d := ticket06FaultService(t, st.Meta, &ticket06AppendFailure{EventStore: st.Events})
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved", events.AgentMessage{MessageID: "saved", Content: []events.ContentBlock{events.Text("original fact")}}, true))
@@ -163,7 +163,7 @@ func TestCompletedLoadLivePublishFailureDoesNotSilenceLaterFacts(t *testing.T) {
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st.Events)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.marker(ticket06FaultContext(t), b, "native_completed"))
