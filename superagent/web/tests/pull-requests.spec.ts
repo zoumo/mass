@@ -15,7 +15,7 @@ test('Topic and Issue preserve their external PR links and source messages', asy
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/superagent/?view=topics')
+ await page.goto('/superagent/topic')
  await page.getByRole('link', { name: /Observer routing Topic/ }).click()
  const workContext = page.getByRole('article')
  await workContext.getByText(/关注的拉取请求/).click()

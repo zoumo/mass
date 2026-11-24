@@ -1303,6 +1303,55 @@
         ],
         "type": "object"
       },
+      "IssueSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked": {
+            "type": "boolean"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "currentSessionBindingId": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "goalRevision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "topicId": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topicId",
+          "title",
+          "goal",
+          "goalRevision",
+          "currentSessionBindingId",
+          "status",
+          "updatedAt",
+          "blocked",
+          "completed"
+        ],
+        "type": "object"
+      },
       "JSONRPCError": {
         "additionalProperties": false,
         "properties": {
@@ -5220,6 +5269,66 @@
         ],
         "type": "object"
       },
+      "WatchdogCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "issueId": {
+            "type": "string"
+          },
+          "judgment": {
+            "type": "string"
+          },
+          "observedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "releaseUnconfirmed": {
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "finding",
+              "no_finding",
+              "incomplete"
+            ],
+            "type": "string"
+          },
+          "topicId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "observedAt",
+          "status",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "WatchdogSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "latest": {
+            "$ref": "#/components/schemas/WatchdogCheck"
+          },
+          "running": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "running"
+        ],
+        "type": "object"
+      },
       "WorkEnd": {
         "additionalProperties": false,
         "properties": {
@@ -6291,6 +6400,16 @@
             }
           },
           {
+            "description": "Use summary for bounded current Issue facts",
+            "explode": false,
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "description": "Use summary for bounded current Issue facts",
+              "type": "string"
+            }
+          },
+          {
             "in": "path",
             "name": "issueId",
             "required": true,
@@ -6304,7 +6423,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueReadProjection"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/IssueReadProjection"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IssueSummary"
+                    }
+                  ]
                 }
               }
             },
@@ -6365,6 +6491,16 @@
             "name": "trace",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Use summary for bounded current Issue facts",
+            "explode": false,
+            "in": "query",
+            "name": "view",
+            "schema": {
+              "description": "Use summary for bounded current Issue facts",
+              "type": "string"
             }
           },
           {
@@ -10693,6 +10829,78 @@
           }
         },
         "summary": "Read Trigger Message details",
+        "tags": [
+          "Core"
+        ]
+      }
+    },
+    "/v1/core/watchdog": {
+      "get": {
+        "operationId": "getWatchdog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchdogSnapshot"
+                }
+              }
+            },
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read the latest Compose Watchdog check",
+        "tags": [
+          "Core"
+        ]
+      },
+      "head": {
+        "operationId": "getWatchdogHead",
+        "responses": {
+          "200": {
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "503": {
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read the latest Compose Watchdog check",
         "tags": [
           "Core"
         ]

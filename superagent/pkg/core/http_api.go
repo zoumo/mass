@@ -57,6 +57,7 @@ func (s *Server) newHTTPAPI() *httpAPI {
 	s.registerMessageResources(api)
 	s.registerScheduledTaskResources(api)
 	s.registerCoreReadResources(api)
+	s.registerWatchdogRead(api)
 	s.registerTelemetryResources(api)
 	s.registerStatus(api)
 	s.registerMassd(api)

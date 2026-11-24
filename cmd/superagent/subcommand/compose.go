@@ -27,6 +27,7 @@ import (
 	"github.com/zoumo/mass/massd"
 	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
 	"github.com/zoumo/mass/superagent/pkg/core"
+	"github.com/zoumo/mass/superagent/pkg/watchdog"
 )
 
 const (
@@ -38,7 +39,7 @@ func newCompose() *cobra.Command {
 	var config string
 	cmd := &cobra.Command{
 		Use:   "compose",
-		Short: "Run Core with embedded MASS and enabled triggers",
+		Short: "Run Core with embedded MASS and enabled components",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCompose(cmd, config)
@@ -91,7 +92,12 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		diagnostics = &composeDiagnostics{output: diagnostics}
 	}
 
-	statusServer, err := startComposeStatus(ctx, triggers)
+	if config.watchdogInterval > 0 {
+		if err := watchdog.ReapOrphans(); err != nil {
+			return fmt.Errorf("cannot configure Watchdog process reaping: %w", err)
+		}
+	}
+	statusServer, err := startComposeStatus(ctx, triggers, config.watchdogInterval > 0)
 	if err != nil {
 		return err
 	}
@@ -173,12 +179,21 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	if err := runningComposeChildren(children); err != nil {
 		return err
 	}
+	var watchdogChild *composeWatchdog
+	if config.watchdogInterval > 0 {
+		watchdogChild, err = startComposeWatchdog(superagent, coreEndpoint, config.watchdogInterval, statusServer.directory, sharedEnvironment, diagnostics, statusServer.recordWatchdog)
+		if err != nil {
+			return err
+		}
+		statusServer.registerWatchdog(watchdogChild.childProcess)
+		defer func() { result = errors.Join(result, watchdogChild.stop()) }()
+	}
 	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(addresses); err != nil {
 		return err
 	}
 	startupComplete = true
 	logger := slog.New(slog.NewJSONHandler(diagnostics, nil))
-	return observeCompose(ctx, logger, server, triggerChildren)
+	return observeCompose(ctx, logger, server, triggerChildren, watchdogChild)
 }
 
 type composeStartup struct {
@@ -210,13 +225,17 @@ func runningComposeChildren(children []*childProcess) error {
 	return nil
 }
 
-func observeCompose(ctx context.Context, logger *slog.Logger, server *childProcess, triggers []*childProcess) error {
+func observeCompose(ctx context.Context, logger *slog.Logger, server *childProcess, triggers []*childProcess, watchdog *composeWatchdog) error {
 	exits := make(chan *childProcess, len(triggers))
 	for _, child := range triggers {
 		go func() {
 			<-child.done
 			exits <- child
 		}()
+	}
+	var watchdogDone <-chan struct{}
+	if watchdog != nil {
+		watchdogDone = watchdog.done
 	}
 	for {
 		select {
@@ -226,6 +245,10 @@ func observeCompose(ctx context.Context, logger *slog.Logger, server *childProce
 			return server.unexpectedExit()
 		case child := <-exits:
 			logger.Error("Trigger exited", "component", child.name, "error", child.unexpectedExit())
+		case <-watchdogDone:
+			logger.Error("Watchdog exited", "component", watchdog.name, "error", watchdog.unexpectedExit(),
+				"releaseUnconfirmed", watchdog.finish())
+			watchdogDone = nil
 		}
 	}
 }
@@ -279,6 +302,10 @@ func (d *childProcess) stop(grace time.Duration) error {
 		}
 		_ = d.stdout.Close()
 	}()
+	return d.stopProcess(grace)
+}
+
+func (d *childProcess) stopProcess(grace time.Duration) error {
 	select {
 	case <-d.done:
 		return nil

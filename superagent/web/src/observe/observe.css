@@ -44,10 +44,11 @@ button:disabled { cursor: default }
 .tabs { background: #07101b; border-bottom: 1px solid var(--line) }
 .tab-inner { gap: 28px; height: 47px }
 .tab-inner a { position: relative; gap: 8px; height: 100%; font-size: 14px; font-weight: 550; color: var(--muted) }
-[data-view=message] { --object: #2dd4bf }
+[data-view=message], [data-view=diagnostics] { --object: var(--teal) }
 [data-view=router] { --object: #c4a8ff }
 [data-view=topic] { --object: #88dfa7 }
 [data-view=issue] { --object: #a7bfdf }
+[data-view=watchdog] { --object: var(--amber) }
 .tab-inner a svg { color: var(--object) }
 .tab-inner a[aria-current] { color: var(--text) }
 .tab-inner a[aria-current]::after { content: ""; position: absolute; inset: auto 0 -1px; height: 3px; background: var(--object); border-radius: 4px 4px 0 0 }
@@ -113,8 +114,8 @@ summary::-webkit-details-marker { display: none }
   .secondary { gap: 12px; font-size: 12px }
   .secondary a { gap: 3px }
   .secondary .readonly { display: none }
-  .tab-inner { gap: 0; justify-content: space-between; height: 44px }
-  .tab-inner a { font-size: 13px; gap: 5px }
+  .tab-inner { gap: 16px; justify-content: space-between; height: 44px; overflow-x: auto; scrollbar-width: thin }
+  .tab-inner a { flex-shrink: 0; font-size: 13px; gap: 5px }
   .workspace-heading { min-height: 79px }
   .view-glyph { width: 32px; height: 32px; border-radius: 8px }
   .workspace-title { gap: 8px }

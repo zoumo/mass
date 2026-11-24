@@ -50,7 +50,8 @@ type Config struct {
 	WebOTLPEndpoint string                `mapstructure:"-"`
 	TelemetryQuery  *TelemetryQueryConfig `mapstructure:"telemetryQuery"`
 	// ComposeTriggerStatus reads Trigger observations from the local supervisor.
-	ComposeTriggerStatus func(context.Context) TriggerStatuses `mapstructure:"-"`
+	ComposeTriggerStatus func(context.Context) TriggerStatuses           `mapstructure:"-"`
+	ComposeWatchdog      func(context.Context) (WatchdogSnapshot, error) `mapstructure:"-"`
 }
 
 func LoadConfig(path string) (Config, error) {

@@ -40,10 +40,12 @@ func TestComposeConfigurationDocument(t *testing.T) {
 	require.NoError(t, err)
 	require.YAMLEq(t, "listen: 127.0.0.1:0", string(c.core))
 	require.Empty(t, c.triggers)
-	c, err = decodeComposeConfig(strings.NewReader(valid + "triggers: {github: {accountId: fake-account}, dws: {source: dws}}\n"))
+	require.Zero(t, c.watchdogInterval)
+	c, err = decodeComposeConfig(strings.NewReader(valid + "triggers: {github: {accountId: fake-account}, dws: {source: dws}}\nwatchdog: {interval: 10m}\n"))
 	require.NoError(t, err)
 	require.YAMLEq(t, "accountId: fake-account", string(c.triggers["github"]))
 	require.YAMLEq(t, "source: dws", string(c.triggers["dws"]))
+	require.Equal(t, 10*time.Minute, c.watchdogInterval)
 	const secret = "PRIVATE-FIXTURE-CONFIG-VALUE"
 	for _, tc := range []struct {
 		name, input, failure string
@@ -63,6 +65,14 @@ func TestComposeConfigurationDocument(t *testing.T) {
 		{"duplicate trigger", valid + "triggers: {dws: {}, DWS: {}}", "triggers configuration contains a duplicate key at line 2"},
 		{"trigger component null", valid + "triggers: {github: null}", "triggers.github configuration must be a mapping"},
 		{"trigger duplicate nested field", valid + "triggers: {dws: {direct: {prompt: " + secret + ", Prompt: ''}}}", "triggers.dws configuration contains a duplicate key at line 2"},
+		{"watchdog missing interval", valid + "watchdog: {}", "watchdog.interval must be a positive duration string"},
+		{"watchdog null", valid + "watchdog: null", "watchdog configuration must be a mapping"},
+		{"watchdog duplicate interval", valid + "watchdog: {interval: 10m, interval: 1h}", "watchdog configuration contains a duplicate key"},
+		{"watchdog unknown field", valid + "watchdog: {interval: 1m, unused: " + secret + "}", "unknown watchdog configuration field"},
+		{"watchdog invalid duration", valid + "watchdog: {interval: " + secret + "}", "watchdog.interval must be a positive duration string"},
+		{"watchdog numeric duration", valid + "watchdog: {interval: 10}", "watchdog.interval must be a positive duration string"},
+		{"watchdog zero duration", valid + "watchdog: {interval: 0s}", "watchdog.interval must be a positive duration string"},
+		{"watchdog negative duration", valid + "watchdog: {interval: -1s}", "watchdog.interval must be a positive duration string"},
 		{"second document", valid + "---\n" + secret, "one YAML document"},
 		{"malformed YAML", "core: [" + secret + "\n", "cannot read Compose configuration as YAML"},
 	} {

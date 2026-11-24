@@ -23,6 +23,10 @@ core:
       threadIdPrefixes: ["dws:"]
       outboxConsumer: true
 
+# Optional business checks alongside Core.
+# watchdog:
+#   interval: 10m
+
 triggers:
   github:
     accountId: github-local

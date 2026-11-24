@@ -117,6 +117,47 @@ listen address with its port. Clients use `wss://<proxy-host>/massd`. If they
 send `Origin`, add the exact value to `massd.embedded.expose.allowedOrigins`.
 See the [WebSocket binding](../harness/bindings/websocket.md#认证与部署).
 
+## Run one Watchdog check
+
+```sh
+bin/superagent watchdog --endpoint http://127.0.0.1:24370
+```
+
+The Watchdog checks for an unaccepted, current `ready` Report whose notification
+reached MASS at least 30 minutes ago. It prints one JSON result with a `finding`,
+`no_finding`, or `incomplete` status. Use `reason` to distinguish outcomes such
+as no eligible Report, insufficient evidence, or a timeout. The result includes
+`releaseUnconfirmed` if Watchdog cannot confirm that the Codex process group
+has exited.
+
+When a Report needs review, the Watchdog starts `codex app-server` in a temporary
+directory. Use `--codex-bin` to select a different executable. It uses
+`OPENAI_API_KEY`, `CODEX_API_KEY`, or file-based Codex login. For file-based
+login, it copies `auth.json` from `CODEX_HOME` or `~/.codex` into the temporary
+Codex home for the round. User Codex configuration stays in the source home.
+Each round discards any refreshed login state. Supply an API key for unattended
+periodic checks.
+
+To enable periodic checks, add a top-level `watchdog` section to the Compose
+file and put `codex` on Compose's `PATH`.
+
+```yaml
+watchdog:
+  interval: 10m
+```
+
+Compose starts Watchdog after Core is ready. Watchdog checks current state
+immediately and waits `interval` after each round, including failed rounds.
+Use a positive Go duration string, such as `10m` or `1h`. Under
+`component: watchdog`, the Compose logs record the outcome and resource IDs.
+On shutdown, Compose cancels the active check and waits for Watchdog and the
+Codex process group to exit.
+
+Open **Watchdog** at `/superagent/watchdog` to see whether Watchdog is running
+and read the latest completed check. Use the Topic and Issue links to review
+its judgment and recommendation in context. Compose keeps the latest result
+after Watchdog exits and starts with an empty snapshot after restart.
+
 ## Run the stack with Compose
 
 1. Copy [the Compose example](compose.example.yaml) to a private run directory.

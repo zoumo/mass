@@ -64,6 +64,7 @@ func New() *cobra.Command {
 				return errors.New("status options require Compose configuration and a supervisor socket")
 			}
 			c.ComposeTriggerStatus = readComposeStatus(statusSocket, statusTriggers)
+			c.ComposeWatchdog = readComposeWatchdog(statusSocket)
 		}
 		return runCore(signals, cmd, c)
 	}}
@@ -183,7 +184,7 @@ func New() *cobra.Command {
 		observe.AddCommand(cmd)
 	}
 	root.AddCommand(observe)
-	root.AddCommand(newRecoverInput(), newInspectBinding(), newScheduledTasks())
+	root.AddCommand(newRecoverInput(), newInspectBinding(), newScheduledTasks(), newWatchdog(), newWatchdogAgentGuard())
 	return root
 }
 

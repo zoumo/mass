@@ -26,7 +26,7 @@ test('Message entry reads the selected record, its full text and Core receipt', 
     }
   })
   await page.setViewportSize({ width: 1360, height: 900 })
-  await page.goto('/superagent/?perspective=message')
+  await page.goto('/superagent/message')
   await expect(page.getByRole('navigation', { name: '观察视角' }).getByRole('link', { name: 'Message' })).toHaveAttribute('aria-current', 'page')
   const list = page.getByRole('complementary', { name: '最近消息' })
   await list.getByRole('link', { name: /发布前检查/ }).click()
@@ -82,7 +82,7 @@ test('Message entry reads the selected record, its full text and Core receipt', 
 test('narrow Message entry opens an individual record and returns to its list', async ({ page, request }, testInfo) => {
   const record = await seed(request)
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/superagent/?perspective=message')
+  await page.goto('/superagent/message')
   const list = page.getByRole('complementary', { name: '最近消息' })
   await expect(list).toBeVisible()
   const selected = list.getByRole('link', { name: /发布前检查/ })

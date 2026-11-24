@@ -34,6 +34,20 @@ type issueReadProjection struct {
 	TopicTitle                     *string                                 `json:"topicTitle,omitempty" nullable:"true"`
 }
 
+// IssueSummary contains current Issue facts for bounded resource reads.
+type IssueSummary struct {
+	ID                      string `json:"id"`
+	TopicID                 string `json:"topicId"`
+	Title                   string `json:"title"`
+	Goal                    string `json:"goal"`
+	GoalRevision            int    `json:"goalRevision"`
+	CurrentSessionBindingID string `json:"currentSessionBindingId"`
+	Status                  string `json:"status"`
+	UpdatedAt               string `json:"updatedAt"`
+	Blocked                 bool   `json:"blocked"`
+	Completed               bool   `json:"completed"`
+}
+
 type reportReadProjection struct {
 	Report
 	traceReadProjection

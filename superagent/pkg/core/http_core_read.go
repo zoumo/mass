@@ -16,7 +16,7 @@ import (
 const coreResourcePrefix = "/v1/core/"
 
 func isTrustedResourceRead(path string) bool {
-	if path == telemetryPerformancePath || strings.HasPrefix(path, telemetryTracePath+"/") {
+	if path == watchdogReadPath || path == telemetryPerformancePath || strings.HasPrefix(path, telemetryTracePath+"/") {
 		return true
 	}
 	rest, ok := strings.CutPrefix(path, coreResourcePrefix)
@@ -58,6 +58,7 @@ type topicReadInput struct {
 
 type issueReadInput struct {
 	Trace string `query:"trace" hidden:"true"`
+	View  string `query:"view" doc:"Use summary for bounded current Issue facts"`
 	ID    string `path:"issueId"`
 }
 
@@ -133,7 +134,20 @@ func (s *Server) registerCoreReadResources(api *httpAPI) {
 
 	registerCoreRecord(s, api, "threads/{threadId}", "Thread", thread, func(in *threadReadInput) (string, string) { return in.ID, "" })
 	registerCoreRecord(s, api, "topics/{topicId}", "Topic", topic, func(in *topicReadInput) (string, string) { return in.ID, "" })
-	registerCoreRecord(s, api, "issues/{issueId}", "Issue", issue, func(in *issueReadInput) (string, string) { return in.ID, in.Trace })
+	registerJSONRead(s, api, huma.Operation{
+		Path: coreResourcePrefix + "issues/{issueId}", OperationID: "getIssue", Summary: "Read Issue",
+		Tags: []string{"Core"}, Parameters: []*huma.Param{traceQuery()},
+		Responses: api.readResponses(&huma.Schema{AnyOf: []*huma.Schema{issue, api.schema(reflect.TypeFor[IssueSummary]())}}, true),
+	}, func(ctx context.Context, in *issueReadInput, head bool) (json.RawMessage, error) {
+		switch in.View {
+		case "":
+			return s.coreRecord(ctx, "issues", in.ID, in.Trace == "true", !head)
+		case "summary":
+			return s.store.issueSummary(ctx, in.ID)
+		default:
+			return nil, problem("invalid_argument", "unknown Issue view")
+		}
+	})
 	registerCoreRecord(s, api, "reports/{reportId}", "Report", report, func(in *reportReadInput) (string, string) { return in.ID, in.Trace })
 	registerCoreRecord(s, api, "internal-events/{eventId}", "InternalEvent", event, func(in *internalEventReadInput) (string, string) { return in.ID, in.Trace })
 	registerCoreRecord(s, api, "session-bindings/{bindingId}", "SessionBinding", binding, func(in *bindingReadInput) (string, string) { return in.ID, in.Trace })

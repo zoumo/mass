@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useState, type MouseEvent } from 'react'
-import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine } from 'lucide-react'
+import { lazy, Suspense, useEffect, useState, type ComponentType, type MouseEvent } from 'react'
+import { Activity, BarChart3, Boxes, CircleDot, GitBranch, ListTree, Mail, MessagesSquare, Pause, Play, Radio, RefreshCw, ScanLine, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { RefreshContext, defaultPerspective, navigate, useQuery, viewHref, type Perspective } from './observer'
+import { RefreshContext, navigate, observerHome, observerView, perspectives, perspectiveFromPath, useObserverLocation, viewHref, type Perspective, type ViewProps } from './observer'
 import MessageView from './MessageView'
 import RouterView from './RouterView'
 import TopicView from './TopicView'
@@ -10,8 +10,8 @@ import IssueView from './IssueView'
 import Diagnostics from './diagnostics/Diagnostics'
 import TraceView from './TraceView'
 import MetricsView from './MetricsView'
+import WatchdogView from './WatchdogView'
 
-const previousViews: Record<string, Perspective> = { messages: 'message', topics: 'topic', issues: 'issue' }
 const SessionChat = lazy(() => import('./session-chat/SessionChat'))
 
 const views = {
@@ -22,23 +22,24 @@ const views = {
   issue: { title: 'Issue', subtitle: '事项', icon: CircleDot, component: IssueView },
   trace: { title: 'Trace', subtitle: '调用链', icon: ListTree, component: TraceView },
   metrics: { title: 'Metrics', subtitle: '', icon: BarChart3, component: MetricsView },
-}
+  watchdog: { title: 'Watchdog', subtitle: '', icon: ShieldCheck, component: WatchdogView },
+} satisfies Record<Perspective, { title: string; subtitle: string; icon: LucideIcon; component: ComponentType<ViewProps> }>
 
 export default function App() {
-  const query = useQuery()
+  const route = useObserverLocation()
+  const query = route.searchParams
   const chat = query.get('chat')
-  if (chat === 'topic' || chat === 'issue' || (import.meta.env.DEV && query.get('prototype') === 'session-chat')) {
+  const demo = import.meta.env.DEV && query.get('prototype') === 'session-chat'
+  if (route.pathname === observerHome && (chat === 'topic' || chat === 'issue' || demo)) {
     return <Suspense fallback={null}><SessionChat query={query}/></Suspense>
   }
-  return <ObserverApp query={query}/>
+  return <ObserverApp route={route}/>
 }
 
-function ObserverApp({ query }: { query: URLSearchParams }) {
-  const collection = query.get('view') || ''
-  const diagnostics =
-    query.get('mode') === 'records' || (Boolean(collection) && !Object.hasOwn(previousViews, collection))
-  const key = query.get('perspective') || previousViews[collection] || defaultPerspective
-  const view: Perspective = Object.hasOwn(views, key) ? (key as Perspective) : defaultPerspective
+function ObserverApp({ route }: { route: URL }) {
+  const query = route.searchParams
+  const view = observerView(route)
+  const diagnostics = view === 'diagnostics'
   const {
     component: View,
     icon: Icon,
@@ -78,16 +79,16 @@ function ObserverApp({ query }: { query: URLSearchParams }) {
     )
       return
     const url = new URL(link.href)
-    if (url.origin !== location.origin || url.pathname !== '/superagent/') return
+    if (url.origin !== location.origin || (url.pathname !== observerHome && !perspectiveFromPath(url.pathname))) return
     event.preventDefault()
     navigate(url.pathname + url.search)
   }
   return (
-    <RefreshContext.Provider value={{ revision, online, view: diagnostics ? 'diagnostics' : view }}>
+    <RefreshContext.Provider value={{ revision, online, view }}>
       <div className="observer" onClick={follow}>
         <header className="topbar">
           <div className="shell top-inner">
-            <a className="brand" href="/superagent/" aria-label="Superagent Web 首页">
+            <a className="brand" href={observerHome} aria-label="Superagent Web 首页">
               <span className="brand-icon">
                 <Activity />
               </span>
@@ -109,7 +110,7 @@ function ObserverApp({ query }: { query: URLSearchParams }) {
         </header>
         <nav className="tabs" aria-label="观察视角">
           <div className="shell tab-inner">
-            {(Object.keys(views) as Perspective[]).map((name) => {
+            {perspectives.map((name) => {
               const TabIcon = views[name].icon
               return (
                 <a

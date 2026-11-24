@@ -1,0 +1,16 @@
+.watchdog-check { max-width: 760px }
+.watchdog-status {
+  color: var(--muted);
+  background: var(--color-secondary);
+  padding: 3px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.watchdog-status[data-status=finding] { color: var(--amber); background: #302610 }
+.watchdog-status[data-status=incomplete] { color: var(--color-destructive); background: #371c2d }
+.watchdog-facts { display: grid; gap: 16px; padding: 18px }
+.watchdog-facts > div { display: grid; grid-template-columns: 6em minmax(0, 1fr); gap: 8px }
+.watchdog-facts dt { color: var(--muted) }
+.watchdog-facts dd { white-space: pre-wrap }
+.watchdog-links { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 18px }

@@ -15,6 +15,7 @@ const apiCollections = new Set([
   'reports',
   'threads',
   'topics',
+  'watchdog',
 ])
 
 function resourceRequest(path: string) {

@@ -5,7 +5,7 @@ test.use({ baseURL: 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_GATEWA
 test('Issue shows blockers and report provenance before explicit acceptance', async ({ page, request }, testInfo) => {
   const issues = (await (await request.get('/v1/core/issues')).json()).items
   const blocked = issues.find((r: {title: string}) => r.title === 'Review blocked build')
-  await page.goto('/superagent/?perspective=issue&id=' + blocked.id)
+  await page.goto('/superagent/issue?id=' + blocked.id)
   const issue = page.getByRole('article', { name: '当前 Issue' })
   await expect(issue.getByRole('heading', {name: blocked.title})).toBeVisible()
   await expect(issue.getByText('Confirm the archive with the reviewer', {exact:false})).toBeVisible()
@@ -53,7 +53,7 @@ test('Issue shows blockers and report provenance before explicit acceptance', as
 
 test('narrow Issue list restores focus and history to the selected row', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/superagent/?perspective=issue')
+  await page.goto('/superagent/issue')
   await page.getByRole('link', { name: '返回 Issue 列表' }).click()
   const listURL = page.url()
   const row = page.getByRole('complementary', { name: '最近的 Issue' }).getByRole('link').nth(1)

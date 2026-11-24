@@ -37,7 +37,7 @@ for (const [size, width, height] of [
       )
     })
     await page.setViewportSize({ width, height })
-    const documentResponse = await page.goto(endpoint + '/superagent/?perspective=message')
+    const documentResponse = await page.goto(endpoint + '/superagent/message')
     expect(documentResponse?.headers()['content-security-policy']).toContain("script-src 'self'")
     const capture = async (name: string) => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
@@ -134,6 +134,7 @@ for (const width of [1380, 390]) {
       ['Issue', 'Issue 进展流程'],
     ]) {
       await tabs.getByRole('link', { name: tab, exact: true }).click()
+      await expect(page).toHaveURL(`${endpoint}/superagent/${tab.toLowerCase()}`)
       await expect(tabs.getByRole('link', { name: tab, exact: true })).toHaveAttribute('aria-current', 'page')
       if (tab === 'Message' && width === 390) {
         await page.getByRole('complementary', { name: '最近消息' }).getByRole('link').first().click()
