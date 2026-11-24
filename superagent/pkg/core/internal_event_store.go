@@ -196,13 +196,21 @@ func enqueueInternalEvent(ctx context.Context, tx *sql.Tx, d internalEvent) erro
 	if err := checkEventIdentity(ctx, tx, d.Recipient, true); err != nil {
 		return err
 	}
-	// Identities and references contain only strings and integers.
-	sender, _ := json.Marshal(d.Sender)
-	recipient, _ := json.Marshal(d.Recipient)
+	sender, err := json.Marshal(d.Sender)
+	if err != nil {
+		return problem("invalid_argument", "invalid internal event sender")
+	}
+	recipient, err := json.Marshal(d.Recipient)
+	if err != nil {
+		return problem("invalid_argument", "invalid internal event recipient")
+	}
 	create := entClientForTx(tx).InternalEvent.Create().SetID(d.ID).SetKind(d.Kind).
 		SetSender(string(sender)).SetRecipient(string(recipient)).SetStatus(internalevent.StatusPending)
 	if len(d.Refs) > 0 {
-		refs, _ := json.Marshal(d.Refs)
+		refs, err := json.Marshal(d.Refs)
+		if err != nil {
+			return problem("invalid_argument", "invalid internal event references")
+		}
 		create.SetRefs(string(refs))
 	}
 	if d.Content != nil {
