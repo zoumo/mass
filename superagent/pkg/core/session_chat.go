@@ -130,7 +130,7 @@ type chatSession struct {
 }
 
 func (s *Server) openSessionChat(ctx context.Context, r *http.Request) (chatSession, error) {
-	b, err := s.sessionChatBinding(ctx, sessionBindingPathValue(r))
+	b, err := s.sessionChatBinding(ctx, resourcePathValue(r, "bindingId"))
 	if err != nil {
 		return chatSession{}, err
 	}

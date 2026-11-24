@@ -36,7 +36,7 @@ func (s *Server) registerSessionBindingOperations(api *httpAPI) {
 		operation huma.Operation
 	}{{"history", history}, {"live", live}} {
 		handler := s.observeResourceHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			s.previewSessionBinding(w, r, sessionBindingPathValue(r), view.name)
+			s.previewSessionBinding(w, r, resourcePathValue(r, "bindingId"), view.name)
 		}))
 		api.registerRaw(view.operation, handler.ServeHTTP)
 		api.registerRaw(headOperation(view.operation), handler.ServeHTTP)
@@ -57,7 +57,7 @@ func (s *Server) registerSessionBindingOperations(api *httpAPI) {
 		},
 	}, s.observeResourceHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.authorizeOperator(w, r) {
-			s.bindingEvidence(w, r, sessionBindingPathValue(r))
+			s.bindingEvidence(w, r, resourcePathValue(r, "bindingId"))
 		}
 	})).ServeHTTP)
 	api.registerRaw(huma.Operation{
@@ -75,7 +75,7 @@ func (s *Server) registerSessionBindingOperations(api *httpAPI) {
 			"503": api.coreError("Recovery unavailable"),
 		},
 	}, s.observeResourceHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.recoverBindingInput(w, r, sessionBindingPathValue(r))
+		s.recoverBindingInput(w, r, resourcePathValue(r, "bindingId"))
 	})).ServeHTTP)
 }
 
@@ -83,8 +83,8 @@ func pathParam(name string) *huma.Param {
 	return &huma.Param{Name: name, In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}}
 }
 
-func sessionBindingPathValue(r *http.Request) string {
-	value := r.PathValue("bindingId")
+func resourcePathValue(r *http.Request, name string) string {
+	value := r.PathValue(name)
 	// Chi matches RawPath when present and otherwise matches the decoded Path.
 	if r.URL.RawPath != "" {
 		if decoded, err := url.PathUnescape(value); err == nil {
