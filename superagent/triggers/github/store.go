@@ -8,79 +8,28 @@ import (
 	"strings"
 	"time"
 
+	_ "embed"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+
+	githubent "github.com/zoumo/mass/superagent/triggers/github/internal/ent"
+	"github.com/zoumo/mass/superagent/triggers/github/internal/ent/pending"
+	"github.com/zoumo/mass/superagent/triggers/github/internal/ent/ratelimit"
+	entrepository "github.com/zoumo/mass/superagent/triggers/github/internal/ent/repository"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggerdb"
 )
 
-const githubDatabaseApplicationID = 0x47485452 // GHTR
+const (
+	githubDatabaseApplicationID = 0x47485452 // GHTR
+	githubRateLimitID           = 1
+)
 
-const githubDatabaseSchema = `
-CREATE TABLE github_rate_limit (
-	id INTEGER PRIMARY KEY CHECK (id = 1),
-	pause_until INTEGER NOT NULL
-);
-INSERT INTO github_rate_limit VALUES (1, 0);
-CREATE TABLE github_repositories (
-	name TEXT PRIMARY KEY,
-	backlog INTEGER NOT NULL DEFAULT 0 CHECK (backlog >= 0),
-	accepted INTEGER NOT NULL DEFAULT 0 CHECK (accepted >= 0),
-	duplicates INTEGER NOT NULL DEFAULT 0 CHECK (duplicates >= 0),
-	last_receipt BLOB NOT NULL DEFAULT '{}',
-	last_delivery_error TEXT NOT NULL DEFAULT '',
-	next_delivery_at INTEGER NOT NULL DEFAULT 0,
-	delivery_failures INTEGER NOT NULL DEFAULT 0 CHECK (delivery_failures >= 0)
-);
-CREATE TABLE github_streams (
-	repository TEXT NOT NULL REFERENCES github_repositories (name),
-	scope TEXT NOT NULL,
-	kind TEXT NOT NULL CHECK (kind IN ('parent', 'discussion', 'ci')),
-	active INTEGER NOT NULL CHECK (active IN (0, 1)),
-	discussion_priority INTEGER NOT NULL DEFAULT 0,
-	discussion_closed INTEGER NOT NULL DEFAULT 0,
-	enabled_at INTEGER NOT NULL,
-	last_success_at INTEGER NOT NULL DEFAULT 0,
-	last_full_at INTEGER NOT NULL DEFAULT 0,
-	next_attempt_at INTEGER NOT NULL DEFAULT 0,
-	last_error TEXT NOT NULL DEFAULT '',
-	failures INTEGER NOT NULL DEFAULT 0,
-	match_key TEXT NOT NULL DEFAULT '',
-	silent_baseline INTEGER NOT NULL DEFAULT 0 CHECK (silent_baseline IN (0, 1)),
-	item_count INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0),
-	PRIMARY KEY (repository, scope)
-) WITHOUT ROWID;
-CREATE INDEX github_due_streams ON github_streams
-	(repository, kind, discussion_priority, last_success_at, scope, next_attempt_at) WHERE active = 1;
-CREATE TABLE github_snapshots (
-	repository TEXT NOT NULL,
-	scope TEXT NOT NULL,
-	object_key TEXT NOT NULL,
-	version INTEGER NOT NULL CHECK (version >= 0),
-	updated_at INTEGER NOT NULL,
-	data BLOB NOT NULL,
-	PRIMARY KEY (repository, scope, object_key),
-	FOREIGN KEY (repository, scope) REFERENCES github_streams (repository, scope)
-) WITHOUT ROWID;
-CREATE TRIGGER github_count_snapshot AFTER INSERT ON github_snapshots BEGIN
-	UPDATE github_streams SET item_count = item_count + 1 WHERE repository = NEW.repository AND scope = NEW.scope;
-END;
-CREATE TRIGGER github_uncount_snapshot AFTER DELETE ON github_snapshots BEGIN
-	UPDATE github_streams SET item_count = item_count - 1 WHERE repository = OLD.repository AND scope = OLD.scope;
-END;
-CREATE TABLE github_pending (
-	sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-	repository TEXT NOT NULL REFERENCES github_repositories (name),
-	message_id TEXT NOT NULL,
-	payload BLOB NOT NULL,
-	UNIQUE (repository, message_id)
-);
-CREATE INDEX github_pending_fifo ON github_pending (repository, sequence);
-CREATE TRIGGER github_count_pending AFTER INSERT ON github_pending BEGIN
-	UPDATE github_repositories SET backlog = backlog + 1 WHERE name = NEW.repository;
-END;
-CREATE TRIGGER github_uncount_pending AFTER DELETE ON github_pending BEGIN
-	UPDATE github_repositories SET backlog = backlog - 1 WHERE name = OLD.repository;
-END;
-`
+//go:embed migrations/0003_bootstrap.sql
+var githubDatabaseSchema string
 
+// Streams and snapshots use composite primary keys. Keep their point queries,
+// checkpoints, and joins in SQL so SQLite can maintain the counters in the DDL.
 const githubStreamColumns = `active, enabled_at, last_success_at, next_attempt_at, last_error, failures, item_count`
 
 const githubUpsertSnapshot = `INSERT INTO github_snapshots (repository, scope, object_key, version, updated_at, data)
@@ -88,33 +37,9 @@ const githubUpsertSnapshot = `INSERT INTO github_snapshots (repository, scope, o
 	ON CONFLICT (repository, scope, object_key) DO UPDATE SET
 		version = excluded.version, updated_at = excluded.updated_at, data = excluded.data`
 
-const githubInsertPending = `INSERT INTO github_pending (repository, message_id, payload) VALUES (?, ?, ?)`
-
-type githubStore struct{ db *sql.DB }
-
-type githubRowReader interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
-func githubRepositoryNames(db interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, pendingOnly bool,
-) ([]string, error) {
-	rows, err := db.QueryContext(context.Background(), `SELECT name FROM github_repositories
-		WHERE name <> ? AND (NOT ? OR backlog > 0) ORDER BY name`, githubInboxRepository, pendingOnly)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		names = append(names, name)
-	}
-	return names, rows.Err()
+type githubStore struct {
+	db       *sql.DB
+	entities *githubent.Client
 }
 
 type githubPendingItem struct {
@@ -134,12 +59,39 @@ func openGitHubStore(c githubConfig) (githubStore, func(), error) {
 	if err != nil {
 		return githubStore{}, nil, err
 	}
-	store := githubStore{db}
+	store := githubStore{db: db, entities: githubent.NewClient(githubent.Driver(entsql.OpenDB(dialect.SQLite, db)))}
 	if err := store.configureRepositories(c.Repositories); err != nil {
 		closeDB()
 		return githubStore{}, nil, errors.New("cannot configure GitHub database repositories")
 	}
 	return store, closeDB, nil
+}
+
+// Ent statements and composite-key SQL must share the same physical transaction
+// on the database's single connection. The caller owns the transaction lifecycle.
+func githubTransactionEntities(tx *sql.Tx) *githubent.Client {
+	return githubent.NewClient(githubent.Driver(githubEntTxDriver{Conn: entsql.Conn{ExecQuerier: tx}}))
+}
+
+type githubEntTxDriver struct{ entsql.Conn }
+
+func (githubEntTxDriver) Dialect() string { return dialect.SQLite }
+func (githubEntTxDriver) Close() error    { return nil }
+
+func (d githubEntTxDriver) Tx(context.Context) (dialect.Tx, error) {
+	return dialect.NopTx(d), nil
+}
+
+func githubRepositoryNames(ctx context.Context, entities *githubent.Client, pendingOnly bool) ([]string, error) {
+	query := entities.Repository.Query().Where(entrepository.IDNEQ(githubInboxRepository))
+	if pendingOnly {
+		query.Where(entrepository.BacklogGT(0))
+	}
+	return query.Order(entrepository.ByID()).IDs(ctx)
+}
+
+func (s githubStore) pendingRepositories() ([]string, error) {
+	return githubRepositoryNames(context.Background(), s.entities, true)
 }
 
 func (s githubStore) configureRepositories(repositories []githubRepository) error {
@@ -163,6 +115,8 @@ func (s githubStore) configureRepositories(repositories []githubRepository) erro
 }
 
 func ensureGitHubRepository(tx *sql.Tx, repo string) error {
+	// Keep SQLite's literal defaults, including the TEXT value of last_receipt
+	// before the first delivery write, and leave existing rows untouched.
 	_, err := tx.ExecContext(context.Background(), `INSERT INTO github_repositories (name) VALUES (?) ON CONFLICT DO NOTHING`, repo)
 	return err
 }
@@ -179,7 +133,7 @@ func (s githubStore) acceptNotifications(c githubConfig, enabled time.Time, item
 				return err
 			}
 		}
-		return writeGitHubRateLimit(tx, pause)
+		return writeGitHubRateLimit(githubTransactionEntities(tx), pause)
 	})
 }
 
@@ -225,16 +179,26 @@ func githubTimeFromValue(value int64) time.Time {
 	return time.Unix(0, value).UTC()
 }
 
-func readGitHubRateLimit(db githubRowReader) (time.Time, error) {
-	var value int64
-	err := db.QueryRowContext(context.Background(), `SELECT pause_until FROM github_rate_limit WHERE id = 1`).Scan(&value)
-	return githubTimeFromValue(value), err
+func (s githubStore) rateLimit() (time.Time, error) {
+	return readGitHubRateLimit(context.Background(), s.entities)
 }
 
-func writeGitHubRateLimit(tx *sql.Tx, until time.Time) error {
+func readGitHubRateLimit(ctx context.Context, entities *githubent.Client) (time.Time, error) {
+	state, err := entities.RateLimit.Get(ctx, githubRateLimitID)
+	if githubent.IsNotFound(err) {
+		return time.Time{}, sql.ErrNoRows
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return githubTimeFromValue(state.PauseUntil), nil
+}
+
+func writeGitHubRateLimit(entities *githubent.Client, until time.Time) error {
 	pause := githubTimeValue(until)
-	_, err := tx.ExecContext(context.Background(), `UPDATE github_rate_limit SET pause_until = ? WHERE id = 1 AND pause_until <> ?`, pause, pause)
-	return err
+	return entities.RateLimit.Update().
+		Where(ratelimit.IDEQ(githubRateLimitID), ratelimit.PauseUntilNEQ(pause)).
+		SetPauseUntil(pause).Exec(context.Background())
 }
 
 func (s githubStore) stream(repository, scope string) (githubStreamState, error) {
@@ -312,7 +276,7 @@ func (s githubStore) savePoll(repository, scope string, stream githubStreamState
 		if err := writeGitHubStream(tx, repository, scope, stream); err != nil {
 			return err
 		}
-		return writeGitHubRateLimit(tx, pause)
+		return writeGitHubRateLimit(githubTransactionEntities(tx), pause)
 	})
 }
 
@@ -322,8 +286,9 @@ func (s githubStore) commitReadback(c githubConfig, repo githubRepository, scope
 ) (int, error) {
 	queued := 0
 	err := triggerdb.Transaction(s.db, func(tx *sql.Tx) error {
+		entities := githubTransactionEntities(tx)
 		var err error
-		queued, err = applyGitHubObservations(tx, c, repo, scope, stream, observations)
+		queued, err = applyGitHubObservations(tx, entities, c, repo, scope, stream, observations)
 		if err != nil {
 			return err
 		}
@@ -335,12 +300,12 @@ func (s githubStore) commitReadback(c githubConfig, repo githubRepository, scope
 		if err := writeGitHubStream(tx, repo.Repository, scope, stream); err != nil {
 			return err
 		}
-		return writeGitHubRateLimit(tx, pause)
+		return writeGitHubRateLimit(entities, pause)
 	})
 	return queued, err
 }
 
-func applyGitHubObservations(tx *sql.Tx, c githubConfig, repo githubRepository, scope string,
+func applyGitHubObservations(tx *sql.Tx, entities *githubent.Client, c githubConfig, repo githubRepository, scope string,
 	stream githubStreamState, observations []githubObservation,
 ) (int, error) {
 	if len(observations) == 0 {
@@ -364,7 +329,8 @@ func applyGitHubObservations(tx *sql.Tx, c githubConfig, repo githubRepository, 
 			if err != nil {
 				return 0, err
 			}
-			if _, err := tx.ExecContext(context.Background(), githubInsertPending, repo.Repository, submission.Message.SourceMessageID, payload); err != nil {
+			if err := entities.Pending.Create().SetRepository(repo.Repository).
+				SetMessageID(submission.Message.SourceMessageID).SetPayload(payload).Exec(context.Background()); err != nil {
 				return 0, err
 			}
 			queued++
@@ -376,23 +342,28 @@ func applyGitHubObservations(tx *sql.Tx, c githubConfig, repo githubRepository, 
 	return queued, nil
 }
 
-func readGitHubDelivery(db githubRowReader, repository string) (githubDeliveryState, error) {
-	var delivery githubDeliveryState
-	var receipt []byte
-	var next int64
-	err := db.QueryRowContext(context.Background(), `SELECT backlog, accepted, duplicates, last_receipt, last_delivery_error,
-		next_delivery_at, delivery_failures FROM github_repositories WHERE name = ?`, repository).
-		Scan(&delivery.Backlog, &delivery.Accepted, &delivery.Duplicates, &receipt, &delivery.LastDeliveryError,
-			&next, &delivery.DeliveryFailures)
-	if err != nil {
-		return delivery, err
-	}
-	delivery.NextDeliveryAt = githubTimeFromValue(next)
-	return delivery, json.Unmarshal(receipt, &delivery.LastReceipt)
+func (s githubStore) delivery(repository string) (githubDeliveryState, error) {
+	return readGitHubDelivery(context.Background(), s.entities, repository)
 }
 
-func readGitHubRepositoryStatus(tx *sql.Tx, repository string) (githubRepositoryStatus, error) {
-	delivery, err := readGitHubDelivery(tx, repository)
+func readGitHubDelivery(ctx context.Context, entities *githubent.Client, name string) (githubDeliveryState, error) {
+	row, err := entities.Repository.Get(ctx, name)
+	if githubent.IsNotFound(err) {
+		return githubDeliveryState{}, sql.ErrNoRows
+	}
+	if err != nil {
+		return githubDeliveryState{}, err
+	}
+	delivery := githubDeliveryState{
+		Backlog: row.Backlog, Accepted: row.Accepted, Duplicates: row.Duplicates,
+		LastDeliveryError: row.LastDeliveryError, NextDeliveryAt: githubTimeFromValue(row.NextDeliveryAt),
+		DeliveryFailures: row.DeliveryFailures,
+	}
+	return delivery, json.Unmarshal(row.LastReceipt, &delivery.LastReceipt)
+}
+
+func readGitHubRepositoryStatus(ctx context.Context, tx *sql.Tx, entities *githubent.Client, repository string) (githubRepositoryStatus, error) {
+	delivery, err := readGitHubDelivery(ctx, entities, repository)
 	if err != nil {
 		return githubRepositoryStatus{}, err
 	}
@@ -401,7 +372,7 @@ func readGitHubRepositoryStatus(tx *sql.Tx, repository string) (githubRepository
 		Accepted: delivery.Accepted, Duplicates: delivery.Duplicates,
 		LastReceipt: delivery.LastReceipt, LastDeliveryError: delivery.LastDeliveryError, NextDeliveryAt: delivery.NextDeliveryAt,
 	}
-	rows, err := tx.QueryContext(context.Background(), `SELECT s.scope, s.kind, pull.data, ci.data, `+githubStreamColumns+`
+	rows, err := tx.QueryContext(ctx, `SELECT s.scope, s.kind, pull.data, ci.data, `+githubStreamColumns+`
 		FROM github_streams AS s
 		LEFT JOIN github_snapshots AS pull ON s.kind = 'ci' AND pull.repository = s.repository
 			AND pull.scope = s.scope AND pull.object_key = ?
@@ -453,35 +424,75 @@ func githubCIStatusFor(stream githubStreamState, pullData, snapshotData []byte) 
 }
 
 func (s githubStore) pendingHead(repository string) (githubPendingItem, error) {
-	var item githubPendingItem
-	err := s.db.QueryRowContext(context.Background(), `SELECT sequence, payload FROM github_pending
-		WHERE repository = ? ORDER BY sequence LIMIT 1`, repository).Scan(&item.sequence, &item.payload)
-	return item, err
+	row, err := s.entities.Pending.Query().Where(pending.RepositoryEQ(repository)).Order(pending.ByID()).
+		Select(pending.FieldID, pending.FieldPayload).First(context.Background())
+	if githubent.IsNotFound(err) {
+		return githubPendingItem{}, sql.ErrNoRows
+	}
+	if err != nil {
+		return githubPendingItem{}, err
+	}
+	return githubPendingItem{sequence: row.ID, payload: row.Payload}, nil
 }
 
-func writeGitHubDelivery(tx *sql.Tx, repository string, delivery githubDeliveryState) error {
+func writeGitHubDelivery(entities *githubent.Client, name string, delivery githubDeliveryState) error {
 	receipt, err := json.Marshal(delivery.LastReceipt)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(context.Background(), `UPDATE github_repositories SET accepted = ?, duplicates = ?, last_receipt = ?,
-		last_delivery_error = ?, next_delivery_at = ?, delivery_failures = ? WHERE name = ?`,
-		delivery.Accepted, delivery.Duplicates, receipt, delivery.LastDeliveryError,
-		githubTimeValue(delivery.NextDeliveryAt), delivery.DeliveryFailures, repository)
-	return err
+	return entities.Repository.Update().Where(entrepository.IDEQ(name)).
+		SetAccepted(delivery.Accepted).SetDuplicates(delivery.Duplicates).SetLastReceipt(receipt).
+		SetLastDeliveryError(delivery.LastDeliveryError).SetNextDeliveryAt(githubTimeValue(delivery.NextDeliveryAt)).
+		SetDeliveryFailures(delivery.DeliveryFailures).Exec(context.Background())
 }
 
 func (s githubStore) saveDelivery(repository string, delivery githubDeliveryState, acknowledgedSequence int64) error {
 	return triggerdb.Transaction(s.db, func(tx *sql.Tx) error {
+		entities := githubTransactionEntities(tx)
 		if acknowledgedSequence != 0 {
-			result, err := tx.ExecContext(context.Background(), `DELETE FROM github_pending WHERE repository = ? AND sequence = ?`, repository, acknowledgedSequence)
+			count, err := entities.Pending.Delete().Where(pending.RepositoryEQ(repository), pending.IDEQ(acknowledgedSequence)).
+				Exec(context.Background())
 			if err != nil {
 				return err
 			}
-			if count, err := result.RowsAffected(); err != nil || count != 1 {
+			if count != 1 {
 				return errors.New("GitHub pending head changed")
 			}
 		}
-		return writeGitHubDelivery(tx, repository, delivery)
+		return writeGitHubDelivery(entities, repository, delivery)
 	})
+}
+
+func (s githubStore) readStatus(ctx context.Context, c githubConfig) (githubStatus, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return githubStatus{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	entities := githubTransactionEntities(tx)
+	pause, err := readGitHubRateLimit(ctx, entities)
+	if err != nil {
+		return githubStatus{}, err
+	}
+	stream, err := readGitHubStream(tx.QueryRowContext(ctx, `SELECT `+githubStreamColumns+`
+		FROM github_streams WHERE repository = ? AND scope = ?`, githubInboxRepository, githubInboxScope))
+	if err != nil {
+		return githubStatus{}, err
+	}
+	status := githubStatus{
+		Source: githubSource, AccountID: c.AccountID, InstanceID: c.InstanceID, RateLimitedUntil: pause,
+		Notifications: githubStreamStatusFor(stream), Repositories: make(map[string]githubRepositoryStatus),
+	}
+	names, err := githubRepositoryNames(ctx, entities, false)
+	if err != nil {
+		return githubStatus{}, err
+	}
+	for _, name := range names {
+		out, err := readGitHubRepositoryStatus(ctx, tx, entities, name)
+		if err != nil {
+			return githubStatus{}, err
+		}
+		status.Repositories[name] = out
+	}
+	return status, nil
 }
