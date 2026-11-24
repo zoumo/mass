@@ -8,23 +8,20 @@ import (
 	"errors"
 	"time"
 
+	_ "embed"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/zoumo/mass/superagent/triggers/dws/internal/queueent"
+	"github.com/zoumo/mass/superagent/triggers/dws/internal/queueent/submission"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggerdb"
 )
 
 const dwsDatabaseApplicationID = 0x44575354 // DWST
 
-const dwsQueueSchema = `
-CREATE TABLE dws_submissions (
-	sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-	account_id TEXT NOT NULL,
-	native_message_id TEXT NOT NULL,
-	observed_at TEXT NOT NULL,
-	payload BLOB NOT NULL,
-	failure TEXT,
-	UNIQUE (account_id, native_message_id)
-);
-CREATE INDEX dws_pending_sequence ON dws_submissions(sequence) WHERE failure IS NULL;
-`
+//go:embed schema/v3.sql
+var dwsQueueSchema string
 
 var errDWSQueueConflict = errors.New("pending_message_conflict")
 
@@ -36,6 +33,7 @@ type dwsQueueItem struct {
 
 type dwsQueue struct {
 	db        *sql.DB
+	client    *queueent.Client
 	accountID string
 }
 
@@ -48,9 +46,19 @@ func dwsDatabaseIdentity(c dwsConfig) triggerdb.Identity {
 
 func openDWSQueue(c dwsConfig) (dwsQueue, func(), error) {
 	db, closeDB, err := triggerdb.Open(c.DatabasePath, dwsDatabaseIdentity(c), dwsQueueSchema)
-	return dwsQueue{db: db, accountID: c.AccountID}, closeDB, err
+	if err != nil {
+		return dwsQueue{}, nil, err
+	}
+	return newDWSQueue(db, c.AccountID), closeDB, nil
 }
 
+func newDWSQueue(db *sql.DB, accountID string) dwsQueue {
+	// triggerdb owns the connection and closes it before releasing the lock.
+	driver := entsql.OpenDB(dialect.SQLite, db)
+	return dwsQueue{db: db, client: queueent.NewClient(queueent.Driver(driver)), accountID: accountID}
+}
+
+// Read both status counts in one SQLite snapshot.
 func (q dwsQueue) counts() (pending, failed int, err error) {
 	err = q.db.QueryRowContext(context.Background(), `SELECT
 		(SELECT count(*) FROM dws_submissions WHERE failure IS NULL),
@@ -59,18 +67,33 @@ func (q dwsQueue) counts() (pending, failed int, err error) {
 	return pending, failed, err
 }
 
+// Queue transactions run to completion during Trigger shutdown.
+func (q dwsQueue) transaction(ctx context.Context, apply func(*queueent.SubmissionClient) error) error {
+	tx, err := q.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := apply(tx.Submission); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (q dwsQueue) enqueue(s queuedSubmission, observedAt time.Time) (inserted bool, err error) {
 	payload, err := json.Marshal(s)
 	if err != nil {
 		return false, err
 	}
-	err = triggerdb.Transaction(q.db, func(tx *sql.Tx) error {
-		var stored []byte
-		err := tx.QueryRowContext(context.Background(), `SELECT payload FROM dws_submissions WHERE account_id = ? AND native_message_id = ?`,
-			q.accountID, s.Message.SourceMessageID).Scan(&stored)
+	ctx := context.Background()
+	err = q.transaction(ctx, func(client *queueent.SubmissionClient) error {
+		stored, err := client.Query().
+			Where(submission.AccountIDEQ(q.accountID), submission.NativeMessageIDEQ(s.Message.SourceMessageID)).
+			Select(submission.FieldPayload).
+			Only(ctx)
 		switch {
 		case err == nil:
-			original, err := dwsBusinessPayload(stored)
+			original, err := dwsBusinessPayload(stored.Payload)
 			if err != nil {
 				return err
 			}
@@ -82,11 +105,15 @@ func (q dwsQueue) enqueue(s queuedSubmission, observedAt time.Time) (inserted bo
 				return errDWSQueueConflict
 			}
 			return nil
-		case !errors.Is(err, sql.ErrNoRows):
+		case !queueent.IsNotFound(err):
 			return err
 		}
-		_, err = tx.ExecContext(context.Background(), `INSERT INTO dws_submissions (account_id, native_message_id, observed_at, payload)
-			VALUES (?, ?, ?, ?)`, q.accountID, s.Message.SourceMessageID, observedAt.UTC().Format(time.RFC3339Nano), payload)
+		err = client.Create().
+			SetAccountID(q.accountID).
+			SetNativeMessageID(s.Message.SourceMessageID).
+			SetObservedAt(observedAt.UTC().Format(time.RFC3339Nano)).
+			SetPayload(payload).
+			Exec(ctx)
 		inserted = err == nil
 		return err
 	})
@@ -94,46 +121,48 @@ func (q dwsQueue) enqueue(s queuedSubmission, observedAt time.Time) (inserted bo
 }
 
 func dwsBusinessPayload(raw []byte) ([]byte, error) {
-	submission, err := decodeQueuedSubmission(raw)
+	input, err := decodeQueuedSubmission(raw)
 	if err != nil {
 		return nil, err
 	}
 	// Delivery diagnostics and operator dispositions do not redefine an input.
-	submission.Message.Meta = nil
-	submission.ReleaseReason = ""
-	submission.Prepared = false
-	submission.InReplyToOutboxID = ""
-	return json.Marshal(submission)
+	input.Message.Meta = nil
+	input.ReleaseReason = ""
+	input.Prepared = false
+	input.InReplyToOutboxID = ""
+	return json.Marshal(input)
 }
 
 const dwsQueueReadLimit = 16
 
 func (q dwsQueue) pending(after int64) ([]dwsQueueItem, error) {
-	rows, err := q.db.QueryContext(context.Background(), `SELECT sequence, observed_at, payload FROM dws_submissions
-        WHERE failure IS NULL AND sequence > ? ORDER BY sequence LIMIT ?`, after, dwsQueueReadLimit)
+	rows, err := q.client.Submission.Query().
+		Where(submission.FailureIsNil(), submission.IDGT(after)).
+		Order(submission.ByID()).
+		Limit(dwsQueueReadLimit).
+		Select(submission.FieldID, submission.FieldObservedAt, submission.FieldPayload).
+		All(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var items []dwsQueueItem
-	for rows.Next() {
-		var item dwsQueueItem
-		var observedAt string
-		var payload []byte
-		if err := rows.Scan(&item.sequence, &observedAt, &payload); err != nil {
-			return nil, err
-		}
-		item.observedAt, err = time.Parse(time.RFC3339Nano, observedAt)
-		if err != nil {
-			return nil, err
-		}
-		item.submission, err = decodeQueuedSubmission(payload)
+	for _, row := range rows {
+		item, err := decodeDWSQueueItem(row.ID, row.ObservedAt, row.Payload)
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	return items, nil
+}
+
+func decodeDWSQueueItem(sequence int64, observedAt string, payload []byte) (dwsQueueItem, error) {
+	at, err := time.Parse(time.RFC3339Nano, observedAt)
+	if err != nil {
+		return dwsQueueItem{}, err
+	}
+	s, err := decodeQueuedSubmission(payload)
+	return dwsQueueItem{sequence: sequence, observedAt: at, submission: s}, err
 }
 
 func (q dwsQueue) prepare(item dwsQueueItem, outboxID string) (queuedSubmission, error) {
@@ -147,7 +176,10 @@ func (q dwsQueue) prepare(item dwsQueueItem, outboxID string) (queuedSubmission,
 	if err != nil {
 		return s, err
 	}
-	_, err = q.db.ExecContext(context.Background(), `UPDATE dws_submissions SET payload=? WHERE sequence=? AND failure IS NULL`, payload, item.sequence)
+	err = q.client.Submission.Update().
+		Where(submission.IDEQ(item.sequence), submission.FailureIsNil()).
+		SetPayload(payload).
+		Exec(context.Background())
 	return s, err
 }
 
@@ -180,17 +212,23 @@ func (item dwsQueueItem) classify(evidence *sendEvidenceStore) (string, string) 
 }
 
 func (q dwsQueue) finish(sequence int64, failure string) error {
-	var result sql.Result
+	ctx := context.Background()
+	var rows int
 	var err error
 	if failure == "" {
-		result, err = q.db.ExecContext(context.Background(), `DELETE FROM dws_submissions WHERE sequence = ? AND failure IS NULL`, sequence)
+		rows, err = q.client.Submission.Delete().
+			Where(submission.IDEQ(sequence), submission.FailureIsNil()).
+			Exec(ctx)
 	} else {
-		result, err = q.db.ExecContext(context.Background(), `UPDATE dws_submissions SET failure = ? WHERE sequence = ? AND failure IS NULL`, failure, sequence)
+		rows, err = q.client.Submission.Update().
+			Where(submission.IDEQ(sequence), submission.FailureIsNil()).
+			SetFailure(failure).
+			Save(ctx)
 	}
 	if err != nil {
 		return err
 	}
-	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+	if rows != 1 {
 		return errors.New("DWS queue head changed")
 	}
 	return nil
