@@ -20,7 +20,6 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	github.com/zoumo/agent-sdk-go v0.1.1-0.20261125182936-6c369afc9b03
-	github.com/zoumo/agent-sdk-testify v0.2.2
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.72.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.47.0
@@ -92,4 +91,4 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 )
 
-tool github.com/zoumo/agent-sdk-testify
+tool github.com/zoumo/agent-sdk-go/cmd/agent-replay

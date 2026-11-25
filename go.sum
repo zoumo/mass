@@ -139,8 +139,6 @@ github.com/zclconf/go-cty-yaml v1.1.0 h1:nP+jp0qPHv2IhUVqmQSzjvqAWcObN0KBkUl2rWB
 github.com/zclconf/go-cty-yaml v1.1.0/go.mod h1:9YLUH4g7lOhVWqUbctnVlZ5KLpg7JAprQNgxSZ1Gyxs=
 github.com/zoumo/agent-sdk-go v0.1.1-0.20261125182936-6c369afc9b03 h1:o4ll8UHvz+w0mE6WuFSsLoQ8VYwdTWOiTSgvIH166Cs=
 github.com/zoumo/agent-sdk-go v0.1.1-0.20261125182936-6c369afc9b03/go.mod h1:1qNFPioauDHpIqTq+MigyZdgCBglzhHSGfP7wynH8Wo=
-github.com/zoumo/agent-sdk-testify v0.2.2 h1:1IUptuMzO5Yvs243Aj13A6PwlaXonz0GBlhtYTGmE8o=
-github.com/zoumo/agent-sdk-testify v0.2.2/go.mod h1:XqC5i1y/g7tl3V0iA21J/8IUN8e7eXMYw0dykwkG/tY=
 github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a h1:Hyb0V2EaZhrmAh/kEl4Cxi1p3uAmSXAI2ZCL9xLbUWY=
 github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a/go.mod h1:bBk2oZ4wN9zgq+9H2bObmGW7vVEetcJV1M/AvieZUN0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

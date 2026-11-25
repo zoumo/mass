@@ -24,7 +24,7 @@ agent 只有在当前人类请求明确要求修改 harness 中的相关内容�
 | make test-go | MASS 单元、集成、仿真三层离线 race 测试 |
 | make test-unit-go | 仅包内单元测试 |
 | make test-integration-go | 构造数据多模块集成测试与 SDK 协议探针 |
-| make test-simulation-go | 录制数据经 agent-sdk-testify 回放 |
+| make test-simulation-go | 录制数据经 agent-replay 回放 |
 | make test-e2e-go | 显式启动真实 Agent 的 E2E，不包含在 test/check 中 |
 | make build | 构建 `bin/massctl`、`bin/massd`、`bin/superagent` 与独立的 `superagent/web/dist` |
 | make build-go | 构建 `bin/massctl` 与 `bin/massd` |
