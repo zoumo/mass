@@ -20,6 +20,7 @@ var traceAssociationSchema string
 //go:embed schema/0028-query-indexes.sql
 var queryIndexSchema string
 
+// TestStartupQueryIndexNamesMatchSchema checks this list against queryIndexSchema.
 var queryIndexNames = []string{
 	"session_bindings_pending",
 	"session_bindings_ready_owner",
