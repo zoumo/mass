@@ -31,10 +31,10 @@ DriverSessionSpec 及 SessionSpec 可提供 `config: {model?, effort?, permissio
 仅接受对象和字符串；省略、空对象及字段空字符串按 SDK 省略，null、非字符串、NUL、
 非法 UTF-8 或不能编码的值在任何原生副作用前拒绝。model 和 effort 原样传入
 SDK Open/Resume 的 Config。非空权限预设仅接受 `manualReview`、`autoReview` 和 `fullAccess`，
-原样传入 SDK Open/Resume 的 PermissionPreset。SDK 收到省略的预设时使用 `autoReview`。
-Runtime 可以提供[新建 Session 的权限预设](session-defaults.md#permissionpreset)。
+原样传入 SDK Open/Resume 的 PermissionPreset。创建时按 [Runtime 默认配置](session-defaults.md#permissionpreset)
+解析预设。Session 和 Runtime 都省略时，Service 将预设留空。SDK Open/Resume 使用自身默认值 `fullAccess` 处理省略的预设。
 
-Session spec 保存初始配置及创建时应用的权限预设。resume 重新请求保存的初始值。
+Session spec 保存初始配置，包括创建时继承的 Runtime 预设。resume 重新请求保存的初始值。
 load 保存和使用本次显式值。可变配置不属于恢复身份；
 ID、cwd、账号、数据归属及原生恢复材料验证仍然必需。旧 spec 省略 config 保持可读，
 不迁移个人运行数据。初始配置不是当前生效值快照。
