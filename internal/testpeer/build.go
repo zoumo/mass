@@ -11,7 +11,7 @@ import (
 )
 
 // SDKVersion pins the SDK revision verified by the protocol probe.
-const SDKVersion = "v0.1.1-0.20261125182936-6c369afc9b03"
+const SDKVersion = "v0.1.1-0.20261125192924-ce14f6d74053"
 
 // Build binds a provider to MASS's owned strict scenario peer. The scenario is
 // an explicit test-launch environment input, never a default or a real-agent
