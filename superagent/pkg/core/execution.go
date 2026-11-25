@@ -173,6 +173,16 @@ Reports
 - For example, a ready Report can include summary="Verified the release checks" and evidence=["https://github.com/example/service/actions/runs/123"]. The Report is the handoff to Topic for acceptance.
 - On report_reminder, report work already performed on this Issue. Use an operationId stable for that event.`
 
+// Reset both representations in one statement so restart can recheck ready bindings.
+func (s *Store) resetReadyBindings(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
+ WHERE state='ready'`)
+	if err != nil {
+		return storageError()
+	}
+	return nil
+}
+
 func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 	bindings := entClientForTx(tx).SessionBinding
 	if c.Sessions == nil {

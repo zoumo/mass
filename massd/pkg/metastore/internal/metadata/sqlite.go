@@ -114,6 +114,9 @@ func (s *Store) openSQL() error {
 		if s.readOnly {
 			return os.ErrNotExist
 		}
+		if _, err := os.Lstat(filepath.Join(s.dir, "metadata.sqlite")); !os.IsNotExist(err) {
+			return errors.New("legacy metadata.sqlite requires explicit migration to SQLite authority")
+		}
 		// Refuse a directory owned by the file MetaStore, even when its
 		// identity marker is missing or a commit is still pending.
 		for _, name := range []string{".store.json", ".pending.json", "runtime.jsonl", "session_index.jsonl"} {

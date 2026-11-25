@@ -14,6 +14,8 @@ import (
 )
 
 // ProcessConfig fixes launch inputs without reading provider credentials or data.
+//
+//nolint:recvcheck // Preserve the public value methods. ResolveEnvironment replaces Env.
 type ProcessConfig struct {
 	Executable string
 	Scenario   string
@@ -101,7 +103,7 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 
 // ResolveExecutable uses the daemon's PATH when no executable was configured.
 // It never binds an implicit executable from a relative PATH entry.
-func (o *ProcessConfig) ResolveExecutable(command string) (string, error) {
+func (o ProcessConfig) ResolveExecutable(command string) (string, error) {
 	if o.Executable != "" {
 		return o.Executable, nil
 	}
@@ -118,7 +120,7 @@ func (o *ProcessConfig) ResolveExecutable(command string) (string, error) {
 
 // Environment explicitly merges overrides instead of accidentally replacing PATH,
 // HOME and other required inherited variables when adding a single setting.
-func (o *ProcessConfig) Environment(provider string) []string {
+func (o ProcessConfig) Environment(provider string) []string {
 	values := map[string]string{}
 	if o.EnvPolicy == "inherit" {
 		for _, entry := range os.Environ() {
@@ -149,7 +151,7 @@ func (o *ProcessConfig) Environment(provider string) []string {
 
 // LookupEnv resolves a value from the same environment that Environment
 // passes to the provider process. Explicit overrides take precedence.
-func (o *ProcessConfig) LookupEnv(key string) (string, bool) {
+func (o ProcessConfig) LookupEnv(key string) (string, bool) {
 	if value, ok := o.Env[key]; ok {
 		return value, true
 	}

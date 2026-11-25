@@ -54,6 +54,21 @@ func TestSQLiteAuthorityRejectsInvalidMarker(t *testing.T) {
 	require.NoError(t, reopened.Close())
 }
 
+func TestSQLiteAuthorityRejectsLegacyProjection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metadata.sqlite")
+	legacy := []byte("legacy derived database bytes")
+	require.NoError(t, os.WriteFile(path, legacy, 0o600))
+
+	_, err := backend.Open(dir, metastore.Config{}, false)
+	require.ErrorContains(t, err, "legacy metadata.sqlite requires explicit migration")
+	require.NoFileExists(t, filepath.Join(dir, ".metadata-sqlite.json"))
+	require.NoFileExists(t, filepath.Join(dir, "metadata-authority.sqlite"))
+	saved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, legacy, saved)
+}
+
 func TestSelectedAuthorityFailsClosed(t *testing.T) {
 	for _, name := range []string{"sqlite", "file"} {
 		t.Run(name, func(t *testing.T) {

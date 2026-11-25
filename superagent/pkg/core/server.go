@@ -123,9 +123,8 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 		s.massdHTTPToken = exposureToken
 	}
 	if c.Sessions != nil {
-		if _, err = store.db.ExecContext(ctx, `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
- WHERE state='ready'`); err != nil {
-			return nil, storageError()
+		if err := store.resetReadyBindings(ctx); err != nil {
+			return nil, err
 		}
 	}
 	life, cancel := context.WithCancel(context.Background())

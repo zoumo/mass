@@ -219,7 +219,7 @@ model SessionStatus {
   /** 跨 Runtime 全局唯一的会话标识；原始值不得为 . 或 ..；close、离线与恢复均保留。 */
   sessionId: string;
 
-  /** 当前可证明的状态；重启不沿用旧 idle 作为可用证明，旧在线状态校正为 unknown，旧 archived 记录迁移为 offline。 */
+  /** 当前可证明的状态。重启时将缺少结算证明的旧在线状态校正为 unknown。 */
   state: SessionState;
 
   /** 本次会话运行已应用的 Session spec 版本，不是 Runtime 版本。 */

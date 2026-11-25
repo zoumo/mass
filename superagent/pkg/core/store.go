@@ -270,6 +270,15 @@ func (s *Store) ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
+// Read both queue depths in one SQLite snapshot.
+func (s *Store) queueDepth(ctx context.Context) (int64, int64, error) {
+	var internalEvents, outbox int64
+	err := s.db.QueryRowContext(ctx, `SELECT
+ (SELECT count(*) FROM internal_events WHERE status IN ('pending','dispatching')),
+ (SELECT count(*) FROM outbox WHERE status='pending')`).Scan(&internalEvents, &outbox)
+	return internalEvents, outbox, err
+}
+
 func (s *Store) Close() error {
 	var err error
 	if s.queueRegistration != nil {

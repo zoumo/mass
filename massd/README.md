@@ -24,6 +24,10 @@ Check HTTP `GET /readyz`, then run `bin/massctl runtime list` against the report
 
 For a fresh rollout with independent state, set `dataDir` to a separate, empty directory and keep the previous directory. For a restart, stop the current owner and start MASS with the same directory and `metaStore.backend`. After `/readyz` succeeds, use `massctl runtime list` to verify the saved Runtimes.
 
+Before reusing a directory from an older release, check whether it contains Sessions stored as `archived`. The daemon rejects such a directory at startup with either MetaStore backend. To keep access to those Sessions, retain the previous binary and data directory. To reuse the directory with this version, first run a release that converts `archived` to `offline` and verify the Sessions before switching binaries.
+
+To initialize SQLite authority, use a separate, empty directory. If the directory contains a legacy `metadata.sqlite` projection, migrate the metadata before reusing that directory.
+
 For a consistent backup, stop the writer and copy the directory with its layout and recovery files. In the default SQLite MetaStore, preserve `metadata-authority.sqlite` and `.metadata-sqlite.json` together. For the file MetaStore, preserve the resource files and metadata recovery records. In either case, EventStore's event files and recovery materials are authoritative. `history.sqlite` is a rebuildable query database. Keep Driver recovery records under `private/` with the data directory.
 
 Changing `metaStore.backend` requires a separately verified migration or a fresh data directory. A missing authority database with its marker still present requires restoration from verified backup. See the [storage contract](../harness/bindings/storage.md) for ownership and recovery rules and the [SQLite layout decision](docs/adr/0001-distinguish-sqlite-authority-from-legacy-projection.md) for the reason behind the separate formats.

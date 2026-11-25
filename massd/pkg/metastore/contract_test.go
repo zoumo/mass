@@ -1,6 +1,7 @@
 package metastore_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,12 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/massd"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/metastore/backend"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/store"
+	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
 type MetaStoreSuite struct {
@@ -199,7 +202,7 @@ func TestRejectIllegalPersistentSessionIDs(t *testing.T) {
 	}
 }
 
-func TestRejectUnsupportedSessionState(t *testing.T) {
+func TestRejectArchivedSessionState(t *testing.T) {
 	for _, name := range []string{"sqlite", "file"} {
 		t.Run(name, func(t *testing.T) {
 			s, dir := open(t, name)
@@ -218,32 +221,67 @@ func TestRejectUnsupportedSessionState(t *testing.T) {
 			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 			require.NoError(t, s.Close())
 
-			writeArchivedState(t, dir, name, invalid)
+			writeStoredSession(t, dir, name, invalid)
 			_, err = backend.Open(dir, metastore.Config{Backend: name}, false)
-			require.ErrorContains(t, err, "invalid stored Session state")
+			require.ErrorContains(t, err, "archived is unsupported")
 		})
 	}
 }
 
-func writeArchivedState(t *testing.T, dir, backendName string, legacy resource.Session) {
+func TestStartupCorrectsUnfamiliarStoredSessionState(t *testing.T) {
+	for _, name := range []string{"sqlite", "file"} {
+		t.Run(name, func(t *testing.T) {
+			s, dir := open(t, name)
+			created, err := s.CreateSession(session("default", "saved", "native"))
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			prior := created
+			prior.Status.State = "future_state"
+			writeStoredSession(t, dir, name, prior)
+
+			config := metastore.Config{Backend: name}
+			instance, err := massd.Start(t.Context(), massd.Options{
+				DataDir:   dir,
+				MetaStore: config,
+				Transport: transport.Options{WriteTimeout: massd.DefaultWriteTimeout},
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, instance.Shutdown(context.Background())) })
+			require.NoError(t, instance.Shutdown(t.Context()))
+
+			reopened, err := backend.Open(dir, config, true)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+			saved, err := reopened.GetSession(resource.SessionRef{SessionID: created.Status.SessionID})
+			require.NoError(t, err)
+			require.Equal(t, events.Unknown, saved.Status.State)
+			require.Equal(t, "state_unconfirmed_after_restart", saved.Status.Reason)
+			require.Equal(t, created.Spec, saved.Spec)
+			require.Equal(t, created.Metadata.UID, saved.Metadata.UID)
+			require.Equal(t, created.Metadata.Generation, saved.Metadata.Generation)
+			require.NotEqual(t, created.Metadata.ResourceVersion, saved.Metadata.ResourceVersion)
+		})
+	}
+}
+
+func writeStoredSession(t *testing.T, dir, backendName string, session resource.Session) {
 	t.Helper()
+	payload, err := json.Marshal(session)
+	require.NoError(t, err)
 	switch backendName {
 	case "sqlite":
-		b, err := json.Marshal(legacy)
-		require.NoError(t, err)
 		db, err := sql.Open("sqlite", filepath.Join(dir, "metadata-authority.sqlite"))
 		require.NoError(t, err)
 		defer func() { require.NoError(t, db.Close()) }()
-		result, err := db.ExecContext(t.Context(), "UPDATE session SET state='archived', payload=? WHERE session_id=?", b, legacy.Status.SessionID)
+		result, err := db.ExecContext(t.Context(), "UPDATE session SET state=?, payload=? WHERE session_id=?", string(session.Status.State), payload, session.Status.SessionID)
 		require.NoError(t, err)
 		count, err := result.RowsAffected()
 		require.NoError(t, err)
 		require.EqualValues(t, 1, count)
 	case "file":
-		path := filepath.Join(dir, "sessions", legacy.Metadata.Namespace, legacy.Metadata.Name, "state.json")
-		b, err := json.Marshal(legacy)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(path, b, 0o600))
+		path := filepath.Join(dir, "sessions", session.Metadata.Namespace, session.Metadata.Name, "state.json")
+		require.NoError(t, os.WriteFile(path, payload, 0o600))
 	default:
 		t.Fatalf("unknown backend %q", backendName)
 	}
