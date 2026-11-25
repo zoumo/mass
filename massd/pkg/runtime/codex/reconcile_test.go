@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	ct "github.com/zoumo/agent-sdk-go/client/codex/types"
 
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"

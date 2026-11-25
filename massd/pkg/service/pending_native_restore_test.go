@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 
 	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
@@ -131,7 +131,7 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			r := v["request"].(map[string]any)
 			switch r["subtype"] {
 			case "initialize":
-				reply(v["request_id"], map[string]any{"current_permission_mode": startup.ClaudePermissionMode})
+				reply(v["request_id"], map[string]any{"current_permission_mode": startup.ClaudeFullAccessMode})
 				mark("ack", "initialize acknowledged")
 				if resumed {
 					go func() {
@@ -155,7 +155,7 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 				}
 				continue
 			case "get_settings":
-				reply(v["request_id"], startup.ClaudeSettings())
+				reply(v["request_id"], startup.ClaudeSettings(startup.ClaudeFullAccessSandbox))
 				continue
 			case "get_status":
 				identityMu.Lock()

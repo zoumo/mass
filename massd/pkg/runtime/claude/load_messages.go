@@ -6,7 +6,7 @@ import (
 	"maps"
 	"time"
 
-	sdk "github.com/zoumo/agent-sdk-go/claude"
+	sdk "github.com/zoumo/agent-sdk-go/client/claude"
 
 	"github.com/zoumo/mass/massd/pkg/events"
 )

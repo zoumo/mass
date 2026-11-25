@@ -11,7 +11,7 @@ import (
 )
 
 // SDKVersion pins the SDK revision verified by the protocol probe.
-const SDKVersion = "v0.1.1-0.20261124100158-5641ab60305c"
+const SDKVersion = "v0.1.1-0.20261125182936-6c369afc9b03"
 
 // TestifyVersion pins the consumer recording/replay tool, not a runtime dependency.
 const TestifyVersion = "v0.2.2"

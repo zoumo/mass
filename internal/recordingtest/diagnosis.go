@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/agent-sdk-go/client/claude"
 )
 
 type DiagnosticOptions struct {

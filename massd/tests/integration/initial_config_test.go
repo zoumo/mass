@@ -73,11 +73,11 @@ func initialCLI(t *testing.T, url, action, cwd, id string, config *runtime.Initi
 
 // Every configured start/resume is matched against a full strict native frame.
 // Authored temporary scenarios do not modify historical recordings.
-func setRuntimeFullAccess(t *testing.T, c *client.Client) {
+func setRuntimeManualReview(t *testing.T, c *client.Client) {
 	t.Helper()
 	var r resource.Runtime
 	require.NoError(t, c.GetRuntime(ctx(t), "agent", &r))
-	r.Spec.PermissionPreset = agent.PermissionPresetFullAccess
+	r.Spec.PermissionPreset = agent.PermissionPresetManualReview
 	require.NoError(t, c.UpdateRuntime(ctx(t), "agent", r.Spec, nil))
 }
 
@@ -143,7 +143,7 @@ func TestInitialSessionConfigurationCodexCreateResume(t *testing.T) {
 				return nil
 			}))
 			require.Positive(t, files, "durable Session must be readable")
-			setRuntimeFullAccess(t, c)
+			setRuntimeManualReview(t, c)
 			var resumed resource.Session
 			require.NoError(t, c.ResumeSession(ctx(t), ref, &resumed))
 			require.Equal(t, created.Status.SessionID, resumed.Status.SessionID)
@@ -169,7 +169,7 @@ func initialClaudeArgs(t *testing.T, evidence string, config *runtime.InitialSes
 		if row.Event != "opened" {
 			continue
 		}
-		require.NotContains(t, row.Args, "--permission-mode=bypassPermissions")
+		require.Contains(t, row.Args, "--permission-mode=bypassPermissions")
 		count++
 		for flag, value := range map[string]string{"--model": config.SDKConfig().Model, "--effort": config.SDKConfig().Effort} {
 			seen := false
@@ -205,7 +205,7 @@ func TestInitialSessionConfigurationClaudeCreateResume(t *testing.T) {
 			c := newHTTPClient(t, url, "")
 			ref := resource.SessionRef{SessionID: created.Status.SessionID}
 			require.NoError(t, c.CloseSession(ctx(t), ref, nil))
-			setRuntimeFullAccess(t, c)
+			setRuntimeManualReview(t, c)
 			var resumed resource.Session
 			require.NoError(t, c.ResumeSession(ctx(t), ref, &resumed))
 			require.Equal(t, created.Status.SessionID, resumed.Status.SessionID)
@@ -270,7 +270,7 @@ func TestInitialSessionConfigurationLoadNative(t *testing.T) {
 					url = server.URL
 				}
 				c := newHTTPClient(t, url, "")
-				setRuntimeFullAccess(t, c)
+				setRuntimeManualReview(t, c)
 				initialReject(t, url, cwd)
 				var accepted resource.SessionLoadAccepted
 				initialCLI(t, url, "load", cwd, id, tc.config, &accepted)
@@ -285,8 +285,8 @@ func TestInitialSessionConfigurationLoadNative(t *testing.T) {
 							continue
 						}
 						found++
-						require.Equal(t, "on-request", call.Params["approvalPolicy"])
-						require.Equal(t, "workspace-write", call.Params["sandbox"])
+						require.Equal(t, "never", call.Params["approvalPolicy"])
+						require.Equal(t, "danger-full-access", call.Params["sandbox"])
 						if tc.config != nil && tc.config.Model != "" {
 							require.Equal(t, tc.config.Model, call.Params["model"])
 						} else {

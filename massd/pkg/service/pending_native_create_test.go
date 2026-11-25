@@ -83,7 +83,7 @@ func TestPendingNativeCreatePeer(t *testing.T) {
 			if err := encoder.Encode(map[string]any{
 				"type": "control_response",
 				"response": map[string]any{
-					"subtype": "success", "request_id": frame.RequestID, "response": map[string]any{"current_permission_mode": startup.ClaudePermissionMode},
+					"subtype": "success", "request_id": frame.RequestID, "response": map[string]any{"current_permission_mode": startup.ClaudeFullAccessMode},
 				},
 			}); err != nil {
 				os.Exit(5)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
@@ -152,7 +153,13 @@ func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name string, ki
 	require.NoError(t, err)
 	cwd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	opened, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "ticket18", Name: "approval"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}})
+	config := &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview}
+	opened, err := svc.CreateSession(ctx(t), resource.Session{
+		Metadata: resource.Metadata{Namespace: "ticket18", Name: "approval"},
+		Spec: resource.SessionSpec{
+			RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd, Config: config},
+		},
+	})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: opened.Status.SessionID}
 	pid, err := os.ReadFile(filepath.Join(dir, "pid"))

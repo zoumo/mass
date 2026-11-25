@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	sdk "github.com/zoumo/agent-sdk-go/codex"
+	sdk "github.com/zoumo/agent-sdk-go/client/codex"
 
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
