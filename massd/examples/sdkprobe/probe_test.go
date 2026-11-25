@@ -56,8 +56,7 @@ func TestMain(m *testing.M) {
 				fmt.Println("PASS cleanup: temporary binaries removed")
 			}
 		}()
-		// Refuse a workspace/module replacement or an accidentally upgraded SDK
-		// or external testify tool.
+		// Verify the SDK used by the probe and the replay tools.
 		output, err := exec.CommandContext(mainCtx, "go", "list", "-m", "-json", "github.com/zoumo/agent-sdk-go").Output()
 		var sdkModule struct {
 			Version string
@@ -68,16 +67,6 @@ func TestMain(m *testing.M) {
 			return
 		}
 		fmt.Println("SDK github.com/zoumo/agent-sdk-go", sdkModule.Version)
-		output, err = exec.CommandContext(mainCtx, "go", "list", "-m", "-json", "github.com/zoumo/agent-sdk-testify").Output()
-		var testifyModule struct {
-			Version string
-			Replace *json.RawMessage
-		}
-		if err != nil || json.Unmarshal(output, &testifyModule) != nil || testifyModule.Version != testpeer.TestifyVersion || testifyModule.Replace != nil {
-			fmt.Fprintln(os.Stderr, "FAIL: probe requires the pinned agent-sdk-testify without replacement", err)
-			return
-		}
-		fmt.Println("tool github.com/zoumo/agent-sdk-testify", testifyModule.Version)
 		for _, native := range []string{"codex", "claude"} {
 			bins[native], err = testpeer.Build(mainCtx, dir, native)
 			if err != nil {

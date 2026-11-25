@@ -29,7 +29,7 @@ test-unit-go:
 test-integration-go:
 	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -timeout=900s ./massd/tests/integration ./massd/examples/sdkprobe
 
-# Recorded consumer material through agent-sdk-testify; never launches an Agent.
+# Recorded consumer material through agent-replay; never launches an Agent.
 test-simulation-go:
 	MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=600s ./massd/tests/simulation
 

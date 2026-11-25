@@ -97,7 +97,7 @@ func newDiagnostic(output, provider string) (*diagnostic, error) {
 		return nil, fmt.Errorf("reserve diagnostic directory: %w", err)
 	}
 	return &diagnostic{root: output, report: DiagnosticReport{
-		Provider: provider, Status: "blocker", SDK: RuntimeSDKVersion, Testify: TestifyVersion,
+		Provider: provider, Status: "blocker", SDK: RuntimeSDKVersion, Testify: ReplayVersion,
 		Platform: goruntime.GOOS + "/" + goruntime.GOARCH, SDKCleanup: "not_started",
 		Blockers: []string{}, Stages: []DiagnosticStage{}, Cleanup: map[string]string{},
 		Boundaries: map[string]string{
