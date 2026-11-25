@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zoumo/agent-sdk-go/agent"
-	sdk "github.com/zoumo/agent-sdk-go/codex"
-	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	sdk "github.com/zoumo/agent-sdk-go/client/codex"
+	ct "github.com/zoumo/agent-sdk-go/client/codex/types"
 
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"

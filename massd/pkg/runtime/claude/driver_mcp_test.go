@@ -41,7 +41,7 @@ func TestClaudeDriverTestPeer(t *testing.T) {
 		os.Exit(3)
 	}
 	enc := json.NewEncoder(os.Stdout)
-	if err := controlSuccess(enc, initialize.RequestID, map[string]any{"current_permission_mode": startup.ClaudePermissionMode}); err != nil {
+	if err := controlSuccess(enc, initialize.RequestID, map[string]any{"current_permission_mode": startup.ClaudeFullAccessMode}); err != nil {
 		os.Exit(6)
 	}
 	line, err = reader.ReadBytes('\n')
@@ -74,7 +74,7 @@ func replyStartupSettings(enc *json.Encoder, line []byte) bool {
 	var settings controlFrame
 	return json.Unmarshal(line, &settings) == nil &&
 		settings.Type == "control_request" && settings.Request.Subtype == "get_settings" &&
-		settings.RequestID != "" && controlSuccess(enc, settings.RequestID, startup.ClaudeSettings()) == nil
+		settings.RequestID != "" && controlSuccess(enc, settings.RequestID, startup.ClaudeSettings(startup.ClaudeFullAccessSandbox)) == nil
 }
 
 func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {

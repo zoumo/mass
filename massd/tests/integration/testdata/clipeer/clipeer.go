@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/agent-sdk-go/client/claude"
 
 	"github.com/zoumo/mass/internal/testpeer/startup"
 )
@@ -66,12 +66,12 @@ func StartupReply(subtype string, id any) map[string]any {
 	body := map[string]any{}
 	switch subtype {
 	case "initialize":
-		body["current_permission_mode"] = startup.ClaudePermissionMode
+		body["current_permission_mode"] = startup.ClaudeFullAccessMode
 	case "get_settings":
-		body = startup.ClaudeSettings()
+		body = startup.ClaudeSettings(startup.ClaudeFullAccessSandbox)
 	}
 	return map[string]any{
-		"type": "control_response",
+		"type":     "control_response",
 		"response": map[string]any{"subtype": "success", "request_id": id, "response": body},
 	}
 }

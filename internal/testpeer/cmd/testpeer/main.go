@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 
 	"github.com/zoumo/mass/internal/testpeer/replay"
 	"github.com/zoumo/mass/internal/testpeer/scenario"
@@ -88,7 +88,7 @@ func run(args []string) int {
 		return exitConfiguration
 	}
 	if *provider == "claude" && expectsStartupSettings(document) {
-		if err := startup.ValidateClaudePermissionArgs(native); err != nil {
+		if err := startup.ValidateClaudePermissionArgs(native, startup.ClaudeFullAccessMode, startup.ClaudeFullAccessSandbox); err != nil {
 			fmt.Fprintln(os.Stderr, "mass-testpeer:", err)
 			return exitConfiguration
 		}

@@ -16,9 +16,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	claude "github.com/zoumo/agent-sdk-go/claude"
-	codex "github.com/zoumo/agent-sdk-go/codex"
-	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	claude "github.com/zoumo/agent-sdk-go/client/claude"
+	codex "github.com/zoumo/agent-sdk-go/client/codex"
+	ct "github.com/zoumo/agent-sdk-go/client/codex/types"
 
 	"github.com/zoumo/mass/internal/testpeer"
 )

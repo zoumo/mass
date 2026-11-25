@@ -19,7 +19,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	github.com/zoumo/agent-sdk-go v0.1.1-0.20261124100158-5641ab60305c
+	github.com/zoumo/agent-sdk-go v0.1.1-0.20261125182936-6c369afc9b03
 	github.com/zoumo/agent-sdk-testify v0.2.2
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.72.0
 	go.opentelemetry.io/otel v1.47.0

@@ -87,13 +87,13 @@ func runCodex(send func(any)) {
 				id = "healthy"
 			}
 			cwds[id] = v.Params["cwd"]
-			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
+			reply(map[string]any{"thread": thread(id), "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "dangerFullAccess"}})
 			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			reply(map[string]any{"thread": thread(v.Params["threadId"].(string))})
 		case "thread/resume":
 			id := v.Params["threadId"].(string)
-			reply(map[string]any{"thread": thread(id), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
+			reply(map[string]any{"thread": thread(id), "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": os.Getenv("PROJECT"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "dangerFullAccess"}})
 			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/turns/list":
 			reply(map[string]any{"data": []any{map[string]any{"id": "saved-turn", "status": "completed", "items": []any{}, "itemsView": "full"}}, "nextCursor": nil})

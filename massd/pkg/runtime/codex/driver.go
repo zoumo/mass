@@ -14,8 +14,8 @@ import (
 
 	"github.com/zoumo/agent-sdk-go/agent"
 	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
-	sdk "github.com/zoumo/agent-sdk-go/codex"
-	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	sdk "github.com/zoumo/agent-sdk-go/client/codex"
+	ct "github.com/zoumo/agent-sdk-go/client/codex/types"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 

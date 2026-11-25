@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 )
 
 // controlFrame is the subset of the native control protocol the synthetic

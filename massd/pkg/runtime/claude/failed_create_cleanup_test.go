@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 
 	"github.com/zoumo/mass/internal/testpeer"
 	peerstartup "github.com/zoumo/mass/internal/testpeer/startup"
@@ -48,7 +48,7 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 		os.Exit(5)
 	}
 	enc := json.NewEncoder(os.Stdout)
-	mode := peerstartup.ClaudePermissionMode
+	mode := peerstartup.ClaudeFullAccessMode
 	if os.Getenv("MASS_FAILED_CREATE_CLEANUP_WAIT") == "mismatched-permission" {
 		mode = "default"
 	}
@@ -95,7 +95,9 @@ func TestOpenRejectsMismatchedPermission(t *testing.T) {
 	defer cancel()
 	_, err := driver.Start(ctx)
 	require.NoError(t, err)
-	opened, err := driver.OpenSession(ctx, runtime.Address{Namespace: "default", SessionName: "mismatched-permission"}, runtime.SessionSpec{Cwd: dir})
+	opened, err := driver.OpenSession(ctx, runtime.Address{Namespace: "default", SessionName: "mismatched-permission"}, runtime.SessionSpec{
+		Cwd: dir, Config: &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview},
+	})
 	var operation *runtime.OperationError
 	require.ErrorAs(t, err, &operation)
 	require.Equal(t, "unsupported", operation.Code)

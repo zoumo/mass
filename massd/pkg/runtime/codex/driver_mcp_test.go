@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
-	sdk "github.com/zoumo/agent-sdk-go/codex"
-	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	sdk "github.com/zoumo/agent-sdk-go/client/codex"
+	ct "github.com/zoumo/agent-sdk-go/client/codex/types"
 	"github.com/zoumo/agent-sdk-go/mcp"
 
 	"github.com/zoumo/mass/internal/testpeer"
@@ -134,7 +134,7 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 			address := runtime.Address{Namespace: "one", SessionName: "mcp"}
 			spec := runtime.SessionSpec{Cwd: cwd, MCPServers: servers}
 			if name == "empty" {
-				spec.Config = &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetFullAccess}
+				spec.Config = &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview}
 			}
 			opened, err := driver.OpenSession(t.Context(), address, spec)
 			*openedID = opened.SessionID
@@ -171,7 +171,7 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 					continue
 				}
 				methods = append(methods, record.Method)
-				if spec.Config == nil {
+				if spec.Config != nil {
 					require.Equal(t, "on-request", record.Params["approvalPolicy"])
 					require.Equal(t, "auto_review", record.Params["approvalsReviewer"])
 					require.Equal(t, "workspace-write", record.Params["sandbox"])

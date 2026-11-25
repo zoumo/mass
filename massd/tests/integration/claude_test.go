@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 
 	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
@@ -388,14 +388,14 @@ func applySyntheticClaudePermissions(scenario map[string]any) {
 		if !ok {
 			continue
 		}
-		body["current_permission_mode"] = startup.ClaudePermissionMode
+		body["current_permission_mode"] = startup.ClaudeFullAccessMode
 		id := "synthetic-startup-settings"
 		requestFrame := scenarioFrame(0, "client", map[string]any{
 			"type": "control_request", "request_id": id, "request": map[string]any{"subtype": "get_settings"},
 		})
 		replyFrame := scenarioFrame(0, "server", map[string]any{
 			"type": "control_response", "response": map[string]any{
-				"subtype": "success", "request_id": id, "response": startup.ClaudeSettings(),
+				"subtype": "success", "request_id": id, "response": startup.ClaudeSettings(startup.ClaudeFullAccessSandbox),
 			},
 		})
 		frames = slices.Insert(frames, i+1, any(requestFrame), any(replyFrame))
@@ -417,14 +417,15 @@ func applySyntheticCodexPermissions(scenario map[string]any) {
 		wire, _ := frame["wire"].(map[string]any)
 		if id, ok := codexOpenRequestID(frame); ok {
 			params, _ := wire["params"].(map[string]any)
-			params["approvalPolicy"], params["approvalsReviewer"], params["sandbox"] = "on-request", "auto_review", "workspace-write"
+			params["approvalPolicy"], params["sandbox"] = "never", "danger-full-access"
+			delete(params, "approvalsReviewer")
 			openRequests[id] = true
 			continue
 		}
 		if id, ok := frameWireID(frame); ok && openRequests[id] {
 			delete(openRequests, id)
 			if result, ok := wire["result"].(map[string]any); ok {
-				result["approvalPolicy"], result["approvalsReviewer"], result["sandbox"] = "on-request", "auto_review", map[string]any{"type": "workspaceWrite"}
+				result["approvalPolicy"], result["approvalsReviewer"], result["sandbox"] = "never", "user", map[string]any{"type": "dangerFullAccess"}
 			}
 		}
 	}

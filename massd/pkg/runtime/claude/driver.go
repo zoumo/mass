@@ -15,7 +15,7 @@ import (
 
 	"github.com/zoumo/agent-sdk-go/agent"
 	agentclaude "github.com/zoumo/agent-sdk-go/agent/claude"
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 	"github.com/zoumo/agent-sdk-go/mcp"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"

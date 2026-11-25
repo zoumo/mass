@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zoumo/agent-sdk-go/codex"
+	"github.com/zoumo/agent-sdk-go/client/codex"
 )
 
 const (

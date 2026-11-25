@@ -122,15 +122,6 @@ func main() {
 				}
 				subtype := r["subtype"].(string)
 				reply := clipeer.StartupReply(subtype, v["request_id"])
-				if fullAccess {
-					body := reply["response"].(map[string]any)["response"].(map[string]any)
-					switch subtype {
-					case "initialize":
-						body["current_permission_mode"] = "bypassPermissions"
-					case "get_settings":
-						body["effective"] = map[string]any{"sandbox": map[string]any{"enabled": false}}
-					}
-				}
 				send(reply)
 				if r["subtype"] == "initialize" && !(resumed && mode == "hold-init") {
 					init()
