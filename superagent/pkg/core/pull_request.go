@@ -65,7 +65,7 @@ func registerWorkPullRequest(ctx context.Context, tx *sql.Tx, topic Topic, issue
 	if topicIndex < 0 {
 		link.ID = newID("pr")
 		topic.PullRequests = append(topic.PullRequests, link)
-		if err := putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", topic, topic.ID); err != nil {
+		if err := saveTopic(ctx, tx, topic); err != nil {
 			return err
 		}
 		link.Sequence++

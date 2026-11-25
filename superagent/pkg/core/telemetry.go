@@ -213,10 +213,7 @@ func (t *coreTelemetry) registerQueueDepth(provider metric.MeterProvider, store 
 	registration, _ := provider.Meter("superagent.core").RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
 		ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		defer cancel()
-		var internalEvents, outbox int64
-		err := store.db.QueryRowContext(ctx, `SELECT
- (SELECT count(*) FROM internal_events WHERE status IN ('pending','dispatching')),
- (SELECT count(*) FROM outbox WHERE status='pending')`).Scan(&internalEvents, &outbox)
+		internalEvents, outbox, err := store.queueDepth(ctx)
 		if err != nil {
 			return nil
 		}

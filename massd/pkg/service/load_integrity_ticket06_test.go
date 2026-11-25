@@ -10,13 +10,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type ticket06FailingPublication struct {
@@ -39,10 +39,10 @@ func (h *ticket06FailingPublication) Handle(e events.SessionEvent) error {
 }
 
 func TestTicket06FailedPublicationCannotBeOvertaken(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.Eventually(t, func() bool { r, e := svc.GetSession(ref); return e == nil && r.Status.HistoryLoad.NativeResumed }, time.Second, time.Millisecond)
@@ -61,10 +61,10 @@ func TestTicket06FailedPublicationCannotBeOvertaken(t *testing.T) {
 }
 
 func TestTicket06UnexpectedDriverEOFIsNotHistoryCompletion(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved", events.AgentMessage{MessageID: "saved", Content: []events.ContentBlock{events.Text("partial")}}, true))
@@ -94,12 +94,12 @@ func (m *ticket06UnknownCreate) CreateSession(r resource.Session) (resource.Sess
 }
 
 func TestTicket06AcceptanceResolvesUnknownMetadataByReadback(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	meta := &ticket06UnknownCreate{MetaStore: st}
+	meta := &ticket06UnknownCreate{MetaStore: st.Meta}
 	d := &ticket06FaultDriver{pipe: events.NewEventPipe(16), bindings: map[string]*ticket06FaultBinding{}, loading: make(chan *ticket06FaultBinding, 1)}
-	svc := service.New(meta, st, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}))
+	svc := service.New(meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}))
 	t.Cleanup(func() {
 		c, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -135,10 +135,10 @@ func (h *ticket06AppendFailure) Append(id string, records []events.SessionEvent)
 }
 
 func TestTicket06AppendFailureRequiresExplicitOriginalUUIDSettlement(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, &ticket06AppendFailure{EventStore: st})
+	svc, d := ticket06FaultService(t, st.Meta, &ticket06AppendFailure{EventStore: st.Events})
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.emit(ticket06FaultContext(t), b, "saved", events.AgentMessage{MessageID: "saved", Content: []events.ContentBlock{events.Text("original fact")}}, true))
@@ -160,10 +160,10 @@ func TestTicket06AppendFailureRequiresExplicitOriginalUUIDSettlement(t *testing.
 }
 
 func TestCompletedLoadLivePublishFailureDoesNotSilenceLaterFacts(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	svc, d := ticket06FaultService(t, st, st)
+	svc, d := ticket06FaultService(t, st.Meta, st.Events)
 	_, b := ticket06FaultLoad(t, svc, d)
 	ref := resource.SessionRef{SessionID: b.id}
 	require.NoError(t, d.marker(ticket06FaultContext(t), b, "native_completed"))

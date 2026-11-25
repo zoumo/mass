@@ -13,12 +13,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -133,12 +133,12 @@ func (f typedSessionFactory) New(string, runtime.Config) (runtime.Driver, error)
 	return f.driver, nil
 }
 
-func newTypedSessionServer(t *testing.T) (*httptest.Server, *typedSessionDriver, *file.Store) {
+func newTypedSessionServer(t *testing.T) (*httptest.Server, *typedSessionDriver, *massdtest.FileStores) {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	driver := &typedSessionDriver{pipe: events.NewEventPipe(32)}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
 		"fixture": typedSessionFactory{driver: driver},
 	}))
 	_, err = svc.CreateRuntime(resource.Runtime{
@@ -230,7 +230,7 @@ func TestClientSessionLifecycleAndHistory(t *testing.T) {
 		ItemID: "stored", Time: time.Now().UTC(), Meta: map[string]any{"large": json.Number("9007199254740993")},
 	}, events.AgentMessage{MessageID: "stored", Content: []events.ContentBlock{events.Text("stored")}}, events.NewSource())
 	require.NoError(t, err)
-	_, err = st.Append(created.Status.SessionID, []events.SessionEvent{event})
+	_, err = st.Events.Append(created.Status.SessionID, []events.SessionEvent{event})
 	require.NoError(t, err)
 
 	var history store.HistoryPage

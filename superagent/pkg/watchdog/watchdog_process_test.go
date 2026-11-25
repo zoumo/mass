@@ -138,9 +138,10 @@ func TestWatchdogStopsCodex(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			codex, log := peerFixture(t, "hang")
 			descendants := wrapPeer(t, codex)
-			extra := []string{"--timeout=3s"}
-			if reason == "canceled" {
-				extra = nil
+			var extra []string
+			if reason == "timed_out" {
+				// The deadline includes starting the race-instrumented processes.
+				extra = []string{"--timeout=10s"}
 			}
 			cmd := watchdogCommand(t, binary, endpoint, codex, extra...)
 			var stdout, stderr bytes.Buffer
@@ -149,10 +150,8 @@ func TestWatchdogStopsCodex(t *testing.T) {
 			awaitComposeTurn(t, log, 1)
 			if reason == "canceled" {
 				require.NoError(t, syscall.Kill(-cmd.Process.Pid, syscall.SIGINT))
-				require.NoError(t, process.wait(10*time.Second))
-			} else {
-				require.NoError(t, process.wait(10*time.Second))
 			}
+			require.NoError(t, process.wait(15*time.Second))
 			result := decodeResult(t, stdout.Bytes())
 			require.Equal(t, "incomplete", result.Status)
 			require.Equal(t, reason, result.Reason)
@@ -231,28 +230,30 @@ func TestWatchdogReadsIssueWithLargeReportHistory(t *testing.T) {
 		{"?view=summary", http.MethodHead, http.StatusOK},
 		{"?view=unknown", http.MethodGet, http.StatusBadRequest},
 	} {
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, view.method, endpoint+"/v1/core/issues/mass-t1-i9"+view.query, http.NoBody)
-		require.NoError(t, err)
-		response, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		body, err := io.ReadAll(response.Body)
-		require.NoError(t, response.Body.Close())
-		require.NoError(t, err)
-		require.Equal(t, view.status, response.StatusCode)
-		if view.query == "" {
-			require.Greater(t, len(body), 8<<20)
-		} else if view.method == http.MethodHead {
-			require.Empty(t, body)
-		} else if view.status == http.StatusOK {
-			require.Less(t, len(body), 2000)
-			var summary core.IssueSummary
-			require.NoError(t, json.Unmarshal(body, &summary))
-			require.Equal(t, "mass-t1-i9", summary.ID)
-			require.Equal(t, "Confirm the fixture output is healthy.", summary.Goal)
-			require.NotContains(t, string(body), `"reports"`)
-		}
+		t.Run(view.method+view.query, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, view.method, endpoint+"/v1/core/issues/mass-t1-i9"+view.query, http.NoBody)
+			require.NoError(t, err)
+			response, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, response.Body.Close())
+			require.NoError(t, err)
+			require.Equal(t, view.status, response.StatusCode)
+			if view.query == "" {
+				require.Greater(t, len(body), 8<<20)
+			} else if view.method == http.MethodHead {
+				require.Empty(t, body)
+			} else if view.status == http.StatusOK {
+				require.Less(t, len(body), 2000)
+				var summary core.IssueSummary
+				require.NoError(t, json.Unmarshal(body, &summary))
+				require.Equal(t, "mass-t1-i9", summary.ID)
+				require.Equal(t, "Confirm the fixture output is healthy.", summary.Goal)
+				require.NotContains(t, string(body), `"reports"`)
+			}
+		})
 	}
 	codex, _ := peerFixture(t, "suspected_missed_acceptance")
 	result := runCLI(t, binary, endpoint, codex)
@@ -469,7 +470,7 @@ exec "${0%/*}/peer" "$@"
 func descendantPIDs(log string) []int {
 	data, _ := os.ReadFile(log)
 	var pids []int
-	for _, raw := range strings.Fields(string(data)) {
+	for raw := range strings.FieldsSeq(string(data)) {
 		if pid, err := strconv.Atoi(raw); err == nil && pid > 0 {
 			pids = append(pids, pid)
 		}

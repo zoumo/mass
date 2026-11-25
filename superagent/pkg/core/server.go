@@ -123,9 +123,8 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 		s.massdHTTPToken = exposureToken
 	}
 	if c.Sessions != nil {
-		if _, err = store.db.ExecContext(ctx, `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
- WHERE state='ready'`); err != nil {
-			return nil, storageError()
+		if err := store.resetReadyBindings(ctx); err != nil {
+			return nil, err
 		}
 	}
 	life, cancel := context.WithCancel(context.Background())
@@ -325,24 +324,14 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 		}
 		body = strings.ReplaceAll(body, needle, "[redacted]")
 	}
-	rows, queryErr := s.store.db.QueryContext(ctx, "SELECT token FROM session_bindings")
-	if queryErr != nil {
-		return "", queryErr
+	roleTokens, err := s.store.bindingTokens(ctx)
+	if err != nil {
+		return "", err
 	}
-	for rows.Next() {
-		var token string
-		if scanErr := rows.Scan(&token); scanErr != nil {
-			_ = rows.Close()
-			return "", scanErr
-		}
+	for _, token := range roleTokens {
 		if token != "" {
 			body = strings.ReplaceAll(body, token, "[redacted]")
 		}
-	}
-	queryErr = rows.Err()
-	_ = rows.Close()
-	if queryErr != nil {
-		return "", queryErr
 	}
 	return body, nil
 }

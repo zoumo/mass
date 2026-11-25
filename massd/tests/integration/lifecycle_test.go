@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -23,7 +24,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type LifecycleSuite struct{ suite.Suite }
@@ -44,15 +44,15 @@ func (g *runtimeStatusGate) UpdateRuntime(r resource.Runtime) (resource.Runtime,
 func (lifecycleSuite *LifecycleSuite) TestConcurrentDesiredSpecAndStartStatus() {
 	t := lifecycleSuite.T()
 	dir := t.TempDir()
-	st, err := file.Open(dir, false)
+	st, err := massdtest.OpenFileStores(dir, false)
 	require.NoError(t, err)
 	defer st.Close()
-	gate := &runtimeStatusGate{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &runtimeStatusGate{MetaStore: st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	svc := service.New(gate, st, reg)
+	svc := service.New(gate, st.Events, reg)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	path, work := scenario(t)
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
@@ -95,12 +95,12 @@ func (lifecycleSuite *LifecycleSuite) TestConcurrentDesiredSpecAndStartStatus() 
 	t.Log("PASS stale start-status CAS conflict preserves all 16 concurrent desired revisions; active Driver/session remain generation 1")
 }
 
-func lifecycleService(t *testing.T, dir string) (*service.Service, *file.Store, *runtime.Registry) {
+func lifecycleService(t *testing.T, dir string) (*service.Service, *massdtest.FileStores, *runtime.Registry) {
 	t.Helper()
-	st, err := file.Open(dir, false)
+	st, err := massdtest.OpenFileStores(dir, false)
 	require.NoError(t, err)
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	svc := service.NewWithPolicy(st, st, reg, prototype.AutoApprovePermissions)
+	svc := service.NewWithPolicy(st.Meta, st.Events, reg, prototype.AutoApprovePermissions)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, st, reg
 }
@@ -234,7 +234,7 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	require.NoError(t, err)
 	// Simulate deletion/recreation by another resource owner. Service deletion
 	// correctly forbids this while persistent references exist; UID is not ownership.
-	require.NoError(t, st2.DeleteRuntime("agent", r.Metadata.ResourceVersion))
+	require.NoError(t, st2.Meta.DeleteRuntime("agent", r.Metadata.ResourceVersion))
 	recreated, err := cold.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: r.Spec})
 	require.NoError(t, err)
 	require.NotEqual(t, r.Metadata.UID, recreated.Metadata.UID)

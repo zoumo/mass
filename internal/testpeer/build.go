@@ -10,7 +10,8 @@ import (
 	"strings"
 )
 
-const SDKVersion = "v0.1.1-0.20261122053355-04650cf68be8"
+// SDKVersion pins the SDK revision verified by the protocol probe.
+const SDKVersion = "v0.1.1-0.20261124100158-5641ab60305c"
 
 // TestifyVersion pins the consumer recording/replay tool, not a runtime dependency.
 const TestifyVersion = "v0.2.2"

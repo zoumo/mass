@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"strings"
+
+	entsql "entgo.io/ent/dialect/sql"
+
+	coreent "github.com/zoumo/mass/superagent/pkg/core/internal/ent"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
 )
 
 // Both lifecycle reads must seek the partial index built at startup. SQLite
@@ -92,8 +96,8 @@ func cancelIssue(ctx context.Context, tx *sql.Tx, issue Issue, change LifecycleC
 
 func changeTopicLifecycle(tool string, r LifecycleRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
-		var t Topic
-		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
+		t, err := readTopic(ctx, tx, b.OwnerID)
+		if err != nil {
 			return nil, err
 		}
 		if err := checkRevision(t.ID, r.ExpectedRevision, t.Revision); err != nil {
@@ -120,7 +124,7 @@ func changeTopicLifecycle(tool string, r LifecycleRequest) workMutation {
 		t.Revision++
 		t.LifecycleGeneration++
 		t.UpdatedAt = change.At
-		return t, putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", t, t.ID)
+		return t, saveTopic(ctx, tx, t)
 	}
 }
 
@@ -172,11 +176,15 @@ func revokeBinding(ctx context.Context, tx *sql.Tx, id string) error {
 
 func previousIssueBinding(ctx context.Context, tx *sql.Tx, issueID string) (SessionBinding, error) {
 	var b SessionBinding
-	err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE role='issue' AND owner_id=? ORDER BY generation DESC LIMIT 1`, &b, issueID)
-	var p *Error
-	if errors.As(err, &p) && p.Code == "not_found" {
-		return b, nil
+	row, err := entClientForTx(tx).SessionBinding.Query().Where(sessionbinding.RoleEQ("issue"), sessionbinding.OwnerIDEQ(issueID)).
+		Order(sessionbinding.ByGeneration(entsql.OrderDesc())).Select(sessionbinding.FieldBody).First(ctx)
+	if err != nil {
+		if coreent.IsNotFound(err) {
+			return b, nil
+		}
+		return b, storageError()
 	}
+	b, err = decodeEntityJSON[SessionBinding](row.Body, nil)
 	if err != nil {
 		return b, err
 	}

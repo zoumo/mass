@@ -54,7 +54,7 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	if err != nil {
 		return zero, err
 	}
-	run, l, err := s.controlWork(r, opts)
+	run, l, err := s.controlWork(ctx, r, opts)
 	if err != nil {
 		return zero, err
 	}

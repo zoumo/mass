@@ -149,7 +149,6 @@ func seedComposeReports(t *testing.T, coreDir string) {
 	require.NoError(t, err)
 	seedReports(t, db)
 	require.NoError(t, db.Close())
-
 }
 
 func writeWatchdogCompose(t *testing.T, dir string, interval time.Duration) (string, string) {

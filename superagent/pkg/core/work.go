@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	entissue "github.com/zoumo/mass/superagent/pkg/core/internal/ent/issue"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
 )
 
 type Material struct {
@@ -263,8 +266,8 @@ func workTraceOperation(tool string) string {
 }
 
 func currentTopic(ctx context.Context, tx *sql.Tx, b SessionBinding) (Topic, error) {
-	var t Topic
-	if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
+	t, err := readTopic(ctx, tx, b.OwnerID)
+	if err != nil {
 		return t, err
 	}
 	if t.Status != "active" {
@@ -278,7 +281,7 @@ func topicIssue(ctx context.Context, tx *sql.Tx, b SessionBinding, id string) (I
 	if id == "" {
 		return issue, problem("invalid_argument", "issueId is required")
 	}
-	err := readJSON(ctx, tx, "SELECT body FROM issues WHERE id=? AND topic_id=?", &issue, id, b.OwnerID)
+	issue, err := readIssue(ctx, tx, id, entissue.TopicIDEQ(b.OwnerID))
 	if err == nil {
 		markMCPIssueTarget(ctx, issue.ID)
 	}
@@ -321,15 +324,16 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
 		key := creationKey("issue", b.ID, r.OperationID)
 		digest := creationDigest(r)
-		if id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM issues WHERE creation_key=?", key); err != nil {
+		issues := entClientForTx(tx).Issue
+		if id, err := issueCreationReplay(ctx, issues, key, digest); err != nil {
 			return nil, err
 		} else if id != "" {
 			issue, err := topicIssue(ctx, tx, b, id)
 			if err != nil || !r.Start {
 				return WorkReceipt{Issue: issue}, err
 			}
-			var original SessionBinding
-			err = readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE role='issue' AND owner_id=? AND generation=1", &original, id)
+			original, err := readBinding(ctx, entClientForTx(tx).SessionBinding,
+				sessionbinding.RoleEQ("issue"), sessionbinding.OwnerIDEQ(id), sessionbinding.GenerationEQ(1))
 			return WorkReceipt{Issue: issue, SessionBinding: &original}, err
 		}
 		t, err := currentTopic(ctx, tx, b)
@@ -364,15 +368,22 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		if err := checkWorkspace(issue.Workspace); err != nil {
 			return nil, err
 		}
+		// Allocate and return the per-Topic number in one SQLite statement.
 		var number int64
 		if err := tx.QueryRowContext(ctx, `UPDATE topics SET issue_number=issue_number+1
  WHERE id=? RETURNING issue_number`, t.ID).Scan(&number); err != nil {
 			return nil, storageError()
 		}
-		if err := tx.QueryRowContext(ctx, `INSERT INTO issues(topic_id,number,created_at,body,creation_key,creation_digest)
- VALUES(?,?,?,'{}',?,?) RETURNING id`, t.ID, number, at, key, digest).Scan(&issue.ID); err != nil {
+		row, err := issues.Create().SetTopicID(t.ID).SetNumber(number).SetCreatedAt(at).SetBody([]byte("{}")).
+			SetCreationKey(key).SetCreationDigest(digest).Save(ctx)
+		if err != nil {
 			return nil, storageError()
 		}
+		stored, err := issues.Query().Where(entissue.IDEQ(row.ID)).Select(entissue.FieldBusinessID).Only(ctx)
+		if err != nil || stored.BusinessID == "" {
+			return nil, storageError()
+		}
+		issue.ID = stored.BusinessID
 		if err := issueCreation.save(ctx, tx, issue.ID, 1); err != nil {
 			return nil, err
 		}
@@ -459,7 +470,14 @@ func (s *Store) scheduleIssue(ctx context.Context, tx *sql.Tx, issue Issue, send
 }
 
 func saveIssue(ctx context.Context, tx *sql.Tx, issue Issue) error {
-	return putJSON(ctx, tx, "UPDATE issues SET body=?2 WHERE id=?1", issue, issue.ID)
+	body, err := json.Marshal(issue)
+	if err != nil {
+		return storageError()
+	}
+	if err := entClientForTx(tx).Issue.Update().Where(entissue.BusinessIDEQ(issue.ID)).SetBody(body).Exec(ctx); err != nil {
+		return storageError()
+	}
+	return nil
 }
 
 func (r CompleteRequest) completion(b SessionBinding, at string) (*Completion, error) {
@@ -536,6 +554,6 @@ func completeTopic(r CompleteRequest) workMutation {
 			return nil, err
 		}
 
-		return t, putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", t, t.ID)
+		return t, saveTopic(ctx, tx, t)
 	}
 }

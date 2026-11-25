@@ -1,5 +1,5 @@
-# Defaults to this directory beside the YAML file. Use an empty directory or an existing schema 26 store.
-# Use an empty directory for a fresh install or when moving from schema 23 or earlier.
+# Use a separate, empty directory for a fresh rollout.
+# Reuse the instance's schema 28 directory on restart.
 dataDir: ./superagent-core-data
 # Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
 listen: 127.0.0.1:24370

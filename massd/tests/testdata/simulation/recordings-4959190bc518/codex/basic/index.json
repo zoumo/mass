@@ -50,18 +50,18 @@
     "streamKinds": [
       "session.state_update",
       "session.state_update",
-      "session.error",
-      "session.error",
-      "session.error",
-      "session.error",
-      "session.error",
+      "session.unsupported_native_event",
+      "session.unsupported_native_event",
+      "session.unsupported_native_event",
+      "session.unsupported_native_event",
+      "session.unsupported_native_event",
       "user.message",
       "agent.message_chunk",
       "agent.message",
       "session.usage_update",
-      "session.error",
-      "session.error",
-      "session.error",
+      "session.unsupported_native_event",
+      "session.unsupported_native_event",
+      "session.unsupported_native_event",
       "session.state_update"
     ]
   }

@@ -68,7 +68,7 @@ func (s *Server) registerStatus(api *httpAPI) {
 	}, func(ctx context.Context, _ *struct{}) (*probeResponse, error) {
 		ctx, cancel := context.WithTimeout(ctx, statusTimeout)
 		defer cancel()
-		if !s.admitting.Load() || s.store.db.PingContext(ctx) != nil {
+		if !s.admitting.Load() || s.store.ping(ctx) != nil {
 			return &probeResponse{Status: http.StatusServiceUnavailable, Body: probeState{Status: "unavailable"}}, nil
 		}
 		return &probeResponse{Status: http.StatusOK, Body: probeState{Status: "ready"}}, nil

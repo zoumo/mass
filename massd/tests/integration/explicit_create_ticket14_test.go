@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
@@ -28,7 +29,6 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -418,18 +418,18 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				dir := t.TempDir()
-				st, err := file.Open(dir, false)
+				st, err := massdtest.OpenFileStores(dir, false)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, st.Close()) })
-				var meta metastore.MetaStore = st
+				var meta metastore.MetaStore = st.Meta
 				if uncertain {
-					meta = &unknownIdentity{MetaStore: st}
+					meta = &unknownIdentity{MetaStore: st.Meta}
 				}
 				gate := &identityGate{MetaStore: meta, entered: make(chan struct{}), release: make(chan struct{})}
 				var once sync.Once
 				release := func() { once.Do(func() { close(gate.release) }) }
 				defer release()
-				svc := service.New(gate, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
+				svc := service.New(gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
 				t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 				bin := mock
 				mode := "explicit-create"

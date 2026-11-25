@@ -9,12 +9,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type pendingCloseDriver struct {
@@ -109,7 +109,7 @@ func TestCloseSettlesPendingWithoutHandleUsingReleaseProof(t *testing.T) {
 			svc.mu.Unlock()
 
 			closed, err := svc.CloseSession(context.Background(), ref)
-			current, readErr := st.GetSession(ref)
+			current, readErr := st.Meta.GetSession(ref)
 			require.NoError(t, readErr)
 			if test.offline {
 				require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestCloseRetainsPendingWithoutHandleOrReleaseProof(t *testing.T) {
 
 	_, err := svc.CloseSession(context.Background(), ref)
 	require.Error(t, err)
-	current, readErr := st.GetSession(ref)
+	current, readErr := st.Meta.GetSession(ref)
 	require.NoError(t, readErr)
 	require.Equal(t, events.SessionState("closing"), current.Status.State)
 	require.Equal(t, "session_close_failed", current.Status.Reason)
@@ -191,7 +191,7 @@ func TestCloseSettlesPendingBufferedEventsBeforeOffline(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, events.SessionState("offline"), closed.Status.State)
 	require.EqualValues(t, 1, driver.closes.Load())
-	page, err := st.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 10})
+	page, err := st.Events.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 1)
 	require.Equal(t, event.EventID, page.Events[0].EventID)
@@ -200,7 +200,7 @@ func TestCloseSettlesPendingBufferedEventsBeforeOffline(t *testing.T) {
 func TestCloseWithoutHandleRetainsUnresolvedHistoryLoad(t *testing.T) {
 	svc, st, driver, _ := newPendingCloseFixture(t)
 	ref := resource.SessionRef{SessionID: "unresolved-load"}
-	_, err := st.CreateSession(resource.Session{
+	_, err := st.Meta.CreateSession(resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "unresolved-load"},
 		Spec:     resource.SessionSpec{RuntimeRef: "agent"},
 		Status: resource.SessionStatus{
@@ -216,7 +216,7 @@ func TestCloseWithoutHandleRetainsUnresolvedHistoryLoad(t *testing.T) {
 
 	_, err = svc.CloseSession(context.Background(), ref)
 	require.Error(t, err)
-	current, readErr := st.GetSession(ref)
+	current, readErr := st.Meta.GetSession(ref)
 	require.NoError(t, readErr)
 	require.Equal(t, events.SessionState("closing"), current.Status.State)
 	require.Equal(t, "session_close_failed", current.Status.Reason)
@@ -226,7 +226,7 @@ func TestCloseWithoutHandleRetainsUnresolvedHistoryLoad(t *testing.T) {
 func TestCloseRetriesStatusOnlyFailureWithoutHandle(t *testing.T) {
 	svc, st, driver, _ := newPendingCloseFixture(t)
 	ref := resource.SessionRef{SessionID: "status-only"}
-	_, err := st.CreateSession(resource.Session{
+	_, err := st.Meta.CreateSession(resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "status-only"},
 		Spec:     resource.SessionSpec{RuntimeRef: "agent"},
 		Status:   resource.SessionStatus{SessionID: ref.SessionID, State: events.SessionState("closing")},
@@ -255,7 +255,7 @@ func TestCloseRetriesPendingReleaseAfterStatusFailure(t *testing.T) {
 
 	_, err := svc.CloseSession(context.Background(), ref)
 	require.Error(t, err)
-	current, readErr := st.GetSession(ref)
+	current, readErr := st.Meta.GetSession(ref)
 	require.NoError(t, readErr)
 	require.Equal(t, events.SessionState("closing"), current.Status.State)
 	require.Equal(t, "session_close_failed", current.Status.Reason)
@@ -280,20 +280,20 @@ func TestCloseFailureReasonOmitsProviderDiagnostics(t *testing.T) {
 	require.Equal(t, "internal_error", closeFailureReason(errors.New("/private/provider/path and token")))
 }
 
-func newPendingCloseFixture(t *testing.T) (*Service, *file.Store, *pendingCloseDriver, resource.SessionRef) {
+func newPendingCloseFixture(t *testing.T) (*Service, *massdtest.FileStores, *pendingCloseDriver, resource.SessionRef) {
 	return newPendingCloseFixtureWithMeta(t, nil)
 }
 
-func newPendingCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore) metastore.MetaStore) (*Service, *file.Store, *pendingCloseDriver, resource.SessionRef) {
+func newPendingCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore) metastore.MetaStore) (*Service, *massdtest.FileStores, *pendingCloseDriver, resource.SessionRef) {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	driver := &pendingCloseDriver{pipe: events.NewEventPipe(8)}
-	var meta metastore.MetaStore = st
+	var meta metastore.MetaStore = st.Meta
 	if wrap != nil {
 		meta = wrap(meta)
 	}
-	svc := New(meta, st, runtime.NewRegistry(map[string]runtime.Factory{"pending": pendingCloseFactory{driver}}))
+	svc := New(meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"pending": pendingCloseFactory{driver}}))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -307,7 +307,7 @@ func newPendingCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore)
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(context.Background(), "agent")
 	require.NoError(t, err)
-	_, err = st.CreateSession(resource.Session{
+	_, err = st.Meta.CreateSession(resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "pending"},
 		Spec:     resource.SessionSpec{RuntimeRef: "agent"},
 		Status: resource.SessionStatus{

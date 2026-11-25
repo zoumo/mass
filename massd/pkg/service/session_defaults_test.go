@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/mcp"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type defaultsDriver struct {
@@ -81,13 +81,13 @@ func (f defaultsFactory) New(string, runtime.Config) (runtime.Driver, error) {
 	return f.driver, nil
 }
 
-func newDefaultsFixture(t *testing.T) (*service.Service, *defaultsDriver, *file.Store) {
+func newDefaultsFixture(t *testing.T) (*service.Service, *defaultsDriver, *massdtest.FileStores) {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	driver := &defaultsDriver{pipe: events.NewEventPipe(32)}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsFactory{driver: driver}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsFactory{driver: driver}}))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -198,7 +198,7 @@ func TestSessionDefaultsAreReappliedOnResume(t *testing.T) {
 		MCPServers: &servers,
 	})
 	require.NoError(t, err)
-	original, err := st.CreateSession(resource.Session{
+	original, err := st.Meta.CreateSession(resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "resume"},
 		Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/work"}},
 		Status:   resource.SessionStatus{SessionID: "native-resume", State: "offline"},
@@ -349,11 +349,11 @@ func (f defaultsLoadFactory) New(string, runtime.Config) (runtime.Driver, error)
 }
 
 func TestRuntimeDefaultsAreAppliedToHistoryLoad(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	driver := &defaultsLoadDriver{pipe: events.NewEventPipe(16), specs: make(chan runtime.SessionSpec, 1)}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsLoadFactory{driver: driver}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsLoadFactory{driver: driver}}))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

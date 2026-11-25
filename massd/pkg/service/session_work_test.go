@@ -18,13 +18,13 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 )
 
@@ -96,14 +96,14 @@ type SessionWorkSuite struct {
 
 func (s *SessionWorkSuite) SetupTest() {
 	s.telemetry = newServiceTelemetryFixture(s.T())
-	st, err := file.Open(s.T().TempDir(), false)
+	st, err := massdtest.OpenFileStores(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	d := &workDriver{pipe: events.NewEventPipe(16), entered: make(chan context.Context, 64), release: make(chan struct{})}
 	s.driver = d
 	var options service.Options
 	s.telemetry.configure(&options)
-	s.svc = service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{d}}), options)
+	s.svc = service.NewWithOptions(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{d}}), options)
 	s.T().Cleanup(func() {
 		select {
 		case <-d.release:

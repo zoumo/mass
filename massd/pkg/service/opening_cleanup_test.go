@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
@@ -29,10 +29,10 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 	peer := filepath.Join(dir, "peer")
 	pidFile := filepath.Join(dir, "pid")
 	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\nexit 1\n"), 0o700))
-	st, err := file.Open(filepath.Join(dir, "store"), false)
+	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
 	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -78,7 +78,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 					if mode == "timeout" {
 						ending = "echo ready > '" + ready + "'\nwhile read -r request; do :; done\n"
 					}
-					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\n"+ending), 0o700))
+					require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request || exit 1\n"+ending), 0o700))
 				}
 				var factory runtime.Factory = claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}
 				if kind == "codex" {
@@ -97,9 +97,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if mode == "timeout" {
-					var expire context.CancelFunc
-					ctx, expire = context.WithTimeout(ctx, 2*time.Second)
-					defer expire()
+					ctx = deadlineAfterOpeningReady(ctx, ready)
 				}
 				_, failure := driver.Start(ctx)
 				if failure == nil {
@@ -132,14 +130,61 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 	}
 }
 
+// openingDeadline gives the SDK one context across process launch and
+// initialization. Its own Done channel propagates the readiness-triggered
+// deadline to contexts derived by the SDK.
+type openingDeadline struct {
+	context.Context
+	done chan struct{}
+	err  error
+}
+
+func (c *openingDeadline) Done() <-chan struct{} { return c.done }
+
+func (c *openingDeadline) Value(key any) any {
+	// Preserve values while deriving the cancellation cause from this context.
+	return context.WithoutCancel(c.Context).Value(key)
+}
+
+func (c *openingDeadline) Err() error {
+	select {
+	case <-c.done:
+		return c.err
+	default:
+		return nil
+	}
+}
+
+func deadlineAfterOpeningReady(ctx context.Context, ready string) context.Context {
+	deadline := &openingDeadline{Context: ctx, done: make(chan struct{})}
+	go func() {
+		defer close(deadline.done)
+		poll := time.NewTicker(time.Millisecond)
+		defer poll.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				deadline.err = ctx.Err()
+				return
+			case <-poll.C:
+				if _, err := os.Stat(ready); err == nil {
+					deadline.err = context.DeadlineExceeded
+					return
+				}
+			}
+		}
+	}()
+	return deadline
+}
+
 func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
 	dir := t.TempDir()
 	peer, ready, pidFile := filepath.Join(dir, "peer"), filepath.Join(dir, "ready"), filepath.Join(dir, "pid")
 	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\n"+syntheticClaudeVersionShell()+"echo $$ > '"+pidFile+"'\nread -r request\necho ready > '"+ready+"'\nwhile read -r request; do :; done\n"), 0o700))
-	st, err := file.Open(filepath.Join(dir, "store"), false)
+	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
 	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

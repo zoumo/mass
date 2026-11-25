@@ -125,7 +125,7 @@ daemon 的空闲回收使用与人工 close 相同的入口。配置、计时条
 
 不支持恢复的类型应在修尾和激活前明确失败。Runtime 按 spec.runtimeRef 名称定位，不比较其 uid；Driver 必须验证原生恢复材料，远端原生会话归属不能仅凭相同 URL 推定。
 
-服务启动不调用本节的恢复流程。启动前先按[服务重启与状态校正](design.md#服务重启与状态校正)处理持久状态：旧 archived 记录迁移为 offline，原本 offline 且无未结算责任的保持 offline，旧在线状态缺少结算证明的为 unknown。查询不隐式启动或恢复，输入也不替代显式 resume；恢复一个 Session 不自动恢复同 Runtime 的其他 Session。
+服务启动不调用本节的恢复流程。启动前先按[服务重启与状态校正](design.md#服务重启与状态校正)校验并校正持久状态。查询不隐式启动或恢复，输入也不替代显式 resume；恢复一个 Session 不自动恢复同 Runtime 的其他 Session。
 
 ## 资源结构与版本
 

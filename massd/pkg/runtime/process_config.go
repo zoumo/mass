@@ -14,6 +14,8 @@ import (
 )
 
 // ProcessConfig fixes launch inputs without reading provider credentials or data.
+//
+//nolint:recvcheck // Preserve the public value methods. ResolveEnvironment replaces Env.
 type ProcessConfig struct {
 	Executable string
 	Scenario   string

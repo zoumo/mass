@@ -23,6 +23,8 @@ import (
 
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/topic"
 )
 
 type SessionsConfig struct {
@@ -171,22 +173,32 @@ Reports
 - For example, a ready Report can include summary="Verified the release checks" and evidence=["https://github.com/example/service/actions/runs/123"]. The Report is the handoff to Topic for acceptance.
 - On report_reminder, report work already performed on this Issue. Use an operationId stable for that event.`
 
+// Reset both representations in one statement so restart can recheck ready bindings.
+func (s *Store) resetReadyBindings(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE session_bindings SET state='pending',next_attempt_at='',body=json_set(body,'$.state','pending','$.nextAttemptAt','')
+ WHERE state='ready'`)
+	if err != nil {
+		return storageError()
+	}
+	return nil
+}
+
 func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
+	bindings := entClientForTx(tx).SessionBinding
 	if c.Sessions == nil {
-		var count int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM session_bindings").Scan(&count); err != nil {
+		exists, err := bindings.Query().Exist(ctx)
+		if err != nil {
 			return storageError()
 		}
-		if count > 0 {
+		if exists {
 			return problem("failed_precondition", "persisted SessionBindings require sessions configuration")
 		}
 		return nil
 	}
-	var b SessionBinding
-	err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE role='router' AND state<>'revoked'", &b)
+	b, err := readBinding(ctx, bindings, sessionbinding.RoleEQ("router"), sessionbinding.StateNEQ("revoked"))
 	if err == nil {
-		var spec resource.SessionSpec
-		if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, b.ID); err != nil {
+		spec, err := readBindingSpec(ctx, tx, b.ID)
+		if err != nil {
 			return err
 		}
 		configured := c.Sessions.Roles.Router
@@ -256,8 +268,8 @@ func usePreviousSession(ctx context.Context, tx *sql.Tx, next *SessionBinding, p
 	next.PreviousSessionBindingID = previous.ID
 	if previous.Close != nil && previous.Close.Reusable && next.Workspace == previous.Workspace &&
 		next.ExecutionProfile.sameModel(previous.ExecutionProfile) && next.Namespace == previous.Namespace && previous.SessionID != "" {
-		var spec resource.SessionSpec
-		if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, previous.ID); err != nil {
+		spec, err := readBindingSpec(ctx, tx, previous.ID)
+		if err != nil {
 			return nil, err
 		}
 		if spec.SystemPrompt != expectedPrompt {
@@ -296,8 +308,14 @@ func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous Sessio
 		return SessionBinding{}, storageError()
 	}
 	token := newID(roleTokenPrefix) + newID("key")
-	if err := putJSON(ctx, tx, "INSERT INTO session_bindings(id,role,owner_id,generation,created_at,token,spec,state,body) VALUES(?,?,?,?,?,?,?,?,?)", b, b.ID, b.Role, b.OwnerID, b.Generation, b.CreatedAt, token, spec, b.State); err != nil {
-		return SessionBinding{}, err
+	body, err := json.Marshal(b)
+	if err != nil {
+		return SessionBinding{}, storageError()
+	}
+	if err := entClientForTx(tx).SessionBinding.Create().SetBusinessID(b.ID).SetRole(b.Role).
+		SetOwnerID(b.OwnerID).SetGeneration(b.Generation).SetCreatedAt(b.CreatedAt).SetToken(token).
+		SetSpec(spec).SetState(b.State).SetBody(body).Exec(ctx); err != nil {
+		return SessionBinding{}, storageError()
 	}
 	return b, bindingCreation.save(ctx, tx, b.ID, 0)
 }
@@ -354,21 +372,27 @@ func (s *Store) newTopic(ctx context.Context, tx *sql.Tx, key, digest string, n 
 		goal = n.Title
 	}
 	t := Topic{Goal: goal, Title: n.Title, Description: n.Description, Workspace: n.Workspace, Status: "active", Revision: 1, CreatedAt: at, UpdatedAt: at}
-	if err := tx.QueryRowContext(ctx, `INSERT INTO topics(created_at,body,creation_key,creation_digest)
- VALUES(?,'{}',?,?) RETURNING id`, at, key, digest).Scan(&t.ID); err != nil {
+	topics := entClientForTx(tx).Topic
+	row, err := topics.Create().SetCreatedAt(at).SetBody([]byte("{}")).SetCreationKey(key).SetCreationDigest(digest).Save(ctx)
+	if err != nil {
 		return "", storageError()
 	}
+	stored, err := topics.Query().Where(topic.IDEQ(row.ID)).Select(topic.FieldBusinessID).Only(ctx)
+	if err != nil || stored.BusinessID == "" {
+		return "", storageError()
+	}
+	t.ID = stored.BusinessID
 	b, err := createBinding(ctx, tx, s.config, "topic", t.ID, t.Workspace, at, 1)
 	if err != nil {
 		return "", err
 	}
 	t.SessionBindingID = b.ID
-	return t.ID, putJSON(ctx, tx, "UPDATE topics SET body=?2 WHERE id=?1", t, t.ID)
+	return t.ID, saveTopic(ctx, tx, t)
 }
 
 func checkBinding(ctx context.Context, tx *sql.Tx, b SessionBinding) error {
-	var current SessionBinding
-	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &current, b.ID); err != nil {
+	current, err := readBindingByID(ctx, tx, b.ID)
+	if err != nil {
 		return problem("stale_binding", "binding is no longer available")
 	}
 	if !sameBinding(current, b) || current.State == "revoked" {
@@ -456,23 +480,48 @@ func (s *Store) updateBinding(ctx context.Context, b SessionBinding) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var saved SessionBinding
-	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=? AND state IN ('ready','pending')", &saved, b.ID); err != nil {
+	saved, err := readBinding(ctx, entClientForTx(tx).SessionBinding,
+		sessionbinding.BusinessIDEQ(b.ID), sessionbinding.StateIn("ready", "pending"))
+	if err != nil {
 		return err
 	}
 	saved.State, saved.NextAttemptAt, saved.LastError = b.State, b.NextAttemptAt, b.LastError
 	saved.SessionID, saved.SessionUID = b.SessionID, b.SessionUID
 	saved.RuntimeType, saved.RuntimeUID, saved.RuntimeVersion = b.RuntimeType, b.RuntimeUID, b.RuntimeVersion
 	saved.PreparationStarted, saved.PreviousOwnerUnknown = b.PreparationStarted, b.PreviousOwnerUnknown
-	if err := putJSON(ctx, tx, "UPDATE session_bindings SET state=?2,next_attempt_at=?3,body=?4 WHERE id=?1", saved, saved.ID, saved.State, saved.NextAttemptAt); err != nil {
+	if err := saveBinding(ctx, tx, saved); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
+func (s *Store) bindingCreationContext(ctx context.Context, id string) trace.SpanContext {
+	return bindingCreation.context(ctx, s.db, id, 0)
+}
+
+// Patch one JSON field and test the binding state in the same statement.
+func (s *Store) markBindingFlag(ctx context.Context, id, state, path string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,?,json('true'))
+ WHERE id=? AND state=?`, path, id, state)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return err == nil && count == 1, nil
+}
+
+func (s *Store) previousSessionReleased(ctx context.Context, b SessionBinding) bool {
+	var released bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM session_bindings
+ WHERE id=? AND state='revoked' AND json_extract(body,'$.close.reusable')=1
+ AND json_extract(body,'$.sessionId')=? AND json_extract(body,'$.sessionUid')=?)`,
+		b.PreviousSessionBindingID, b.SessionID, b.SessionUID).Scan(&released)
+	return err == nil && released
+}
+
 func (s *Server) prepare(ctx, call context.Context, b SessionBinding, token string, spec resource.SessionSpec) {
 	if s.store.telemetry.tracesEnabled {
-		parent := bindingCreation.context(ctx, s.store.db, b.ID, 0)
+		parent := s.store.bindingCreationContext(ctx, b.ID)
 		if parent.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
 		}
@@ -487,11 +536,7 @@ func (s *Server) prepare(ctx, call context.Context, b SessionBinding, token stri
 		}
 	}
 	firstPreparation := !b.PreparationStarted
-	result, err := s.store.db.ExecContext(ctx, "UPDATE session_bindings SET body=json_set(body,'$.preparationStarted',json('true')) WHERE id=? AND state='pending'", b.ID)
-	if err != nil {
-		return
-	}
-	if count, err := result.RowsAffected(); err != nil || count != 1 {
+	if marked, err := s.store.markBindingFlag(ctx, b.ID, "pending", "$.preparationStarted"); err != nil || !marked {
 		return
 	}
 	b.PreparationStarted = true
@@ -510,12 +555,7 @@ func (s *Server) prepare(ctx, call context.Context, b SessionBinding, token stri
 	err = c.GetSession(call, ref, &found)
 	if b.CapabilityFileID != "" && firstPreparation && !b.PreviousOwnerUnknown &&
 		b.SessionID != "" && b.SessionUID != "" && errorCode(err) == "not_found" {
-		var released bool
-		queryErr := s.store.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM session_bindings
- WHERE id=? AND state='revoked' AND json_extract(body,'$.close.reusable')=1
- AND json_extract(body,'$.sessionId')=? AND json_extract(body,'$.sessionUid')=?)`,
-			b.PreviousSessionBindingID, b.SessionID, b.SessionUID).Scan(&released)
-		if queryErr == nil && released {
+		if s.store.previousSessionReleased(ctx, b) {
 			b.ReuseError = "session_missing"
 			outcome = operationOutcome(s.useFreshSession(ctx, b), "pending")
 			return
@@ -567,12 +607,7 @@ func (s *Server) prepare(ctx, call context.Context, b SessionBinding, token stri
 		case found.Status.State == "offline" || b.Role == "issue" && ownershipUnconfirmed(found):
 			if b.Role == "issue" && !b.PreviousOwnerUnknown && found.Status.Reason != resource.SessionReasonOwnerReleased {
 				// Resume can reattach this authority without proving the release of an earlier owner.
-				affected, writeErr := s.store.db.ExecContext(ctx, `UPDATE session_bindings
- SET body=json_set(body,'$.previousOwnerUnknown',json('true')) WHERE id=? AND state='pending'`, b.ID)
-				if writeErr != nil {
-					return
-				}
-				if count, countErr := affected.RowsAffected(); countErr != nil || count != 1 {
+				if marked, err := s.store.markBindingFlag(ctx, b.ID, "pending", "$.previousOwnerUnknown"); err != nil || !marked {
 					return
 				}
 				b.PreviousOwnerUnknown = true
@@ -682,10 +717,10 @@ func (s *Server) useFreshSession(ctx context.Context, b SessionBinding) error {
 		return err
 	}
 	replacement, err := json.Marshal(spec)
-	if err == nil {
-		_, err = s.store.db.ExecContext(ctx, "UPDATE session_bindings SET spec=?,body=?,next_attempt_at='' WHERE id=? AND state='pending'", replacement, raw, b.ID)
+	if err != nil {
+		return err
 	}
-	return err
+	return s.store.replacePendingBindingSpec(ctx, b.ID, replacement, raw)
 }
 
 func after(d time.Duration) string {
@@ -819,12 +854,8 @@ func (s *Server) coordinateBinding(ctx context.Context, id string) {
 		return
 	}
 	defer s.runtimeOperations.RUnlock()
-	var b SessionBinding
-	var spec resource.SessionSpec
-	var data, specBytes []byte
-	var token string
-	if err := s.store.db.QueryRowContext(ctx, "SELECT body,token,spec FROM session_bindings WHERE id=?", id).Scan(&data, &token, &specBytes); err != nil ||
-		json.Unmarshal(data, &b) != nil || json.Unmarshal(specBytes, &spec) != nil {
+	b, spec, token, err := s.store.bindingCredentials(ctx, id)
+	if err != nil {
 		return
 	}
 	call, cancel := context.WithTimeout(context.WithoutCancel(ctx), 7*time.Second)

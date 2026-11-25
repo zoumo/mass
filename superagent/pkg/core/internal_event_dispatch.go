@@ -14,6 +14,7 @@ import (
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/internalevent"
 )
 
 type inputBatch struct {
@@ -44,8 +45,8 @@ func businessEventCurrent(ctx context.Context, tx *sql.Tx, d internalEvent) (boo
 	if d.Kind == routedMessageKind {
 		return scheduledTaskDeliveryCurrent(ctx, tx, d)
 	}
-	var topic Topic
-	if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, d.Recipient.TopicID); err != nil {
+	topic, err := readTopic(ctx, tx, d.Recipient.TopicID)
+	if err != nil {
 		return false, err
 	}
 	return !terminal(topic.Status), nil
@@ -130,8 +131,8 @@ func (s *Store) selectInternalBatch(ctx context.Context, b SessionBinding) (inte
 		issueContext := false
 		if err == nil && !view.truncated && inlineTopic {
 			if boundTopic == nil {
-				var topic Topic
-				if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, b.OwnerID); err != nil {
+				topic, err := readTopic(ctx, tx, b.OwnerID)
+				if err != nil {
 					return batch, err
 				}
 				boundTopic = &topic
@@ -451,12 +452,13 @@ func (s *Store) admitInternalBatch(ctx context.Context, b SessionBinding, batch 
 		if !current {
 			return false, problem("stale_binding", "internal event is no longer current")
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE internal_events SET status='dispatching'
- WHERE event_id=? AND status IN ('pending','dispatching')`, item.ID)
+		count, err := entClientForTx(tx).InternalEvent.Update().Where(internalevent.IDEQ(item.ID),
+			internalevent.StatusIn(internalevent.StatusPending, internalevent.StatusDispatching)).
+			SetStatus(internalevent.StatusDispatching).Save(ctx)
 		if err != nil {
 			return false, err
 		}
-		if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if count != 1 {
 			return false, problem("stale_binding", "internal event was settled or superseded")
 		}
 		if err := internalDispatch.save(ctx, tx, item.ID, b.Generation); err != nil {

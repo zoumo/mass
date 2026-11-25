@@ -94,7 +94,7 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string, wantDiagno
 	s.reg = runtime.NewRegistry(map[string]runtime.Factory{
 		"codex": codex.Factory{RecoveryDir: s.T().TempDir(), TracerProvider: traceProvider},
 	})
-	s.start("codex", scenario, s.st)
+	s.start("codex", scenario, s.st.Events)
 	ref := s.open("unsupported")
 	handler, err := transport.New(s.svc, withTestWriteTimeout(transport.Options{}))
 	s.Require().NoError(err)

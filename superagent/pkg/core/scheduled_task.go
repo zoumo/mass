@@ -5,13 +5,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/runtime"
+	coreent "github.com/zoumo/mass/superagent/pkg/core/internal/ent"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/predicate"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/scheduledtask"
 )
 
 const (
@@ -88,36 +90,68 @@ func decodeScheduledTaskUpdate(data []byte, request any) error {
 
 type scheduledTaskRecord struct {
 	ScheduledTask
+	seq             int64
 	anchor          time.Time
 	topicGeneration int
+	deletedAt       *string
 }
 
-func readScheduledTask(ctx context.Context, tx *sql.Tx, filter string, args ...any) (scheduledTaskRecord, error) {
-	var task scheduledTaskRecord
-	var raw []byte
-	var anchor string
-	err := tx.QueryRowContext(ctx, `SELECT body,schedule_anchor,topic_generation FROM scheduled_tasks WHERE `+filter, args...).
-		Scan(&raw, &anchor, &task.topicGeneration)
-	if errors.Is(err, sql.ErrNoRows) {
-		return task, problem("not_found", "resource not found in current scope")
+func queryScheduledTask(ctx context.Context, query *coreent.ScheduledTaskSelect) (*coreent.ScheduledTask, error) {
+	row, err := query.Only(ctx)
+	if coreent.IsNotFound(err) {
+		return nil, problem("not_found", "resource not found in current scope")
 	}
-	if err != nil || json.Unmarshal(raw, &task.ScheduledTask) != nil {
+	if err != nil {
+		return nil, storageError()
+	}
+	return row, nil
+}
+
+func readScheduledTask(ctx context.Context, tasks *coreent.ScheduledTaskClient, filters ...predicate.ScheduledTask) (scheduledTaskRecord, error) {
+	var task scheduledTaskRecord
+	row, err := queryScheduledTask(ctx, tasks.Query().Where(filters...).
+		Select(scheduledtask.FieldBody, scheduledtask.FieldScheduleAnchor, scheduledtask.FieldTopicGeneration))
+	if err != nil {
+		return task, err
+	}
+	if err := json.Unmarshal(row.Body, &task.ScheduledTask); err != nil {
 		return task, storageError()
 	}
-	task.anchor, err = time.Parse(utcTimestamp, anchor)
+	task.anchor, err = time.Parse(utcTimestamp, row.ScheduleAnchor)
 	if err != nil {
 		return task, storageError()
 	}
+	task.seq, task.topicGeneration = row.ID, row.TopicGeneration
 	return task, nil
 }
 
-func (t *scheduledTaskRecord) save(ctx context.Context, tx *sql.Tx) error {
-	return putJSON(ctx, tx, "UPDATE scheduled_tasks SET schedule_anchor=?2,body=?3 WHERE id=?1",
-		t.ScheduledTask, t.ID, t.anchor.Format(utcTimestamp))
+func readScheduledTaskBody(ctx context.Context, tx *sql.Tx, id string, binding *SessionBinding) (json.RawMessage, error) {
+	query := entClientForTx(tx).ScheduledTask.Query().Where(scheduledtask.BusinessIDEQ(id), scheduledtask.DeletedAtIsNil())
+	if binding != nil {
+		query.Where(scheduledtask.OwnerTypeEQ(scheduledtask.OwnerTypeTopic), scheduledtask.OwnerIDEQ(binding.OwnerID))
+	}
+	row, err := queryScheduledTask(ctx, query.Select(scheduledtask.FieldBody))
+	if err != nil {
+		return nil, err
+	}
+	return row.Body, nil
 }
 
-func (t *scheduledTaskRecord) saveRevision(ctx context.Context, tx *sql.Tx) error {
-	if err := t.save(ctx, tx); err != nil {
+func (t *scheduledTaskRecord) save(ctx context.Context, tasks *coreent.ScheduledTaskClient) error {
+	body, err := json.Marshal(t.ScheduledTask)
+	if err != nil {
+		return storageError()
+	}
+	updated, err := tasks.Update().Where(scheduledtask.IDEQ(t.seq)).
+		SetScheduleAnchor(t.anchor.Format(utcTimestamp)).SetBody(body).SetNillableDeletedAt(t.deletedAt).Save(ctx)
+	if err != nil || updated != 1 {
+		return storageError()
+	}
+	return nil
+}
+
+func (t *scheduledTaskRecord) saveRevision(ctx context.Context, tx *sql.Tx, tasks *coreent.ScheduledTaskClient) error {
+	if err := t.save(ctx, tasks); err != nil {
 		return err
 	}
 	return scheduledTaskRevision.save(ctx, tx, t.ID, t.Revision)
@@ -138,14 +172,21 @@ func createScheduledTask(r CreateScheduledTaskRequest) workMutation {
 		}
 		key := creationKey("scheduled-task", scope, r.OperationID)
 		digest := creationDigest(r)
-		id, err := numberedCreation(ctx, tx, digest, "SELECT id,creation_digest FROM scheduled_tasks WHERE creation_key=?", key)
-		if err != nil {
-			return nil, err
-		}
-		if id != "" {
+		tasks := entClientForTx(tx).ScheduledTask
+		existing, err := tasks.Query().Where(scheduledtask.CreationKeyEQ(key)).
+			Select(scheduledtask.FieldCreationDigest, scheduledtask.FieldBody).Only(ctx)
+		switch {
+		case err == nil:
+			if existing.CreationDigest != digest {
+				return nil, problem("conflict", "operationId has different creation parameters")
+			}
 			var task ScheduledTask
-			err := readJSON(ctx, tx, "SELECT body FROM scheduled_tasks WHERE id=?", &task, id)
-			return task, err
+			if err := json.Unmarshal(existing.Body, &task); err != nil {
+				return nil, storageError()
+			}
+			return task, nil
+		case !coreent.IsNotFound(err):
+			return nil, storageError()
 		}
 		if err := validateScheduledContent(r.Content); err != nil {
 			return nil, err
@@ -163,7 +204,6 @@ func createScheduledTask(r CreateScheduledTaskRequest) workMutation {
 			},
 			anchor: at,
 		}
-		var ownerType, ownerID any
 		if b.Role != "operator" {
 			topic, err := currentTopic(ctx, tx, b)
 			if err != nil {
@@ -171,31 +211,42 @@ func createScheduledTask(r CreateScheduledTaskRequest) workMutation {
 			}
 			task.Owner = &ScheduledTaskOwner{Type: "topic", ID: topic.ID}
 			task.topicGeneration = topic.LifecycleGeneration
-			ownerType, ownerID = task.Owner.Type, task.Owner.ID
 		}
 		body, err := json.Marshal(task.ScheduledTask)
 		if err != nil {
 			return nil, storageError()
 		}
-		if err := tx.QueryRowContext(ctx, `INSERT INTO scheduled_tasks(owner_type,owner_id,topic_generation,created_at,schedule_anchor,body,creation_key,creation_digest)
- VALUES(?,?,?,?,?,?,?,?) RETURNING id`, ownerType, ownerID, task.topicGeneration, task.CreatedAt, task.CreatedAt, body, key, digest).Scan(&task.ID); err != nil {
+		create := tasks.Create().SetTopicGeneration(task.topicGeneration).SetCreatedAt(task.CreatedAt).
+			SetScheduleAnchor(task.CreatedAt).SetBody(body).SetCreationKey(key).SetCreationDigest(digest)
+		if task.Owner != nil {
+			create.SetOwnerType(scheduledtask.OwnerTypeTopic).SetOwnerID(task.Owner.ID)
+		}
+		row, err := create.Save(ctx)
+		if err != nil {
 			return nil, storageError()
 		}
-		return task.ScheduledTask, task.saveRevision(ctx, tx)
+		// Ent gets the SQLite sequence from INSERT. Read the generated public ID
+		// before persisting it in the task body and saving its revision trace.
+		stored, err := tasks.Query().Where(scheduledtask.IDEQ(row.ID)).Select(scheduledtask.FieldBusinessID).Only(ctx)
+		if err != nil || stored.BusinessID == "" {
+			return nil, storageError()
+		}
+		task.seq, task.ID = row.ID, stored.BusinessID
+		return task.ScheduledTask, task.saveRevision(ctx, tx, tasks)
 	}
 }
 
-func scheduledTaskForChange(ctx context.Context, tx *sql.Tx, b SessionBinding, r ScheduledTaskRevision) (scheduledTaskRecord, error) {
+func scheduledTaskForChange(ctx context.Context, tasks *coreent.ScheduledTaskClient, b SessionBinding, r ScheduledTaskRevision) (scheduledTaskRecord, error) {
 	if r.ScheduledTaskID == "" {
 		return scheduledTaskRecord{}, problem("invalid_argument", "scheduledTaskId is required")
 	}
-	var task scheduledTaskRecord
-	var err error
+	filters := []predicate.ScheduledTask{scheduledtask.BusinessIDEQ(r.ScheduledTaskID), scheduledtask.DeletedAtIsNil()}
 	if b.Role == "operator" {
-		task, err = readScheduledTask(ctx, tx, "id=? AND owner_type IS NULL AND deleted_at IS NULL", r.ScheduledTaskID)
+		filters = append(filters, scheduledtask.OwnerTypeIsNil())
 	} else {
-		task, err = readScheduledTask(ctx, tx, "id=? AND owner_type='topic' AND owner_id=? AND deleted_at IS NULL", r.ScheduledTaskID, b.OwnerID)
+		filters = append(filters, scheduledtask.OwnerTypeEQ(scheduledtask.OwnerTypeTopic), scheduledtask.OwnerIDEQ(b.OwnerID))
 	}
+	task, err := readScheduledTask(ctx, tasks, filters...)
 	if err != nil {
 		return task, err
 	}
@@ -204,7 +255,8 @@ func scheduledTaskForChange(ctx context.Context, tx *sql.Tx, b SessionBinding, r
 
 func updateScheduledTask(r UpdateScheduledTaskRequest) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
-		task, err := scheduledTaskForChange(ctx, tx, b, r.ScheduledTaskRevision)
+		tasks := entClientForTx(tx).ScheduledTask
+		task, err := scheduledTaskForChange(ctx, tasks, b, r.ScheduledTaskRevision)
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +269,7 @@ func updateScheduledTask(r UpdateScheduledTaskRequest) workMutation {
 		if err := task.apply(r.ScheduledTaskChanges, scheduledTaskNow()); err != nil {
 			return nil, err
 		}
-		return task.ScheduledTask, task.saveRevision(ctx, tx)
+		return task.ScheduledTask, task.saveRevision(ctx, tx, tasks)
 	}
 }
 
@@ -263,7 +315,8 @@ func (t *scheduledTaskRecord) apply(changes ScheduledTaskChanges, at time.Time) 
 
 func deleteScheduledTask(r ScheduledTaskRevision) workMutation {
 	return func(ctx context.Context, tx *sql.Tx, b SessionBinding) (any, error) {
-		task, err := scheduledTaskForChange(ctx, tx, b, r)
+		tasks := entClientForTx(tx).ScheduledTask
+		task, err := scheduledTaskForChange(ctx, tasks, b, r)
 		if err != nil {
 			return nil, err
 		}
@@ -274,10 +327,8 @@ func deleteScheduledTask(r ScheduledTaskRevision) workMutation {
 		}
 		task.end(scheduledTaskNow())
 		task.Revision++
-		if _, err := tx.ExecContext(ctx, "UPDATE scheduled_tasks SET deleted_at=? WHERE id=?", task.UpdatedAt, task.ID); err != nil {
-			return nil, storageError()
-		}
-		return map[string]string{"scheduledTaskId": task.ID}, task.saveRevision(ctx, tx)
+		task.deletedAt = &task.UpdatedAt
+		return map[string]string{"scheduledTaskId": task.ID}, task.saveRevision(ctx, tx, tasks)
 	}
 }
 
@@ -289,8 +340,8 @@ func (t *scheduledTaskRecord) checkOwner(ctx context.Context, tx *sql.Tx) error 
 	if t.Owner == nil {
 		return nil
 	}
-	var topic Topic
-	if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &topic, t.Owner.ID); err != nil {
+	topic, err := readTopic(ctx, tx, t.Owner.ID)
+	if err != nil {
 		return err
 	}
 	if topic.Status != "active" || topic.LifecycleGeneration != t.topicGeneration {
@@ -300,14 +351,16 @@ func (t *scheduledTaskRecord) checkOwner(ctx context.Context, tx *sql.Tx) error 
 }
 
 func (s *Store) scheduledTaskExists(ctx context.Context, id string) (bool, error) {
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM scheduled_tasks WHERE id=?)", id).Scan(&exists); err != nil {
+	exists, err := s.entities.ScheduledTask.Query().Where(scheduledtask.BusinessIDEQ(id)).Exist(ctx)
+	if err != nil {
 		return false, storageError()
 	}
 	return exists, nil
 }
 
 func closeTopicScheduledTasks(ctx context.Context, tx *sql.Tx, topicID string, generation int, at string) error {
+	// Let SQLite patch each matching body and recompute the generated columns
+	// in one statement while keeping other JSON members intact.
 	if _, err := tx.ExecContext(ctx, `UPDATE scheduled_tasks SET body=json_remove(
  json_set(body,'$.status','completed','$.updatedAt',?), '$.nextRunAt')
  WHERE owner_type='topic' AND owner_id=? AND topic_generation=? AND deleted_at IS NULL AND status IN ('active','paused')`,

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"slices"
 	"strings"
+
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/outbox"
 )
 
 const outboxProjection = `json_patch(json_object('id',outbox.id,'messageId',outbox.message_id,'content',json(outbox.content),'status',outbox.status),
@@ -136,16 +138,16 @@ func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (
 	if err != nil {
 		return nil, storageError()
 	}
-	var blocker any
+	create := entClientForTx(tx).Outbox.Create().SetID(item.ID).SetMessageID(item.MessageID).
+		SetContent(string(content)).SetStatus(outbox.StatusPending)
 	if item.BlockerRef != nil {
 		raw, err := json.Marshal(item.BlockerRef)
 		if err != nil {
 			return nil, storageError()
 		}
-		blocker = string(raw)
+		create.SetBlockerRef(string(raw))
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO outbox(id,message_id,content,status,blocker_ref) VALUES(?,?,?,?,?)",
-		item.ID, item.MessageID, string(content), item.Status, blocker); err != nil {
+	if err := create.Exec(ctx); err != nil {
 		return nil, storageError()
 	}
 	if err := outboxEnqueue.save(ctx, tx, item.ID, 0); err != nil {

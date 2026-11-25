@@ -191,7 +191,8 @@ Service 在开放业务接口前，通过 MetaStore 完成状态校正；不由 
 
 | 重启前的事实 | 重启后的 Session 状态 |
 |---|---|
-| 旧 persisted state 为 archived | 迁移为 offline，保留身份、历史、UUID 与同步位置，不建立当前运行绑定 |
+| 持久状态为 `archived` | MetaStore 拒绝打开，服务启动失败 |
+| 其他未识别的持久状态 | `unknown`，通过 reason 说明旧运行未确认 |
 | 原本为 offline 且无未结算责任 | offline |
 | 保存为 opening、idle、running、requires_action 或 closing，但跨重启缺少释放或结算证明 | unknown，通过 reason 说明旧运行未确认 |
 | 原本为 unknown 或有未结算操作/load | unknown，继续保留原责任，不把重启当作结算证据 |
@@ -258,7 +259,7 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 - close 在 opening/open/resume/load 尚未产生句柄时保持 closing 并接管原结果；有句柄后再调用 SDK，不能新建 open/resume。
 - 空闲 Session 到期使用同一条 close 路径；查询、历史、watch 不重置计时，失败不自动重试。
 - sessionIdleTimeout 默认 10m、0 禁用、负数或无效值启动失败、约 5s 可显式配置。
-- 服务重启不启动 Runtime 或 Session；旧 archived 迁移为 offline，缺少结算证明的旧在线状态为 unknown；冷进程无当前运行映射的 unknown Runtime 可由显式 start/resume 建立新 Driver，unknown Session 随即可恢复；unknown resume 失败仍为 unknown。已有运行绑定或未结算责任时仍拒绝。
+- 服务重启不启动 Runtime 或 Session。持久状态为 `archived` 时启动失败。其他未识别的状态和缺少结算证明的旧在线状态校正为 `unknown`。冷进程无当前运行映射的 `unknown` Runtime 可由显式 start/resume 建立新 Driver，`unknown` Session 随即可恢复。resume 失败时保持 `unknown`。已有运行绑定或未结算责任时仍拒绝。
 - SessionQuery.state=archived 被拒绝，不返回空页或兼容别名。
 - 启动校正和默认 Runtime 登记完成后开放业务接口。启动登记补齐缺项，保留同名资源的身份、spec 和 generation。
 - 运行中更新不替换 Driver；停止使用原 Driver 并保留未确定责任。

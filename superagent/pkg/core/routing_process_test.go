@@ -24,12 +24,12 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 	"github.com/zoumo/mass/massd/pkg/transport"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
@@ -137,10 +137,10 @@ func newRouteBoundary(t *testing.T) *routeBoundary {
 
 func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundary {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}))
+	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}))
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
 	require.NoError(t, err)
 	api, err := transport.New(svc, transport.Options{WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})

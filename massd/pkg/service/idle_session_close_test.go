@@ -11,12 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
 	"github.com/zoumo/mass/massd/pkg/store"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type manualTimer struct {
@@ -82,14 +82,14 @@ func (c *manualClock) Active() int {
 type idleFixture struct {
 	clock  *manualClock
 	driver *closeDriver
-	store  *file.Store
+	store  *massdtest.FileStores
 	svc    *service.Service
 	ref    resource.SessionRef
 }
 
 func newIdleFixture(t *testing.T, timeout time.Duration, configure ...func(*service.Options)) *idleFixture {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	clock := newManualClock()
@@ -106,7 +106,7 @@ func newIdleFixture(t *testing.T, timeout time.Duration, configure ...func(*serv
 	for _, apply := range configure {
 		apply(&options)
 	}
-	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}), options)
+	svc := service.NewWithOptions(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}), options)
 	t.Cleanup(func() {
 		d.releasePrompt()
 		d.releaseResume()
@@ -280,7 +280,7 @@ func TestIdleExpiryRevalidatesPersistedState(t *testing.T) {
 
 			current := mustSession(t, f.svc, f.ref)
 			current.Status.State = state
-			_, err := f.store.UpdateSession(current)
+			_, err := f.store.Meta.UpdateSession(current)
 			require.NoError(t, err)
 
 			f.clock.Advance(time.Second)
@@ -871,7 +871,7 @@ func TestRestartDoesNotCreateIdleTimersForHistoricalSessions(t *testing.T) {
 
 	clock := newManualClock()
 	factory := &ticket03Factory{}
-	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}), service.Options{
+	svc := service.NewWithOptions(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}), service.Options{
 		SessionIdleTimeout: time.Second,
 		Clock:              clock,
 	})
@@ -954,12 +954,12 @@ func (f idleReplayFactory) New(string, runtime.Config) (runtime.Driver, error) {
 }
 
 func TestIdleHistoryReplayToolWorkDoesNotSuppressClose(t *testing.T) {
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	clock := newManualClock()
 	driver := &idleReplayDriver{pipe: events.NewEventPipe(64)}
-	svc := service.NewWithOptions(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": idleReplayFactory{driver: driver}}), service.Options{
+	svc := service.NewWithOptions(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": idleReplayFactory{driver: driver}}), service.Options{
 		SessionIdleTimeout: time.Second,
 		Clock:              clock,
 	})

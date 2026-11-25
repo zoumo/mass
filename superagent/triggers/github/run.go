@@ -2,7 +2,6 @@ package github
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,7 +30,7 @@ func runGitHub(ctx context.Context, c githubConfig, api *githubAPI, core *corecl
 		return err
 	}
 	defer closeDB()
-	api.pauseUntil, err = readGitHubRateLimit(store.db)
+	api.pauseUntil, err = store.rateLimit()
 	if err != nil {
 		return errors.New("cannot read GitHub rate limit state")
 	}
@@ -59,12 +58,12 @@ func runGitHub(ctx context.Context, c githubConfig, api *githubAPI, core *corecl
 }
 
 func (t *githubTrigger) round(ctx context.Context) error {
-	names, err := githubRepositoryNames(t.store.db, true)
+	names, err := t.store.pendingRepositories()
 	if err != nil {
 		return errors.New("cannot read GitHub delivery repositories")
 	}
 	for _, name := range names {
-		delivery, err := readGitHubDelivery(t.store.db, name)
+		delivery, err := t.store.delivery(name)
 		if err != nil {
 			return errors.New("cannot read GitHub delivery state")
 		}
@@ -250,39 +249,6 @@ type githubStreamStatus struct {
 	LastError     string            `json:"lastError,omitempty"`
 }
 
-func (t *githubTrigger) readStatus(ctx context.Context) (githubStatus, error) {
-	tx, err := t.store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return githubStatus{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	pause, err := readGitHubRateLimit(tx)
-	if err != nil {
-		return githubStatus{}, err
-	}
-	stream, err := readGitHubStream(tx.QueryRowContext(ctx, `SELECT `+githubStreamColumns+`
-		FROM github_streams WHERE repository = ? AND scope = ?`, githubInboxRepository, githubInboxScope))
-	if err != nil {
-		return githubStatus{}, err
-	}
-	s := githubStatus{
-		Source: githubSource, AccountID: t.config.AccountID, InstanceID: t.config.InstanceID, RateLimitedUntil: pause,
-		Notifications: githubStreamStatusFor(stream), Repositories: make(map[string]githubRepositoryStatus),
-	}
-	names, err := githubRepositoryNames(tx, false)
-	if err != nil {
-		return githubStatus{}, err
-	}
-	for _, name := range names {
-		out, err := readGitHubRepositoryStatus(tx, name)
-		if err != nil {
-			return githubStatus{}, err
-		}
-		s.Repositories[name] = out
-	}
-	return s, nil
-}
-
 func githubStreamStatusFor(v githubStreamState) githubStreamStatus {
 	state := "ready"
 	if !v.Active {
@@ -306,7 +272,7 @@ func (t *githubTrigger) serveStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	status, err := t.readStatus(r.Context())
+	status, err := t.store.readStatus(r.Context(), t.config)
 	if err != nil {
 		http.Error(w, "GitHub status unavailable", http.StatusServiceUnavailable)
 		return

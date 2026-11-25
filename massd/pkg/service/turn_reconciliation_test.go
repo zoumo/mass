@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
-	"github.com/zoumo/mass/massd/pkg/store/file"
 )
 
 type turnReconciliationDriver struct {
@@ -39,10 +39,10 @@ func (failedObservation) Err() error              { return errors.New("test obse
 
 func turnReconciliationFixture(t *testing.T, d *turnReconciliationDriver) (*Service, *runBinding, *lane, runtime.DriverSession) {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	saved, err := st.CreateSession(resource.Session{
+	saved, err := st.Meta.CreateSession(resource.Session{
 		Metadata: resource.Metadata{Namespace: "one", Name: "original"},
 		Spec:     resource.SessionSpec{RuntimeRef: "agent"},
 		Status: resource.SessionStatus{
@@ -53,7 +53,7 @@ func turnReconciliationFixture(t *testing.T, d *turnReconciliationDriver) (*Serv
 	source := events.NewSource()
 	l := &lane{source: source, session: saved, queue: make(chan delivery, 2), done: make(chan struct{})}
 	run := &runBinding{driver: d, started: true, done: make(chan struct{}), lanes: map[string]*lane{saved.Status.SessionID: l}}
-	s := &Service{meta: st, runs: map[string]*runBinding{"agent": run}, sessionOps: map[string]*sessionOperation{}}
+	s := &Service{meta: st.Meta, runs: map[string]*runBinding{"agent": run}, sessionOps: map[string]*sessionOperation{}}
 	go s.process(run, l)
 	t.Cleanup(func() {
 		close(run.done)

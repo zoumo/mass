@@ -12,6 +12,7 @@ import (
 
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
 )
 
 type RecoveryRequest struct {
@@ -145,7 +146,8 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 		return r, b, spec, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &b, req.SessionBindingID); err != nil {
+	b, err = readBindingByID(ctx, tx, req.SessionBindingID)
+	if err != nil {
 		return r, b, spec, err
 	}
 	known := b.Recovery != nil && b.Recovery.ID == req.OperationID
@@ -178,7 +180,8 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 	if !known && b.Recovery != nil && b.Recovery.Status == "reconciling" {
 		return r, b, spec, problem("failed_precondition", "retry the in-flight recovery with its original operationId")
 	}
-	if err := readJSON(ctx, tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, b.ID); err != nil {
+	spec, err = readBindingSpec(ctx, tx, b.ID)
+	if err != nil {
 		return r, b, spec, err
 	}
 	if !known {
@@ -197,8 +200,7 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 		if !retired {
 			b.State, b.NextAttemptAt = "recovering", ""
 		}
-		if err := putJSON(ctx, tx, "UPDATE session_bindings SET state=?2,next_attempt_at=?3,body=?4 WHERE id=?1",
-			b, b.ID, b.State, b.NextAttemptAt); err != nil {
+		if err := saveBinding(ctx, tx, b); err != nil {
 			return r, b, spec, err
 		}
 	}
@@ -222,12 +224,11 @@ func (s *Server) reconcileSession(ctx context.Context, b SessionBinding, spec re
 		// The same authority may use the public resume path. Neither state
 		// certifies old work stopped or allows a replacement binding.
 		if ownershipUnconfirmed(found) {
-			affected, err := s.store.db.ExecContext(ctx, `UPDATE session_bindings SET body=json_set(body,'$.previousOwnerUnknown',json('true'))
- WHERE id=? AND state='recovering'`, b.ID)
+			marked, err := s.store.markBindingFlag(ctx, b.ID, "recovering", "$.previousOwnerUnknown")
 			if err != nil {
 				return storageError()
 			}
-			if count, err := affected.RowsAffected(); err != nil || count != 1 {
+			if !marked {
 				return problem("stale_binding", "binding changed before recovery")
 			}
 		}
@@ -383,8 +384,8 @@ func (s *Store) completeRecovery(ctx context.Context, b SessionBinding, r Recove
 		return r, storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	var current SessionBinding
-	if err := readJSON(ctx, tx, "SELECT body FROM session_bindings WHERE id=?", &current, b.ID); err != nil {
+	current, err := readBindingByID(ctx, tx, b.ID)
+	if err != nil {
 		return r, err
 	}
 	if current.State != b.State || current.State != "revoked" && current.State != "recovering" {
@@ -404,7 +405,7 @@ func (s *Store) completeRecovery(ctx context.Context, b SessionBinding, r Recove
 			release.Reusable = false
 			b.Close, r.Close = &release, &release
 		}
-		if err := putJSON(ctx, tx, "UPDATE session_bindings SET body=?2 WHERE id=?1", b, b.ID); err != nil {
+		if err := saveBindingBody(ctx, tx, b); err != nil {
 			return r, err
 		}
 		if err := saveRelatedReleases(ctx, tx, r.RelatedReleases); err != nil {
@@ -422,7 +423,7 @@ func (s *Store) completeRecovery(ctx context.Context, b SessionBinding, r Recove
 	} else {
 		b.State, b.LastError, b.NextAttemptAt = "ready", "", ""
 		b.SessionID, b.SessionUID = r.SessionID, r.SessionUID
-		if err := putJSON(ctx, tx, "UPDATE session_bindings SET state=?2,next_attempt_at='',body=?3 WHERE id=?1", b, b.ID, b.State); err != nil {
+		if err := saveBinding(ctx, tx, b); err != nil {
 			return r, err
 		}
 	}
@@ -435,8 +436,8 @@ func (s *Store) completeRecovery(ctx context.Context, b SessionBinding, r Recove
 
 func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b SessionBinding, r *Recovery) error {
 	if b.Role == "topic" {
-		var t Topic
-		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
+		t, err := readTopic(ctx, tx, b.OwnerID)
+		if err != nil {
 			return err
 		}
 		if t.SessionBindingID != b.ID {
@@ -460,8 +461,8 @@ func (s *Store) replaceBinding(ctx context.Context, tx *sql.Tx, b SessionBinding
 	recipient := eventIdentity{Kind: b.Role, TopicID: b.OwnerID}
 	kind := "binding_recovered"
 	if b.Role == "topic" {
-		var t Topic
-		if err := readJSON(ctx, tx, "SELECT body FROM topics WHERE id=?", &t, b.OwnerID); err != nil {
+		t, err := readTopic(ctx, tx, b.OwnerID)
+		if err != nil {
 			return err
 		}
 		if terminal(t.Status) {
@@ -486,8 +487,8 @@ func (s *Store) replaceUnrecoverableBinding(ctx context.Context, b SessionBindin
 		return storageError()
 	}
 	defer func() { _ = tx.Rollback() }()
-	var current SessionBinding
-	if err := readJSON(ctx, tx, `SELECT body FROM session_bindings WHERE id=? AND state='pending'`, &current, b.ID); err != nil {
+	current, err := readBinding(ctx, entClientForTx(tx).SessionBinding, sessionbinding.BusinessIDEQ(b.ID), sessionbinding.StateEQ("pending"))
+	if err != nil {
 		return err
 	}
 	router := current.Role == "router" && current.RuntimeType == "claude"

@@ -21,7 +21,7 @@ func TestInitialSessionConfigurationServiceRejectsBeforeEffects(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
-	page, err := st.ListSessions(resource.SessionQuery{})
+	page, err := st.Meta.ListSessions(resource.SessionQuery{})
 	require.NoError(t, err)
 	require.Empty(t, page.Items)
 	driver.mu.Lock()
@@ -51,7 +51,7 @@ func TestSystemPromptServiceRejectsBeforeRuntimeStart(t *testing.T) {
 		require.Equal(t, "invalid_argument", public.Code)
 		require.Equal(t, testCase.reason, public.Reason)
 	}
-	page, err := st.ListSessions(resource.SessionQuery{})
+	page, err := st.Meta.ListSessions(resource.SessionQuery{})
 	require.NoError(t, err)
 	require.Empty(t, page.Items)
 	driver.mu.Lock()

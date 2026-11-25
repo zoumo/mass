@@ -58,7 +58,7 @@ func retireIssueBinding(ctx context.Context, tx *sql.Tx, issue Issue, at string,
 	if observation := b.WorkObservation; observation != nil && observation.inProgress() {
 		observation.loseContinuity("session_binding_retired")
 	}
-	return b, putJSON(ctx, tx, "UPDATE session_bindings SET state='revoked',next_attempt_at='',body=?2 WHERE id=?1", b, b.ID)
+	return b, saveBinding(ctx, tx, b)
 }
 
 func recoverStops(ctx context.Context, tx *sql.Tx) error {

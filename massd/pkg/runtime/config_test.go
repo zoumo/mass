@@ -11,6 +11,12 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime/codex"
 )
 
+var _ interface {
+	ResolveExecutable(string) (string, error)
+	Environment(string) []string
+	LookupEnv(string) (string, bool)
+} = runtime.ProcessConfig{}
+
 func TestRealRuntimeConfigurationDoesNotRequireSyntheticScenario(t *testing.T) {
 	for name, factory := range map[string]runtime.Factory{"codex": codex.Factory{}, "claude": claude.Factory{}} {
 		t.Run(name, func(t *testing.T) {

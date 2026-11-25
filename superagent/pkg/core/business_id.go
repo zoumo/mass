@@ -7,6 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+
+	coreent "github.com/zoumo/mass/superagent/pkg/core/internal/ent"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/issue"
+	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/topic"
 )
 
 // Scope the operation ID to its creator. The request digest detects changed
@@ -39,11 +43,38 @@ func numberedCreation(ctx context.Context, tx *sql.Tx, digest, query string, arg
 		return "", nil
 	case err != nil:
 		return "", storageError()
-	case savedDigest != digest:
-		return "", problem("conflict", "operationId has different creation parameters")
 	default:
-		return id, nil
+		return checkCreationReplay(id, savedDigest, digest)
 	}
+}
+
+func checkCreationReplay(id, savedDigest, digest string) (string, error) {
+	if savedDigest != digest {
+		return "", problem("conflict", "operationId has different creation parameters")
+	}
+	return id, nil
+}
+
+func topicCreationReplay(ctx context.Context, topics *coreent.TopicClient, key, digest string) (string, error) {
+	row, err := topics.Query().Where(topic.CreationKeyEQ(key)).Select(topic.FieldBusinessID, topic.FieldCreationDigest).Only(ctx)
+	if coreent.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", storageError()
+	}
+	return checkCreationReplay(row.BusinessID, row.CreationDigest, digest)
+}
+
+func issueCreationReplay(ctx context.Context, issues *coreent.IssueClient, key, digest string) (string, error) {
+	row, err := issues.Query().Where(issue.CreationKeyEQ(key)).Select(issue.FieldBusinessID, issue.FieldCreationDigest).Only(ctx)
+	if coreent.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", storageError()
+	}
+	return checkCreationReplay(row.BusinessID, row.CreationDigest, digest)
 }
 
 func existingCreation(ctx context.Context, tx *sql.Tx, table, idColumn, key, id string) (bool, error) {

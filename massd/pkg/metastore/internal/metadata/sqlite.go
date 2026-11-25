@@ -10,19 +10,45 @@ import (
 	"os"
 	"path/filepath"
 
+	_ "embed"
 	_ "modernc.org/sqlite"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 
 	"github.com/zoumo/mass/massd/pkg/internal/fileio"
+	"github.com/zoumo/mass/massd/pkg/metastore/internal/metadata/ent"
+	"github.com/zoumo/mass/massd/pkg/metastore/internal/metadata/ent/runtimerecord"
+	entsession "github.com/zoumo/mass/massd/pkg/metastore/internal/metadata/ent/session"
 	"github.com/zoumo/mass/massd/pkg/resource"
 )
+
+//go:embed migrations/001_authority.sql
+var authorityV1DDL string
 
 // This database is the resource authority, never a disposable projection.
 type database struct {
 	db   *sql.DB
 	conn *sql.Conn
 	tx   *sql.Tx
+}
+
+// The Store owns commit, rollback and connection lifetime, including when Ent
+// requests a transaction for an entity write.
+type transactionDriver struct {
+	entsql.Conn
+}
+
+func (d transactionDriver) Tx(context.Context) (dialect.Tx, error) {
+	return dialect.NopTx(d), nil
+}
+
+func (transactionDriver) Dialect() string { return dialect.SQLite }
+func (transactionDriver) Close() error    { return nil }
+
+func metadataClient(tx *sql.Tx) *ent.Client {
+	return ent.NewClient(ent.Driver(transactionDriver{Conn: entsql.Conn{ExecQuerier: tx}}))
 }
 
 func (d *database) close() error {
@@ -88,11 +114,14 @@ func (s *Store) openSQL() error {
 		if s.readOnly {
 			return os.ErrNotExist
 		}
-		// Legacy projections and resource files require an explicit migration. Never
-		// reclassify them, and never start an empty authority beside existing data.
-		for _, name := range []string{"metadata.sqlite", ".store.json", ".pending.json", "state.json", "runtime.json", "runtime.jsonl", "session_index.jsonl", filepath.Join("data", "state.json")} {
+		if _, err := os.Lstat(filepath.Join(s.dir, "metadata.sqlite")); !os.IsNotExist(err) {
+			return errors.New("legacy metadata.sqlite requires explicit migration to SQLite authority")
+		}
+		// Refuse a directory owned by the file MetaStore, even when its
+		// identity marker is missing or a commit is still pending.
+		for _, name := range []string{".store.json", ".pending.json", "runtime.jsonl", "session_index.jsonl"} {
 			if _, err := os.Lstat(filepath.Join(s.dir, name)); !os.IsNotExist(err) {
-				return errors.New("existing metadata requires explicit migration to SQLite authority")
+				return errors.New("existing file metadata requires explicit migration to SQLite authority")
 			}
 		}
 		if err := s.walkSessions(func(path, _, _ string) error {
@@ -142,12 +171,7 @@ func (s *Store) openSQL() error {
 			return err
 		}
 		defer func() { _ = tx.Rollback() }()
-		if _, err = tx.ExecContext(context.Background(), `
- CREATE TABLE authority (format INTEGER NOT NULL, cursor_key TEXT NOT NULL);
- CREATE TABLE runtime (name TEXT PRIMARY KEY, type TEXT NOT NULL, state TEXT NOT NULL, payload BLOB NOT NULL);
- CREATE TABLE session (key TEXT PRIMARY KEY, session_id TEXT UNIQUE NOT NULL, namespace TEXT NOT NULL, name TEXT NOT NULL, runtime_ref TEXT NOT NULL, state TEXT NOT NULL, sort_key TEXT NOT NULL, payload BLOB NOT NULL);
- CREATE UNIQUE INDEX session_name ON session(namespace,name);
- `); err != nil {
+		if _, err = tx.ExecContext(context.Background(), authorityV1DDL); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(context.Background(), "INSERT INTO authority VALUES(1,?)", uuid.NewString()); err != nil {
@@ -164,42 +188,38 @@ func (s *Store) openSQL() error {
 }
 
 func (s *Store) readSQL(tx *sql.Tx) error {
-	var err error
+	ctx := context.Background()
 	var format int
 	s.data = snapshot{Format: 2, Runtimes: map[string]resource.Runtime{}, Sessions: map[string]resource.Session{}}
-	if err = tx.QueryRowContext(context.Background(), "SELECT format,cursor_key FROM authority").Scan(&format, &s.data.CursorKey); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT format,cursor_key FROM authority").Scan(&format, &s.data.CursorKey); err != nil {
 		return fmt.Errorf("invalid metadata authority (not a rebuildable cache): %w", err)
 	}
 	if format != 1 {
 		return errors.New("unsupported metadata authority format")
 	}
-	for _, table := range []string{"runtime", "session"} {
-		rows, err := tx.QueryContext(context.Background(), "SELECT payload FROM "+table)
-		if err != nil {
+	// The full resource payload is the source for snapshot validation.
+	client := metadataClient(tx)
+	runtimes, err := client.RuntimeRecord.Query().Select(runtimerecord.FieldPayload).All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range runtimes {
+		var r resource.Runtime
+		if err := fileio.Decode(row.Payload, &r); err != nil {
 			return err
 		}
-		for rows.Next() {
-			var b []byte
-			if err = rows.Scan(&b); err != nil {
-				break
-			}
-			if table == "runtime" {
-				var r resource.Runtime
-				err = fileio.Decode(b, &r)
-				s.data.Runtimes[r.Metadata.Name] = r
-			} else {
-				var r storedSession
-				err = fileio.Decode(b, &r)
-				s.data.Sessions[key(r.Metadata.Namespace, r.Metadata.Name)] = resource.Session(r)
-			}
-			if err != nil {
-				break
-			}
-		}
-		err = errors.Join(err, rows.Err(), rows.Close())
-		if err != nil {
+		s.data.Runtimes[r.Metadata.Name] = r
+	}
+	sessions, err := client.Session.Query().Select(entsession.FieldPayload).All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range sessions {
+		var r resource.Session
+		if err := fileio.Decode(row.Payload, &r); err != nil {
 			return err
 		}
+		s.data.Sessions[key(r.Metadata.Namespace, r.Metadata.Name)] = r
 	}
 	return s.validate()
 }
@@ -249,11 +269,12 @@ func (s *Store) commitSQL(next snapshot) error {
 }
 
 func (s *Store) syncMetadata(tx *sql.Tx, next, previous snapshot) error {
-	var err error
+	ctx := context.Background()
+	client := metadataClient(tx)
 	// Replace only changed resource rows.
 	for name := range previous.Runtimes {
 		if _, exists := next.Runtimes[name]; !exists {
-			if _, err = tx.ExecContext(context.Background(), "DELETE FROM runtime WHERE name=?", name); err != nil {
+			if _, err := client.RuntimeRecord.Delete().Where(runtimerecord.IDEQ(name)).Exec(ctx); err != nil {
 				return err
 			}
 		}
@@ -263,7 +284,7 @@ func (s *Store) syncMetadata(tx *sql.Tx, next, previous snapshot) error {
 		if exists && current.Status.SessionID == old.Status.SessionID {
 			continue
 		}
-		if _, err = tx.ExecContext(context.Background(), "DELETE FROM session WHERE key=?", k); err != nil {
+		if _, err := client.Session.Delete().Where(entsession.IDEQ(k)).Exec(ctx); err != nil {
 			return err
 		}
 	}
@@ -275,7 +296,15 @@ func (s *Store) syncMetadata(tx *sql.Tx, next, previous snapshot) error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(context.Background(), "INSERT INTO runtime VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET type=excluded.type,state=excluded.state,payload=excluded.payload", r.Metadata.Name, r.Spec.Type, r.Status.State, b); err != nil {
+		err = client.RuntimeRecord.Create().
+			SetID(r.Metadata.Name).
+			SetType(r.Spec.Type).
+			SetState(r.Status.State).
+			SetPayload(b).
+			OnConflictColumns(runtimerecord.FieldID).
+			UpdateNewValues().
+			Exec(ctx)
+		if err != nil {
 			return err
 		}
 	}
@@ -287,7 +316,19 @@ func (s *Store) syncMetadata(tx *sql.Tx, next, previous snapshot) error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(context.Background(), "INSERT INTO session VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET session_id=excluded.session_id,namespace=excluded.namespace,name=excluded.name,runtime_ref=excluded.runtime_ref,state=excluded.state,sort_key=excluded.sort_key,payload=excluded.payload", key(r.Metadata.Namespace, r.Metadata.Name), r.Status.SessionID, r.Metadata.Namespace, r.Metadata.Name, r.Spec.RuntimeRef, r.Status.State, sessionOrder(r), b); err != nil {
+		err = client.Session.Create().
+			SetID(k).
+			SetSessionID(r.Status.SessionID).
+			SetNamespace(r.Metadata.Namespace).
+			SetName(r.Metadata.Name).
+			SetRuntimeRef(r.Spec.RuntimeRef).
+			SetState(string(r.Status.State)).
+			SetSortKey(sessionOrder(r)).
+			SetPayload(b).
+			OnConflictColumns(entsession.FieldID).
+			UpdateNewValues().
+			Exec(ctx)
+		if err != nil {
 			return err
 		}
 	}
