@@ -149,7 +149,7 @@ func TestCodexMCPURLClosesWhenNativeRequestResolves(t *testing.T) {
 
 func openMCPScenario(t *testing.T, kind, executable string, scenario map[string]any) (*service.Service, resource.SessionRef, *service.Subscription) {
 	t.Helper()
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	ensureNativeReadyObservation(scenario, kind)
 	path, work := writeNativeScenario(t, scenario)
 	const name = "mcp"

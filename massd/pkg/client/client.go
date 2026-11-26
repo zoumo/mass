@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,7 +46,6 @@ type Client struct {
 	serverURL                 string
 	token                     string
 	connect                   StreamConnector
-	tlsConfig                 *tls.Config
 	writeTimeout              time.Duration
 	subscriptionQueueCapacity int
 
@@ -77,12 +75,6 @@ func (s *rpcStream) callOptions(ctx context.Context) []rpc2.CallOption {
 		}
 	}
 	return options
-}
-
-// SetTLSClientConfig configures the WebSocket handshake transport before first
-// use. It is only meaningful for wss:// endpoints.
-func (c *Client) SetTLSClientConfig(config *tls.Config) {
-	c.tlsConfig = config
 }
 
 // New creates a lazy JSON-RPC client without opening a connection.
@@ -355,7 +347,6 @@ func (c *Client) openStream(ctx context.Context) (*rpcStream, error) {
 	dialer := websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,
 		HandshakeTimeout: rpcHandshakeTimeout,
-		TLSClientConfig:  c.tlsConfig,
 	}
 	socket, response, err := dialer.DialContext(ctx, endpoint, headers)
 	if response != nil {

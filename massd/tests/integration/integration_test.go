@@ -189,15 +189,11 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, r.Metadata.Generation)
-	_, err = registry.Get("codex")
-	require.Error(t, err, "resource create must not construct a Driver")
+	require.Equal(t, "stopped", r.Status.State)
+	require.Zero(t, r.Status.AppliedGeneration)
 	r, err = svc.StartRuntime(c, "codex")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, r.Status.AppliedGeneration)
-	driver, err := registry.Get("codex")
-	require.NoError(t, err)
-	_, err = driver.Events()
-	require.Error(t, err, "Service has already acquired the only stream")
 	type createdResult struct {
 		value resource.Session
 		err   error

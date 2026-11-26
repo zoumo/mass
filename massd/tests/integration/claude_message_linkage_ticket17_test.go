@@ -154,17 +154,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 				require.NoError(t, err)
 				_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("linkage-" + mode)}})
 				require.NoError(t, err)
-				driver, err := registry.Get("agent")
-				require.NoError(t, err)
-				observation := driver.(interface {
-					SessionObservation(string) runtime.SessionObservation
-				}).SessionObservation(ref.SessionID)
-				select {
-				case <-observation.Done():
-				case <-ctx(t).Done():
-					t.Fatal("foreign session identity was not rejected")
-				}
-				require.ErrorContains(t, observation.Err(), "session_identity_mismatch")
+				requireObservationLost(t, svc, ref)
 				after, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 				require.NoError(t, err)
 				require.Equal(t, before, after)

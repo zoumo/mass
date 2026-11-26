@@ -22,7 +22,7 @@ import (
 func TestIllegalNativeIdentityNeverBecomesPersistentSession(t *testing.T) {
 	for _, id := range []string{".", ".."} {
 		t.Run(id, func(t *testing.T) {
-			svc, _, _ := lifecycleService(t, t.TempDir())
+			svc, _ := lifecycleService(t, t.TempDir())
 			path, work := identityOnlyScenario(t, id)
 			var err error
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})

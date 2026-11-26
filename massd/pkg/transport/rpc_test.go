@@ -339,12 +339,7 @@ func TestInProcessRPCStalledRepliesDrainAfterWriteTimeout(t *testing.T) {
 	// Receiving this notification proves the previous request was admitted.
 	require.NoError(t, peer.WriteObject(json.RawMessage(`{"jsonrpc":"2.0","method":"ignored"}`)))
 
-	draining, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	require.NoError(t, server.Drain(draining))
 	var response rpcResponse
-	require.ErrorIs(t, peer.ReadObject(&response), io.EOF)
-
 	healthy, err := server.Connect(t.Context(), time.Second)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, healthy.Close()) })
@@ -352,6 +347,11 @@ func TestInProcessRPCStalledRepliesDrainAfterWriteTimeout(t *testing.T) {
 	require.NoError(t, healthy.ReadObject(&response))
 	require.Equal(t, `"healthy"`, string(response.ID))
 	require.Nil(t, response.Error)
+
+	draining, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	require.NoError(t, server.DrainAndClose(draining))
+	require.ErrorIs(t, peer.ReadObject(&response), io.EOF)
 }
 
 func TestRPCCloseExternalAdmission(t *testing.T) {

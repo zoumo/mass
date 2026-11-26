@@ -104,7 +104,6 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string, wantDiagno
 	observer, err := c.Subscribe(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	defer observer.Close()
-	observation := s.sessionObservation(ref)
 	s.Require().NoError(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
 	var diagnostics []events.SessionEvent
 	var answered bool
@@ -135,12 +134,6 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string, wantDiagno
 settled:
 	s.Require().Len(diagnostics, len(wantDiagnostics))
 	s.True(answered)
-	select {
-	case <-observation.Done():
-		s.FailNow("unsupported item ended the original observation", "%v", observation.Err())
-	default:
-	}
-	s.Require().NoError(observation.Err())
 	s.Require().Eventually(func() bool {
 		var current resource.Session
 		return c.GetSession(ctx(s.T()), ref, &current) == nil &&

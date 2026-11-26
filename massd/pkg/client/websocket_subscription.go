@@ -30,10 +30,6 @@ type subscriptionClosedNotification struct {
 	Error          *runtime.OperationError `json:"error,omitempty"`
 }
 
-type unsubscribeParams struct {
-	SubscriptionID string `json:"subscriptionId"`
-}
-
 // Subscription is one dedicated WebSocket observation with a bounded local
 // queue. Next is the only consumer of that queue.
 type Subscription struct {
@@ -47,12 +43,11 @@ type Subscription struct {
 	id       string
 	setupErr error
 
-	mu                 sync.Mutex
-	queue              chan events.SessionEvent
-	done               chan struct{}
-	terminal           error
-	finished           bool
-	pendingUnsubscribe bool
+	mu       sync.Mutex
+	queue    chan events.SessionEvent
+	done     chan struct{}
+	terminal error
+	finished bool
 
 	closeOnce sync.Once
 	closeErr  error
@@ -173,45 +168,6 @@ func (s *Subscription) Err() error {
 	return s.terminal
 }
 
-// Unsubscribe explicitly ends this connection's subscription. The successful
-// response is observed only after the server has sent the terminal notification.
-func (s *Subscription) Unsubscribe(ctx context.Context) error {
-	s.mu.Lock()
-	if s.finished {
-		err := s.terminal
-		s.mu.Unlock()
-		return err
-	}
-	s.pendingUnsubscribe = true
-	s.mu.Unlock()
-
-	<-s.idReady
-	if s.setupErr != nil {
-		return s.setupErr
-	}
-	var raw json.RawMessage
-	err := s.conn.Call(ctx, "session.unsubscribe", unsubscribeParams{SubscriptionID: s.id}, &raw, s.stream.callOptions(ctx)...)
-	if err != nil {
-		err = s.client.callError(ctx, s.stream, err)
-		s.finish(err)
-		_ = s.closeTransport()
-		return err
-	}
-	if err := s.Err(); err != nil && !errors.Is(err, io.EOF) {
-		_ = s.closeTransport()
-		return err
-	}
-	if err := s.Err(); err == nil {
-		err = errors.New("unsubscribe response arrived without subscription.closed")
-		s.finish(err)
-	}
-	closeErr := s.closeTransport()
-	if err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
-	return closeErr
-}
-
 // Close releases only this observation's connection. It does not send any
 // Session close or cancel command.
 func (s *Subscription) Close() error {
@@ -309,16 +265,8 @@ func (s *Subscription) finish(err error) {
 }
 
 func (s *Subscription) finishFromServer(err error) {
-	closeNow := false
-	s.mu.Lock()
-	if !s.finished {
-		s.setFinishedLocked(err)
-		closeNow = !s.pendingUnsubscribe
-	}
-	s.mu.Unlock()
-	if closeNow {
-		go func() { _ = s.closeTransport() }()
-	}
+	s.finish(err)
+	go func() { _ = s.closeTransport() }()
 }
 
 func (s *Subscription) setFinishedLocked(err error) {

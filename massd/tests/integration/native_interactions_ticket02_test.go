@@ -21,7 +21,7 @@ import (
 func TestNativeInteractionAnswerCorrection(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		t.Run(kind, func(t *testing.T) {
-			svc, reg, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			session := openNative(t, svc, kind, "question", "questions")
 			ref := resource.SessionRef{SessionID: session.Status.SessionID}
 			sub, err := svc.SubscribeEvents(ref)
@@ -44,12 +44,10 @@ func TestNativeInteractionAnswerCorrection(t *testing.T) {
 					} else {
 						answers = map[string]any{"format": map[string]any{"answers": []any{"json"}}}
 					}
-					driver, err := reg.Get("questions")
-					require.NoError(t, err)
 					canceled, cancel := context.WithCancel(context.Background())
 					cancel()
-					_, err = driver.AnswerInteraction(canceled, ref.SessionID, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
-					require.Error(t, err, "confirmed native pre-write cancellation must not consume live authority")
+					_, err = svc.AnswerInteraction(canceled, ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					require.ErrorIs(t, err, context.Canceled)
 					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
 					require.NoError(t, err, "validation must not consume live native authority")
 					require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
@@ -180,7 +178,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 func TestNativePermissionDecisions(t *testing.T) {
 	for _, scenario := range []struct{ kind, mode string }{{"codex", "deny"}, {"claude", "deny"}, {"claude", "update"}, {"codex", "restricted"}} {
 		t.Run(scenario.kind+"/"+scenario.mode, func(t *testing.T) {
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			session := openNative(t, svc, scenario.kind, "ticket02-permission-"+scenario.mode, "permission")
 			ref := resource.SessionRef{SessionID: session.Status.SessionID}
 			sub, err := svc.SubscribeEvents(ref)
