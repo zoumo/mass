@@ -78,7 +78,11 @@ func triggerStart(t *testing.T, endpoint, input, mode string, capacity int, opti
 	}
 	path := configFile(t, c)
 	pid := filepath.Join(t.TempDir(), "consumer.pid")
-	p := triggertest.Start(t, triggerBinary, []string{"triggers", "dws", "serve", "--config", path}, []string{"TEST_CORE_TOKEN=" + triggertest.Token, "DWS_FIXTURE_INPUT=" + input, "DWS_FIXTURE_MODE=" + mode, "DWS_FIXTURE_PID=" + pid})
+	p := triggertest.Start(t, triggerBinary, []string{"triggers", "dws", "serve", "--config", path}, []string{
+		"TEST_CORE_TOKEN=" + triggertest.Token, "DWS_FIXTURE_INPUT=" + input, "DWS_FIXTURE_MODE=" + mode, "DWS_FIXTURE_PID=" + pid,
+		// The four sequential CLI preflight probes need no race-runtime exit delay.
+		"GORACE=" + os.Getenv("GORACE") + " atexit_sleep_ms=0",
+	})
 	statusURL := p.Endpoint(t, "statusEndpoint")
 	return p, statusURL
 }

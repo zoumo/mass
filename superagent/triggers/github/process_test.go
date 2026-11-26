@@ -190,13 +190,14 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 	f := newGitHubCoreFixture(t)
 	const repo = "demo/sdk"
 	old := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	fresh := time.Now().UTC().Truncate(time.Second).Add(3 * time.Second)
+	// Date the fixture's first change after the trigger has completed its baseline poll.
+	fresh := sync.OnceValue(func() time.Time { return time.Now().UTC().Truncate(time.Second) })
 	prURL := githubObjectURL(repo, "pull", 42)
 	var phase, outsideReads atomic.Int32
 	fixture := httptest.NewServer(githubFixtureHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		var items []githubNotification
 		if phase.Load() > 0 {
-			noticeTime := fresh.Add(time.Duration(phase.Load()) * time.Second)
+			noticeTime := fresh().Add(time.Duration(phase.Load()) * time.Second)
 			items = []githubNotification{
 				githubFixtureNotice(500, 42, "Demo/SDK", "PullRequest", "review_requested", noticeTime),
 				githubFixtureNotice(501, 43, "demo/outside", "PullRequest", "mention", noticeTime),
@@ -215,13 +216,13 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 			githubFixtureObject(w, q, githubFixturePull(repo, 42, old))
 		case "comments":
 			if q.Variables.ID != "" {
-				comments := []map[string]any{githubFixtureComment(603, prURL+"#discussion_r603", "inline review comment", "User", fresh)}
+				comments := []map[string]any{githubFixtureComment(603, prURL+"#discussion_r603", "inline review comment", "User", fresh())}
 				githubFixtureRespond(w, map[string]any{"node": map[string]any{"comments": githubFixturePage(comments, "")}})
 				return
 			}
 			comments := []map[string]any{githubFixtureComment(601, prURL+"#issuecomment-601", "old PR discussion", "User", old)}
 			if phase.Load() > 1 {
-				comments = append(comments, githubFixtureComment(602, prURL+"#issuecomment-602", "new comment", "User", fresh))
+				comments = append(comments, githubFixtureComment(602, prURL+"#issuecomment-602", "new comment", "User", fresh()))
 			}
 			githubFixtureObject(w, q, map[string]any{"comments": githubFixturePage(comments, "")})
 		case "reviews":
@@ -229,7 +230,7 @@ func TestGitHubNotificationsFilterAndReadPullDiscussion(t *testing.T) {
 			if phase.Load() > 1 {
 				reviews = []map[string]any{{
 					"fullDatabaseId": "604", "url": prURL + "#pullrequestreview-604", "body": "review from native ID",
-					"author": githubFixtureAuthor("User"), "state": "APPROVED", "submittedAt": fresh,
+					"author": githubFixtureAuthor("User"), "state": "APPROVED", "submittedAt": fresh(),
 				}}
 			}
 			githubFixtureObject(w, q, map[string]any{"reviews": githubFixturePage(reviews, "")})
