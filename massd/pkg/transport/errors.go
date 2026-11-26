@@ -53,31 +53,6 @@ func publicError(err error) (*Error, bool) {
 	}
 }
 
-func statusFor(code string) int {
-	switch code {
-	case "invalid_argument":
-		return 400
-	case "unauthenticated":
-		return 401
-	case "permission_denied":
-		return 403
-	case "not_found":
-		return 404
-	case "already_exists", "conflict":
-		return 409
-	case "unsupported", "native_rejected":
-		return 422
-	case "resource_exhausted":
-		return 429
-	case "unavailable":
-		return 503
-	case "deadline_exceeded":
-		return 504
-	default:
-		return 500
-	}
-}
-
 func fail(w http.ResponseWriter, status int, err *Error) {
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now())
 	w.Header().Del("Location")
