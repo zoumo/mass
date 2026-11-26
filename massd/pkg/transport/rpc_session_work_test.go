@@ -188,9 +188,12 @@ func newSessionWorkRPCFixture(t *testing.T) *sessionWorkRPCFixture {
 		pipe:          events.NewEventPipe(32),
 		cancelReceipt: runtime.CancelReceipt{Result: "noActiveWork"},
 	}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
-		"fixture": sessionWorkRPCFactory{driver: driver},
-	}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
+			"fixture": sessionWorkRPCFactory{driver: driver},
+		}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		driver.mu.Lock()
 		release := driver.promptRelease

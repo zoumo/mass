@@ -180,9 +180,12 @@ func newTypedWorkFixture(t *testing.T) *typedWorkFixture {
 		pipe:          events.NewEventPipe(32),
 		cancelReceipt: runtime.CancelReceipt{Result: "noActiveWork"},
 	}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
-		"fixture": typedWorkFactory{driver: driver},
-	}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
+			"fixture": typedWorkFactory{driver: driver},
+		}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		driver.mu.Lock()
 		release := driver.promptRelease

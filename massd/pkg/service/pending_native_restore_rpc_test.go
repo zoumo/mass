@@ -48,7 +48,10 @@ func newPendingRestoreRPCFixture(t *testing.T) *pendingRestoreRPCFixture {
 		unknownOpening: true,
 	}
 	release := sync.OnceFunc(func() { close(driver.release) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{driver}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{driver}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		release()
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)

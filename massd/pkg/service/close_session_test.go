@@ -236,7 +236,10 @@ func newCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore) metast
 	if wrap != nil {
 		meta = wrap(meta)
 	}
-	svc := service.New(meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}))
+	svc := service.NewWithOptions(
+		meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": closeFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		d.releasePrompt()
 		d.releaseResume()

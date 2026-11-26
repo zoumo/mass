@@ -44,7 +44,10 @@ func TestOverloadTotalRetentionExhaustionRetainsOriginalDelivery(t *testing.T) {
 	defer release.Do(func() { close(gate) })
 	d := &overloadDriver{pipe: events.NewEventPipe(128), source: events.NewSource(), peerSource: events.NewSource(), count: 320}
 	d.unknown.Store(true)
-	svc := service.New(st.Meta, &overloadStore{EventStore: st.Events, gate: gate}, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
+	svc := service.NewWithOptions(
+		st.Meta, &overloadStore{EventStore: st.Events, gate: gate}, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	defer func() { release.Do(func() { close(gate) }); d.unknown.Store(false); _ = svc.Shutdown(ctx) }()
@@ -221,7 +224,10 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				if !required {
 					history = faultStore
 				}
-				svc := service.New(st.Meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}))
+				svc := service.NewWithOptions(
+					st.Meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": overloadFactory{d}}),
+					service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+				)
 				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 				defer cancel()
 				defer func() {

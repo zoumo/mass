@@ -429,7 +429,10 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 				var once sync.Once
 				release := func() { once.Do(func() { close(gate.release) }) }
 				defer release()
-				svc := service.New(gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
+				svc := service.NewWithOptions(
+					gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}),
+					service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+				)
 				t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 				bin := mock
 				mode := "explicit-create"

@@ -140,7 +140,10 @@ func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundar
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
 	require.NoError(t, err)
 	api, err := transport.New(svc, transport.Options{WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})

@@ -87,7 +87,10 @@ func newDefaultsFixture(t *testing.T) (*service.Service, *defaultsDriver, *massd
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	driver := &defaultsDriver{pipe: events.NewEventPipe(32)}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsFactory{driver: driver}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsFactory{driver: driver}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -353,7 +356,10 @@ func TestRuntimeDefaultsAreAppliedToHistoryLoad(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	driver := &defaultsLoadDriver{pipe: events.NewEventPipe(16), specs: make(chan runtime.SessionSpec, 1)}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsLoadFactory{driver: driver}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": defaultsLoadFactory{driver: driver}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

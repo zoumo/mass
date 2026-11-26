@@ -181,7 +181,10 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
 	defer release()
-	svc := service.New(gate, st.Events, registry)
+	svc := service.NewWithOptions(
+		gate, st.Events, registry,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 	require.NoError(t, err)
@@ -340,7 +343,10 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	reopened, err := massdtest.OpenFileStores(dir, true)
 	require.NoError(t, err)
 	defer reopened.Close()
-	offline := service.New(reopened.Meta, reopened.Events, nil)
+	offline := service.NewWithOptions(
+		reopened.Meta, reopened.Events, nil,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	savedID, err := offline.GetSession(id)
 	require.NoError(t, err)
 	savedName, err := offline.GetSession(name)

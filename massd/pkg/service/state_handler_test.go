@@ -61,7 +61,10 @@ func TestStateWritesDoNotBlockRealtimeOrOverwriteLifecycle(t *testing.T) {
 			}
 			defer release()
 			driver := &workDriver{pipe: events.NewEventPipe(16), entered: make(chan context.Context, 1), release: make(chan struct{})}
-			svc := service.New(gate, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{driver}}))
+			svc := service.NewWithOptions(
+				gate, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{driver}}),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			defer func() { release(); require.NoError(t, svc.Shutdown(context.Background())) }()
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
 			require.NoError(t, err)
@@ -167,7 +170,10 @@ func TestFailedStateObservationContinuesWithoutReplayOrControl(t *testing.T) {
 				require.NoError(t, err)
 				defer history.Close()
 				observed := &failingStateMeta{MetaStore: meta, readonly: ro, uncertain: uncertain, completed: make(chan events.SessionState, 4)}
-				svc := service.New(observed, history, runtime.NewRegistry(nil))
+				svc := service.NewWithOptions(
+					observed, history, runtime.NewRegistry(nil),
+					service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+				)
 				defer func() { require.NoError(t, svc.Shutdown(context.Background())) }()
 				ref := resource.SessionRef{SessionID: r.Status.SessionID}
 				b, err := svc.EventBroadcast(ref)
@@ -210,7 +216,10 @@ func TestActiveStateConflictRechecksLatestIdentityVersionAndTerminalState(t *tes
 				history, err := eventfile.Open(t.TempDir(), false)
 				require.NoError(t, err)
 				defer history.Close()
-				svc := service.New(gate, history, runtime.NewRegistry(nil))
+				svc := service.NewWithOptions(
+					gate, history, runtime.NewRegistry(nil),
+					service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+				)
 				var released atomic.Bool
 				release := func() {
 					if released.CompareAndSwap(false, true) {

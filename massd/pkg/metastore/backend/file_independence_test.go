@@ -1,4 +1,4 @@
-package file_test
+package backend_test
 
 import (
 	"os"
@@ -11,20 +11,21 @@ import (
 
 	"github.com/zoumo/mass/massd/pkg/events"
 	eventfile "github.com/zoumo/mass/massd/pkg/eventstore/file"
-	"github.com/zoumo/mass/massd/pkg/metastore/file"
+	"github.com/zoumo/mass/massd/pkg/metastore"
+	"github.com/zoumo/mass/massd/pkg/metastore/backend"
 	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
 func TestMetadataDoesNotDependOnEvents(t *testing.T) {
 	dir := t.TempDir()
-	st, err := file.Open(dir, false)
+	st, err := backend.Open(dir, metastore.Config{Backend: "file"}, false)
 	require.NoError(t, err)
 	r, err := st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Status: resource.SessionStatus{SessionID: "native"}})
 	require.NoError(t, err)
 	require.NoError(t, st.Close())
 	// An event replica path cannot prevent metadata recovery or CRUD.
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "history.sqlite"), 0o700))
-	st, err = file.Open(dir, false)
+	st, err = backend.Open(dir, metastore.Config{Backend: "file"}, false)
 	require.NoError(t, err)
 	defer st.Close()
 	got, err := st.GetSession(resource.SessionRef{SessionID: "native"})
@@ -44,7 +45,7 @@ func TestEventFirstLifecycleOnSharedRoot(t *testing.T) {
 	require.NoError(t, err)
 	_, err = history.Append("native", []events.SessionEvent{fact})
 	require.NoError(t, err)
-	meta, err := file.Open(dir, false)
+	meta, err := backend.Open(dir, metastore.Config{Backend: "file"}, false)
 	require.NoError(t, err)
 	defer meta.Close()
 	_, err = meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Status: resource.SessionStatus{SessionID: "native"}})
@@ -53,7 +54,7 @@ func TestEventFirstLifecycleOnSharedRoot(t *testing.T) {
 	progress, err := history.Append("native", []events.SessionEvent{fact})
 	require.NoError(t, err)
 	require.Equal(t, &fact.EventID, progress)
-	meta, err = file.Open(dir, false)
+	meta, err = backend.Open(dir, metastore.Config{Backend: "file"}, false)
 	require.NoError(t, err)
 	defer meta.Close()
 	require.NoError(t, history.Close())

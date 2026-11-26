@@ -138,7 +138,10 @@ func TestSDKNotificationsThroughRPCHistoryStateAndResume(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	driver := &notificationDriver{pipe: events.NewEventPipe(32)}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": httpConfigFactoryWithDriver{driver}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": httpConfigFactoryWithDriver{driver}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		cleanup, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()

@@ -26,7 +26,10 @@ func (s *SessionIdentitySuite) SetupTest() {
 	s.Require().NoError(err)
 	s.st = st
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
-	s.svc = service.New(st.Meta, st.Events, nil)
+	s.svc = service.NewWithOptions(
+		st.Meta, st.Events, nil,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 }
 
 func (s *SessionIdentitySuite) TestUUIDCreateNameRejectedBeforeRuntimeAccess() {
@@ -147,7 +150,10 @@ func (f failingIDDirectory) GetSession(ref resource.SessionRef) (resource.Sessio
 
 func (s *SessionIdentitySuite) TestNameHitDoesNotHideDirectoryFailure() {
 	s.seed("one", "demo", "native")
-	svc := service.New(failingIDDirectory{s.st.Meta}, s.st.Events, nil)
+	svc := service.NewWithOptions(
+		failingIDDirectory{s.st.Meta}, s.st.Events, nil,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err := svc.ResolveSession("one", "demo")
 	s.Require().ErrorContains(err, "injected directory failure")
 	s.NotErrorIs(err, store.ErrNotFound)

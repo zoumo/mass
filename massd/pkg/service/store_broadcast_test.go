@@ -26,7 +26,10 @@ func TestSameNameNewIdentityKeepsBroadcastsIsolated(t *testing.T) {
 			history, err := eventfile.Open(t.TempDir(), false)
 			require.NoError(t, err)
 			defer history.Close()
-			svc := service.New(meta, history, runtime.NewRegistry(nil))
+			svc := service.NewWithOptions(
+				meta, history, runtime.NewRegistry(nil),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			defer func() { require.NoError(t, svc.Shutdown(context.Background())) }()
 			named := resource.SessionRef{Namespace: "one", Name: "demo"}
 			create := func(id string) resource.Session {

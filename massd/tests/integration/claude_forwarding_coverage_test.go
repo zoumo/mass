@@ -71,7 +71,13 @@ func TestClaudeAssignedRootForwardingGapSurvivesRPCNotifications(t *testing.T) {
 	release := sync.OnceFunc(func() { close(releaseEvents) })
 	defer release()
 	factory := forwardingNotificationFactory{Factory: claude.Factory{RecoveryDir: t.TempDir()}, release: releaseEvents}
-	svc := service.NewWithPolicy(authority.Meta, authority.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}), prototype.AutoApprovePermissions)
+	svc := service.NewWithOptions(
+		authority.Meta, authority.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}),
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  prototype.AutoApprovePermissions,
+		},
+	)
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

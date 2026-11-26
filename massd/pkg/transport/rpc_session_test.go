@@ -168,9 +168,12 @@ func newSessionRPCFixture(t *testing.T, blockLoad bool) *sessionRPCFixture {
 	require.NoError(t, err)
 	driver := newSessionRPCDriver()
 	driver.blockNativeLoad = blockLoad
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
-		"fixture": sessionRPCFactory{driver: driver},
-	}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
+			"fixture": sessionRPCFactory{driver: driver},
+		}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = svc.CreateRuntime(resource.Runtime{
 		Metadata: resource.Metadata{Name: "agent"},
 		Spec:     resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}},

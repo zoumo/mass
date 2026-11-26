@@ -161,7 +161,10 @@ func ticket08HTTP(t *testing.T, kind string, gate *ticket08Gate, configure ...fu
 			option(d)
 		}
 	}
-	svc := service.New(st.Meta, gate, runtime.NewRegistry(map[string]runtime.Factory{kind: ticket08Factory{native, requests, wrappedOption}}))
+	svc := service.NewWithOptions(
+		st.Meta, gate, runtime.NewRegistry(map[string]runtime.Factory{kind: ticket08Factory{native, requests, wrappedOption}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	evidence := t.TempDir()

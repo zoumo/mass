@@ -293,7 +293,10 @@ func newPendingCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore)
 	if wrap != nil {
 		meta = wrap(meta)
 	}
-	svc := New(meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"pending": pendingCloseFactory{driver}}))
+	svc := NewWithOptions(
+		meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"pending": pendingCloseFactory{driver}}),
+		Options{SessionIdleTimeout: DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

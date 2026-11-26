@@ -633,7 +633,13 @@ func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, o
 		codexFactory = observedCodexFactory{Factory: codexFactory, observation: observation}
 	}
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codexFactory})
-	svc := service.NewWithPolicy(st.Meta, st.Events, reg, policy)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, reg,
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  policy,
+		},
+	)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, reg, dir
 }
@@ -844,7 +850,13 @@ func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation(
 	missingReg := runtime.NewRegistry(map[string]runtime.Factory{
 		"claude": claude.Factory{RecoveryDir: t.TempDir()},
 	})
-	missing := service.NewWithPolicy(missingStore.Meta, missingStore.Events, missingReg, prototype.AutoApprovePermissions)
+	missing := service.NewWithOptions(
+		missingStore.Meta, missingStore.Events, missingReg,
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  prototype.AutoApprovePermissions,
+		},
+	)
 	t.Cleanup(func() {
 		if shutdownErr := missing.Shutdown(ctx(t)); shutdownErr != nil {
 			assert.ErrorContains(t, shutdownErr, "close_failed")
