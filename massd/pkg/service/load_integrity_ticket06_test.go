@@ -99,7 +99,10 @@ func TestTicket06AcceptanceResolvesUnknownMetadataByReadback(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	meta := &ticket06UnknownCreate{MetaStore: st.Meta}
 	d := &ticket06FaultDriver{pipe: events.NewEventPipe(16), bindings: map[string]*ticket06FaultBinding{}, loading: make(chan *ticket06FaultBinding, 1)}
-	svc := service.New(meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}))
+	svc := service.NewWithOptions(
+		meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		c, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()

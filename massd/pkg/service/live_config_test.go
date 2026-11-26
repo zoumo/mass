@@ -69,7 +69,10 @@ func newLiveConfigService(t *testing.T, optional bool, options ...service.Option
 		selected = driver.closeDriver
 	}
 	registry := runtime.NewRegistry(map[string]runtime.Factory{"fixture": liveConfigFactory{selected}})
-	svc := service.New(st.Meta, st.Events, registry)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, registry,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	if len(options) > 0 {
 		svc = service.NewWithOptions(st.Meta, st.Events, registry, options[0])
 	}

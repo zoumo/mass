@@ -25,7 +25,10 @@ func (s *RuntimeConfigSuite) SetupTest() {
 	st, err := massdtest.OpenFileStores(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
-	s.svc = service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": configFactory{}}))
+	s.svc = service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": configFactory{}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 }
 
 type configFactory struct{}
@@ -152,7 +155,10 @@ func TestRuntimeCanStartAfterReplacingPersistedLegacyEnvironment(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx)) })
 	_, err = svc.StartRuntime(ctx, "agent")
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)

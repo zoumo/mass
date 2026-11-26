@@ -166,15 +166,6 @@ type Service struct {
 	telemetry   serviceTelemetry
 }
 
-func New(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry) *Service {
-	return NewWithOptions(meta, history, registry, Options{SessionIdleTimeout: DefaultSessionIdleTimeout})
-}
-
-// NewWithPolicy explicitly enables an application-owned interaction policy.
-func NewWithPolicy(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry, policy InteractionPolicy) *Service {
-	return NewWithOptions(meta, history, registry, Options{InteractionPolicy: policy, SessionIdleTimeout: DefaultSessionIdleTimeout})
-}
-
 // NewWithOptions assembles explicit application policy and time dependencies.
 func NewWithOptions(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry, options Options) *Service {
 	clock := options.Clock

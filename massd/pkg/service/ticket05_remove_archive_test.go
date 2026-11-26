@@ -22,7 +22,10 @@ func TestTicket05ArchivedIsNotAPublicSessionFilter(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 
-	svc := service.New(st.Meta, st.Events, nil)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, nil,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = svc.ListSessions(resource.SessionQuery{State: events.SessionState("archived")})
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 }
@@ -87,7 +90,10 @@ func TestPreparePreservesHistoryLoadAcrossRestart(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, history.Close()) })
 
 			factory := &ticket03Factory{}
-			svc := service.New(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+			svc := service.NewWithOptions(
+				meta, history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()

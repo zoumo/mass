@@ -52,7 +52,7 @@ func (lifecycleSuite *LifecycleSuite) TestConcurrentDesiredSpecAndStartStatus() 
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	svc := service.New(gate, st.Events, reg)
+	svc := service.NewWithOptions(gate, st.Events, reg, service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout})
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	path, work := scenario(t)
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
@@ -100,7 +100,13 @@ func lifecycleService(t *testing.T, dir string) (*service.Service, *massdtest.Fi
 	st, err := massdtest.OpenFileStores(dir, false)
 	require.NoError(t, err)
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	svc := service.NewWithPolicy(st.Meta, st.Events, reg, prototype.AutoApprovePermissions)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, reg,
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  prototype.AutoApprovePermissions,
+		},
+	)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, st, reg
 }

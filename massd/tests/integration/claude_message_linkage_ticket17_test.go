@@ -38,7 +38,10 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
 			registry := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: t.TempDir()}})
-			svc := service.New(st.Meta, st.Events, registry)
+			svc := service.NewWithOptions(
+				st.Meta, st.Events, registry,
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()

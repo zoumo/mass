@@ -44,7 +44,10 @@ func injectService(t *testing.T, d runtime.Driver, options ...service.Options) (
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	registry := runtime.NewRegistry(map[string]runtime.Factory{"fixture": injectWorkFactory{d}})
-	svc := service.New(st.Meta, st.Events, registry)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, registry,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	if len(options) > 0 {
 		svc = service.NewWithOptions(st.Meta, st.Events, registry, options[0])
 	}

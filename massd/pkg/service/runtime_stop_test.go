@@ -145,7 +145,10 @@ func (s *RuntimeStopSuite) SetupTest() {
 	s.factory = &stopFactory{}
 	s.history = &recoveryHistory{EventStore: st.Events, entered: make(chan struct{}), release: make(chan struct{})}
 	s.meta = &stopMeta{MetaStore: st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
-	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": s.factory}))
+	s.svc = service.NewWithOptions(
+		s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": s.factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	s.T().Cleanup(func() {
 		for _, d := range s.factory.drivers {
 			d.failStop.Store(false)

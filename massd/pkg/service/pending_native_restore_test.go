@@ -268,7 +268,10 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		// RED cleanup is external recovery, never proof of product Stop success.
 		for _, phase := range []string{"create", "resume"} {
@@ -472,7 +475,10 @@ func TestPendingRestoreCancellationIsNotReleaseProof(t *testing.T) {
 	require.NoError(t, err)
 	d := &pendingRestoreDriver{recoveryDriver: &recoveryDriver{pipe: events.NewEventPipe(16)}, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), unknownOpening: true}
 	release := sync.OnceFunc(func() { close(d.release) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		release()
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -567,7 +573,10 @@ func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 			d := &pendingRestoreDriver{recoveryDriver: &recoveryDriver{pipe: events.NewEventPipe(16)}, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), unknown: unknown}
 			release := sync.OnceFunc(func() { close(d.release) })
 			t.Cleanup(func() { d.pipe.End(nil) })
-			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
+			svc := service.NewWithOptions(
+				st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			t.Cleanup(func() {
 				d.allowCleanup.Store(true)
 				release()

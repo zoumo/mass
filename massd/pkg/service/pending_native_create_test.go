@@ -118,7 +118,10 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 				require.NoError(t, err)
 				reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}})
-				svc := service.New(st.Meta, st.Events, reg)
+				svc := service.NewWithOptions(
+					st.Meta, st.Events, reg,
+					service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+				)
 				pid := 0
 				t.Cleanup(func() {
 					// Emergency cleanup is not evidence that product stop succeeded.

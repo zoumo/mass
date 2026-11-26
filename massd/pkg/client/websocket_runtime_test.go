@@ -58,7 +58,10 @@ func newTypedRuntimeServer(t *testing.T) (*httptest.Server, *blockingRuntimeDriv
 	}
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": blockingRuntimeFactory{driver}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": blockingRuntimeFactory{driver}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)

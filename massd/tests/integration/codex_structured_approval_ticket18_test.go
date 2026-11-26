@@ -124,7 +124,10 @@ func ticket18RoundtripCase(t *testing.T, bin, choices, decision, name string, ki
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "recovery")}})
-	svc := service.NewWithPolicy(st.Meta, st.Events, reg, nil)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, reg,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	// Independent finalizers: a failed shutdown assertion must not skip store close
 	// or process readback, including on the deliberately failing RED run.
 	t.Cleanup(func() {

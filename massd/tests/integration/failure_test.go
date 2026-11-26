@@ -69,7 +69,13 @@ func (s *failureSuite) TearDownTest() {
 func (s *failureSuite) start(kind, name string, history eventstore.EventStore) {
 	path, work := nativeScenario(s.T(), kind, name)
 	s.work = work
-	s.svc = service.NewWithPolicy(s.meta, history, s.reg, prototype.AutoApprovePermissions)
+	s.svc = service.NewWithOptions(
+		s.meta, history, s.reg,
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  prototype.AutoApprovePermissions,
+		},
+	)
 	bin := mock
 	if kind == "claude" {
 		bin = claudeMock
@@ -185,7 +191,10 @@ func (s *failureSuite) disconnect(kind string) {
 	s.Equal("stopping", r.Status.State)
 	_, err = s.svc.StartRuntime(ctx(s.T()), "agent")
 	s.Require().Error(err)
-	cold := service.New(s.st.Meta, s.st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: s.T().TempDir()}, "claude": claude.Factory{RecoveryDir: s.T().TempDir()}}))
+	cold := service.NewWithOptions(
+		s.st.Meta, s.st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: s.T().TempDir()}, "claude": claude.Factory{RecoveryDir: s.T().TempDir()}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = cold.StartRuntime(ctx(s.T()), "agent")
 	s.Require().ErrorContains(err, "previous runtime release")
 	if kind == "codex" {
@@ -515,7 +524,10 @@ func (s *failureSuite) TestResumeEarlyCapacityFailsExplicitlyAndReleases() {
 	bin := filepath.Join(root, "resume-overflow-peer")
 	out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 	s.Require().NoError(err, "%s", out)
-	s.svc = service.New(s.meta, s.st.Events, s.reg)
+	s.svc = service.NewWithOptions(
+		s.meta, s.st.Events, s.reg,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
 		"executable": bin, "scenario": path, "env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": config}),
 	}}})

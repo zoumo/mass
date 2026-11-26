@@ -128,7 +128,10 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 			key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(work, "-")
 			project := filepath.Join(config, "projects", key)
 			require.NoError(t, os.MkdirAll(project, 0o700))
-			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(factories))
+			svc := service.NewWithOptions(
+				st.Meta, st.Events, runtime.NewRegistry(factories),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -278,7 +281,10 @@ func ticket20Open(t *testing.T, f *ticket20Fixture, create bool) {
 	if f.wrapMetadata != nil {
 		meta = f.wrapMetadata(meta)
 	}
-	f.svc = service.New(meta, st.Events, runtime.NewRegistry(factories))
+	f.svc = service.NewWithOptions(
+		meta, st.Events, runtime.NewRegistry(factories),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	svc := f.svc
 	closeService := sync.OnceFunc(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)

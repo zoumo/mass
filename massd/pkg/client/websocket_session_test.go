@@ -138,9 +138,12 @@ func newTypedSessionServer(t *testing.T) (*httptest.Server, *typedSessionDriver,
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	driver := &typedSessionDriver{pipe: events.NewEventPipe(32)}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
-		"fixture": typedSessionFactory{driver: driver},
-	}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
+			"fixture": typedSessionFactory{driver: driver},
+		}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = svc.CreateRuntime(resource.Runtime{
 		Metadata: resource.Metadata{Name: "agent"},
 		Spec:     resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}},

@@ -23,7 +23,7 @@ import (
 	"github.com/zoumo/mass/massd/pkg/eventstore"
 	eventfile "github.com/zoumo/mass/massd/pkg/eventstore/file"
 	"github.com/zoumo/mass/massd/pkg/metastore"
-	metafile "github.com/zoumo/mass/massd/pkg/metastore/file"
+	"github.com/zoumo/mass/massd/pkg/metastore/backend"
 	"github.com/zoumo/mass/massd/pkg/prototype"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
@@ -85,7 +85,7 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 	var history eventstore.EventStore
 	if setup.fileStoreDir != "" {
 		// Use the product's independent stores, retaining file authority for both.
-		metadata, err := metafile.Open(setup.fileStoreDir, false)
+		metadata, err := backend.Open(setup.fileStoreDir, metastore.Config{Backend: "file"}, false)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 		records, err := eventfile.Open(setup.fileStoreDir, false)
@@ -105,7 +105,10 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 	if setup.factory != nil {
 		factory = setup.factory(factory)
 	}
-	svc := service.New(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}))
+	svc := service.NewWithOptions(
+		meta, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(setup.env)}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
@@ -621,7 +624,7 @@ func TestTicket07ClaudeMultipleOffsetQueriesPreserveFirstLastAndHiddenParent(t *
 	require.Len(t, offsets, 2)
 
 	// Reopen through public file-store constructors to verify durable authority.
-	metadata, err := metafile.Open(data, true)
+	metadata, err := backend.Open(data, metastore.Config{Backend: "file"}, true)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, metadata.Close()) }()
 	saved, err := metadata.GetSession(ref)
