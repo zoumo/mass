@@ -112,8 +112,6 @@ type Acceptance struct {
 	NativeRecorded *bool `json:"nativeRecorded,omitempty"`
 }
 
-func Yes() *bool { return Bool(true) }
-
 func Bool(value bool) *bool {
 	v := value
 	return &v

@@ -35,8 +35,8 @@ func TestRPCInjectEvidenceAndError(t *testing.T) {
 	}{
 		{"unknown_fields_absent", runtime.Acceptance{}, ""},
 		{"not_applied", runtime.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false), NativeRecorded: runtime.Bool(false)}, ""},
-		{"unknown", runtime.Acceptance{Sent: runtime.Yes()}, "outcome_unknown"},
-		{"rejected", runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}, "native_rejected"},
+		{"unknown", runtime.Acceptance{Sent: runtime.Bool(true)}, "outcome_unknown"},
+		{"rejected", runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(false)}, "native_rejected"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &injectAPI{receipt: runtime.InjectReceipt{Acceptance: tc.evidence}}

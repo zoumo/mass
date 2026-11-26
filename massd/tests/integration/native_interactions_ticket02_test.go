@@ -52,7 +52,7 @@ func TestNativeInteractionAnswerCorrection(t *testing.T) {
 					require.Error(t, err, "confirmed native pre-write cancellation must not consume live authority")
 					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
 					require.NoError(t, err, "validation must not consume live native authority")
-					require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+					require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 					require.Nil(t, receipt.Evidence.NativeAccepted)
 					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
 					require.Error(t, err)
@@ -153,7 +153,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 				result := <-results
 				if result.err == nil {
 					successes++
-					s.Equal(runtime.Yes(), result.receipt.Evidence.Sent)
+					s.Equal(runtime.Bool(true), result.receipt.Evidence.Sent)
 					s.Nil(result.receipt.Evidence.NativeAccepted)
 				} else {
 					s.Require().ErrorAs(result.err, &public)
@@ -216,7 +216,7 @@ func TestNativePermissionDecisions(t *testing.T) {
 					}
 					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.NoError(t, err)
-					require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+					require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 					require.Nil(t, receipt.Evidence.NativeAccepted)
 					answered = true
 				}

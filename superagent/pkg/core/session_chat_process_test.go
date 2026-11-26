@@ -20,7 +20,7 @@ func TestCurrentSessionChatBoundary(t *testing.T) {
 	boundary.driver.mu.Lock()
 	boundary.driver.answer = func(ref string, answer any) (runtime.Acceptance, error) {
 		if value, ok := answer.(map[string]any); ref == "fixture-permission" && ok && value["optionId"] == "allow-once" {
-			return runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}, nil
+			return runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}, nil
 		}
 		return runtime.Acceptance{}, errors.New("unexpected interaction answer")
 	}

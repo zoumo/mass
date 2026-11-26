@@ -134,7 +134,7 @@ func (d *closeDriver) SendPrompt(ctx context.Context, _ string, _ runtime.Input)
 	if d.promptErr != nil {
 		return runtime.InputReceipt{}, d.promptErr
 	}
-	return runtime.InputReceipt{Submission: "close-test", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}, Work: d.promptWork}, nil
+	return runtime.InputReceipt{Submission: "close-test", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}, Work: d.promptWork}, nil
 }
 
 func (d *closeDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
@@ -144,7 +144,7 @@ func (d *closeDriver) Cancel(context.Context, string) (runtime.CancelReceipt, er
 
 func (d *closeDriver) AnswerInteraction(context.Context, string, string, any) (runtime.Acceptance, error) {
 	d.answers.Add(1)
-	return runtime.Acceptance{Sent: runtime.Yes()}, nil
+	return runtime.Acceptance{Sent: runtime.Bool(true)}, nil
 }
 
 func (d *closeDriver) CloseSession(ctx context.Context, _ string) error {

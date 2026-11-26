@@ -263,7 +263,7 @@ func TestRPCSessionWorkReceiptsAndOpenNullAnswer(t *testing.T) {
 		Submission: "input-1",
 		Acceptance: runtime.Acceptance{NativeAccepted: runtime.Bool(false)},
 	}, nil)
-	fixture.driver.setAnswerResult(runtime.Acceptance{NativeRecorded: runtime.Yes()}, nil)
+	fixture.driver.setAnswerResult(runtime.Acceptance{NativeRecorded: runtime.Bool(true)}, nil)
 	fixture.driver.setCancelResult(runtime.CancelReceipt{
 		Target: "work-1",
 		Result: "controlAcknowledged",
@@ -397,7 +397,7 @@ func TestRPCSessionWorkLongPromptAllowsConcurrentCancelAndAnswer(t *testing.T) {
 	fixture := newSessionWorkRPCFixture(t)
 	fixture.driver.setPromptBlock()
 	fixture.driver.setPromptResult(runtime.InputReceipt{Submission: "late-input"}, nil)
-	fixture.driver.setAnswerResult(runtime.Acceptance{Sent: runtime.Yes()}, nil)
+	fixture.driver.setAnswerResult(runtime.Acceptance{Sent: runtime.Bool(true)}, nil)
 	fixture.driver.setCancelResult(runtime.CancelReceipt{Target: "work-1", Result: "controlAcknowledged"}, nil)
 	conn := sessionWorkRPCConn(t, fixture)
 	entered, release, finished := fixture.driver.promptChannels()

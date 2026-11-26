@@ -51,7 +51,7 @@ func TestPromptFailurePreservesDispatchEvidence(t *testing.T) {
 		},
 		{
 			name: "observed write with uncertain outcome", code: agent.ErrorOutcomeUnknown,
-			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded, sent: runtime.Yes(), wantSent: runtime.Yes(),
+			dispatch: sdk.OutcomeUnknown, cause: context.DeadlineExceeded, sent: runtime.Bool(true), wantSent: runtime.Bool(true),
 		},
 	}
 	for _, tc := range cases {
@@ -95,7 +95,7 @@ func TestPromptReturnsAssociationForIdentifiedTurn(t *testing.T) {
 			native := &promptSDKSession{promptReceipt: agent.InputReceipt{
 				Submission: "turn-id",
 				Result:     tc.result,
-				Acceptance: agent.Acceptance{Sent: runtime.Yes()},
+				Acceptance: agent.Acceptance{Sent: runtime.Bool(true)},
 			}}
 			relay, err := agentrelay.Start(t.Context(), agentrelay.Config{
 				Session: native,

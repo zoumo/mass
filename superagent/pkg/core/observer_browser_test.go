@@ -227,7 +227,7 @@ func seedObserverSessionReuse(t *testing.T) map[string]string {
 	boundary := newRouteBoundaryWithRuntime(t, "claude")
 	boundary.driver.mu.Lock()
 	boundary.driver.allowResume = true
-	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}
+	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}}
 	boundary.driver.mu.Unlock()
 	f, operatorFile := eventFixture(t, boundary.url)
 	p := f.start()

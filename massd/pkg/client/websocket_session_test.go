@@ -61,7 +61,7 @@ func (d *typedSessionDriver) OpenSessionWithInput(_ context.Context, _ runtime.A
 	session := d.nativeSession(spec)
 	session.InitialInputReceipt = &runtime.InputReceipt{
 		Submission: "typed-create",
-		Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+		Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)},
 	}
 	return session, nil
 }
@@ -87,7 +87,7 @@ func (d *typedSessionDriver) ResumeSessionWithInput(_ context.Context, id string
 	session.SessionID = id
 	session.InitialInputReceipt = &runtime.InputReceipt{
 		Submission: "typed-resume",
-		Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+		Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)},
 	}
 	return session, nil
 }
@@ -174,7 +174,7 @@ func TestClientSessionLifecycleAndHistory(t *testing.T) {
 	}, &created))
 	require.NotNil(t, created.InitialInputReceipt)
 	require.Equal(t, "typed-create", created.InitialInputReceipt.Submission)
-	require.Equal(t, runtime.Yes(), created.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), created.InitialInputReceipt.Acceptance.Sent)
 	driver.mu.Lock()
 	require.Len(t, driver.openInputs, 1)
 	require.NotNil(t, driver.openInputs[0].Content[0].Text)

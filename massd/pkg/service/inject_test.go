@@ -72,7 +72,7 @@ func TestInjectServiceEvidence(t *testing.T) {
 	}{
 		{"absent", runtime.Acceptance{}, ""},
 		{"not_applied", runtime.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false)}, ""},
-		{"native_rejected", runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}, "native_rejected"},
+		{"native_rejected", runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(false)}, "native_rejected"},
 		{"unknown", runtime.Acceptance{}, "outcome_unknown"},
 		{"empty_non_unknown_error", runtime.Acceptance{}, "native_rejected"},
 	} {
@@ -119,7 +119,7 @@ func TestInjectServiceOptionalDriver(t *testing.T) {
 
 func TestInjectServiceAbandonedWaitRetainsGate(t *testing.T) {
 	d := newInjectWorkDriver()
-	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
+	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}
 	// Cleanup releases the original operation even if an assertion fails.
 	svc, ref := injectService(t, d)
 	t.Cleanup(func() {
@@ -172,7 +172,7 @@ func TestInjectServicePromptUnknownBlocksInject(t *testing.T) {
 func TestInjectServiceRearmsIdleWithoutNativeStateEvent(t *testing.T) {
 	d := newInjectWorkDriver()
 	close(d.release)
-	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
+	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}
 	clock := newManualClock()
 	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: 10 * time.Second})
 	waitForInjectIdleTimer(t, svc, d, ref, clock)
@@ -240,7 +240,7 @@ func (c *workDispatchContext) Err() error {
 
 func TestInjectServiceIdleAfterOverlappingPrompt(t *testing.T) {
 	d := newInjectWorkDriver()
-	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
+	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}
 	clock := newManualClock()
 	svc, ref := injectService(t, d, service.Options{Clock: clock, SessionIdleTimeout: time.Second})
 	settleInject := sync.OnceFunc(func() { close(d.release) })
@@ -342,7 +342,7 @@ func TestInjectServiceDefersIdleTimerUntilOverlappingAnswerSettles(t *testing.T)
 		{
 			name:          "prompt not applied",
 			prompt:        true,
-			promptReceipt: runtime.InputReceipt{Result: agent.InputNotApplied, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}},
+			promptReceipt: runtime.InputReceipt{Result: agent.InputNotApplied, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}},
 		},
 		{
 			name:      "prompt rejected",
@@ -366,7 +366,7 @@ func TestInjectServiceDefersIdleTimerUntilOverlappingAnswerSettles(t *testing.T)
 func testDeferredIdleRearm(t *testing.T, prompt bool, promptReceipt runtime.InputReceipt, promptErr error) {
 	t.Helper()
 	d := &idlePromptDriver{injectWorkDriver: newInjectWorkDriver(), promptReceipt: promptReceipt, promptErr: promptErr}
-	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}
+	d.receipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}
 	answerRelease := make(chan struct{})
 	d.onFinish = func() error {
 		<-answerRelease
@@ -420,7 +420,7 @@ func TestIdleUnsentPromptPreservesEarlierUnobservedWork(t *testing.T) {
 	d := &idlePromptDriver{
 		injectWorkDriver: newInjectWorkDriver(),
 		promptReceipt: runtime.InputReceipt{
-			Submission: "first", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+			Submission: "first", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)},
 		},
 	}
 	close(d.release)

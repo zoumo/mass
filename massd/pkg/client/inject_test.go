@@ -65,7 +65,7 @@ func TestClientInjectReplacesReceipt(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			assert.Equal(t, runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, typed)
+			assert.Equal(t, runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}, typed)
 			require.Equal(t, sparse, dynamic)
 		})
 	}
@@ -75,7 +75,7 @@ func TestClientInjectClearsReceiptOnTransportLoss(t *testing.T) {
 	inject, _ := injectReceiptClient(t, nil)
 	var receipt runtime.InjectReceipt
 	require.NoError(t, inject(&receipt))
-	require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+	require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 	var problem *runtime.OperationError
 	require.ErrorAs(t, inject(&receipt), &problem)
 	require.Equal(t, "outcome_unknown", problem.Code)

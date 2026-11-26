@@ -26,7 +26,7 @@ func (a *liveConfigAPI) SetSessionConfig(_ context.Context, _ resource.SessionRe
 	a.calls.Add(1)
 	return runtime.ConfigReceipt{
 		Change:     change,
-		Acceptance: agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)},
+		Acceptance: agent.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(false)},
 	}, nil
 }
 

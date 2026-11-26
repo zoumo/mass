@@ -62,7 +62,7 @@ func TestTicket06CLILoadRPCHistoryAndFutureEvents(t *testing.T) {
 		require.NoError(t, nextErr)
 		if p, ok := e.Payload().(events.AgentMessage); ok {
 			require.Nil(t, e.Replay, "current content must not gain old replay authority")
-			require.Equal(t, "same resumed connection", events.TextOf(p.Content[0]))
+			require.Equal(t, events.Text("same resumed connection"), p.Content[0])
 			break
 		}
 	}

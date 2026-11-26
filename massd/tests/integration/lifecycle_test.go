@@ -419,7 +419,7 @@ func (lifecycleSuite *LifecycleSuite) TestCloseResumeKeepsObserversAndIdentity()
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.AgentMessage); ok {
-			require.Equal(t, "new answer", events.TextOf(p.Content[0]))
+			require.Equal(t, events.Text("new answer"), p.Content[0])
 			message = true
 		}
 		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && message {

@@ -369,7 +369,7 @@ func TestEmbeddedMASSConfigAndStartupFailure(t *testing.T) {
 	alias := filepath.Join(f.dir, "core-alias")
 	require.NoError(t, os.Symlink(cfg.DataDir, alias))
 	cfg.Massd.Embedded.DataDir = alias
-	_, err = core.Start(cfg)
+	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.ErrorContains(t, err, "separate data directories")
 	cfg.Massd.Embedded.DataDir = original
 
@@ -378,10 +378,10 @@ func TestEmbeddedMASSConfigAndStartupFailure(t *testing.T) {
 	require.NoError(t, err)
 	defer occupied.Close()
 	cfg.Listen = occupied.Addr().String()
-	_, err = core.Start(cfg)
+	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.ErrorContains(t, err, "cannot bind listen address")
 	require.NoError(t, occupied.Close())
-	s, err := core.Start(cfg)
+	s, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() { done <- s.Serve() }()
@@ -416,7 +416,7 @@ func TestEmbeddedMASSRejectsFilesystemAliases(t *testing.T) {
 			write(t, f.config, strings.Replace(configText, "dataDir: "+f.data, "dataDir: ./"+test.corePath, 1))
 			cfg, err := core.LoadConfig(f.config)
 			require.NoError(t, err)
-			s, err := core.Start(cfg)
+			s, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 			if s != nil {
 				done := make(chan error, 1)
 				go func() { done <- s.Serve() }()

@@ -249,7 +249,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	receipt, err := svc.SendPrompt(c, id, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
 	require.Equal(t, "turn-1", receipt.Submission)
-	require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+	require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 	persisted := []events.SessionEvent{}
 	chunks := []string{}
 	running := false
@@ -306,7 +306,8 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 		}
 		if chunk, ok := event.Payload().(events.MessageChunk); ok {
 			require.Equal(t, "message-1", event.ItemID)
-			chunks = append(chunks, events.TextOf(chunk.Content[0]))
+			require.NotNil(t, chunk.Content[0].Text)
+			chunks = append(chunks, chunk.Content[0].Text.Text)
 		}
 		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil {
 			if *state.State == events.Running {
@@ -319,7 +320,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	}
 	require.Equal(t, []string{"preview ", "only"}, chunks)
 	require.Len(t, persisted, 4)
-	require.Equal(t, "complete answer", events.TextOf(persisted[3].Payload().(events.AgentMessage).Content[0]))
+	require.Equal(t, events.Text("complete answer"), persisted[3].Payload().(events.AgentMessage).Content[0])
 	page, err := svc.ListHistoryEvents(id, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 4)

@@ -143,7 +143,7 @@ func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
 	f, _ := eventFixture(t, endpoint)
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	store, err := core.Open(config)
+	store, err := core.OpenStore(config, core.TelemetryOptions{})
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 

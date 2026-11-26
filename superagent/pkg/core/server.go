@@ -44,15 +44,6 @@ type Server struct {
 // MassdMountPath is the Core HTTP prefix for an explicitly exposed MASS instance.
 const MassdMountPath = "/massd"
 
-func Start(c Config) (*Server, error) {
-	return StartWithTelemetry(c, TelemetryOptions{})
-}
-
-// StartWithTelemetry starts Core with optional process-owned OTel providers.
-func StartWithTelemetry(c Config, options TelemetryOptions) (*Server, error) {
-	return StartWithContext(context.Background(), c, options)
-}
-
 // StartWithContext starts Core and uses ctx for startup operations.
 func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (_ *Server, result error) {
 	var embedded *EmbeddedMassdConfig
@@ -84,7 +75,7 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 			return nil, err
 		}
 	}
-	store, err := openStore(c, options)
+	store, err := OpenStore(c, options)
 	if err != nil {
 		return nil, err
 	}

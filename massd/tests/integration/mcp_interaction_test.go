@@ -87,7 +87,7 @@ func TestClaudeMCPFormURLAndPermissionSettlement(t *testing.T) {
 			}
 			receipt, err := svc.AnswerInteraction(ctx(t), ref, string(payload.Interaction), want.answer)
 			require.NoError(t, err)
-			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 			pending[payload.Interaction] = want.outcome
 			asked++
 		case events.InteractionClosed:
@@ -134,7 +134,7 @@ func TestCodexMCPURLClosesWhenNativeRequestResolves(t *testing.T) {
 			require.Equal(t, events.InteractionURL, payload.Request.Kind)
 			receipt, err := svc.AnswerInteraction(ctx(t), ref, string(payload.Interaction), map[string]any{"action": "accept"})
 			require.NoError(t, err)
-			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 			urlRef = payload.Interaction
 		case events.InteractionClosed:
 			require.Equal(t, urlRef, payload.Interaction)

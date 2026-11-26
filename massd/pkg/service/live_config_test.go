@@ -171,12 +171,12 @@ func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 	}{
 		{"", agent.Acceptance{}},
 		{"", agent.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false), NativeRecorded: runtime.Bool(false)}},
-		{"", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes(), NativeRecorded: runtime.Yes()}},
-		{"native_rejected", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}},
+		{"", agent.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true), NativeRecorded: runtime.Bool(true)}},
+		{"native_rejected", agent.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(false)}},
 		{"unsupported", agent.Acceptance{Sent: runtime.Bool(false)}},
 		{"conflict", agent.Acceptance{Sent: runtime.Bool(false)}},
 		{"deadline_exceeded", agent.Acceptance{Sent: runtime.Bool(false)}},
-		{"outcome_unknown", agent.Acceptance{Sent: runtime.Yes()}},
+		{"outcome_unknown", agent.Acceptance{Sent: runtime.Bool(true)}},
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%d_%s", i, tc.code), func(t *testing.T) {

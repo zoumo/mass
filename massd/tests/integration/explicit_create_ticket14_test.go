@@ -56,7 +56,7 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.InitialInputReceipt)
 	require.NotEmpty(t, got.InitialInputReceipt.Submission)
-	require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), got.InitialInputReceipt.Acceptance.Sent)
 	ref := resource.SessionRef{SessionID: got.Status.SessionID}
 	require.Eventually(t, func() bool {
 		page, e := svc.ListHistoryEvents(ref, store.HistoryQuery{})
@@ -98,7 +98,7 @@ func TestTicket14ExplicitCreateCLI(t *testing.T) {
 	_, err = uuid.Parse(result.Status.SessionID)
 	require.NoError(t, err)
 	require.NotNil(t, result.InitialInputReceipt)
-	require.Equal(t, runtime.Yes(), result.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), result.InitialInputReceipt.Acceptance.Sent)
 	require.Nil(t, result.InitialInputReceipt.Acceptance.NativeAccepted)
 }
 
@@ -153,11 +153,11 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &got))
 			require.NotNil(t, got.InitialInputReceipt)
 			receipt := got.InitialInputReceipt
-			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 			require.Nil(t, receipt.Acceptance.NativeRecorded)
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
-				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+				require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 			}
@@ -232,7 +232,7 @@ func TestTicket14ClaimedSessionExposesPreInitPermission(t *testing.T) {
 	require.NotEmpty(t, result.Status.SessionID)
 	require.NotNil(t, result.InitialInputReceipt)
 	require.NotEmpty(t, result.InitialInputReceipt.Submission)
-	require.Equal(t, runtime.Yes(), result.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), result.InitialInputReceipt.Acceptance.Sent)
 
 	var permission events.InteractionRequested
 	select {
@@ -250,7 +250,7 @@ func TestTicket14ClaimedSessionExposesPreInitPermission(t *testing.T) {
 		"optionId": "allow-once",
 	})
 	require.NoError(t, err)
-	require.Equal(t, runtime.Yes(), answered.Evidence.Sent)
+	require.Equal(t, runtime.Bool(true), answered.Evidence.Sent)
 	require.Nil(t, answered.Evidence.NativeAccepted)
 	require.Eventually(t, func() bool {
 		current, getErr := svc.GetSession(resource.SessionRef{SessionID: result.Status.SessionID})
@@ -285,7 +285,7 @@ func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	require.Len(t, first.Events, 1)
 	require.NotEmpty(t, got.InitialInputReceipt.Submission)
 	require.Equal(t, "applied_best_effort", string(got.InitialInputReceipt.Result))
-	require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), got.InitialInputReceipt.Acceptance.Sent)
 	claudeMeta, ok := first.Events[0].Meta["claude"].(map[string]any)
 	require.True(t, ok)
 	require.NotContains(t, claudeMeta, "submission", "MASS must preserve SDK metadata without injecting submission")

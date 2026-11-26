@@ -293,7 +293,7 @@ func superagentBinary(t *testing.T) string {
 func runCore(t *testing.T) (string, *sql.DB) {
 	t.Helper()
 	dir := t.TempDir()
-	server, err := core.Start(core.Config{DataDir: dir, Listen: "127.0.0.1:0"})
+	server, err := core.StartWithContext(t.Context(), core.Config{DataDir: dir, Listen: "127.0.0.1:0"}, core.TelemetryOptions{})
 	require.NoError(t, err)
 	served := make(chan error, 1)
 	go func() { served <- server.Serve() }()

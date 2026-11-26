@@ -129,7 +129,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, router.SessionID, event.SessionID)
 		if message, ok := event.Payload().(events.AgentMessage); ok && len(message.Content) > 0 {
-			require.Equal(t, final, events.TextOf(message.Content[0]))
+			require.Equal(t, events.Text(final), message.Content[0])
 			break
 		}
 	}
@@ -190,11 +190,11 @@ func TestEmbeddedMASSExposureConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, path, cfg.Massd.Embedded.Expose.TokenFile)
 	cfg.Listen = "0.0.0.0:0"
-	_, err = core.Start(cfg)
+	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.ErrorContains(t, err, "loopback Core listener")
 	cfg.Listen = "127.0.0.1:0"
 	cfg.Massd.Embedded.Expose.TokenFile = ""
-	_, err = core.Start(cfg)
+	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.ErrorContains(t, err, "expose.tokenFile is required")
 }
 

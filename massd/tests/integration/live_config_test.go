@@ -381,7 +381,7 @@ func TestLiveSessionConfigurationNativePublic(t *testing.T) {
 						result := liveConfigResult(t, done)
 						require.NoError(t, result.err)
 						require.Equal(t, change, result.receipt.Change)
-						require.Equal(t, agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}, result.receipt.Acceptance)
+						require.Equal(t, agent.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}, result.receipt.Acceptance)
 					}
 				}
 			}

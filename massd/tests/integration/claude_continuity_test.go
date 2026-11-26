@@ -50,7 +50,7 @@ func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	for _, text := range []string{"first", "second"} {
 		var receipt runtime.InputReceipt
 		s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(text)}}}, &receipt)
-		s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+		s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 		s.Nil(receipt.Acceptance.NativeAccepted)
 		s.Nil(receipt.Acceptance.NativeRecorded)
 		receipts = append(receipts, receipt)
@@ -69,7 +69,7 @@ func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	for i, e := range page.Events {
 		s.Equal(ref.SessionID, e.SessionID)
 		s.NotContains(e.Meta["claude"].(map[string]any), "submission")
-		s.Equal([]string{"first", "second"}[i], events.TextOf(e.Payload().(events.AgentMessage).Content[0]))
+		s.Equal(events.Text([]string{"first", "second"}[i]), e.Payload().(events.AgentMessage).Content[0])
 	}
 	data, err := os.ReadFile(evidence)
 	s.Require().NoError(err)

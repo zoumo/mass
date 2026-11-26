@@ -259,7 +259,7 @@ approvalLoop:
 				var receipt runtime.InteractionReceipt
 				childAnswer := map[string]any{"outcome": "selected", "optionId": p.Request.Options[0].OptionID}
 				require.NoError(t, client.Answer(ctx(t), ref, string(p.Interaction), childAnswer, &receipt))
-				require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+				require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 				childAnswered = true
 				continue
 			}
@@ -301,7 +301,7 @@ approvalLoop:
 			_, err = driver.AnswerInteraction(canceled, ref.SessionID, string(p.Interaction), valid)
 			require.Error(t, err, "NotSent must retain the still-live native capability")
 			require.NoError(t, client.Answer(ctx(t), ref, string(p.Interaction), valid, &receipt))
-			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 			require.Nil(t, receipt.Evidence.NativeAccepted)
 			require.Error(t, client.Answer(ctx(t), ref, string(p.Interaction), valid, nil), "consumed authority cannot answer twice")
 			answered = true

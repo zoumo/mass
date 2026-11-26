@@ -22,7 +22,7 @@ func startObserverTelemetryCore(t *testing.T, receiver string, options core.Tele
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
 	cfg.WebOTLPEndpoint = receiver
-	server, err := core.StartWithTelemetry(cfg, options)
+	server, err := core.StartWithContext(t.Context(), cfg, options)
 	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve() }()
@@ -145,7 +145,7 @@ func TestObserverTelemetryRequiresLoopbackOrigin(t *testing.T) {
 		"http://user:secret@127.0.0.1:4320", "http://127.0.0.1:4320/prefix", "http://127.0.0.1:4320?secret",
 	} {
 		cfg.WebOTLPEndpoint = endpoint
-		server, err := core.Start(cfg)
+		server, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 		require.Nil(t, server)
 		require.EqualError(t, err, "invalid_argument: Web OTLP endpoint must be an HTTP loopback origin with a port")
 	}

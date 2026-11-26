@@ -105,7 +105,7 @@ func TestClaudeAssignedRootForwardingGapSurvivesRPCNotifications(t *testing.T) {
 	require.Empty(t, page.Events)
 	var receipt runtime.InputReceipt
 	require.NoError(t, client.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, &receipt))
-	require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 	answered := false
 	for {
 		event, err = observer.Next(ctx(t))

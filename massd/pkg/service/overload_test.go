@@ -174,7 +174,7 @@ func (d *overloadDriver) SendPrompt(ctx context.Context, id string, _ runtime.In
 			return runtime.InputReceipt{}, err
 		}
 	}
-	return runtime.InputReceipt{Submission: "accepted", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "accepted", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}, nil
 }
 
 type overloadFactory struct{ d *overloadDriver }

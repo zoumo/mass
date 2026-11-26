@@ -106,7 +106,7 @@ func (*ticket03Driver) CancelHistoryLoad(context.Context, string, string) error 
 
 func (d *ticket03Driver) SendPrompt(context.Context, string, runtime.Input) (runtime.InputReceipt, error) {
 	d.prompts.Add(1)
-	return runtime.InputReceipt{Submission: "ticket03", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "ticket03", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}, nil
 }
 
 func (d *ticket03Driver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
@@ -116,7 +116,7 @@ func (d *ticket03Driver) Cancel(context.Context, string) (runtime.CancelReceipt,
 
 func (d *ticket03Driver) AnswerInteraction(context.Context, string, string, any) (runtime.Acceptance, error) {
 	d.answers.Add(1)
-	return runtime.Acceptance{Sent: runtime.Yes()}, nil
+	return runtime.Acceptance{Sent: runtime.Bool(true)}, nil
 }
 
 func (d *ticket03Driver) CloseSession(context.Context, string) error {

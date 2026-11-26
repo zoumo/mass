@@ -72,7 +72,7 @@ func (d *sessionRPCDriver) OpenSessionWithInput(_ context.Context, _ runtime.Add
 	session := d.nativeSession(spec)
 	session.InitialInputReceipt = &runtime.InputReceipt{
 		Submission: "create-submission",
-		Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+		Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)},
 	}
 	return session, nil
 }
@@ -98,7 +98,7 @@ func (d *sessionRPCDriver) ResumeSessionWithInput(_ context.Context, id string, 
 	session.SessionID = id
 	session.InitialInputReceipt = &runtime.InputReceipt{
 		Submission: "resume-submission",
-		Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+		Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)},
 	}
 	return session, nil
 }
@@ -225,7 +225,7 @@ func TestRPCSessionLifecycleHistoryAndExplicitReferences(t *testing.T) {
 	require.NotEmpty(t, created.Status.SessionID)
 	require.NotNil(t, created.InitialInputReceipt)
 	require.Equal(t, "create-submission", created.InitialInputReceipt.Submission)
-	require.Equal(t, runtime.Yes(), created.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), created.InitialInputReceipt.Acceptance.Sent)
 	fixture.driver.mu.Lock()
 	require.Len(t, fixture.driver.openInputs, 1)
 	require.NotNil(t, fixture.driver.openInputs[0].Content[0].Text)

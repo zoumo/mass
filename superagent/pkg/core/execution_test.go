@@ -16,7 +16,7 @@ import (
 
 func TestEventCandidates(t *testing.T) {
 	ctx := t.Context()
-	store, err := Open(Config{DataDir: t.TempDir()})
+	store, err := OpenStore(Config{DataDir: t.TempDir()}, TelemetryOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.Empty(t, store.eventCandidates(ctx))
@@ -133,7 +133,7 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 	config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", Sessions: &SessionsConfig{
 		Roles: ExecutionRoles{Router: previous.ExecutionProfile}, RouterWorkspace: "/project", Namespace: "routing",
 	}}
-	store, err := Open(config)
+	store, err := OpenStore(config, TelemetryOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	tx, err := store.db.BeginTx(t.Context(), nil)
@@ -198,7 +198,7 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 		Roles:           ExecutionRoles{Router: ExecutionProfile{RuntimeRef: "agent", Model: "model"}},
 		RouterWorkspace: "/project", Namespace: "routing",
 	}}
-	store, err := Open(config)
+	store, err := OpenStore(config, TelemetryOptions{})
 	require.NoError(t, err)
 	tx, err := store.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
@@ -226,7 +226,7 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.NoError(t, store.Close())
 
-	reopened, err := Open(config)
+	reopened, err := OpenStore(config, TelemetryOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	tx, err = reopened.db.BeginTx(t.Context(), nil)
@@ -269,7 +269,7 @@ func TestClaudeRouterReplacementRespectsInputAndOwnership(t *testing.T) {
 				Roles:           ExecutionRoles{Router: ExecutionProfile{RuntimeRef: "agent", Model: "model"}},
 				RouterWorkspace: "/project", Namespace: "routing",
 			}}
-			store, err := Open(config)
+			store, err := OpenStore(config, TelemetryOptions{})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, store.Close()) })
 			tx, err := store.db.BeginTx(ctx, nil)

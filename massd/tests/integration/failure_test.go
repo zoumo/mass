@@ -113,7 +113,7 @@ func (s *failureSuite) cancel(kind string) {
 	s.Require().NoError(err)
 	defer sub.Close()
 	receipt := s.input(ref)
-	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+	s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 	s.until(sub, events.Running)
 	ack, err := s.svc.Cancel(ctx(s.T()), ref)
 	s.Require().NoError(err)
@@ -154,7 +154,7 @@ func (s *failureSuite) disconnect(kind string) {
 	s.Require().NoError(err)
 	defer sub.Close()
 	receipt := s.input(ref)
-	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+	s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 	s.until(sub, events.Running)
 	observation := s.sessionObservation(ref)
 	select {
@@ -172,9 +172,9 @@ func (s *failureSuite) disconnect(kind string) {
 		s.Equal("session_observation_eof", operation.Reason)
 	}
 	// The returned ACK/write evidence is independent of subsequent observation loss.
-	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+	s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 	if kind == "codex" {
-		s.Equal(runtime.Yes(), receipt.Acceptance.NativeAccepted)
+		s.Equal(runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 	}
 	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must not resend")}})
 	s.Require().Error(err)

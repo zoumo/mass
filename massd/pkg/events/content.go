@@ -20,20 +20,6 @@ func Text(text string) ContentBlock {
 	return agent.ContentBlock{Text: &agent.ContentBlockText{Text: text}}
 }
 
-// TextValue returns the text for the SDK text block branch.
-func TextValue(block ContentBlock) (string, bool) {
-	if block.Text != nil {
-		return block.Text.Text, true
-	}
-	return "", false
-}
-
-// TextOf returns text for a text block and an empty string for other kinds.
-func TextOf(block ContentBlock) string {
-	text, _ := TextValue(block)
-	return text
-}
-
 // ValidateContentBlock delegates annotations and media validation to the SDK
 // content union.
 func ValidateContentBlock(block ContentBlock) error {

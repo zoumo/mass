@@ -45,11 +45,8 @@ type Store struct {
 	hasTraceAssociations bool
 }
 
-func Open(c Config) (*Store, error) {
-	return openStore(c, TelemetryOptions{})
-}
-
-func openStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
+// OpenStore opens the configured Core database and registers its telemetry.
+func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	ctx, cancel := context.WithTimeout(context.Background(), storeStartupTimeout)
 	defer cancel()
 	// Refuse foreign/old data before creating even a lock file in that directory.

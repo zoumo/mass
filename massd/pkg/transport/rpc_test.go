@@ -528,7 +528,7 @@ type promptTraceAPI struct {
 }
 
 func (promptTraceAPI) SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error) {
-	return runtime.InputReceipt{Submission: "accepted", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "accepted", Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}, nil
 }
 
 func TestRPCTraceContext(t *testing.T) {

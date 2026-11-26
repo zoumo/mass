@@ -86,10 +86,10 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			}
 			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 			require.NoError(t, err)
-			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
-				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+				require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 				require.Nil(t, receipt.Acceptance.NativeRecorded)
@@ -682,7 +682,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				defer sub.Close()
 				receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 				require.NoError(t, err)
-				require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+				require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 				requests, chunks := 0, 0
 				seen := map[string]int{}
 				var interaction string
@@ -710,7 +710,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 							}
 							accepted, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.NoError(t, err)
-							require.Equal(t, runtime.Yes(), accepted.Evidence.Sent)
+							require.Equal(t, runtime.Bool(true), accepted.Evidence.Sent)
 							require.Nil(t, accepted.Evidence.NativeAccepted)
 							_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.Error(t, err, "no double answer")
@@ -724,7 +724,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 								}
 								acceptance, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"})
 								require.NoError(t, err)
-								require.Equal(t, runtime.Yes(), acceptance.Evidence.Sent)
+								require.Equal(t, runtime.Bool(true), acceptance.Evidence.Sent)
 								require.Nil(t, acceptance.Evidence.NativeAccepted)
 							}
 						}
@@ -1095,7 +1095,9 @@ observed:
 	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "invalid coordinate", "invalid null coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
 		for _, payload := range persisted {
 			for _, block := range payload.Content {
-				require.NotEqual(t, forbidden, events.TextOf(block))
+				if block.Text != nil {
+					require.NotEqual(t, forbidden, block.Text.Text)
+				}
 			}
 		}
 	}
@@ -1152,7 +1154,9 @@ func TestClaudeLiveBlockStateCapacityFailsClosed(t *testing.T) {
 		case events.MessageChunk:
 			if event.ItemID == "msg-capacity:0" {
 				for _, block := range payload.Content {
-					reopened = reopened || events.TextOf(block) == "reopened"
+					if block.Text != nil && block.Text.Text == "reopened" {
+						reopened = true
+					}
 				}
 			}
 		}
@@ -1226,14 +1230,18 @@ func TestClaudeLiveAssistantFramesSuppressConflictingCompletedContent(t *testing
 			}
 			fullCount++
 			for _, block := range payload.Content {
-				duplicateFull = duplicateFull || events.TextOf(block) == "duplicate-full"
+				if block.Text != nil && block.Text.Text == "duplicate-full" {
+					duplicateFull = true
+				}
 			}
 		case events.MessageChunk:
 			if event.ItemID != "msg-frame:1" {
 				return
 			}
 			for _, block := range payload.Content {
-				duplicateSurvived = duplicateSurvived || events.TextOf(block) == "after-duplicate"
+				if block.Text != nil && block.Text.Text == "after-duplicate" {
+					duplicateSurvived = true
+				}
 			}
 		}
 	}
