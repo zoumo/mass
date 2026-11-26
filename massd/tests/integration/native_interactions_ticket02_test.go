@@ -38,21 +38,16 @@ func TestNativeInteractionAnswerCorrection(t *testing.T) {
 					require.Error(t, err)
 					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"not-a-native-question": map[string]any{"answers": []any{"json"}}}}})
 					require.Error(t, err, "unknown question identity must reject before dispatch")
-					var answers map[string]any
-					if kind == "claude" {
-						answers = map[string]any{"Which format?": "json"}
-					} else {
-						answers = map[string]any{"format": map[string]any{"answers": []any{"json"}}}
-					}
-					canceled, cancel := context.WithCancel(context.Background())
+					answer := questionAnswer(kind)
+					canceled, cancel := context.WithCancel(t.Context())
 					cancel()
-					_, err = svc.AnswerInteraction(canceled, ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					_, err = svc.AnswerInteraction(canceled, ref, string(p.Interaction), answer)
 					require.ErrorIs(t, err, context.Canceled)
-					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.NoError(t, err, "validation must not consume live native authority")
 					require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 					require.Nil(t, receipt.Evidence.NativeAccepted)
-					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.Error(t, err)
 					answered = true
 				}

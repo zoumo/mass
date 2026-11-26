@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -193,6 +194,40 @@ func (s *failureSuite) disconnect(kind string) {
 }
 func (s *failureSuite) TestCodexDisconnect()  { s.disconnect("codex") }
 func (s *failureSuite) TestClaudeDisconnect() { s.disconnect("claude") }
+func TestDriverSessionObservationAfterDisconnect(t *testing.T) {
+	for _, tc := range []struct{ kind, code, reason string }{
+		{"claude", "unavailable", "session_terminated"},
+		{"codex", "outcome_unknown", "session_observation_eof"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			driver, _, pidFile := lifecycleDriver(t, tc.kind, "acknowledged")
+			work, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
+			opened, err := driver.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "active"}, runtime.SessionSpec{Cwd: work})
+			require.NoError(t, err)
+			require.NotNil(t, opened.Observation)
+			_, err = driver.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+			require.NoError(t, err)
+			pid, err := os.ReadFile(pidFile)
+			require.NoError(t, err)
+			id, err := strconv.Atoi(string(pid))
+			require.NoError(t, err)
+			peer, err := os.FindProcess(id)
+			require.NoError(t, err)
+			require.NoError(t, peer.Kill())
+			select {
+			case <-opened.Observation.Done():
+			case <-ctx(t).Done():
+				t.Fatal("native disconnect did not end session observation")
+			}
+			var operation *runtime.OperationError
+			require.ErrorAs(t, opened.Observation.Err(), &operation)
+			require.Equal(t, tc.code, operation.Code)
+			require.Equal(t, tc.reason, operation.Reason)
+		})
+	}
+}
+
 func (s *failureSuite) TestUnknownInputIsNotResent() {
 	s.start("codex", "unknown-input", s.st.Events)
 	s.unknown = true
