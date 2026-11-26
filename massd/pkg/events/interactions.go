@@ -35,18 +35,6 @@ const (
 	InteractionFailed    = agent.InteractionFailed
 )
 
-func PermissionRequest(tool, title string) InteractionRequest {
-	return agent.InteractionRequest{
-		Kind:       agent.InteractionPermission,
-		ToolCallID: tool,
-		Title:      title,
-		Options: []agent.PermissionOption{
-			{OptionID: "allow-once", Name: "Allow once", Kind: PermissionAllow, Scope: PermissionScopeOnce},
-			{OptionID: "reject-once", Name: "Reject once", Kind: PermissionReject, Scope: PermissionScopeOnce},
-		},
-	}
-}
-
 // Historical permission kinds remain available to callers reading older events.
 //
 //nolint:staticcheck // Keep aliases for the original SDK wire values.
