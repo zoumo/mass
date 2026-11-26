@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 )
 
 type syntheticClaudeControlFrame struct {

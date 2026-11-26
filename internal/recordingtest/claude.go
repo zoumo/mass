@@ -143,7 +143,7 @@ func (h *harness) publishClaudeRecording(scratch, session, export string, c flow
 		SourceSession:     filepath.Join(filepath.Base(scratch), "session"),
 		ExportPath:        filepath.ToSlash(filepath.Join("tests", "testdata", "simulation", "recordings", "claude", c.name, "material")),
 		Hashes:            map[string]string{},
-		Versions:          map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "claude": identity.version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")},
+		Versions:          map[string]string{"sdk": RuntimeSDKVersion, "testify": ReplayVersion, "claude": identity.version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")},
 		ToolHashes:        map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "claude": hashFile(t, identity.path)},
 		ClaudePath:        filepath.Base(identity.path),
 		Prompt:            c.prompt,
@@ -201,12 +201,13 @@ func RunClaudeBasicReplay(t *testing.T) {
 	requireSubsequence(t, index.Facts.StreamKinds, eventKinds(index.Facts.Events))
 	h.replay(material, index.Facts, flowCase{
 		name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project,
-		initialInput: true, legacyClaudeInput: true, legacyPermissions: true, ignoreStreamKinds: true,
+		sessionConfig: &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview},
+		initialInput:  true, legacyClaudeInput: true, legacyPermissions: true, ignoreStreamKinds: true,
 	})
 }
 
 // RunClaudeCapturedUUIDReplay uses a temporary UUID-bearing copy of the
-// historical exchange to exercise the fresh-capture route through MASS and Testify.
+// historical exchange to exercise the fresh-capture route through MASS and Replay.
 func RunClaudeCapturedUUIDReplay(t *testing.T) {
 	h := newHarness(t)
 	source, index := loadCase(t, h.root, "claude", "basic", claudeProject, claudePrompt)
@@ -216,7 +217,8 @@ func RunClaudeCapturedUUIDReplay(t *testing.T) {
 
 	h.replay(material, index.Facts, flowCase{
 		name: "basic", provider: "claude", prompt: index.Prompt, project: index.Project,
-		initialInput: true, legacyPermissions: true, ignoreStreamKinds: true,
+		sessionConfig: &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview},
+		initialInput:  true, legacyPermissions: true, ignoreStreamKinds: true,
 	})
 }
 
@@ -309,7 +311,8 @@ func RunClaudePermissionReplay(t *testing.T) {
 	requireSubsequence(t, index.Facts.StreamKinds, eventKinds(index.Facts.Events))
 	session := h.replay(material, index.Facts, flowCase{
 		name: "permission", provider: "claude", prompt: index.Prompt, project: index.Project,
-		initialInput: true, legacyClaudeInput: true, legacyPermissions: true, ignoreStreamKinds: true, expectPermission: true,
+		sessionConfig: &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview},
+		initialInput:  true, legacyClaudeInput: true, legacyPermissions: true, ignoreStreamKinds: true, expectPermission: true,
 		expectedPermission: "Bash", expectedToolOutput: "mass-claude-approved",
 		permissionOptions: []events.PermissionOption{
 			{OptionID: "allow-once", Name: "Allow once", Kind: events.PermissionAllow, Scope: events.PermissionScopeOnce},

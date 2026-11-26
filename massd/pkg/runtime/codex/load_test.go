@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	sdk "github.com/zoumo/agent-sdk-go/codex"
+	sdk "github.com/zoumo/agent-sdk-go/client/codex"
 )
 
 func TestResumeOutcomeUnknownUsesSDKDispatchEvidence(t *testing.T) {

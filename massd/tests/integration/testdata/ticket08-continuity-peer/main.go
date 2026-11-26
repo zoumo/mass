@@ -104,7 +104,7 @@ func main() {
 				continue
 			case "thread/start":
 				cwd = v["params"].(map[string]any)["cwd"].(string)
-				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
+				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "dangerFullAccess"}})
 				notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 				continue
 			case "thread/read":

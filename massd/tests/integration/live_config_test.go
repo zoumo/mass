@@ -18,7 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
+	nativeclaude "github.com/zoumo/agent-sdk-go/client/claude"
 
 	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/internal/testpeer"
@@ -201,7 +201,7 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			if p.kind == "codex" {
 				respond(map[string]any{"userAgent": "synthetic", "codexHome": "/synthetic", "platformFamily": "unix", "platformOs": "linux"})
 			} else {
-				respond(map[string]any{"current_permission_mode": startup.ClaudePermissionMode})
+				respond(map[string]any{"current_permission_mode": startup.ClaudeFullAccessMode})
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": p.id, "cwd": p.cwd, "claude_code_version": p.version})
 				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": p.id, "state": "idle"})
 			}
@@ -213,7 +213,7 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			respond(map[string]any{"status": "ok", "session_id": p.id, "cwd": cwd})
 		case "initialized":
 		case "thread/start", "thread/resume":
-			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": p.cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
+			respond(map[string]any{"thread": thread(), "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": p.cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "dangerFullAccess"}})
 			send(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": p.id, "status": map[string]any{"type": "idle"}}})
 		case "thread/read":
 			respond(map[string]any{"thread": thread()})
@@ -221,7 +221,7 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			respond(map[string]any{"status": "unsubscribed"})
 		case "thread/inject_items", "turn/start", "turn/steer", "thread/settings/update", "set_model", "get_settings", "apply_flag_settings":
 			if method == "get_settings" && startupSettings {
-				respond(startup.ClaudeSettings())
+				respond(startup.ClaudeSettings(startup.ClaudeFullAccessSandbox))
 				startupSettings = false
 				continue
 			}

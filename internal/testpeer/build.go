@@ -11,10 +11,7 @@ import (
 )
 
 // SDKVersion pins the SDK revision verified by the protocol probe.
-const SDKVersion = "v0.1.1-0.20261124100158-5641ab60305c"
-
-// TestifyVersion pins the consumer recording/replay tool, not a runtime dependency.
-const TestifyVersion = "v0.2.2"
+const SDKVersion = "v0.1.1-0.20261125192924-ce14f6d74053"
 
 // Build binds a provider to MASS's owned strict scenario peer. The scenario is
 // an explicit test-launch environment input, never a default or a real-agent

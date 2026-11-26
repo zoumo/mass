@@ -3,6 +3,7 @@ package recordingtest
 import (
 	"context"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
-	agenttestify "github.com/zoumo/agent-sdk-testify"
+	"github.com/zoumo/agent-sdk-go/replay"
 
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/client"
@@ -38,7 +39,7 @@ const (
 	permissionPrompt  = "Use the shell tool to execute this exact command in the current project: `printf mass-approved > permission-proof.txt`. The command writes only that project-local file. Do not use apply_patch, do not read other files, and do not just describe the command. Then report the command exit status."
 )
 
-type route = agenttestify.Route
+type route = replay.Route
 
 type factEvent struct {
 	Kind       string `json:"kind"`
@@ -134,11 +135,34 @@ func newHarness(t *testing.T) *harness {
 	require.True(t, ok)
 	root := filepath.Join(filepath.Dir(source), "..", "..", "massd")
 	dir := t.TempDir()
-	h := &harness{t: t, ctx: ctx, root: root, tool: filepath.Join(dir, "testify"), daemon: filepath.Join(dir, "massd")}
+	h := &harness{t: t, ctx: ctx, root: root, tool: filepath.Join(dir, "agent-replay"), daemon: filepath.Join(dir, "massd")}
 	t.Cleanup(cancel)
-	h.command("go", "build", "-o", h.tool, "github.com/zoumo/agent-sdk-testify/cmd/agent-sdk-testify")
-	h.command("go", "build", "-o", h.daemon, "../cmd/massd")
+	h.command("go", "build", "-mod=readonly", "-o", h.tool, replayCommandPackage)
+	requirePinnedSDK(t, h.tool)
+	h.command("go", "build", "-mod=readonly", "-o", h.daemon, "../cmd/massd")
+	requirePinnedSDK(t, h.daemon)
 	return h
+}
+
+const replayCommandPackage = "github.com/zoumo/agent-sdk-go/cmd/agent-replay"
+
+func requirePinnedSDK(t *testing.T, executable string) {
+	t.Helper()
+	info, err := buildinfo.ReadFile(executable)
+	require.NoError(t, err)
+	const sdkModule = "github.com/zoumo/agent-sdk-go"
+	module := &info.Main
+	if module.Path != sdkModule {
+		for _, dependency := range info.Deps {
+			if dependency.Path == sdkModule {
+				module = dependency
+				break
+			}
+		}
+	}
+	require.Equal(t, sdkModule, module.Path, "%s build info must include the Agent SDK", filepath.Base(executable))
+	require.Nil(t, module.Replace, "%s requires an unreplaced SDK module", filepath.Base(executable))
+	require.Equal(t, RuntimeSDKVersion, module.Version, "%s SDK version", filepath.Base(executable))
 }
 
 func (h *harness) command(name string, args ...string) string {
@@ -249,8 +273,10 @@ func (h *harness) prepare(session, sourceFlag, source, mode, expectedProject str
 	h.t.Helper()
 	h.phase = "testify-prepare"
 	h.command(h.tool, "prepare", sourceFlag, source, "--fixture-dir", session)
-	fixture, err := agenttestify.Open(session)
+	fixture, err := replay.Open(session)
 	require.NoError(h.t, err)
+	require.Equal(h.t, replay.ToolSourceExecutable, fixture.Tool.Source)
+	require.Equal(h.t, ReplayVersion, fixture.Tool.Version)
 	require.NotEmpty(h.t, fixture.FixtureID)
 	selected, ok := fixture.Routes[mode]
 	require.True(h.t, ok)
@@ -742,8 +768,14 @@ func commandText(raw any) string {
 func (h *harness) replay(material string, expected facts, c flowCase) string {
 	var plan capturePlan
 	readJSON(h.t, filepath.Join(material, "plan.json"), &plan)
-	if c.provider != "claude" && plan.Model != "" && c.sessionConfig == nil {
-		c.sessionConfig = &runtime.InitialSessionConfig{Model: plan.Model}
+	if c.provider != "claude" && plan.Model != "" {
+		if c.sessionConfig == nil {
+			c.sessionConfig = &runtime.InitialSessionConfig{Model: plan.Model}
+		} else if c.sessionConfig.Model == "" {
+			config := *c.sessionConfig
+			config.Model = plan.Model
+			c.sessionConfig = &config
+		}
 	}
 	c.budget = 60 * time.Second
 	session := filepath.Join(h.t.TempDir(), "session")
@@ -766,7 +798,7 @@ func (h *harness) replay(material string, expected facts, c flowCase) string {
 		executable = filepath.Join(session, "claude-mock-launcher")
 		capture, err := readClaudeReplayCapture(material, plan.Project, c.legacyClaudeInput)
 		require.NoError(h.t, err)
-		// Testify retargets the route symlink when mock starts. Pin its prepared
+		// Replay retargets the route symlink when mock starts. Pin its prepared
 		// workspace so session claim and native init validate the same directory.
 		c.project, err = filepath.EvalSymlinks(prepared.Workspace)
 		require.NoError(h.t, err)
@@ -825,7 +857,7 @@ func verifyExecution(session, material string, legacyPermissions bool) error {
 	if err != nil {
 		return err
 	}
-	fixture, err := agenttestify.Open(canonicalSession)
+	fixture, err := replay.Open(canonicalSession)
 	if err != nil {
 		return err
 	}
@@ -842,9 +874,9 @@ func verifyExecution(session, material string, legacyPermissions bool) error {
 	if err := readJSONFile(filepath.Join(canonicalSession, "executions", "index.json"), &index); err != nil {
 		return err
 	}
-	// agent-sdk-testify validates its own index on Open; this keeps MASS's
+	// Replay validates its own index on Open; this keeps MASS's
 	// reading of the current execution index explicit.
-	if index.SchemaVersion != testifyExecutionIndexSchemaVersion || index.FixtureID == "" || index.FixtureID != fixture.FixtureID {
+	if index.SchemaVersion != replayExecutionIndexSchemaVersion || index.FixtureID == "" || index.FixtureID != fixture.FixtureID {
 		return fmt.Errorf("execution index fixture identity is incomplete: schemaVersion=%d fixtureId=%q", index.SchemaVersion, index.FixtureID)
 	}
 	if len(index.Executions) != 1 {
@@ -861,7 +893,7 @@ func verifyExecution(session, material string, legacyPermissions bool) error {
 	if report.FixtureID != fixture.FixtureID || report.ExecutionID != execution.ID {
 		return errors.New("execution report fixture identity is incomplete")
 	}
-	if report.Status != agenttestify.ExecutionStatusPassed || !report.Complete {
+	if report.Status != replay.ExecutionStatusPassed || !report.Complete {
 		return fmt.Errorf("execution report status/complete is %q/%t", report.Status, report.Complete)
 	}
 	descriptorHash, err := fileSHA256(report.ExecutionPath)
@@ -875,10 +907,10 @@ func verifyExecution(session, material string, legacyPermissions bool) error {
 		return fmt.Errorf("expected one execution connection, got %d", len(report.Connections))
 	}
 	connection := report.Connections[0]
-	if connection.ID != "main" || connection.Status != agenttestify.ConnectionStatusPassed {
+	if connection.ID != "main" || connection.Status != replay.ConnectionStatusPassed {
 		return fmt.Errorf("execution connection id/status is %q/%q", connection.ID, connection.Status)
 	}
-	if connection.Transport != agenttestify.MockTransportProcess {
+	if connection.Transport != replay.MockTransportProcess {
 		return fmt.Errorf("execution connection transport = %q, want process", connection.Transport)
 	}
 	if !connection.FullConsumption {
@@ -994,13 +1026,13 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	canonicalSession, err := filepath.EvalSymlinks(session)
 	require.NoError(t, err)
 	session = canonicalSession
-	fixture, err := agenttestify.Open(session)
+	fixture, err := replay.Open(session)
 	require.NoError(t, err)
 	require.Equal(t, "plan", fixture.Source.Kind)
 	require.Equal(t, "consumer", fixture.Source.Provenance)
 	require.Equal(t, "consumer", fixture.Source.DriverProfile)
-	require.Equal(t, agenttestify.ToolSourceExecutable, fixture.Tool.Source)
-	require.Equal(t, TestifyVersion, fixture.Tool.Version)
+	require.Equal(t, replay.ToolSourceExecutable, fixture.Tool.Source)
+	require.Equal(t, ReplayVersion, fixture.Tool.Version)
 	fixtureHash := hashFile(t, filepath.Join(session, "fixture.json"))
 	var index struct {
 		SchemaVersion int    `json:"schemaVersion"`
@@ -1015,7 +1047,7 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		} `json:"executions"`
 	}
 	readJSON(t, filepath.Join(session, "executions", "index.json"), &index)
-	require.Equal(t, testifyExecutionIndexSchemaVersion, index.SchemaVersion)
+	require.Equal(t, replayExecutionIndexSchemaVersion, index.SchemaVersion)
 	require.Equal(t, fixture.FixtureID, index.FixtureID)
 	require.Equal(t, fixtureHash, index.FixtureSHA256)
 	require.Len(t, index.Executions, 1)
@@ -1058,7 +1090,7 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		} `json:"artifact"`
 	}
 	readJSON(t, descriptor, &desc)
-	require.Equal(t, testifyExecutionIndexSchemaVersion, desc.SchemaVersion)
+	require.Equal(t, replayExecutionIndexSchemaVersion, desc.SchemaVersion)
 	require.Equal(t, execution.ID, desc.ExecutionID)
 	require.Equal(t, fixture.FixtureID, desc.FixtureID)
 	require.Equal(t, "record", desc.Command)
@@ -1226,7 +1258,7 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	require.Equal(t, "complete", manifest.CaptureStatus)
 	require.Equal(t, "pass", manifest.CredentialScan)
 	require.Equal(t, "consumer", manifest.Provenance)
-	require.Equal(t, TestifyVersion, manifest.ProxyVersion)
+	require.Equal(t, ReplayVersion, manifest.ProxyVersion)
 	require.Equal(t, result.PlanSHA256, manifest.PlanSHA256)
 	require.Equal(t, manifest.RunSHA256, materialFiles["raw/transport.json"])
 	require.Equal(t, expectedVersion, manifest.Native.Version)
@@ -1289,7 +1321,11 @@ func loadCase(t *testing.T, root, provider, name, expectedProject, expectedPromp
 func RunCodexBasicReplay(t *testing.T) {
 	h := newHarness(t)
 	material, index := loadCase(t, h.root, "codex", "basic", project, prompt)
-	h.replay(material, index.Facts, flowCase{name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project, legacyPermissions: true})
+	h.replay(material, index.Facts, flowCase{
+		name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project,
+		legacyPermissions: true,
+		sessionConfig:     &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview},
+	})
 }
 
 func RunCodexPermissionReplay(t *testing.T) {
@@ -1321,6 +1357,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 	test := flowCase{
 		name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project,
 		legacyPermissions: true,
+		sessionConfig:     &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview},
 		expectPermission:  true, expectedPermission: "Approve command execution",
 		expectedCommand: "printf mass-approved > permission-proof.txt",
 		permissionOptions: []events.PermissionOption{
@@ -1372,7 +1409,7 @@ func executionReceiptPath(t *testing.T, session string) string {
 	}
 	readJSON(t, filepath.Join(session, "executions", "index.json"), &index)
 	require.Len(t, index.Executions, 1)
-	fixture, err := agenttestify.Open(session)
+	fixture, err := replay.Open(session)
 	require.NoError(t, err)
 	report, err := fixture.ExecutionReport(index.Executions[0].ID)
 	require.NoError(t, err)
@@ -1496,7 +1533,7 @@ func RunRecordCodexBasic(t *testing.T) {
 	if h.diagnostic != nil {
 		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
 	}
-	index := caseIndex{Provider: "codex", Case: "basic", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/basic/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: prompt, Project: recordProject, Facts: observed}
+	index := caseIndex{Provider: "codex", Case: "basic", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/basic/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": ReplayVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: prompt, Project: recordProject, Facts: observed}
 	exportRelative, err := filepath.Rel(h.root, filepath.Join(export, "material"))
 	require.NoError(t, err)
 	index.ExportPath = filepath.ToSlash(exportRelative)
@@ -1582,7 +1619,7 @@ func RunRecordCodexPermission(t *testing.T) {
 	if h.diagnostic != nil {
 		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
 	}
-	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: recordPrompt, Project: recordProject, Facts: observed}
+	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": ReplayVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: recordPrompt, Project: recordProject, Facts: observed}
 	exportRelative, err := filepath.Rel(h.root, filepath.Join(export, "material"))
 	require.NoError(t, err)
 	index.ExportPath = filepath.ToSlash(exportRelative)

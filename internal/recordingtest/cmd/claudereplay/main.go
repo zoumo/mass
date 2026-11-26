@@ -48,7 +48,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	launcher := args[2:]
 	if legacyPermissions {
-		if err := startup.ValidateClaudePermissionArgs(launcher[1:]); err != nil {
+		if err := startup.ValidateClaudePermissionArgs(launcher[1:], startup.ClaudeAutoReviewMode, startup.ClaudeAutoReviewSandbox); err != nil {
 			return err
 		}
 		client := &serializedWriter{destination: stdout}
@@ -155,7 +155,7 @@ func (b *replayBinding) forwardInput(source io.Reader, destination io.Writer) er
 				}
 				if err := b.settings.Encode(map[string]any{
 					"type":     "control_response",
-					"response": map[string]any{"subtype": "success", "request_id": id, "response": startup.ClaudeSettings()},
+					"response": map[string]any{"subtype": "success", "request_id": id, "response": startup.ClaudeSettings(startup.ClaudeAutoReviewSandbox)},
 				}); err != nil {
 					return err
 				}

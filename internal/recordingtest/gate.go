@@ -18,7 +18,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	agenttestify "github.com/zoumo/agent-sdk-testify"
+	"github.com/zoumo/agent-sdk-go/agent"
+	"github.com/zoumo/agent-sdk-go/replay"
+
+	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
 type artifactCase struct {
@@ -1075,7 +1078,11 @@ func RunAuditRejectsSensitiveMaterial(t *testing.T) {
 func RunRejectsIncompleteExecution(t *testing.T) {
 	h := newHarness(t)
 	material, index := loadCase(t, h.root, "codex", "basic", project, prompt)
-	session := h.replay(material, index.Facts, flowCase{name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project, legacyPermissions: true})
+	session := h.replay(material, index.Facts, flowCase{
+		name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project,
+		legacyPermissions: true,
+		sessionConfig:     &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview},
+	})
 	t.Logf("validated active Codex baseline before execution mutations: %s", index.ExportPath)
 	pristine := filepath.Join(t.TempDir(), "session")
 	restoreDirectory(t, session, pristine)
@@ -1215,7 +1222,7 @@ func executionEvidencePaths(t *testing.T, session string) (string, string, strin
 	}
 	readJSON(t, indexPath, &index)
 	require.Len(t, index.Executions, 1)
-	fixture, err := agenttestify.Open(session)
+	fixture, err := replay.Open(session)
 	require.NoError(t, err)
 	report, err := fixture.ExecutionReport(index.Executions[0].ID)
 	require.NoError(t, err)

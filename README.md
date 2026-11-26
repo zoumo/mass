@@ -162,7 +162,7 @@ Superagent is experimental.
 | `make test` | Run offline Go tests with the race detector and run Superagent Web browser tests |
 | `make test-unit-go` | Run package-local tests only |
 | `make test-integration-go` | Run constructed multi-module scenarios and SDK probes |
-| `make test-simulation-go` | Replay recorded Agent material through `agent-sdk-testify` |
+| `make test-simulation-go` | Replay recorded Agent material through `agent-replay` |
 | `make test-e2e-go` | Run the separate end-to-end suite with real Codex and Claude CLIs |
 | `make build` | Build the daemon, CLI, and Superagent Core and Superagent Web |
 | `make check` | Check the Go module and Superagent Web with lint, tests, builds, and formatting checks |

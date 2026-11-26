@@ -200,7 +200,7 @@ func main() {
 				panic("load retried resume")
 			}
 			requireProjectIsolation(v.Params)
-			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
+			respond(map[string]any{"thread": thread(), "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "dangerFullAccess"}})
 			send(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": "native-thread", "status": map[string]any{"type": "idle"}}})
 		case "thread/turns/list":
 			if v.Params["cursor"] == nil {

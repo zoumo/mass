@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-26
+
+- [Session 配置合同](modules/runtime/session-config.md#初始配置与恢复)采用 SDK 默认权限 `fullAccess`。创建时 Session 和 Runtime 都省略预设，恢复时已保存的预设为空，或历史加载未指定预设，均由 SDK 应用该默认值。
+
 ## 2026-11-25
 
 - [服务启动](modules/service/design.md#服务重启与状态校正)拒绝包含 `archived` Session 的持久数据。其他未识别的持久状态校正为 `unknown`。同步[存储合同](bindings/storage.md)和升级说明。

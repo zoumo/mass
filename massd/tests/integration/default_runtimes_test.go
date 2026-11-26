@@ -127,18 +127,18 @@ func TestDefaultRuntimeSessionPermissions(t *testing.T) {
 	peer := ticket20Peer(t)
 	for _, backend := range []string{"sqlite", "file"} {
 		for _, scenario := range []struct {
-			kind   string
-			preset agent.PermissionPreset
+			kind       string
+			name       string
+			preset     agent.PermissionPreset
+			sdkDefault bool
 		}{
-			{"claude", ""},
-			{"codex", ""},
-			{"codex", agent.PermissionPresetManualReview},
+			{kind: "claude", name: "inherited"},
+			{kind: "claude", name: "sdk-default", sdkDefault: true},
+			{kind: "codex", name: "inherited"},
+			{kind: "codex", name: "sdk-default", sdkDefault: true},
+			{kind: "codex", name: "manualReview", preset: agent.PermissionPresetManualReview},
 		} {
-			name := backend + "/" + scenario.kind + "/inherited"
-			if scenario.preset != "" {
-				name = backend + "/" + scenario.kind + "/" + string(scenario.preset)
-			}
-			t.Run(name, func(t *testing.T) {
+			t.Run(backend+"/"+scenario.kind+"/"+scenario.name, func(t *testing.T) {
 				kind := scenario.kind
 				work, err := filepath.EvalSymlinks(t.TempDir())
 				require.NoError(t, err)
@@ -154,6 +154,12 @@ func TestDefaultRuntimeSessionPermissions(t *testing.T) {
 				}
 				data := t.TempDir()
 				c, _, stop := defaultRuntimeDaemon(t, backend, data, env)
+				if scenario.sdkDefault {
+					var r resource.Runtime
+					require.NoError(t, c.GetRuntime(ctx(t), kind, &r))
+					r.Spec.PermissionPreset = ""
+					require.NoError(t, c.UpdateRuntime(ctx(t), kind, r.Spec, &r))
+				}
 				wire := filepath.Join(native, "wire.jsonl")
 				require.NoFileExists(t, wire)
 				spec := resource.SessionSpec{RuntimeRef: kind, SessionSpec: runtime.SessionSpec{Cwd: work}}
@@ -168,8 +174,12 @@ func TestDefaultRuntimeSessionPermissions(t *testing.T) {
 					Metadata: resource.Metadata{Namespace: "default", Name: "original"}, Spec: spec, InitialInput: &input,
 				}, &created))
 				require.NotNil(t, created.InitialInputReceipt)
-				require.NotNil(t, created.Spec.Config)
-				require.Equal(t, expected, created.Spec.Config.PermissionPreset)
+				if scenario.sdkDefault {
+					require.Nil(t, created.Spec.Config)
+				} else {
+					require.NotNil(t, created.Spec.Config)
+					require.Equal(t, expected, created.Spec.Config.PermissionPreset)
+				}
 				ref := resource.SessionRef{SessionID: created.Status.SessionID}
 				require.Eventually(t, func() bool {
 					var page store.HistoryPage

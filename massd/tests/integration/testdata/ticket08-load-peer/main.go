@@ -70,7 +70,7 @@ func main() {
 				panic("second resume")
 			}
 			record("resumed", map[string]any{"id": v.Params["threadId"]})
-			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "workspaceWrite"}})
+			respond(map[string]any{"thread": thread(), "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "dangerFullAccess"}})
 			notify("thread/status/changed", map[string]any{"threadId": "native-thread", "status": map[string]any{"type": "idle"}})
 		case "thread/turns/list":
 			respond(map[string]any{"data": []any{map[string]any{"id": "saved", "status": "completed", "items": []any{}, "itemsView": "full"}}, "nextCursor": nil})
