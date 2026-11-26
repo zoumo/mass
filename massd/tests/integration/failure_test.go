@@ -389,22 +389,25 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	s.T().Log("PASS native Codex overload fails locally, owns close, and settles all 160 original facts without reader reconciliation")
 }
 
-// Poll the cheap resource projection while the turn runs; cloning the entire
-// growing history every 5ms competes with Store commits under the race detector.
-func (s *failureSuite) requireHistoryAfterTurn(ref resource.SessionRef, count int) {
-	s.Require().Eventually(func() bool {
-		// This fixture orders running, all facts, then idle. Read a fact before
-		// reading state so an earlier initial idle cannot satisfy the wait.
-		page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1})
-		if err != nil || len(page.Events) == 0 {
-			return false
-		}
-		current, err := s.svc.GetSession(ref)
-		return err == nil && current.Status.State == events.Idle
-	}, 6*time.Second, 5*time.Millisecond)
+// Each native turn fits in the Service delivery queue. Await its live idle
+// event before starting the next turn so only the unread subscriber overflows.
+func (s *failureSuite) publishSlowSubscriberTurns(ref resource.SessionRef) {
+	s.T().Helper()
+	live, err := s.svc.SubscribeEvents(ref)
+	s.Require().NoError(err)
+	defer live.Close()
+	for range 2 {
+		s.input(ref)
+		s.until(live, events.Running)
+		s.until(live, events.Idle)
+	}
+}
+
+func (s *failureSuite) requireSlowSubscriberHistory(ref resource.SessionRef) {
+	s.T().Helper()
 	page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1000})
 	s.Require().NoError(err)
-	s.Require().Len(page.Events, count)
+	s.Require().Len(page.Events, 140)
 }
 
 func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
@@ -413,8 +416,8 @@ func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
 	defer sub.Close()
-	s.input(ref)
-	s.requireHistoryAfterTurn(ref, 140)
+	s.publishSlowSubscriberTurns(ref)
+	s.requireSlowSubscriberHistory(ref)
 
 	for range 128 {
 		_, err = nextSubscription(sub, ctx(s.T()))
@@ -745,8 +748,8 @@ func requireNoError(t *testing.T, err error) {
 func (s *failureSuite) TestSubscriptionOverflowIsExplicit() {
 	s.start("codex", "slow-subscriber", s.st.Events)
 	ref := s.open("demo")
-	s.input(ref)
-	s.requireHistoryAfterTurn(ref, 140)
+	s.publishSlowSubscriberTurns(ref)
+	s.requireSlowSubscriberHistory(ref)
 
 	session, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
@@ -792,6 +795,6 @@ func (s *failureSuite) TestSubscriptionOverflowIsExplicit() {
 	s.Equal("slow_subscriber", closedParams.Error.Reason)
 	s.Equal("Observation capacity exceeded", closedParams.Error.Message)
 	s.NotContains(closedParams.Error.Message, "slow subscriber")
-	s.requireHistoryAfterTurn(ref, 140)
+	s.requireSlowSubscriberHistory(ref)
 	s.T().Log("PASS overflowed EventBroadcast maps to one historical event followed by explicit redacted subscription.closed; full 140-fact history preserved")
 }
