@@ -56,7 +56,10 @@ func ticket06ServiceWithPeer(t *testing.T, bin, mode string, extraEnv ...map[str
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: t.TempDir()}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: t.TempDir()}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -174,7 +177,7 @@ func TestTicket06RetainsFiveContentKindsAndToolOutputPresence(t *testing.T) {
 	require.Equal(t, "partial", *results["truncated-output"].RawOutput)
 	require.Contains(t, results, "mcp")
 	require.Contains(t, results, "dynamic")
-	require.Equal(t, "retained thought", events.TextOf(page.Events[2].Payload().(events.AgentThinking).Content[0]))
+	require.Equal(t, events.Text("retained thought"), page.Events[2].Payload().(events.AgentThinking).Content[0])
 	require.Equal(t, []any{"separate summary"}, page.Events[2].Meta["native"].(map[string]any)["item"].(map[string]any)["summary"])
 }
 

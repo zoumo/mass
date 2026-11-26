@@ -3,7 +3,6 @@ package core_test
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"net"
@@ -38,6 +37,14 @@ const (
 )
 
 func TestEmbeddedMASSMount(t *testing.T) {
+	// Go's default TLS roots can only be set once per process.
+	if os.Getenv("MASS_TEST_ISOLATED_TLS_ROOTS") != "1" {
+		command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestEmbeddedMASSMount$")
+		command.Env = append(os.Environ(), "MASS_TEST_ISOLATED_TLS_ROOTS=1", "GODEBUG="+os.Getenv("GODEBUG")+",x509usefallbackroots=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
 	peer := newNativeSubmitPeer(t)
 	_, relay := dispatchBinaries(t)
 	f, operator := eventFixture(t, "ws://127.0.0.1:1")
@@ -81,16 +88,17 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 	checkMassctlMountedSession(t, mount, token, router)
 
-	wss, tlsConfig := startMASSProxy(t, p.endpoint)
-	tlsDial := &websocket.Dialer{HandshakeTimeout: time.Second, TLSClientConfig: tlsConfig}
+	wss, roots := startMASSProxy(t, p.endpoint)
+	x509.SetFallbackRoots(roots)
+	tlsDial := &websocket.Dialer{HandshakeTimeout: time.Second}
 	checkMassdUpgrade(t, tlsDial, wss, token, mountedMASSOrigin, "", http.StatusSwitchingProtocols)
 	checkMassdUpgrade(t, tlsDial, wss, token, "https://foreign.example.test", "", http.StatusForbidden)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
 	defer cancel()
 	ref := resource.SessionRef{SessionID: router.SessionID}
-	healthy := mountedMASSClient(t, wss, token, tlsConfig, 32)
-	slow := mountedMASSClient(t, wss, token, tlsConfig, 1)
+	healthy := mountedMASSClient(t, wss, token, 32)
+	slow := mountedMASSClient(t, wss, token, 1)
 	healthySubscription, err := healthy.Subscribe(ctx, ref)
 	require.NoError(t, err)
 	slowSubscription, err := slow.Subscribe(ctx, ref)
@@ -129,7 +137,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, router.SessionID, event.SessionID)
 		if message, ok := event.Payload().(events.AgentMessage); ok && len(message.Content) > 0 {
-			require.Equal(t, final, events.TextOf(message.Content[0]))
+			require.Equal(t, events.Text(final), message.Content[0])
 			break
 		}
 	}
@@ -190,11 +198,11 @@ func TestEmbeddedMASSExposureConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, path, cfg.Massd.Embedded.Expose.TokenFile)
 	cfg.Listen = "0.0.0.0:0"
-	_, err = core.Start(cfg)
+	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.ErrorContains(t, err, "loopback Core listener")
 	cfg.Listen = "127.0.0.1:0"
 	cfg.Massd.Embedded.Expose.TokenFile = ""
-	_, err = core.Start(cfg)
+	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.ErrorContains(t, err, "expose.tokenFile is required")
 }
 
@@ -244,7 +252,7 @@ func checkMassdUpgrade(t *testing.T, dial *websocket.Dialer, base, token, origin
 	require.Equal(t, status, response.StatusCode)
 }
 
-func startMASSProxy(t *testing.T, endpoint string) (string, *tls.Config) {
+func startMASSProxy(t *testing.T, endpoint string) (string, *x509.CertPool) {
 	t.Helper()
 	target, err := url.Parse(endpoint)
 	require.NoError(t, err)
@@ -257,14 +265,13 @@ func startMASSProxy(t *testing.T, endpoint string) (string, *tls.Config) {
 	t.Cleanup(proxy.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(proxy.Certificate())
-	return "wss" + strings.TrimPrefix(proxy.URL, "https") + "/massd", &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	return "wss" + strings.TrimPrefix(proxy.URL, "https") + "/massd", roots
 }
 
-func mountedMASSClient(t *testing.T, endpoint, token string, tlsConfig *tls.Config, queue int) *client.Client {
+func mountedMASSClient(t *testing.T, endpoint, token string, queue int) *client.Client {
 	t.Helper()
 	c, err := client.New(endpoint, token, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: queue})
 	require.NoError(t, err)
-	c.SetTLSClientConfig(tlsConfig)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	return c
 }

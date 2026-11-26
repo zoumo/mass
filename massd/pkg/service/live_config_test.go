@@ -69,7 +69,10 @@ func newLiveConfigService(t *testing.T, optional bool, options ...service.Option
 		selected = driver.closeDriver
 	}
 	registry := runtime.NewRegistry(map[string]runtime.Factory{"fixture": liveConfigFactory{selected}})
-	svc := service.New(st.Meta, st.Events, registry)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, registry,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	if len(options) > 0 {
 		svc = service.NewWithOptions(st.Meta, st.Events, registry, options[0])
 	}
@@ -171,12 +174,12 @@ func TestLiveSessionConfigurationPublicReceiptsAndErrors(t *testing.T) {
 	}{
 		{"", agent.Acceptance{}},
 		{"", agent.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false), NativeRecorded: runtime.Bool(false)}},
-		{"", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes(), NativeRecorded: runtime.Yes()}},
-		{"native_rejected", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}},
+		{"", agent.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true), NativeRecorded: runtime.Bool(true)}},
+		{"native_rejected", agent.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(false)}},
 		{"unsupported", agent.Acceptance{Sent: runtime.Bool(false)}},
 		{"conflict", agent.Acceptance{Sent: runtime.Bool(false)}},
 		{"deadline_exceeded", agent.Acceptance{Sent: runtime.Bool(false)}},
-		{"outcome_unknown", agent.Acceptance{Sent: runtime.Yes()}},
+		{"outcome_unknown", agent.Acceptance{Sent: runtime.Bool(true)}},
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%d_%s", i, tc.code), func(t *testing.T) {

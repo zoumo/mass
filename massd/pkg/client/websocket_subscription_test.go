@@ -147,6 +147,7 @@ func TestClientSubscriptionConnectionsAndOwnership(t *testing.T) {
 	require.Equal(t, event.EventID, nextClientSubscription(t, second).EventID)
 
 	require.NoError(t, first.Close())
+	require.ErrorIs(t, first.Err(), io.EOF)
 	after := clientSubscriptionEvent(t, "after first close")
 	require.NoError(t, fixture.broadcast.Publish(after))
 	require.Equal(t, after.EventID, nextClientSubscription(t, second).EventID)
@@ -161,21 +162,6 @@ func TestClientSubscriptionConnectionsAndOwnership(t *testing.T) {
 	_, err = second.Next(ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "client is closed")
-	require.Equal(t, 0, fixture.api.cancelCount())
-}
-
-func TestClientSubscriptionUnsubscribe(t *testing.T) {
-	fixture := newClientSubscriptionFixture(t)
-	wsClient := newTestClient(t, websocketURL(fixture.http), "test-token")
-	t.Cleanup(func() { _ = wsClient.Close() })
-	subscription, err := wsClient.Subscribe(t.Context(), resource.SessionRef{SessionID: "observed"})
-	require.NoError(t, err)
-
-	event := clientSubscriptionEvent(t, "before unsubscribe")
-	require.NoError(t, fixture.broadcast.Publish(event))
-	require.Equal(t, event.EventID, nextClientSubscription(t, subscription).EventID)
-	require.NoError(t, subscription.Unsubscribe(t.Context()))
-	require.ErrorIs(t, subscription.Err(), io.EOF)
 	require.Equal(t, 0, fixture.api.cancelCount())
 }
 

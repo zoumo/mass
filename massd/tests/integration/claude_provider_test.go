@@ -117,7 +117,7 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 			if message, ok := e.Payload().(events.AgentMessage); ok {
 				require.Equal(t, "live-1:0", message.MessageID)
 				require.Equal(t, message.MessageID, e.ItemID)
-				require.Equal(t, "same retained process", events.TextOf(message.Content[0]))
+				require.Equal(t, events.Text("same retained process"), message.Content[0])
 				messageSeen = true
 			}
 		case <-ctx(t).Done():

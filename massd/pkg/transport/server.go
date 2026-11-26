@@ -90,10 +90,6 @@ func (s *Server) CloseAdmission() {
 	s.rpc.markSubscriptionsForShutdown()
 }
 
-// Drain waits, within ctx, for established connections to finish in-flight
-// calls and to forward their terminal subscription notifications.
-func (s *Server) Drain(ctx context.Context) error { return s.rpc.drain(ctx) }
-
 // DrainAndClose waits for established connections to become idle, then closes
 // them. The wait is bounded by ctx.
 func (s *Server) DrainAndClose(ctx context.Context) error {

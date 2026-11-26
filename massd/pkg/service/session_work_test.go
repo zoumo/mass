@@ -78,7 +78,7 @@ func (d *workDriver) SendPrompt(ctx context.Context, id string, in runtime.Input
 		}
 	}
 	no := false
-	return runtime.InputReceipt{Submission: "work-1", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: &no}}, nil
+	return runtime.InputReceipt{Submission: "work-1", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: &no}}, nil
 }
 
 type workFactory struct{ driver *workDriver }

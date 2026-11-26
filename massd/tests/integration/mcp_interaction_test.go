@@ -87,7 +87,7 @@ func TestClaudeMCPFormURLAndPermissionSettlement(t *testing.T) {
 			}
 			receipt, err := svc.AnswerInteraction(ctx(t), ref, string(payload.Interaction), want.answer)
 			require.NoError(t, err)
-			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 			pending[payload.Interaction] = want.outcome
 			asked++
 		case events.InteractionClosed:
@@ -134,7 +134,7 @@ func TestCodexMCPURLClosesWhenNativeRequestResolves(t *testing.T) {
 			require.Equal(t, events.InteractionURL, payload.Request.Kind)
 			receipt, err := svc.AnswerInteraction(ctx(t), ref, string(payload.Interaction), map[string]any{"action": "accept"})
 			require.NoError(t, err)
-			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 			urlRef = payload.Interaction
 		case events.InteractionClosed:
 			require.Equal(t, urlRef, payload.Interaction)
@@ -149,7 +149,7 @@ func TestCodexMCPURLClosesWhenNativeRequestResolves(t *testing.T) {
 
 func openMCPScenario(t *testing.T, kind, executable string, scenario map[string]any) (*service.Service, resource.SessionRef, *service.Subscription) {
 	t.Helper()
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	ensureNativeReadyObservation(scenario, kind)
 	path, work := writeNativeScenario(t, scenario)
 	const name = "mcp"

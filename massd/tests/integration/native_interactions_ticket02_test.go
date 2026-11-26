@@ -21,7 +21,7 @@ import (
 func TestNativeInteractionAnswerCorrection(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		t.Run(kind, func(t *testing.T) {
-			svc, reg, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			session := openNative(t, svc, kind, "question", "questions")
 			ref := resource.SessionRef{SessionID: session.Status.SessionID}
 			sub, err := svc.SubscribeEvents(ref)
@@ -38,23 +38,16 @@ func TestNativeInteractionAnswerCorrection(t *testing.T) {
 					require.Error(t, err)
 					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"not-a-native-question": map[string]any{"answers": []any{"json"}}}}})
 					require.Error(t, err, "unknown question identity must reject before dispatch")
-					var answers map[string]any
-					if kind == "claude" {
-						answers = map[string]any{"Which format?": "json"}
-					} else {
-						answers = map[string]any{"format": map[string]any{"answers": []any{"json"}}}
-					}
-					driver, err := reg.Get("questions")
-					require.NoError(t, err)
-					canceled, cancel := context.WithCancel(context.Background())
+					answer := questionAnswer(kind)
+					canceled, cancel := context.WithCancel(t.Context())
 					cancel()
-					_, err = driver.AnswerInteraction(canceled, ref.SessionID, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
-					require.Error(t, err, "confirmed native pre-write cancellation must not consume live authority")
-					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					_, err = svc.AnswerInteraction(canceled, ref, string(p.Interaction), answer)
+					require.ErrorIs(t, err, context.Canceled)
+					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.NoError(t, err, "validation must not consume live native authority")
-					require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+					require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 					require.Nil(t, receipt.Evidence.NativeAccepted)
-					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.Error(t, err)
 					answered = true
 				}
@@ -153,7 +146,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 				result := <-results
 				if result.err == nil {
 					successes++
-					s.Equal(runtime.Yes(), result.receipt.Evidence.Sent)
+					s.Equal(runtime.Bool(true), result.receipt.Evidence.Sent)
 					s.Nil(result.receipt.Evidence.NativeAccepted)
 				} else {
 					s.Require().ErrorAs(result.err, &public)
@@ -180,7 +173,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 func TestNativePermissionDecisions(t *testing.T) {
 	for _, scenario := range []struct{ kind, mode string }{{"codex", "deny"}, {"claude", "deny"}, {"claude", "update"}, {"codex", "restricted"}} {
 		t.Run(scenario.kind+"/"+scenario.mode, func(t *testing.T) {
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			session := openNative(t, svc, scenario.kind, "ticket02-permission-"+scenario.mode, "permission")
 			ref := resource.SessionRef{SessionID: session.Status.SessionID}
 			sub, err := svc.SubscribeEvents(ref)
@@ -216,7 +209,7 @@ func TestNativePermissionDecisions(t *testing.T) {
 					}
 					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.NoError(t, err)
-					require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
+					require.Equal(t, runtime.Bool(true), receipt.Evidence.Sent)
 					require.Nil(t, receipt.Evidence.NativeAccepted)
 					answered = true
 				}

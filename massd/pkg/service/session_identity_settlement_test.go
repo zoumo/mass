@@ -67,7 +67,10 @@ func TestInvalidRestoreIdentityRetainsRetryableCleanup(t *testing.T) {
 			original, err := st.Meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}, Status: resource.SessionStatus{SessionID: "original", State: "offline"}})
 			require.NoError(t, err)
 			driver := &invalidRestoreDriver{pipe: events.NewEventPipe(1), id: id}
-			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": invalidRestoreFactory{driver}}))
+			svc := service.NewWithOptions(
+				st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": invalidRestoreFactory{driver}}),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			t.Cleanup(func() {
 				cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancelCleanup()

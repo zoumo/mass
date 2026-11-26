@@ -71,7 +71,13 @@ func TestClaudeAssignedRootForwardingGapSurvivesRPCNotifications(t *testing.T) {
 	release := sync.OnceFunc(func() { close(releaseEvents) })
 	defer release()
 	factory := forwardingNotificationFactory{Factory: claude.Factory{RecoveryDir: t.TempDir()}, release: releaseEvents}
-	svc := service.NewWithPolicy(authority.Meta, authority.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}), prototype.AutoApprovePermissions)
+	svc := service.NewWithOptions(
+		authority.Meta, authority.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}),
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  prototype.AutoApprovePermissions,
+		},
+	)
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -105,7 +111,7 @@ func TestClaudeAssignedRootForwardingGapSurvivesRPCNotifications(t *testing.T) {
 	require.Empty(t, page.Events)
 	var receipt runtime.InputReceipt
 	require.NoError(t, client.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, &receipt))
-	require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 	answered := false
 	for {
 		event, err = observer.Next(ctx(t))

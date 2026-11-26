@@ -33,7 +33,7 @@ import (
 )
 
 func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	path, work := nativeScenario(t, "claude", "explicit-create")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "explicit"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.InitialInputReceipt)
 	require.NotEmpty(t, got.InitialInputReceipt.Submission)
-	require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), got.InitialInputReceipt.Acceptance.Sent)
 	ref := resource.SessionRef{SessionID: got.Status.SessionID}
 	require.Eventually(t, func() bool {
 		page, e := svc.ListHistoryEvents(ref, store.HistoryQuery{})
@@ -79,7 +79,7 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 }
 
 func TestTicket14ExplicitCreateCLI(t *testing.T) {
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	path, work := nativeScenario(t, "claude", "explicit-create")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestTicket14ExplicitCreateCLI(t *testing.T) {
 	_, err = uuid.Parse(result.Status.SessionID)
 	require.NoError(t, err)
 	require.NotNil(t, result.InitialInputReceipt)
-	require.Equal(t, runtime.Yes(), result.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), result.InitialInputReceipt.Acceptance.Sent)
 	require.Nil(t, result.InitialInputReceipt.Acceptance.NativeAccepted)
 }
 
@@ -107,7 +107,7 @@ func TestTicket14ExplicitCreateCLI(t *testing.T) {
 func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 	for _, kind := range []string{"claude", "codex"} {
 		t.Run(kind, func(t *testing.T) {
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			mode := "explicit-create"
 			bin := mock
 			if kind == "claude" {
@@ -153,11 +153,11 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &got))
 			require.NotNil(t, got.InitialInputReceipt)
 			receipt := got.InitialInputReceipt
-			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 			require.Nil(t, receipt.Acceptance.NativeRecorded)
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
-				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+				require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 			}
@@ -214,7 +214,7 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 
 func TestTicket14ClaimedSessionExposesPreInitPermission(t *testing.T) {
 	requests := make(chan events.InteractionRequested, 1)
-	svc, _, _ := setup(t, func(request events.InteractionRequested) (map[string]any, bool) {
+	svc, _ := setup(t, func(request events.InteractionRequested) (map[string]any, bool) {
 		requests <- request
 		return nil, false
 	})
@@ -232,7 +232,7 @@ func TestTicket14ClaimedSessionExposesPreInitPermission(t *testing.T) {
 	require.NotEmpty(t, result.Status.SessionID)
 	require.NotNil(t, result.InitialInputReceipt)
 	require.NotEmpty(t, result.InitialInputReceipt.Submission)
-	require.Equal(t, runtime.Yes(), result.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), result.InitialInputReceipt.Acceptance.Sent)
 
 	var permission events.InteractionRequested
 	select {
@@ -250,7 +250,7 @@ func TestTicket14ClaimedSessionExposesPreInitPermission(t *testing.T) {
 		"optionId": "allow-once",
 	})
 	require.NoError(t, err)
-	require.Equal(t, runtime.Yes(), answered.Evidence.Sent)
+	require.Equal(t, runtime.Bool(true), answered.Evidence.Sent)
 	require.Nil(t, answered.Evidence.NativeAccepted)
 	require.Eventually(t, func() bool {
 		current, getErr := svc.GetSession(resource.SessionRef{SessionID: result.Status.SessionID})
@@ -267,7 +267,7 @@ func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-continuity").CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	configDir := t.TempDir()
@@ -285,7 +285,7 @@ func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	require.Len(t, first.Events, 1)
 	require.NotEmpty(t, got.InitialInputReceipt.Submission)
 	require.Equal(t, "applied_best_effort", string(got.InitialInputReceipt.Result))
-	require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), got.InitialInputReceipt.Acceptance.Sent)
 	claudeMeta, ok := first.Events[0].Meta["claude"].(map[string]any)
 	require.True(t, ok)
 	require.NotContains(t, claudeMeta, "submission", "MASS must preserve SDK metadata without injecting submission")
@@ -372,7 +372,7 @@ func TestTicket14UnrelatedResultsKeepCurrentWorkOpen(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	for _, mode := range []string{"initial-foreign", "initial-child"} {
 		t.Run(mode, func(t *testing.T) {
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
 			work, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -429,7 +429,10 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 				var once sync.Once
 				release := func() { once.Do(func() { close(gate.release) }) }
 				defer release()
-				svc := service.New(gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
+				svc := service.NewWithOptions(
+					gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}),
+					service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+				)
 				t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 				bin := mock
 				mode := "explicit-create"
@@ -530,7 +533,7 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 		t.Run(strconv.FormatBool(stop), func(t *testing.T) {
 			dir := t.TempDir()
 			release := func() { require.NoError(t, os.WriteFile(filepath.Join(dir, "release"), nil, 0o600)) }
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			// Always release the authored peer before Service cleanup, including failure.
 			t.Cleanup(release)
 			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"EVIDENCE": dir})}}})

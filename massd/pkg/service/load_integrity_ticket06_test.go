@@ -99,7 +99,10 @@ func TestTicket06AcceptanceResolvesUnknownMetadataByReadback(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	meta := &ticket06UnknownCreate{MetaStore: st.Meta}
 	d := &ticket06FaultDriver{pipe: events.NewEventPipe(16), bindings: map[string]*ticket06FaultBinding{}, loading: make(chan *ticket06FaultBinding, 1)}
-	svc := service.New(meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}))
+	svc := service.NewWithOptions(
+		meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault-peer": ticket06FaultFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		c, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -148,7 +151,7 @@ func TestTicket06AppendFailureRequiresExplicitOriginalUUIDSettlement(t *testing.
 	require.False(t, r.Status.HistoryLoad.CleanupCompleted, "an unresolved append remains owned")
 	require.NoError(t, svc.ReconcileHistory(ticket06FaultContext(t), ref))
 	page := ticket06FaultHistory(t, svc, ref, 1)
-	require.Equal(t, "original fact", events.TextOf(page[0].Payload().(events.AgentMessage).Content[0]))
+	require.Equal(t, events.Text("original fact"), page[0].Payload().(events.AgentMessage).Content[0])
 	require.Eventually(t, func() bool {
 		current, e := svc.GetSession(ref)
 		return e == nil && current.Status.HistoryLoad.CleanupCompleted && current.Status.HistoryLoad.LastCommittedEventID == page[0].EventID

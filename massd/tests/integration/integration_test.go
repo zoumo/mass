@@ -181,20 +181,19 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
 	defer release()
-	svc := service.New(gate, st.Events, registry)
+	svc := service.NewWithOptions(
+		gate, st.Events, registry,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, r.Metadata.Generation)
-	_, err = registry.Get("codex")
-	require.Error(t, err, "resource create must not construct a Driver")
+	require.Equal(t, "stopped", r.Status.State)
+	require.Zero(t, r.Status.AppliedGeneration)
 	r, err = svc.StartRuntime(c, "codex")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, r.Status.AppliedGeneration)
-	driver, err := registry.Get("codex")
-	require.NoError(t, err)
-	_, err = driver.Events()
-	require.Error(t, err, "Service has already acquired the only stream")
 	type createdResult struct {
 		value resource.Session
 		err   error
@@ -249,7 +248,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	receipt, err := svc.SendPrompt(c, id, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
 	require.Equal(t, "turn-1", receipt.Submission)
-	require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+	require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 	persisted := []events.SessionEvent{}
 	chunks := []string{}
 	running := false
@@ -306,7 +305,8 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 		}
 		if chunk, ok := event.Payload().(events.MessageChunk); ok {
 			require.Equal(t, "message-1", event.ItemID)
-			chunks = append(chunks, events.TextOf(chunk.Content[0]))
+			require.NotNil(t, chunk.Content[0].Text)
+			chunks = append(chunks, chunk.Content[0].Text.Text)
 		}
 		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil {
 			if *state.State == events.Running {
@@ -319,7 +319,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	}
 	require.Equal(t, []string{"preview ", "only"}, chunks)
 	require.Len(t, persisted, 4)
-	require.Equal(t, "complete answer", events.TextOf(persisted[3].Payload().(events.AgentMessage).Content[0]))
+	require.Equal(t, events.Text("complete answer"), persisted[3].Payload().(events.AgentMessage).Content[0])
 	page, err := svc.ListHistoryEvents(id, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 4)
@@ -339,7 +339,10 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	reopened, err := massdtest.OpenFileStores(dir, true)
 	require.NoError(t, err)
 	defer reopened.Close()
-	offline := service.New(reopened.Meta, reopened.Events, nil)
+	offline := service.NewWithOptions(
+		reopened.Meta, reopened.Events, nil,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	savedID, err := offline.GetSession(id)
 	require.NoError(t, err)
 	savedName, err := offline.GetSession(name)

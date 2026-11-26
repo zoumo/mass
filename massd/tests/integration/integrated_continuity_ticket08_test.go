@@ -38,7 +38,7 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 				require.NoError(t, readErr)
 				require.NotContains(t, string(snapshot), bin, "owned peer must be released even after a failed assertion")
 			})
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"PEER_KIND": kind, "PEER_EVIDENCE": evidence})}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
@@ -66,13 +66,13 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 				require.NoError(t, err)
 				var receipt runtime.InputReceipt
 				require.NoError(t, json.Unmarshal(out, &receipt))
-				require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+				require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 				require.NotEqual(t, previous, receipt.Submission)
 				previous = receipt.Submission
 				if kind == "claude" {
 					require.Nil(t, receipt.Acceptance.NativeAccepted)
 				} else {
-					require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+					require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 				}
 				answered, message := false, false
 				for {
@@ -84,7 +84,7 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 						require.Error(t, c.Answer(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "not-offered"}, &answer))
 						valid := map[string]any{"outcome": "selected", "optionId": "allow-once"}
 						require.NoError(t, c.Answer(ctx(t), ref, string(p.Interaction), valid, &answer))
-						require.Equal(t, runtime.Yes(), answer.Evidence.Sent)
+						require.Equal(t, runtime.Bool(true), answer.Evidence.Sent)
 						require.Nil(t, answer.Evidence.NativeAccepted)
 						require.Error(t, c.Answer(ctx(t), ref, string(p.Interaction), valid, nil), "consumed authority cannot be reused")
 						answered = true

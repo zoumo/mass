@@ -183,7 +183,7 @@ func (d *ticket06FaultDriver) SendPrompt(ctx context.Context, id string, _ runti
 	if err := d.state(ctx, b, events.Idle); err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return runtime.InputReceipt{Submission: "live-turn", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "live-turn", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}, nil
 }
 func (d *ticket06FaultDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 
@@ -259,7 +259,7 @@ func TestTicket06CompletedLoadCancelCannotTouchLiveWork(t *testing.T) {
 	_, err = svc.SendPrompt(ticket06FaultContext(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("second live input")}})
 	require.NoError(t, err, "rejected load cancellation must leave subsequent live work usable")
 	records := ticket06FaultHistory(t, svc, ref, 3)
-	require.Equal(t, "healthy live work", events.TextOf(records[2].Payload().(events.AgentMessage).Content[0]))
+	require.Equal(t, events.Text("healthy live work"), records[2].Payload().(events.AgentMessage).Content[0])
 	r, err := svc.GetSession(ref)
 	require.NoError(t, err)
 	require.Equal(t, "completed", r.Status.HistoryLoad.Phase)
@@ -429,7 +429,7 @@ func TestTicket06CancelPagingRetainsPartialHistoryAndHealthyPeer(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond)
 	after := ticket06FaultHistory(t, svc, ref, 1)
 	require.Equal(t, before[0].EventID, after[0].EventID)
-	require.Equal(t, "retained first page", events.TextOf(after[0].Payload().(events.UserMessage).Content[0]))
+	require.Equal(t, events.Text("retained first page"), after[0].Payload().(events.UserMessage).Content[0])
 	_, err = svc.SendPrompt(ticket06FaultContext(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("not a complete import")}})
 	require.Error(t, err)
 	_, err = svc.CreateSession(ticket06FaultContext(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "healthy"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}})
@@ -438,7 +438,7 @@ func TestTicket06CancelPagingRetainsPartialHistoryAndHealthyPeer(t *testing.T) {
 	_, err = svc.SendPrompt(ticket06FaultContext(t), peer, runtime.Input{Content: []events.ContentBlock{events.Text("continue healthy peer")}})
 	require.NoError(t, err)
 	records := ticket06FaultHistory(t, svc, peer, 1)
-	require.Equal(t, "healthy live work", events.TextOf(records[0].Payload().(events.AgentMessage).Content[0]))
+	require.Equal(t, events.Text("healthy live work"), records[0].Payload().(events.AgentMessage).Content[0])
 }
 
 type ticket06DrainGate struct {
@@ -523,7 +523,7 @@ func TestTicket06CancelDuringLocalDrainPreservesAdmittedHistory(t *testing.T) {
 			}, 3*time.Second, 10*time.Millisecond)
 			records := ticket06FaultHistory(t, svc, ref, 2)
 			require.Equal(t, first[0].EventID, records[0].EventID)
-			require.Equal(t, "second admitted fact", events.TextOf(records[1].Payload().(events.AgentMessage).Content[0]))
+			require.Equal(t, events.Text("second admitted fact"), records[1].Payload().(events.AgentMessage).Content[0])
 			require.Equal(t, receipt.LoadID, records[1].Replay.LoadID)
 			r, err = svc.GetSession(ref)
 			require.NoError(t, err)

@@ -1,4 +1,4 @@
-package file_test
+package backend_test
 
 import (
 	"bytes"
@@ -10,14 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/massd/pkg/events"
-	"github.com/zoumo/mass/massd/pkg/metastore/file"
+	"github.com/zoumo/mass/massd/pkg/metastore"
+	"github.com/zoumo/mass/massd/pkg/metastore/backend"
 	"github.com/zoumo/mass/massd/pkg/resource"
 )
 
-func openLayout(t *testing.T) (*file.Store, string) {
+func openLayout(t *testing.T) (backend.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := file.Open(dir, false)
+	st, err := backend.Open(dir, metastore.Config{Backend: "file"}, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	return st, dir
@@ -69,7 +70,7 @@ func TestJSONLIndexRebuildAndStatusUpdates(t *testing.T) {
 		} else {
 			require.NoError(t, os.WriteFile(index, []byte("corrupt index"), 0o600))
 		}
-		reader, err := file.Open(dir, true)
+		reader, err := backend.Open(dir, metastore.Config{Backend: "file"}, true)
 		require.NoError(t, err, "derived index is never authoritative")
 		require.NoError(t, reader.Close())
 		if missing {
@@ -80,7 +81,7 @@ func TestJSONLIndexRebuildAndStatusUpdates(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "corrupt index", string(b))
 		}
-		writer, err := file.Open(dir, false)
+		writer, err := backend.Open(dir, metastore.Config{Backend: "file"}, false)
 		require.NoError(t, err)
 		require.NoError(t, writer.Close())
 		b, err = os.ReadFile(index)
@@ -99,12 +100,12 @@ func TestInterruptedMultiFileCommitRequiresRecovery(t *testing.T) {
 	require.ErrorContains(t, err, "outcome_unknown")
 	_, err = st.ListSessions(resource.SessionQuery{})
 	require.ErrorContains(t, err, "outcome_unknown")
-	_, err = file.Open(dir, true)
+	_, err = backend.Open(dir, metastore.Config{Backend: "file"}, true)
 	require.ErrorContains(t, err, "writable reopen required")
 	require.NoError(t, st.Close())
 	require.FileExists(t, filepath.Join(dir, ".pending.json"))
 	require.NoError(t, os.Remove(filepath.Join(path, "state.json")))
-	reopened, err := file.Open(dir, false)
+	reopened, err := backend.Open(dir, metastore.Config{Backend: "file"}, false)
 	require.NoError(t, err)
 	defer reopened.Close()
 	r, err := reopened.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
@@ -127,12 +128,12 @@ func TestRejectUnsafePathsAndDirectoryIdentityMismatch(t *testing.T) {
 	require.NoError(t, st.Close())
 	ns := filepath.Join(dir, "sessions", "default")
 	require.NoError(t, os.Rename(filepath.Join(ns, "demo"), filepath.Join(ns, "renamed")))
-	_, err = file.Open(dir, true)
+	_, err = backend.Open(dir, metastore.Config{Backend: "file"}, true)
 	require.ErrorContains(t, err, "directory identity mismatch")
 	require.NoError(t, os.Rename(filepath.Join(ns, "renamed"), filepath.Join(ns, "demo")))
 	outside := t.TempDir()
 	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "sessions", "linked")))
-	_, err = file.Open(dir, false)
+	_, err = backend.Open(dir, metastore.Config{Backend: "file"}, false)
 	require.ErrorContains(t, err, "unexpected storage entry")
 	entries, err := os.ReadDir(outside)
 	require.NoError(t, err)

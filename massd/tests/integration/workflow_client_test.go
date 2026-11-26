@@ -118,11 +118,16 @@ type rawRPCResponse struct {
 
 func rawRPCCall(t *testing.T, endpoint, token, method string, params json.RawMessage) rawRPCResponse {
 	t.Helper()
+	return rawRPCCallWithDialer(t, websocket.DefaultDialer, endpoint, token, method, params)
+}
+
+func rawRPCCallWithDialer(t *testing.T, dialer *websocket.Dialer, endpoint, token, method string, params json.RawMessage) rawRPCResponse {
+	t.Helper()
 	headers := http.Header{}
 	if token != "" {
 		headers.Set("Authorization", "Bearer "+token)
 	}
-	conn, handshake, err := websocket.DefaultDialer.DialContext(ctx(t), endpoint, headers)
+	conn, handshake, err := dialer.DialContext(ctx(t), endpoint, headers)
 	if handshake != nil {
 		_ = handshake.Body.Close()
 	}

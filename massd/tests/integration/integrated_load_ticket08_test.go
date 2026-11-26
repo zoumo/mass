@@ -160,7 +160,7 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 	for _, text := range []string{"first", "second"} {
 		var receipt runtime.InputReceipt
 		s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(text)}}}, &receipt)
-		s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+		s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 		if kind == "claude" {
 			s.Nil(receipt.Acceptance.NativeAccepted)
 		}
@@ -192,7 +192,7 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 				s.Contains(request.Request.ToolCallID, "tool-live-")
 				var answer runtime.InteractionReceipt
 				s.call("session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, &answer)
-				s.Equal(runtime.Yes(), answer.Evidence.Sent)
+				s.Equal(runtime.Bool(true), answer.Evidence.Sent)
 				answered = true
 			}
 			if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {

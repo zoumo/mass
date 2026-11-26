@@ -142,7 +142,7 @@ func TestWatchdogComposeForcedStop(t *testing.T) {
 
 func seedComposeReports(t *testing.T, coreDir string) {
 	t.Helper()
-	store, err := core.Open(core.Config{DataDir: coreDir})
+	store, err := core.OpenStore(core.Config{DataDir: coreDir}, core.TelemetryOptions{})
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 	db, err := sql.Open("sqlite", filepath.Join(coreDir, "core.sqlite"))

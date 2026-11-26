@@ -272,7 +272,10 @@ func liveConfigHTTP(t *testing.T, kind string, allowShutdownError ...bool) (*ser
 	if kind == "claude" {
 		factory = claude.Factory{RecoveryDir: t.TempDir()}
 	}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{kind: configNativeFactory{Factory: factory, peer: peer}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{kind: configNativeFactory{Factory: factory, peer: peer}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		err := svc.Shutdown(ctx(t))
 		if len(allowShutdownError) > 0 && allowShutdownError[0] {
@@ -381,7 +384,7 @@ func TestLiveSessionConfigurationNativePublic(t *testing.T) {
 						result := liveConfigResult(t, done)
 						require.NoError(t, result.err)
 						require.Equal(t, change, result.receipt.Change)
-						require.Equal(t, agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}, result.receipt.Acceptance)
+						require.Equal(t, agent.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}, result.receipt.Acceptance)
 					}
 				}
 			}

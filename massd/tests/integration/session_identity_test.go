@@ -22,7 +22,7 @@ import (
 func TestIllegalNativeIdentityNeverBecomesPersistentSession(t *testing.T) {
 	for _, id := range []string{".", ".."} {
 		t.Run(id, func(t *testing.T) {
-			svc, _, _ := lifecycleService(t, t.TempDir())
+			svc, _ := lifecycleService(t, t.TempDir())
 			path, work := identityOnlyScenario(t, id)
 			var err error
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
@@ -85,7 +85,10 @@ func TestRPCCreateWaitsForIdentityAndReturnsRawID(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	gate := &identityGate{MetaStore: st.Meta, entered: make(chan struct{}), release: make(chan struct{})}
-	svc := service.New(gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
+	svc := service.NewWithOptions(
+		gate, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	path, work := identityOnlyScenario(t, "a/b %空间")
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})

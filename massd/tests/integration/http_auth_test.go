@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -102,10 +103,11 @@ func (webSocketAuthSuite *WebSocketAuthSuite) TestAuthenticatedDaemon() {
 	require.NoError(t, err)
 	require.Equal(t, 200, response.StatusCode)
 	response.Body.Close()
+	dialer := &websocket.Dialer{TLSClientConfig: wire.TLSClientConfig, HandshakeTimeout: 5 * time.Second}
+	rpc := rawRPCCallWithDialer(t, dialer, ready.URL, "synthetic-http-token", "runtime.list", json.RawMessage(`{}`))
+	require.Nil(t, rpc.Error)
 	var rows []resource.Runtime
-	c := newHTTPClient(t, strings.TrimSuffix(ready.URL, "/jsonrpc"), "synthetic-http-token")
-	c.SetTLSClientConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})
-	require.NoError(t, c.ListRuntimes(ctx, resource.RuntimeQuery{}, &rows))
+	require.NoError(t, json.Unmarshal(rpc.Result, &rows))
 	require.Len(t, rows, 2)
 	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, cmd.Wait())

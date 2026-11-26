@@ -497,9 +497,9 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		}
 		require.NoError(t, api.SendPrompt(h.ctx, ref, input, &receipt))
 	}
-	require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 	if provider == "codex" {
-		require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+		require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 		if h.diagnostic != nil {
 			h.diagnostic.report.Boundaries["native_input_ack"] = "native_accepted"
 		}
@@ -563,9 +563,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 			}
 		}
 		if tool, ok := event.Payload().(events.ToolResult); ok && answered {
-			for _, block := range tool.Content {
-				approvedToolOutput.WriteString(events.TextOf(block))
-			}
+			approvedToolOutput.WriteString(contentText(tool.Content))
 			if tool.Status == "completed" && (provider != "codex" || tool.ExitCode != nil && *tool.ExitCode == 0) {
 				approvedToolCompleted = true
 			}
@@ -609,9 +607,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		fact := factEvent{Kind: event.Type()}
 		switch payload := event.Payload().(type) {
 		case events.UserMessage:
-			for _, block := range payload.Content {
-				fact.Text += events.TextOf(block)
-			}
+			fact.Text = contentText(payload.Content)
 			require.Equal(t, c.prompt, fact.Text)
 			user = true
 		case events.ToolCall:
@@ -621,13 +617,9 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 			fact.ToolCallID = payload.ID
 			fact.Status = payload.Status
 			fact.ExitCode = payload.ExitCode
-			for _, block := range payload.Content {
-				fact.Text += events.TextOf(block)
-			}
+			fact.Text = contentText(payload.Content)
 		case events.AgentMessage:
-			for _, block := range payload.Content {
-				fact.Text += events.TextOf(block)
-			}
+			fact.Text = contentText(payload.Content)
 			require.NotEmpty(t, fact.Text)
 			assistant = true
 		}
@@ -743,7 +735,7 @@ func (h *harness) answerPermissionWithState(api *client.Client, ref resource.Ses
 		return err
 	}
 	require.Equal(h.t, string(request.Interaction), answer.Interaction)
-	require.Equal(h.t, runtime.Yes(), answer.Evidence.Sent)
+	require.Equal(h.t, runtime.Bool(true), answer.Evidence.Sent)
 	require.Nil(h.t, answer.Evidence.NativeAccepted)
 	result.Permission = &permissionFacts{
 		Interaction:       string(request.Interaction),
@@ -757,6 +749,16 @@ func (h *harness) answerPermissionWithState(api *client.Client, ref resource.Ses
 	}
 	*answered = true
 	return nil
+}
+
+func contentText(blocks []events.ContentBlock) string {
+	var text strings.Builder
+	for _, block := range blocks {
+		if block.Text != nil {
+			text.WriteString(block.Text.Text)
+		}
+	}
+	return text.String()
 }
 
 func commandText(raw any) string {

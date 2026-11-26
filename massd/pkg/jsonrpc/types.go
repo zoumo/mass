@@ -61,12 +61,3 @@ type RPCError struct {
 }
 
 func (e *RPCError) Error() string { return e.Message }
-
-// Reason returns the structured protocol reason when present.
-func (e *RPCError) Reason() string {
-	var data ProtocolErrorData
-	if len(e.Data) == 0 || json.Unmarshal(e.Data, &data) != nil {
-		return ""
-	}
-	return data.Reason
-}

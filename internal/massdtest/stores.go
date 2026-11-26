@@ -5,16 +5,17 @@ import (
 	"errors"
 
 	eventfile "github.com/zoumo/mass/massd/pkg/eventstore/file"
-	metafile "github.com/zoumo/mass/massd/pkg/metastore/file"
+	"github.com/zoumo/mass/massd/pkg/metastore"
+	"github.com/zoumo/mass/massd/pkg/metastore/backend"
 )
 
 type FileStores struct {
-	Meta   *metafile.Store
+	Meta   backend.Store
 	Events *eventfile.Store
 }
 
 func OpenFileStores(dir string, readOnly bool) (*FileStores, error) {
-	meta, err := metafile.Open(dir, readOnly)
+	meta, err := backend.Open(dir, metastore.Config{Backend: "file"}, readOnly)
 	if err != nil {
 		return nil, err
 	}

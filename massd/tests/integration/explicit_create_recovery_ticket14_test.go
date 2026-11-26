@@ -21,7 +21,8 @@ import (
 	"github.com/zoumo/mass/internal/testpeer"
 	"github.com/zoumo/mass/massd/pkg/events"
 	eventfile "github.com/zoumo/mass/massd/pkg/eventstore/file"
-	metafile "github.com/zoumo/mass/massd/pkg/metastore/file"
+	"github.com/zoumo/mass/massd/pkg/metastore"
+	"github.com/zoumo/mass/massd/pkg/metastore/backend"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/runtime/claude"
@@ -53,7 +54,7 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			// Close and reopen BOTH file authorities and the Service, not just a
 			// driver in the same registry. Native saved history survives separately.
 			open := func(dir string, create bool) (*service.Service, func()) {
-				meta, e := metafile.Open(dir, false)
+				meta, e := backend.Open(dir, metastore.Config{Backend: "file"}, false)
 				require.NoError(t, e)
 				closeMeta := sync.OnceFunc(func() { assert.NoError(t, meta.Close(), "close metadata authority") })
 				t.Cleanup(closeMeta)
@@ -62,7 +63,10 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 				closeHistory := sync.OnceFunc(func() { assert.NoError(t, history.Close(), "close event authority") })
 				t.Cleanup(closeHistory)
 				vault := filepath.Join(dir, "private")
-				svc := service.New(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: vault}, "codex": codex.Factory{RecoveryDir: vault}}))
+				svc := service.NewWithOptions(
+					meta, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: vault}, "codex": codex.Factory{RecoveryDir: vault}}),
+					service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+				)
 				closeService := sync.OnceFunc(func() {
 					cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
@@ -120,7 +124,7 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			require.NoError(t, err)
 			require.NotNil(t, created.InitialInputReceipt)
 			first := waitHistory(svc, 1)
-			require.Equal(t, "first explicit input", events.TextOf(first.Events[0].Payload().(events.AgentMessage).Content[0]))
+			require.Equal(t, events.Text("first explicit input"), first.Events[0].Payload().(events.AgentMessage).Content[0])
 			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			require.NoError(t, resumeWithInput(svc, "after close resume"))
@@ -159,13 +163,13 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			require.NoError(t, err)
 			require.Len(t, imported.Events, 6)
 			for i, text := range []string{"first explicit input", "after close resume", "after durable restart"} {
-				require.Equal(t, text, events.TextOf(imported.Events[2*i].Payload().(events.UserMessage).Content[0]))
-				require.Equal(t, text, events.TextOf(imported.Events[2*i+1].Payload().(events.AgentMessage).Content[0]))
+				require.Equal(t, events.Text(text), imported.Events[2*i].Payload().(events.UserMessage).Content[0])
+				require.Equal(t, events.Text(text), imported.Events[2*i+1].Payload().(events.AgentMessage).Content[0])
 			}
 			_, err = loaded.SendPrompt(ctx(t), ref, input("after native load"))
 			require.NoError(t, err)
 			continued := waitHistory(loaded, 4)
-			require.Equal(t, "after native load", events.TextOf(continued.Events[3].Payload().(events.AgentMessage).Content[0]))
+			require.Equal(t, events.Text("after native load"), continued.Events[3].Payload().(events.AgentMessage).Content[0])
 			_, err = loaded.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			closeLoaded()

@@ -136,7 +136,10 @@ func (s *RecoverySuite) SetupTest() {
 	s.release = func() { once.Do(func() { close(s.d.closeRelease) }) }
 	s.meta = &recoveryMeta{MetaStore: st.Meta}
 	s.history = &recoveryHistory{EventStore: st.Events, entered: make(chan struct{}), release: make(chan struct{})}
-	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": recoveryFactory{s.d}}))
+	s.svc = service.NewWithOptions(
+		s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": recoveryFactory{s.d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	s.T().Cleanup(func() {
 		s.release()
 		select {

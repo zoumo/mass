@@ -268,7 +268,10 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		// RED cleanup is external recovery, never proof of product Stop success.
 		for _, phase := range []string{"create", "resume"} {
@@ -323,7 +326,7 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		r, e := svc.GetSession(ref)
 		return err == nil && e == nil && r.Status.State == events.Idle && len(before.Events) == 1
 	}, 5*time.Second, 10*time.Millisecond)
-	require.Equal(t, "durable original answer", events.TextOf(before.Events[0].Payload().(events.AgentMessage).Content[0]))
+	require.Equal(t, events.Text("durable original answer"), before.Events[0].Payload().(events.AgentMessage).Content[0])
 	closed, err := svc.CloseSession(ctx, ref)
 	require.NoError(t, err)
 	require.Equal(t, events.SessionState("offline"), closed.Status.State)
@@ -405,7 +408,7 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	if mode == "caller-abandon-only" {
 		require.Len(t, after.Events, len(before.Events)+1)
 		require.Equal(t, before.Events, after.Events[:len(before.Events)], "history identity/order/content must survive canceled restore")
-		require.Equal(t, "resume answer", events.TextOf(after.Events[len(before.Events)].Payload().(events.AgentMessage).Content[0]))
+		require.Equal(t, events.Text("resume answer"), after.Events[len(before.Events)].Payload().(events.AgentMessage).Content[0])
 	} else {
 		require.Equal(t, before, after, "history identity/order/content must survive canceled restore")
 	}
@@ -472,7 +475,10 @@ func TestPendingRestoreCancellationIsNotReleaseProof(t *testing.T) {
 	require.NoError(t, err)
 	d := &pendingRestoreDriver{recoveryDriver: &recoveryDriver{pipe: events.NewEventPipe(16)}, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), unknownOpening: true}
 	release := sync.OnceFunc(func() { close(d.release) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		release()
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -567,7 +573,10 @@ func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 			d := &pendingRestoreDriver{recoveryDriver: &recoveryDriver{pipe: events.NewEventPipe(16)}, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), unknown: unknown}
 			release := sync.OnceFunc(func() { close(d.release) })
 			t.Cleanup(func() { d.pipe.End(nil) })
-			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}))
+			svc := service.NewWithOptions(
+				st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fault": pendingRestoreFactory{d}}),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			t.Cleanup(func() {
 				d.allowCleanup.Store(true)
 				release()
@@ -649,7 +658,7 @@ func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, page.Events, 1, "late accepted fact must drain before Stop success, including explicit cleanup retry")
 			require.Equal(t, "19191919-1919-4191-8191-191919191919", page.Events[0].EventID)
-			require.Equal(t, "accepted late restore fact", events.TextOf(page.Events[0].Payload().(events.AgentMessage).Content[0]))
+			require.Equal(t, events.Text("accepted late restore fact"), page.Events[0].Payload().(events.AgentMessage).Content[0])
 			require.Equal(t, int32(1), d.resumeCalls.Load(), "no replacement native restore")
 			require.Zero(t, d.promptCalls.Load(), "no native input dispatch while stopping or stopped")
 		})

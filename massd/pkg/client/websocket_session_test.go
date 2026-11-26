@@ -61,7 +61,7 @@ func (d *typedSessionDriver) OpenSessionWithInput(_ context.Context, _ runtime.A
 	session := d.nativeSession(spec)
 	session.InitialInputReceipt = &runtime.InputReceipt{
 		Submission: "typed-create",
-		Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+		Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)},
 	}
 	return session, nil
 }
@@ -87,7 +87,7 @@ func (d *typedSessionDriver) ResumeSessionWithInput(_ context.Context, id string
 	session.SessionID = id
 	session.InitialInputReceipt = &runtime.InputReceipt{
 		Submission: "typed-resume",
-		Acceptance: runtime.Acceptance{Sent: runtime.Yes()},
+		Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)},
 	}
 	return session, nil
 }
@@ -138,9 +138,12 @@ func newTypedSessionServer(t *testing.T) (*httptest.Server, *typedSessionDriver,
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	driver := &typedSessionDriver{pipe: events.NewEventPipe(32)}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
-		"fixture": typedSessionFactory{driver: driver},
-	}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
+			"fixture": typedSessionFactory{driver: driver},
+		}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = svc.CreateRuntime(resource.Runtime{
 		Metadata: resource.Metadata{Name: "agent"},
 		Spec:     resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}},
@@ -174,7 +177,7 @@ func TestClientSessionLifecycleAndHistory(t *testing.T) {
 	}, &created))
 	require.NotNil(t, created.InitialInputReceipt)
 	require.Equal(t, "typed-create", created.InitialInputReceipt.Submission)
-	require.Equal(t, runtime.Yes(), created.InitialInputReceipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), created.InitialInputReceipt.Acceptance.Sent)
 	driver.mu.Lock()
 	require.Len(t, driver.openInputs, 1)
 	require.NotNil(t, driver.openInputs[0].Content[0].Text)

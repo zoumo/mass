@@ -18,9 +18,9 @@ func TestIssueSubmissionReceipt(t *testing.T) {
 		attempt    string
 		state      string
 	}{
-		{"written", "applied_best_effort", runtime.Acceptance{Sent: runtime.Yes()}, nil, "delivered", "delivered"},
-		{"not applied", "not_applied", runtime.Acceptance{Sent: runtime.Yes()}, nil, "blocked", "unknown"},
-		{"native rejection", "applied_best_effort", runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}, nil, "blocked", "unknown"},
+		{"written", "applied_best_effort", runtime.Acceptance{Sent: runtime.Bool(true)}, nil, "delivered", "delivered"},
+		{"not applied", "not_applied", runtime.Acceptance{Sent: runtime.Bool(true)}, nil, "blocked", "unknown"},
+		{"native rejection", "applied_best_effort", runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(false)}, nil, "blocked", "unknown"},
 		{"not sent", "applied_best_effort", runtime.Acceptance{Sent: runtime.Bool(false)}, nil, "blocked", "unknown"},
 		{"no write evidence", "applied_best_effort", runtime.Acceptance{}, nil, "blocked", "unknown"},
 		{"lost response", "", runtime.Acceptance{}, &runtime.OperationError{Code: "outcome_unknown", Reason: "operation_unconfirmed"}, "transport_unknown", "unknown"},

@@ -66,7 +66,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			release := func() { once.Do(func() { close(gate.release) }) }
 			defer release()
 			reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}})
-			svc := service.New(st.Meta, gate, reg)
+			svc := service.NewWithOptions(st.Meta, gate, reg, service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout})
 			pidFile := filepath.Join(ownedRoot, "owned-pid")
 			expectProcesses := false
 			t.Cleanup(func() {

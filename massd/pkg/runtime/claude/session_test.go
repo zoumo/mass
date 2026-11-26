@@ -83,7 +83,7 @@ func TestPromptFailurePreservesDispatchEvidence(t *testing.T) {
 		},
 		{
 			name: "observed write with uncertain outcome", code: agent.ErrorOutcomeUnknown,
-			sent: runtime.Yes(), wantSent: runtime.Yes(),
+			sent: runtime.Bool(true), wantSent: runtime.Bool(true),
 		},
 	}
 	for _, tc := range cases {

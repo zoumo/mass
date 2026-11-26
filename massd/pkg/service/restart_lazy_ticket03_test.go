@@ -106,7 +106,7 @@ func (*ticket03Driver) CancelHistoryLoad(context.Context, string, string) error 
 
 func (d *ticket03Driver) SendPrompt(context.Context, string, runtime.Input) (runtime.InputReceipt, error) {
 	d.prompts.Add(1)
-	return runtime.InputReceipt{Submission: "ticket03", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "ticket03", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}, nil
 }
 
 func (d *ticket03Driver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
@@ -116,7 +116,7 @@ func (d *ticket03Driver) Cancel(context.Context, string) (runtime.CancelReceipt,
 
 func (d *ticket03Driver) AnswerInteraction(context.Context, string, string, any) (runtime.Acceptance, error) {
 	d.answers.Add(1)
-	return runtime.Acceptance{Sent: runtime.Yes()}, nil
+	return runtime.Acceptance{Sent: runtime.Bool(true)}, nil
 }
 
 func (d *ticket03Driver) CloseSession(context.Context, string) error {
@@ -233,7 +233,10 @@ func TestTicket03PrepareReconcilesPersistedStateWithoutStartingAnything(t *testi
 	st = openTicket03StoreAt(t, dir)
 
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -346,7 +349,10 @@ func TestTicket03ConcurrentCreateAndExplicitStartShareOneRuntimeBinding(t *testi
 		d.startGate = gate
 		d.started = entered
 	}}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		select {
 		case <-gate:
@@ -394,7 +400,10 @@ func TestTicket03UnknownResumeStartsRuntimeAndUsesObservedState(t *testing.T) {
 	factory := &ticket03Factory{configure: func(d *ticket03Driver) {
 		d.resumeTo = events.Idle
 	}}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -432,7 +441,10 @@ func TestTicket03ColdRestartStartsUnknownRuntimeAndResumesSession(t *testing.T) 
 	factory := &ticket03Factory{configure: func(d *ticket03Driver) {
 		d.resumeTo = events.Idle
 	}}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -473,7 +485,10 @@ func TestTicket03UnknownResumeFailureKeepsUnknown(t *testing.T) {
 	factory := &ticket03Factory{configure: func(d *ticket03Driver) {
 		d.resumeErr = errors.Join(runtime.ErrResourcesReleased, errors.New("native resume rejected"))
 	}}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -504,7 +519,10 @@ func TestTicket03ReadOperationsDoNotStartRuntime(t *testing.T) {
 	createTicket03Runtime(t, st, "agent", "stopped")
 	original := createTicket03Session(t, st, "agent", "offline", "offline")
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -549,7 +567,10 @@ func TestTicket03PromptFailsFastOnDetachedUnknownAndNonExecutableStates(t *testi
 		createTicket03Session(t, st, "agent", "prompt-"+string(state), state)
 	}
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -570,7 +591,10 @@ func TestTicket03AnswerAndCancelFailFastWithoutEffectiveRun(t *testing.T) {
 	createTicket03Runtime(t, st, "agent", "stopped")
 	createTicket03Session(t, st, "agent", "detached", "offline")
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -589,7 +613,10 @@ func TestTicket03WorkDispatchesOnlyWithEffectiveRunAndExecutableState(t *testing
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -639,7 +666,10 @@ func TestTicket03FreshLiveUnknownAdmitsWorkBeforeObservedState(t *testing.T) {
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -664,7 +694,10 @@ func TestTicket03ObservedUnknownRejectsWorkWithoutDispatchSideEffects(t *testing
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -711,7 +744,10 @@ func TestTicket03DetachedUnknownRejectsWorkWithoutDispatchSideEffects(t *testing
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -737,7 +773,10 @@ func TestTicket03ResumeRejectsNonResumableStateBeforeStartingRuntime(t *testing.
 	createTicket03Runtime(t, st, "agent", "stopped")
 	createTicket03Session(t, st, "agent", "still-idle", events.Idle)
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -754,7 +793,10 @@ func TestTicket03DuplicateCreateDoesNotStartRuntime(t *testing.T) {
 	createTicket03Runtime(t, st, "agent", "stopped")
 	createTicket03Session(t, st, "agent", "existing", "offline")
 	factory := &ticket03Factory{}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

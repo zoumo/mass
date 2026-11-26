@@ -294,6 +294,20 @@ func TestIdleExpiryRevalidatesPersistedState(t *testing.T) {
 	}
 }
 
+func blockingPermissionEvent() events.InteractionRequested {
+	return events.InteractionRequested{
+		Interaction: "ask",
+		Blocking:    true,
+		Request: events.InteractionRequest{
+			Kind: events.InteractionPermission, ToolCallID: "tool", Title: "Allow?",
+			Options: []events.PermissionOption{
+				{OptionID: "allow-once", Name: "Allow once", Kind: events.PermissionAllow, Scope: events.PermissionScopeOnce},
+				{OptionID: "reject-once", Name: "Reject once", Kind: events.PermissionReject, Scope: events.PermissionScopeOnce},
+			},
+		},
+	}
+}
+
 func TestIdleWaitsForBlockingInteractionToClose(t *testing.T) {
 	f := newIdleFixture(t, time.Second)
 	f.driver.releaseClose()
@@ -302,7 +316,7 @@ func TestIdleWaitsForBlockingInteractionToClose(t *testing.T) {
 	subscription, err := f.svc.SubscribeEvents(f.ref)
 	require.NoError(t, err)
 	defer subscription.Close()
-	f.emit(t, events.InteractionRequested{Interaction: "ask", Request: events.PermissionRequest("tool", "Allow?"), Blocking: true})
+	f.emit(t, blockingPermissionEvent())
 	select {
 	case <-subscription.Events():
 	case <-time.After(time.Second):
@@ -718,7 +732,7 @@ func TestIdlePromptSettlementWithQueuedNativeEvents(t *testing.T) {
 		},
 		{
 			name:     "interaction",
-			queued:   events.InteractionRequested{Interaction: "ask", Request: events.PermissionRequest("tool", "Allow?"), Blocking: true},
+			queued:   blockingPermissionEvent(),
 			finished: events.InteractionClosed{Interaction: "ask", Outcome: "answered"},
 		},
 		{

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -327,6 +328,37 @@ func TestInProcessRPCDuplicatePendingReplyClosesConnection(t *testing.T) {
 	require.ErrorIs(t, peer.ReadObject(&response), io.EOF)
 }
 
+func TestInProcessRPCDrainWritesQueuedReplies(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server, err := transport.New(nil, transport.Options{WriteTimeout: time.Second})
+		require.NoError(t, err)
+		t.Cleanup(server.Shutdown)
+		peer, err := server.Connect(t.Context(), time.Second)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, peer.Close()) })
+
+		require.NoError(t, peer.WriteObject(json.RawMessage(initializeMessage(`"init"`, rpcwire.Version))))
+		require.NoError(t, peer.WriteObject(json.RawMessage(`{"jsonrpc":"2.0","id":"queued","method":"unknown"}`)))
+		// With no peer reader, the writer is blocked on initialize and the
+		// method-not-found reply is queued behind it.
+		synctest.Wait()
+		drained := make(chan error, 1)
+		go func() { drained <- server.DrainAndClose(t.Context()) }()
+		synctest.Wait()
+		require.False(t, server.Ready())
+
+		var init, queued rpcResponse
+		require.NoError(t, peer.ReadObject(&init))
+		require.Equal(t, `"init"`, string(init.ID))
+		require.Nil(t, init.Error)
+		synctest.Wait() // Only the queued reply can still hold the connection open.
+		require.NoError(t, peer.ReadObject(&queued))
+		requireRPCError(t, queued, -32601, `"queued"`, "")
+		require.NoError(t, <-drained)
+		require.ErrorIs(t, peer.ReadObject(&queued), io.EOF)
+	})
+}
+
 func TestInProcessRPCStalledRepliesDrainAfterWriteTimeout(t *testing.T) {
 	server, err := transport.New(nil, transport.Options{WriteTimeout: time.Second})
 	require.NoError(t, err)
@@ -339,12 +371,7 @@ func TestInProcessRPCStalledRepliesDrainAfterWriteTimeout(t *testing.T) {
 	// Receiving this notification proves the previous request was admitted.
 	require.NoError(t, peer.WriteObject(json.RawMessage(`{"jsonrpc":"2.0","method":"ignored"}`)))
 
-	draining, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	require.NoError(t, server.Drain(draining))
 	var response rpcResponse
-	require.ErrorIs(t, peer.ReadObject(&response), io.EOF)
-
 	healthy, err := server.Connect(t.Context(), time.Second)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, healthy.Close()) })
@@ -352,6 +379,11 @@ func TestInProcessRPCStalledRepliesDrainAfterWriteTimeout(t *testing.T) {
 	require.NoError(t, healthy.ReadObject(&response))
 	require.Equal(t, `"healthy"`, string(response.ID))
 	require.Nil(t, response.Error)
+
+	draining, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	require.NoError(t, server.DrainAndClose(draining))
+	require.ErrorIs(t, peer.ReadObject(&response), io.EOF)
 }
 
 func TestRPCCloseExternalAdmission(t *testing.T) {
@@ -528,7 +560,7 @@ type promptTraceAPI struct {
 }
 
 func (promptTraceAPI) SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error) {
-	return runtime.InputReceipt{Submission: "accepted", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "accepted", Acceptance: runtime.Acceptance{Sent: runtime.Bool(true)}}, nil
 }
 
 func TestRPCTraceContext(t *testing.T) {

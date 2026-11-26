@@ -63,7 +63,7 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 				observation = newCodexTurnObservation()
 				defer observation.releaseFacts()
 			}
-			svc, _, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
+			svc, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
 			// The executable is still strictly synthetic. Only launch configuration
 			// uses the real-runtime shape: scenario is not a required config field.
 			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{
@@ -86,10 +86,10 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			}
 			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 			require.NoError(t, err)
-			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
-				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+				require.Equal(t, runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 				require.Nil(t, receipt.Acceptance.NativeRecorded)
@@ -618,12 +618,12 @@ func frameWireMethodAt(frames []any, index int) (string, bool) {
 	return method, ok
 }
 
-func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *runtime.Registry, string) {
+func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, string) {
 	t.Helper()
 	return setupWithCodexObservation(t, policy, nil)
 }
 
-func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, observation *codexTurnObservation) (*service.Service, *runtime.Registry, string) {
+func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, observation *codexTurnObservation) (*service.Service, string) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := massdtest.OpenFileStores(dir, false)
@@ -633,9 +633,15 @@ func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, o
 		codexFactory = observedCodexFactory{Factory: codexFactory, observation: observation}
 	}
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codexFactory})
-	svc := service.NewWithPolicy(st.Meta, st.Events, reg, policy)
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, reg,
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  policy,
+		},
+	)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
-	return svc, reg, dir
+	return svc, dir
 }
 
 func openNative(t *testing.T, svc *service.Service, kind, mode, name string) resource.Session {
@@ -665,7 +671,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 					policy = nil
 					scenarioMode = "basic"
 				}
-				svc, _, dir := setup(t, policy)
+				svc, dir := setup(t, policy)
 				r := openNative(t, svc, kind, scenarioMode, "demo")
 				if kind == "claude" {
 					_, err := uuid.Parse(r.Status.SessionID)
@@ -682,7 +688,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				defer sub.Close()
 				receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 				require.NoError(t, err)
-				require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+				require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 				requests, chunks := 0, 0
 				seen := map[string]int{}
 				var interaction string
@@ -710,7 +716,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 							}
 							accepted, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.NoError(t, err)
-							require.Equal(t, runtime.Yes(), accepted.Evidence.Sent)
+							require.Equal(t, runtime.Bool(true), accepted.Evidence.Sent)
 							require.Nil(t, accepted.Evidence.NativeAccepted)
 							_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.Error(t, err, "no double answer")
@@ -724,7 +730,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 								}
 								acceptance, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"})
 								require.NoError(t, err)
-								require.Equal(t, runtime.Yes(), acceptance.Evidence.Sent)
+								require.Equal(t, runtime.Bool(true), acceptance.Evidence.Sent)
 								require.Nil(t, acceptance.Evidence.NativeAccepted)
 							}
 						}
@@ -829,7 +835,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 
 func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation() {
 	t := claudeSuite.T()
-	svc, reg, _ := setup(t, prototype.AutoApprovePermissions)
+	svc, _ := setup(t, prototype.AutoApprovePermissions)
 	healthy := openNative(t, svc, "claude", "question", "healthy")
 	second, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "second"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: healthy.Spec.Cwd}}})
 	require.NoError(t, err)
@@ -844,7 +850,13 @@ func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation(
 	missingReg := runtime.NewRegistry(map[string]runtime.Factory{
 		"claude": claude.Factory{RecoveryDir: t.TempDir()},
 	})
-	missing := service.NewWithPolicy(missingStore.Meta, missingStore.Events, missingReg, prototype.AutoApprovePermissions)
+	missing := service.NewWithOptions(
+		missingStore.Meta, missingStore.Events, missingReg,
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  prototype.AutoApprovePermissions,
+		},
+	)
 	t.Cleanup(func() {
 		if shutdownErr := missing.Shutdown(ctx(t)); shutdownErr != nil {
 			assert.ErrorContains(t, shutdownErr, "close_failed")
@@ -859,21 +871,9 @@ func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation(
 	require.NoError(t, err)
 	_, err = uuid.Parse(opened.Status.SessionID)
 	require.NoError(t, err)
-	missingDriver, err := missingReg.Get("missing")
-	require.NoError(t, err)
-	observation := missingDriver.(interface {
-		SessionObservation(string) runtime.SessionObservation
-	}).SessionObservation(opened.Status.SessionID)
-	select {
-	case <-observation.Done():
-	case <-ctx(t).Done():
-		t.Fatal("native exit before init was not observed")
-	}
-	require.ErrorContains(t, observation.Err(), "session_terminated")
-	d, err := reg.Get("healthy")
-	require.NoError(t, err)
+	requireObservationLost(t, missing, resource.SessionRef{SessionID: opened.Status.SessionID})
 	// Unsupported SDK options reject without starting a replacement process.
-	_, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "bad"}, runtime.SessionSpec{Cwd: work, AdditionalDirs: []string{"/extra"}})
+	_, err = svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "bad"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: work, AdditionalDirs: []string{"/extra"}}}})
 	var rejected *runtime.OperationError
 	require.ErrorAs(t, err, &rejected)
 	require.Equal(t, "unsupported", rejected.Code)
@@ -901,7 +901,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation(
 
 func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	t := claudeSuite.T()
-	svc, _, _ := setup(t, prototype.AutoApprovePermissions)
+	svc, _ := setup(t, prototype.AutoApprovePermissions)
 	r := openNative(t, svc, "claude", "block-item-identity", "blocks")
 	ref := resource.SessionRef{SessionID: r.Status.SessionID}
 	sub, err := svc.SubscribeEvents(ref)
@@ -1095,7 +1095,9 @@ observed:
 	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "invalid coordinate", "invalid null coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
 		for _, payload := range persisted {
 			for _, block := range payload.Content {
-				require.NotEqual(t, forbidden, events.TextOf(block))
+				if block.Text != nil {
+					require.NotEqual(t, forbidden, block.Text.Text)
+				}
 			}
 		}
 	}
@@ -1152,7 +1154,9 @@ func TestClaudeLiveBlockStateCapacityFailsClosed(t *testing.T) {
 		case events.MessageChunk:
 			if event.ItemID == "msg-capacity:0" {
 				for _, block := range payload.Content {
-					reopened = reopened || events.TextOf(block) == "reopened"
+					if block.Text != nil && block.Text.Text == "reopened" {
+						reopened = true
+					}
 				}
 			}
 		}
@@ -1226,14 +1230,18 @@ func TestClaudeLiveAssistantFramesSuppressConflictingCompletedContent(t *testing
 			}
 			fullCount++
 			for _, block := range payload.Content {
-				duplicateFull = duplicateFull || events.TextOf(block) == "duplicate-full"
+				if block.Text != nil && block.Text.Text == "duplicate-full" {
+					duplicateFull = true
+				}
 			}
 		case events.MessageChunk:
 			if event.ItemID != "msg-frame:1" {
 				return
 			}
 			for _, block := range payload.Content {
-				duplicateSurvived = duplicateSurvived || events.TextOf(block) == "after-duplicate"
+				if block.Text != nil && block.Text.Text == "after-duplicate" {
+					duplicateSurvived = true
+				}
 			}
 		}
 	}

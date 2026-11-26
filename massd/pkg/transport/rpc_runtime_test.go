@@ -80,7 +80,10 @@ func newRPCRuntimeFixture(t *testing.T, driver *rpcRuntimeDriver) *httptest.Serv
 	}
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": rpcRuntimeFactory{driver}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"fixture": rpcRuntimeFactory{driver}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	endpoint, err := transport.New(svc, withTestWriteTimeout(transport.Options{Token: "test-token"}))
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(endpoint)

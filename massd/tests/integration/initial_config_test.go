@@ -106,7 +106,7 @@ func TestInitialSessionConfigurationCodexCreateResume(t *testing.T) {
 			}
 			ensureNativeReadyObservation(fixture, "codex")
 			path, cwd := writeNativeScenario(t, fixture)
-			svc, _, dir := setup(t, nil)
+			svc, dir := setup(t, nil)
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 			require.NoError(t, err)
 			handler, err := transport.New(svc, withTestWriteTimeout(transport.Options{}))

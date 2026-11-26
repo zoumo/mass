@@ -91,7 +91,7 @@ func (d *routeDriver) SendPrompt(_ context.Context, id string, input runtime.Inp
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.inputs[id] = append(d.inputs[id], input)
-	return runtime.InputReceipt{Submission: "start", Result: "applied_new_work", Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "start", Result: "applied_new_work", Acceptance: runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}}, nil
 }
 
 func (d *routeDriver) Inject(_ context.Context, id string, input runtime.Input) (runtime.InjectReceipt, error) {
@@ -140,7 +140,10 @@ func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundar
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
 	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
 	require.NoError(t, err)
 	api, err := transport.New(svc, transport.Options{WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})
@@ -775,7 +778,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 		OperationID: "observer-finished-accept", ExpectedRevision: 1, Reason: "Reviewed the archived result", Evidence: []string{"artifacts/archive.log"},
 	})
 	boundary.driver.mu.Lock()
-	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}
+	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}}
 	boundary.driver.mu.Unlock()
 	queueInternal(t, p, newInternalEvent("browser-accepted", "context_supplement", eventParty{Kind: "router"}))
 	waitWorkEvent(t, p, "browser-accepted", "sent")

@@ -49,7 +49,10 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	d := &workDriver{pipe: events.NewEventPipe(16), entered: make(chan context.Context, 1), release: make(chan struct{})}
-	svc := service.New(meta, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{d}}))
+	svc := service.NewWithOptions(
+		meta, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{d}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		_ = st.Reconcile()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -146,7 +149,10 @@ func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	restoredMeta, err := backend.Open(dir, metastore.Config{Backend: authority}, false)
 	require.NoError(t, err)
 	defer restoredMeta.Close()
-	queryOnly := service.New(restoredMeta, reopened, runtime.NewRegistry(nil))
+	queryOnly := service.NewWithOptions(
+		restoredMeta, reopened, runtime.NewRegistry(nil),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	defer func() { require.NoError(t, queryOnly.Shutdown(ctx)) }()
 	broadcast, err := queryOnly.EventBroadcast(ref)
 	require.NoError(t, err)

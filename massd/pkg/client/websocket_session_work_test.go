@@ -180,9 +180,12 @@ func newTypedWorkFixture(t *testing.T) *typedWorkFixture {
 		pipe:          events.NewEventPipe(32),
 		cancelReceipt: runtime.CancelReceipt{Result: "noActiveWork"},
 	}
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
-		"fixture": typedWorkFactory{driver: driver},
-	}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{
+			"fixture": typedWorkFactory{driver: driver},
+		}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	t.Cleanup(func() {
 		driver.mu.Lock()
 		release := driver.promptRelease
@@ -244,7 +247,7 @@ func TestClientSessionWorkTypedReceiptsAndOpenAnswer(t *testing.T) {
 		Submission: "typed-input",
 		Acceptance: runtime.Acceptance{NativeAccepted: runtime.Bool(false)},
 	}, nil)
-	fixture.driver.setAnswer(runtime.Acceptance{NativeRecorded: runtime.Yes()})
+	fixture.driver.setAnswer(runtime.Acceptance{NativeRecorded: runtime.Bool(true)})
 	fixture.driver.setCancel(runtime.CancelReceipt{Result: "noActiveWork"})
 	wsClient := newInitializedWorkClient(t, fixture)
 
@@ -269,7 +272,7 @@ func TestClientSessionWorkTypedReceiptsAndOpenAnswer(t *testing.T) {
 	require.NoError(t, wsClient.Answer(t.Context(), nameRef, "interaction-null", nil, &nullReceipt))
 	require.Equal(t, "interaction-null", nullReceipt.Interaction)
 	require.Nil(t, nullReceipt.Evidence.Sent)
-	require.Equal(t, runtime.Yes(), nullReceipt.Evidence.NativeRecorded)
+	require.Equal(t, runtime.Bool(true), nullReceipt.Evidence.NativeRecorded)
 
 	answer := map[string]any{
 		"value": json.Number("9007199254740993"),

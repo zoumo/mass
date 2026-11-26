@@ -117,7 +117,7 @@ func TestInjectNativeDaemonSuccess(t *testing.T) {
 					done = injectAsync(t, c, ref)
 				}
 				call := peer.next(t)
-				expected := runtime.Acceptance{Sent: runtime.Yes()}
+				expected := runtime.Acceptance{Sent: runtime.Bool(true)}
 				if kind == "codex" {
 					require.Equal(t, "thread/inject_items", call.method)
 					require.Equal(t, ref.SessionID, call.params["threadId"])
@@ -125,7 +125,7 @@ func TestInjectNativeDaemonSuccess(t *testing.T) {
 					require.Len(t, items, 1)
 					require.Equal(t, map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "context only"}}}, items[0])
 					call.respond(map[string]any{})
-					expected.NativeAccepted = runtime.Yes()
+					expected.NativeAccepted = runtime.Bool(true)
 				} else {
 					require.Equal(t, "user", call.method)
 					require.Equal(t, false, call.params["shouldQuery"])
@@ -184,7 +184,7 @@ func TestStructuredInputThroughNativeDaemon(t *testing.T) {
 				injected <- injectResult{receipt, err}
 			}()
 			call := peer.next(t)
-			expected := runtime.Acceptance{Sent: runtime.Yes()}
+			expected := runtime.Acceptance{Sent: runtime.Bool(true)}
 			claudeContent := []any{
 				map[string]any{"type": "text", "text": "before"},
 				map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": image}},
@@ -200,7 +200,7 @@ func TestStructuredInputThroughNativeDaemon(t *testing.T) {
 					},
 				}}, call.params["items"])
 				call.respond(map[string]any{})
-				expected.NativeAccepted = runtime.Yes()
+				expected.NativeAccepted = runtime.Bool(true)
 			} else {
 				require.Equal(t, "user", call.method)
 				require.Equal(t, false, call.params["shouldQuery"])
@@ -258,7 +258,7 @@ func TestInjectNativeDaemonRejectionAndUnsupported(t *testing.T) {
 			require.Error(t, <-done)
 			var receipt runtime.InjectReceipt
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &receipt))
-			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+			require.Equal(t, runtime.Bool(true), receipt.Acceptance.Sent)
 			require.Equal(t, runtime.Bool(false), receipt.Acceptance.NativeAccepted)
 			var p runtime.OperationError
 			require.NoError(t, json.Unmarshal(stderr.Bytes(), &p))
@@ -323,7 +323,7 @@ func TestInjectNativeDaemonUnknown(t *testing.T) {
 	peer.next(t).disconnect()
 	result := injectResultOf(t, first)
 	injectProblem(t, result.err, "outcome_unknown")
-	require.Equal(t, runtime.Yes(), result.receipt.Acceptance.Sent)
+	require.Equal(t, runtime.Bool(true), result.receipt.Acceptance.Sent)
 	require.Nil(t, result.receipt.Acceptance.NativeAccepted)
 	next := injectResultOf(t, injectAsync(t, c, ref))
 	require.Error(t, next.err)

@@ -32,7 +32,10 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -184,7 +187,10 @@ func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
 	st, err := massdtest.OpenFileStores(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	svc := service.New(st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	svc := service.NewWithOptions(
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

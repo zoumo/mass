@@ -23,7 +23,7 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	write(t, f.config, string(config)+"    threadIds: ['"+threadID+"']\n")
 	f.execution(boundary)
 	boundary.driver.mu.Lock()
-	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}
+	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}}
 	boundary.driver.mu.Unlock()
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")

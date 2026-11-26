@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/internal/massdtest"
@@ -69,7 +71,13 @@ func (s *failureSuite) TearDownTest() {
 func (s *failureSuite) start(kind, name string, history eventstore.EventStore) {
 	path, work := nativeScenario(s.T(), kind, name)
 	s.work = work
-	s.svc = service.NewWithPolicy(s.meta, history, s.reg, prototype.AutoApprovePermissions)
+	s.svc = service.NewWithOptions(
+		s.meta, history, s.reg,
+		service.Options{
+			SessionIdleTimeout: service.DefaultSessionIdleTimeout,
+			InteractionPolicy:  prototype.AutoApprovePermissions,
+		},
+	)
 	bin := mock
 	if kind == "claude" {
 		bin = claudeMock
@@ -113,7 +121,7 @@ func (s *failureSuite) cancel(kind string) {
 	s.Require().NoError(err)
 	defer sub.Close()
 	receipt := s.input(ref)
-	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+	s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 	s.until(sub, events.Running)
 	ack, err := s.svc.Cancel(ctx(s.T()), ref)
 	s.Require().NoError(err)
@@ -133,17 +141,12 @@ func (s *failureSuite) cancel(kind string) {
 }
 func (s *failureSuite) TestCodexCancelReceipt()  { s.cancel("codex") }
 func (s *failureSuite) TestClaudeCancelReceipt() { s.cancel("claude") }
-func (s *failureSuite) sessionObservation(ref resource.SessionRef) runtime.SessionObservation {
-	s.T().Helper()
-	driver, err := s.reg.Get("agent")
-	s.Require().NoError(err)
-	observer, ok := driver.(interface {
-		SessionObservation(string) runtime.SessionObservation
-	})
-	s.Require().True(ok)
-	observation := observer.SessionObservation(ref.SessionID)
-	s.Require().NotNil(observation)
-	return observation
+func requireObservationLost(t *testing.T, svc *service.Service, ref resource.SessionRef) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		session, err := svc.GetSession(ref)
+		return err == nil && session.Status.State == events.Unknown && session.Status.Reason == "session_observation_lost"
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 func (s *failureSuite) disconnect(kind string) {
@@ -154,27 +157,13 @@ func (s *failureSuite) disconnect(kind string) {
 	s.Require().NoError(err)
 	defer sub.Close()
 	receipt := s.input(ref)
-	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+	s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 	s.until(sub, events.Running)
-	observation := s.sessionObservation(ref)
-	select {
-	case <-observation.Done():
-	case <-ctx(s.T()).Done():
-		s.FailNow("native disconnect did not end original observation")
-	}
-	var operation *runtime.OperationError
-	s.Require().ErrorAs(observation.Err(), &operation)
-	if kind == "claude" {
-		s.Equal("unavailable", operation.Code)
-		s.Equal("session_terminated", operation.Reason)
-	} else {
-		s.Equal("outcome_unknown", operation.Code)
-		s.Equal("session_observation_eof", operation.Reason)
-	}
+	requireObservationLost(s.T(), s.svc, ref)
 	// The returned ACK/write evidence is independent of subsequent observation loss.
-	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
+	s.Equal(runtime.Bool(true), receipt.Acceptance.Sent)
 	if kind == "codex" {
-		s.Equal(runtime.Yes(), receipt.Acceptance.NativeAccepted)
+		s.Equal(runtime.Bool(true), receipt.Acceptance.NativeAccepted)
 	}
 	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must not resend")}})
 	s.Require().Error(err)
@@ -185,7 +174,10 @@ func (s *failureSuite) disconnect(kind string) {
 	s.Equal("stopping", r.Status.State)
 	_, err = s.svc.StartRuntime(ctx(s.T()), "agent")
 	s.Require().Error(err)
-	cold := service.New(s.st.Meta, s.st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: s.T().TempDir()}, "claude": claude.Factory{RecoveryDir: s.T().TempDir()}}))
+	cold := service.NewWithOptions(
+		s.st.Meta, s.st.Events, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: s.T().TempDir()}, "claude": claude.Factory{RecoveryDir: s.T().TempDir()}}),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = cold.StartRuntime(ctx(s.T()), "agent")
 	s.Require().ErrorContains(err, "previous runtime release")
 	if kind == "codex" {
@@ -202,6 +194,40 @@ func (s *failureSuite) disconnect(kind string) {
 }
 func (s *failureSuite) TestCodexDisconnect()  { s.disconnect("codex") }
 func (s *failureSuite) TestClaudeDisconnect() { s.disconnect("claude") }
+func TestDriverSessionObservationAfterDisconnect(t *testing.T) {
+	for _, tc := range []struct{ kind, code, reason string }{
+		{"claude", "unavailable", "session_terminated"},
+		{"codex", "outcome_unknown", "session_observation_eof"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			driver, _, pidFile := lifecycleDriver(t, tc.kind, "acknowledged")
+			work, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
+			opened, err := driver.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "active"}, runtime.SessionSpec{Cwd: work})
+			require.NoError(t, err)
+			require.NotNil(t, opened.Observation)
+			_, err = driver.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+			require.NoError(t, err)
+			pid, err := os.ReadFile(pidFile)
+			require.NoError(t, err)
+			id, err := strconv.Atoi(string(pid))
+			require.NoError(t, err)
+			peer, err := os.FindProcess(id)
+			require.NoError(t, err)
+			require.NoError(t, peer.Kill())
+			select {
+			case <-opened.Observation.Done():
+			case <-ctx(t).Done():
+				t.Fatal("native disconnect did not end session observation")
+			}
+			var operation *runtime.OperationError
+			require.ErrorAs(t, opened.Observation.Err(), &operation)
+			require.Equal(t, tc.code, operation.Code)
+			require.Equal(t, tc.reason, operation.Reason)
+		})
+	}
+}
+
 func (s *failureSuite) TestUnknownInputIsNotResent() {
 	s.start("codex", "unknown-input", s.st.Events)
 	s.unknown = true
@@ -398,22 +424,25 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	s.T().Log("PASS native Codex overload fails locally, owns close, and settles all 160 original facts without reader reconciliation")
 }
 
-// Poll the cheap resource projection while the turn runs; cloning the entire
-// growing history every 5ms competes with Store commits under the race detector.
-func (s *failureSuite) requireHistoryAfterTurn(ref resource.SessionRef, count int) {
-	s.Require().Eventually(func() bool {
-		// This fixture orders running, all facts, then idle. Read a fact before
-		// reading state so an earlier initial idle cannot satisfy the wait.
-		page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1})
-		if err != nil || len(page.Events) == 0 {
-			return false
-		}
-		current, err := s.svc.GetSession(ref)
-		return err == nil && current.Status.State == events.Idle
-	}, 6*time.Second, 5*time.Millisecond)
+// Each native turn fits in the Service delivery queue. Await its live idle
+// event before starting the next turn so only the unread subscriber overflows.
+func (s *failureSuite) publishSlowSubscriberTurns(ref resource.SessionRef) {
+	s.T().Helper()
+	live, err := s.svc.SubscribeEvents(ref)
+	s.Require().NoError(err)
+	defer live.Close()
+	for range 2 {
+		s.input(ref)
+		s.until(live, events.Running)
+		s.until(live, events.Idle)
+	}
+}
+
+func (s *failureSuite) requireSlowSubscriberHistory(ref resource.SessionRef) {
+	s.T().Helper()
 	page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1000})
 	s.Require().NoError(err)
-	s.Require().Len(page.Events, count)
+	s.Require().Len(page.Events, 140)
 }
 
 func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
@@ -422,8 +451,8 @@ func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
 	defer sub.Close()
-	s.input(ref)
-	s.requireHistoryAfterTurn(ref, 140)
+	s.publishSlowSubscriberTurns(ref)
+	s.requireSlowSubscriberHistory(ref)
 
 	for range 128 {
 		_, err = nextSubscription(sub, ctx(s.T()))
@@ -515,7 +544,10 @@ func (s *failureSuite) TestResumeEarlyCapacityFailsExplicitlyAndReleases() {
 	bin := filepath.Join(root, "resume-overflow-peer")
 	out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 	s.Require().NoError(err, "%s", out)
-	s.svc = service.New(s.meta, s.st.Events, s.reg)
+	s.svc = service.NewWithOptions(
+		s.meta, s.st.Events, s.reg,
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
 		"executable": bin, "scenario": path, "env": testpeer.RuntimeEnv(map[string]string{"CLAUDE_CONFIG_DIR": config}),
 	}}})
@@ -751,8 +783,8 @@ func requireNoError(t *testing.T, err error) {
 func (s *failureSuite) TestSubscriptionOverflowIsExplicit() {
 	s.start("codex", "slow-subscriber", s.st.Events)
 	ref := s.open("demo")
-	s.input(ref)
-	s.requireHistoryAfterTurn(ref, 140)
+	s.publishSlowSubscriberTurns(ref)
+	s.requireSlowSubscriberHistory(ref)
 
 	session, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
@@ -798,6 +830,6 @@ func (s *failureSuite) TestSubscriptionOverflowIsExplicit() {
 	s.Equal("slow_subscriber", closedParams.Error.Reason)
 	s.Equal("Observation capacity exceeded", closedParams.Error.Message)
 	s.NotContains(closedParams.Error.Message, "slow subscriber")
-	s.requireHistoryAfterTurn(ref, 140)
+	s.requireSlowSubscriberHistory(ref)
 	s.T().Log("PASS overflowed EventBroadcast maps to one historical event followed by explicit redacted subscription.closed; full 140-fact history preserved")
 }

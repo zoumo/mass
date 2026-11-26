@@ -128,7 +128,10 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 			key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(work, "-")
 			project := filepath.Join(config, "projects", key)
 			require.NoError(t, os.MkdirAll(project, 0o700))
-			svc := service.New(st.Meta, st.Events, runtime.NewRegistry(factories))
+			svc := service.NewWithOptions(
+				st.Meta, st.Events, runtime.NewRegistry(factories),
+				service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+			)
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -186,11 +189,11 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 			require.Equal(t, ref.SessionID, got.Status.SessionID)
 			require.NotNil(t, got.InitialInputReceipt)
 			require.NotEmpty(t, got.InitialInputReceipt.Submission)
-			require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.Sent)
+			require.Equal(t, runtime.Bool(true), got.InitialInputReceipt.Acceptance.Sent)
 			if kind == "claude" {
 				require.Nil(t, got.InitialInputReceipt.Acceptance.NativeAccepted)
 			} else {
-				require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.NativeAccepted)
+				require.Equal(t, runtime.Bool(true), got.InitialInputReceipt.Acceptance.NativeAccepted)
 			}
 			var runtimeMessage events.SessionEvent
 			if scenario.mode == "terminal-before-receipt" {
@@ -216,7 +219,7 @@ func TestTicket20ExplicitResumeRPC(t *testing.T) {
 				require.Equal(t, runtimeMessage.Payload(), after.Events[1].Payload())
 			}
 			require.Equal(t, before.Events[0], after.Events[0])
-			require.Equal(t, "new resume input", events.TextOf(after.Events[1].Payload().(events.AgentMessage).Content[0]))
+			require.Equal(t, events.Text("new resume input"), after.Events[1].Payload().(events.AgentMessage).Content[0])
 			for {
 				streamed, e := observer.Next(ctx(t))
 				require.NoError(t, e)
@@ -278,7 +281,10 @@ func ticket20Open(t *testing.T, f *ticket20Fixture, create bool) {
 	if f.wrapMetadata != nil {
 		meta = f.wrapMetadata(meta)
 	}
-	f.svc = service.New(meta, st.Events, runtime.NewRegistry(factories))
+	f.svc = service.NewWithOptions(
+		meta, st.Events, runtime.NewRegistry(factories),
+		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
+	)
 	svc := f.svc
 	closeService := sync.OnceFunc(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -431,7 +437,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			require.Equal(t, f.ref.SessionID, resumed.Status.SessionID)
 			require.NotNil(t, resumed.InitialInputReceipt)
 			before := ticket20Wait(t, f, 2)
-			require.Equal(t, "new explicit input", events.TextOf(before.Events[1].Payload().(events.AgentMessage).Content[0]))
+			require.Equal(t, events.Text("new explicit input"), before.Events[1].Payload().(events.AgentMessage).Content[0])
 			for _, call := range ticket20Wire(t, f) {
 				if call.Method == "input" && call.Params["text"] == "new explicit input" {
 					if kind == "claude" {
@@ -494,8 +500,8 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, page.Events, 8)
 			for i, text := range []string{"original input", "new explicit input", "after restart", "second opt-in"} {
-				require.Equal(t, text, events.TextOf(page.Events[2*i].Payload().(events.UserMessage).Content[0]))
-				require.Equal(t, text, events.TextOf(page.Events[2*i+1].Payload().(events.AgentMessage).Content[0]))
+				require.Equal(t, events.Text(text), page.Events[2*i].Payload().(events.UserMessage).Content[0])
+				require.Equal(t, events.Text(text), page.Events[2*i+1].Payload().(events.AgentMessage).Content[0])
 			}
 			_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after native load")}})
 			require.NoError(t, err)
@@ -700,7 +706,7 @@ func TestTicket20ResumeCommitGatesFactsAndReceipt(t *testing.T) {
 				case observed := <-seen:
 					require.Equal(t, "agent.message", observed.Type())
 					require.Equal(t, f.ref.SessionID, observed.SessionID)
-					require.Equal(t, "before commit", events.TextOf(observed.Payload().(events.AgentMessage).Content[0]))
+					require.Equal(t, events.Text("before commit"), observed.Payload().(events.AgentMessage).Content[0])
 				case <-ctx(t).Done():
 					t.Fatal("native resume answer did not reach the public runtime stream before commit")
 				}
@@ -746,7 +752,7 @@ func TestTicket20ResumeCommitGatesFactsAndReceipt(t *testing.T) {
 					page, err = f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{Types: []string{"agent.message"}})
 					return err == nil && len(page.Events) == wantMessages
 				}, 5*time.Second, 10*time.Millisecond)
-				require.Equal(t, "before commit", events.TextOf(page.Events[1].Payload().(events.AgentMessage).Content[0]))
+				require.Equal(t, events.Text("before commit"), page.Events[1].Payload().(events.AgentMessage).Content[0])
 				f.close()
 				ticket20Released(t, f)
 			})
