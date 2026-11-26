@@ -7,7 +7,8 @@ export GOFLAGS := $(strip $(GOFLAGS) -mod=readonly)
 export GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
 
 mass_commands := ./cmd/massd/... ./cmd/massctl/... ./cmd/mass-record-diagnose/...
-mass_packages := ./massd/... ./internal/... $(mass_commands)
+cua_packages := ./extensions/cua/...
+mass_packages := ./massd/... ./internal/... $(mass_commands) $(cua_packages)
 superagent_packages := ./superagent/... ./cmd/superagent/...
 
 fmt: fmt-go fmt-superagent
@@ -26,7 +27,7 @@ lint-go:
 
 # Package-local tests: no integration suite or recorded material.
 test-unit-go:
-	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -timeout=600s ./massd ./massd/pkg/... ./internal/... $(mass_commands)
+	GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -timeout=600s ./massd ./massd/pkg/... ./internal/... $(mass_commands) $(cua_packages)
 
 # Constructed multi-module scenarios and strict SDK protocol probes.
 test-integration-go:
@@ -49,7 +50,12 @@ build-massctl:
 	mkdir -p bin
 	go build -trimpath -o bin/massctl ./cmd/massctl
 
-build-go: build-massctl
+.PHONY: build-cua-mcp
+build-cua-mcp:
+	mkdir -p bin
+	go build -trimpath -o bin/cua-mcp ./extensions/cua/cmd/cua-mcp
+
+build-go: build-massctl build-cua-mcp
 	go build -trimpath -o bin/massd ./cmd/massd
 
 check-go: lint-go test-go build-go
