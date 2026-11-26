@@ -25,8 +25,14 @@ type fileConfig struct {
 }
 
 type computerConfig struct {
-	ID        string `mapstructure:"id"`
-	TokenFile string `mapstructure:"tokenFile"`
+	ID        string        `mapstructure:"id"`
+	TokenFile string        `mapstructure:"tokenFile"`
+	Driver    *driverConfig `mapstructure:"driver"`
+}
+
+type driverConfig struct {
+	CLI    string `mapstructure:"cli"`
+	Socket string `mapstructure:"socket"`
 }
 
 type config struct {
@@ -36,9 +42,10 @@ type config struct {
 }
 
 type computer struct {
-	id    string
-	url   string
-	token string
+	id     string
+	url    string
+	token  string
+	driver *driverConfig
 }
 
 var machineIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{6,62}[a-z0-9]$`)
@@ -81,11 +88,16 @@ func loadConfig(path string) (*config, error) {
 		if _, exists := cfg.computers[item.ID]; exists {
 			return nil, fmt.Errorf("computers[%d] repeats a computer id", i)
 		}
+		if driver := item.Driver; driver != nil && (!filepath.IsAbs(driver.CLI) || !filepath.IsAbs(driver.Socket)) {
+			return nil, fmt.Errorf("computers[%d] driver.cli and driver.socket must be absolute paths on the target Mac", i)
+		}
 		token, err := readToken(configPath(baseDir, item.TokenFile))
 		if err != nil {
 			return nil, fmt.Errorf("computers[%d] tokenFile: %w", i, err)
 		}
-		cfg.computers[item.ID] = &computer{id: item.ID, url: relay.JoinPath("m", item.ID).String(), token: token}
+		cfg.computers[item.ID] = &computer{
+			id: item.ID, url: relay.JoinPath("m", item.ID).String(), token: token, driver: item.Driver,
+		}
 	}
 	return cfg, nil
 }

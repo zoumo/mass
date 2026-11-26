@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,16 +25,13 @@ const (
 )
 
 func TestShortCommandStdio(t *testing.T) {
-	binDir := t.TempDir()
-	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-o", binDir+string(os.PathSeparator),
-		"./cmd/cua-mcp", "./testdata/cua")
-	output, err := build.CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	binDir := buildBridge(t)
 
 	t.Run("single target and upstream results", func(t *testing.T) {
 		ctx, f := startBridge(t, binDir, "first-mac")
 		tools, err := f.session.ListTools(ctx, nil)
 		require.NoError(t, err)
+		require.Len(t, tools.Tools, 1)
 		tool := findSpaceBash(t, tools.Tools)
 		assert.Equal(t, []any{"command"}, tool.InputSchema.(map[string]any)["required"])
 
@@ -151,6 +149,21 @@ type bridgeFixture struct {
 
 func startBridge(t *testing.T, binDir string, ids ...string) (context.Context, *bridgeFixture) {
 	t.Helper()
+	return startBridgeWithDrivers(t, binDir, nil, ids...)
+}
+
+func buildBridge(t *testing.T) string {
+	t.Helper()
+	binDir := t.TempDir()
+	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-o", binDir+string(os.PathSeparator),
+		"./cmd/cua-mcp", "./testdata/cua")
+	output, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	return binDir
+}
+
+func startBridgeWithDrivers(t *testing.T, binDir string, drivers []string, ids ...string) (context.Context, *bridgeFixture) {
+	t.Helper()
 	dir := t.TempDir()
 	f := &bridgeFixture{tempDir: filepath.Join(dir, "state")}
 	require.NoError(t, os.Mkdir(f.tempDir, 0o700))
@@ -161,6 +174,9 @@ func startBridge(t *testing.T, binDir string, ids ...string) (context.Context, *
 		tokenFile := id + ".token"
 		require.NoError(t, os.WriteFile(filepath.Join(dir, tokenFile), []byte(fixtureTokenPrefix+id+"\n"), 0o600))
 		fmt.Fprintf(&cfg, "  - id: %q\n    tokenFile: %q\n", id, tokenFile)
+		if slices.Contains(drivers, id) {
+			fmt.Fprint(&cfg, "    driver:\n      cli: /target/Cua Driver/bin/cua-driver\n      socket: /target/Library/Caches/driver.sock\n")
+		}
 	}
 	configPath := filepath.Join(dir, "cua-mcp.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg.String()), 0o600))
