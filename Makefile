@@ -3,6 +3,9 @@
 # Use go.mod even if a checkout retains a local vendor directory.
 export GOFLAGS := $(strip $(GOFLAGS) -mod=readonly)
 
+# Cached lint diagnostics contain absolute source paths.
+export GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
+
 mass_commands := ./cmd/massd/... ./cmd/massctl/... ./cmd/mass-record-diagnose/...
 mass_packages := ./massd/... ./internal/... $(mass_commands)
 superagent_packages := ./superagent/... ./cmd/superagent/...
