@@ -3,6 +3,7 @@ module github.com/zoumo/mass
 go 1.26.9
 
 require (
+	connectrpc.com/connect v1.18.1
 	entgo.io/ent v0.14.6
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/go-chi/chi/v5 v5.5.0
