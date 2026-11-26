@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,9 +14,9 @@ import (
 const spaceBashTool = "space_bash"
 
 func registerShortCommand(server *mcp.Server, cfg *config) func() error {
-	sessions := make(map[string]*shortCommandSession, len(cfg.computers))
+	sessions := make(map[string]*officialMCPSession, len(cfg.computers))
 	for id := range cfg.computers {
-		sessions[id] = new(shortCommandSession)
+		sessions[id] = new(officialMCPSession)
 	}
 	required := []string{"command"}
 	if len(sessions) > 1 {
@@ -42,7 +40,7 @@ func registerShortCommand(server *mcp.Server, cfg *config) func() error {
 		if err != nil {
 			return toolError(err), nil
 		}
-		session, err := sessions[target.id].get(ctx, cfg, target)
+		session, err := sessions[target.id].get(ctx, cfg, target, connectShortCommand)
 		if err != nil {
 			return toolError(err), nil
 		}
@@ -50,11 +48,7 @@ func registerShortCommand(server *mcp.Server, cfg *config) func() error {
 	})
 
 	return func() error {
-		var err error
-		for _, session := range sessions {
-			err = errors.Join(err, session.close())
-		}
-		return err
+		return closeOfficialSessions(sessions)
 	}
 }
 
@@ -93,50 +87,11 @@ func shortCommandArguments(cfg *config, raw json.RawMessage) (*computer, map[str
 	return target, args, nil
 }
 
-type shortCommandSession struct {
-	mu      sync.Mutex
-	session *mcp.ClientSession
-	dir     string
-	closed  bool
-}
-
-func (s *shortCommandSession) get(ctx context.Context, cfg *config, target *computer) (*mcp.ClientSession, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || ctx.Err() != nil {
-		return nil, errors.New("call to Cua MCP canceled")
-	}
-	if s.session != nil {
-		return s.session, nil
-	}
-
-	dir, err := os.MkdirTemp("", "cua-mcp-*")
-	if err != nil {
-		return nil, errors.New("cannot create private Cua state directory")
-	}
-	session, err := connectShortCommand(ctx, cfg, target, dir)
-	if err != nil {
-		return nil, errors.Join(err, removeCuaState(dir))
-	}
-	s.dir, s.session = dir, session
-	return session, nil
-}
-
 func connectShortCommand(ctx context.Context, cfg *config, target *computer, dir string) (*mcp.ClientSession, error) {
 	setup, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	env := []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + dir,
-		"CUA_HOME=" + dir,
-		"CUA_CREDENTIAL_STORE=file",
-		"CUA_MESH=off",
-		"CUA_TELEMETRY=off",
-	}
-	if cfg.caFile != "" {
-		env = append(env, "SSL_CERT_FILE="+cfg.caFile)
-	}
+	env := cuaCommandEnv(cfg, dir)
 	state := filepath.Join(dir, "sandboxes")
 
 	// Only the registration process receives the token in its environment. Cua
@@ -159,25 +114,4 @@ func connectShortCommand(ctx context.Context, cfg *config, target *computer, dir
 	cmd.Dir = dir
 	cmd.Env = env
 	return connectOfficialMCP(setup, cmd)
-}
-
-func (s *shortCommandSession) close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.closed = true
-	if s.session == nil {
-		return nil
-	}
-	err := s.session.Close()
-	if err != nil {
-		err = errors.New("short-command MCP subprocess did not close cleanly")
-	}
-	return errors.Join(err, removeCuaState(s.dir))
-}
-
-func removeCuaState(dir string) error {
-	if err := os.RemoveAll(dir); err != nil {
-		return errors.New("cannot remove private Cua state directory")
-	}
-	return nil
 }

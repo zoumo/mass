@@ -32,11 +32,14 @@ func run(args []string) error {
 		os.Getenv("CUA_CREDENTIAL_STORE") != "file" || os.Getenv("CUA_TELEMETRY") != "off" ||
 		os.Getenv("CUA_MESH") != "off" || filepath.Base(os.Getenv("SSL_CERT_FILE")) != "test-ca.pem" ||
 		os.Getenv("CUA_DAEMON") != "" {
-		return errors.New("Cua environment is not isolated")
+		return errors.New("isolated Cua environment is required")
 	}
 	state := filepath.Join(home, "sandboxes")
 	registry := filepath.Join(home, "fake-registry.json")
 	switch {
+	case len(args) >= 2 && slices.Equal(args[:2], []string{"spacesd", "exec"}):
+		return runDesktop(state, args)
+
 	case len(args) == 8 && slices.Equal(args[:2], []string{"spaces", "add"}):
 		id := args[4]
 		token := os.Getenv("CUA_ENV_TOKEN")

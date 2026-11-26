@@ -1,0 +1,486 @@
+[
+  {
+    "name": "list_windows",
+    "description": "List windows and their process and window IDs. Filter by app name, bundle ID, or pid.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
+          "type": "string"
+        },
+        "on_screen_only": {
+          "description": "Drop windows not on the current Space.",
+          "type": "boolean"
+        },
+        "pid": {
+          "description": "Only this pid's windows, on every layer.",
+          "type": "integer"
+        },
+        "session": {
+          "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_window_state",
+    "description": "Read a window's accessibility tree and screenshot. In the default Markdown tree, address row N as element_token <snapshot_id>:N. Use tree_format elements for structured tokens. Reading the same window again replaces its previous snapshot. Use since to read changes after an action.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "capture_mode": {
+          "description": "DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_token) or an element px action (x,y). Any value (including the old \"som\"/\"screenshot\" aliases) is accepted but has no effect.",
+          "enum": [
+            "ax",
+            "vision"
+          ],
+          "type": "string"
+        },
+        "display_only": {
+          "description": "Default false. With include_accessibility_tree:false, returns pixels for display without registering an action capture or replacing the agent snapshot. The image cannot ground input actions.",
+          "type": "boolean"
+        },
+        "full_output": {
+          "description": "Default false. Set true to restore the previous full response: both `elements` and `tree_markdown`, all metadata, and the platform's own walk limits unless max_elements / max_depth are passed. Does not combine with `since`.",
+          "type": "boolean"
+        },
+        "include_accessibility_tree": {
+          "description": "Default true. False skips the AX walk and returns the screenshot plus window metadata. Both this and include_screenshot false is an error.",
+          "type": "boolean"
+        },
+        "include_screenshot": {
+          "description": "Default true. False returns the tree only (saves image tokens and latency); screenshot_out_file still forces a capture.",
+          "type": "boolean"
+        },
+        "max_depth": {
+          "description": "Cap on walk depth. Default 25.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_dimension": {
+          "description": "Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview / thumbnail. Applied on top of the session/global max_image_dimension ceiling; the tighter of the two wins. Omit for the configured default.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_elements": {
+          "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 250 (2 000 with full_output:true); the response states when the tree was cut.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_image_dimension": {
+          "description": "Per-call override for the returned screenshot's long edge in pixels. An explicit value wins over the session/global setting; 0 returns native resolution. Omit to preserve configured behavior.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pid": {
+          "description": "Target process ID.",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Case-insensitive substring filter; `a|b` matches rows containing either. Returns matching rows plus ancestors, or says `0 of N elements match` when none does; element_index values are not renumbered. Try this before a full read.",
+          "type": "string"
+        },
+        "screenshot_format": {
+          "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged.",
+          "enum": [
+            "png",
+            "jpeg"
+          ],
+          "type": "string"
+        },
+        "screenshot_out_file": {
+          "description": "When set, write the screenshot (PNG, or JPEG with screenshot_format:\"jpeg\") to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.",
+          "type": "string"
+        },
+        "screenshot_quality": {
+          "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85.",
+          "maximum": 95,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "session": {
+          "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+          "type": "string"
+        },
+        "since": {
+          "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. Every tree read also returns the window's `ui_tree_revision`: it stays the same while reads of the same view see the same rows, and grows when they change. Pass it as `ui_tree_revision` on an action to have the action refused with `stale_revision`, before any input, when a later read saw the tree change.",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "default": 1000,
+          "description": "Wall-clock budget in milliseconds for the accessibility-tree walk (default 1000, min 100, max 120000). Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`.",
+          "maximum": 120000,
+          "minimum": 100,
+          "type": "integer"
+        },
+        "tree_format": {
+          "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value), plus `observations`: display-only rows such as static text, with role, label, value and frame but no element_token, for reading and verify_state only. \"both\": the two together, as before; roughly doubles the size.",
+          "enum": [
+            "markdown",
+            "elements",
+            "both"
+          ],
+          "type": "string"
+        },
+        "verbose": {
+          "description": "Default false. Set true to include the `_note` string and the full `background_input` capability report (macOS), which are omitted by default to save context.",
+          "type": "boolean"
+        },
+        "window_id": {
+          "description": "Target window ID from list_windows.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid",
+        "window_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "click",
+    "description": "Click a window element by element_token from the latest snapshot, or by x and y in that window's screenshot.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; or an element's published custom_actions name or raw envelope. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer.",
+          "type": "string"
+        },
+        "button": {
+          "description": "Mouse button. Default left.",
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ],
+          "type": "string"
+        },
+        "capture_id": {
+          "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused.",
+          "type": "string"
+        },
+        "count": {
+          "description": "Click count (pixel path only). Default 1.",
+          "type": "integer"
+        },
+        "debug_image_out": {
+          "description": "Write a screenshot with a crosshair at (x, y) to this path. Needs window_id; not with from_zoom.",
+          "type": "string"
+        },
+        "delivery_mode": {
+          "description": "Default \"background\" (no fronting). \"foreground\" briefly fronts the window, acts, then restores the prior app; needs window_id and is required for modified clicks. Escalate in order: AX element_token, background pixel, foreground, checking state between rungs; a click has no read-back except list-row selection.",
+          "enum": [
+            "background",
+            "foreground"
+          ],
+          "type": "string"
+        },
+        "element_token": {
+          "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
+          "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+          "type": "string"
+        },
+        "from_zoom": {
+          "description": "x and y are in the last zoom image for this pid.",
+          "type": "boolean"
+        },
+        "modifier": {
+          "description": "Modifier keys: cmd, shift, option/alt, ctrl.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pid": {
+          "description": "Target process ID. Optional with element_token (it carries the pid).",
+          "type": "integer"
+        },
+        "post_action_wait": {
+          "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+          "enum": [
+            "default",
+            "none"
+          ],
+          "type": "string"
+        },
+        "scope": {
+          "description": "Default \"window\". \"desktop\": x,y with no pid/window_id are true screen pixels from get_desktop_state.",
+          "enum": [
+            "window",
+            "desktop"
+          ],
+          "type": "string"
+        },
+        "session": {
+          "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": true,
+          "description": "Exact window (kind \"window\", with pid and window_id) or desktop (kind \"desktop\", with display_id). \"primary\" is the portable desktop target.",
+          "properties": {
+            "display_id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "window",
+                "desktop"
+              ],
+              "type": "string"
+            },
+            "pid": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "window_id": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "ui_tree_revision": {
+          "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_id": {
+          "description": "Target window ID. Omit with element_token.",
+          "type": "integer"
+        },
+        "x": {
+          "description": "X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target).",
+          "type": "number"
+        },
+        "y": {
+          "description": "Y in screenshot pixels from the image selected by target.",
+          "type": "number"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "type_text",
+    "description": "Insert text into the element named by element_token or into the focused field of the target window.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "delay_ms": {
+          "description": "Ms between characters in the CGEvent fallback. Default 0: characters go in batched key events, fast. Set a positive value for one paced key per character (debounced search boxes).",
+          "maximum": 200,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delivery_mode": {
+          "description": "Default \"background\": AX insert, then CGEvent keys, no focus steal. \"foreground\": front the window, type, restore; last resort for surfaces (WhatsApp/Catalyst) where background keys do not land.",
+          "enum": [
+            "background",
+            "foreground"
+          ],
+          "type": "string"
+        },
+        "element_token": {
+          "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
+          "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+          "type": "string"
+        },
+        "pid": {
+          "description": "Target process ID.",
+          "type": "integer"
+        },
+        "post_action_wait": {
+          "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+          "enum": [
+            "default",
+            "none"
+          ],
+          "type": "string"
+        },
+        "scope": {
+          "default": "window",
+          "description": "\"desktop\" with no pid/window_id types into the frontmost app.",
+          "enum": [
+            "window",
+            "desktop"
+          ],
+          "type": "string"
+        },
+        "session": {
+          "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": true,
+          "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+          "properties": {
+            "display_id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "window",
+                "desktop"
+              ],
+              "type": "string"
+            },
+            "pid": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "window_id": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "text": {
+          "description": "Text to insert.",
+          "type": "string"
+        },
+        "ui_tree_revision": {
+          "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_id": {
+          "description": "Window ID. Omit with element_token.",
+          "type": "integer"
+        },
+        "x": {
+          "description": "Screenshot-pixel X of the field (get_window_state PNG, as in click). With y and no element_token, pixel-clicks to focus, then types.",
+          "type": "number"
+        },
+        "y": {
+          "description": "Screenshot-pixel Y (see x).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "press_key",
+    "description": "Press and release a key in the target window or element. Key names include return, tab, escape, arrows, space, delete, home, end, pageup, pagedown, function keys, letters, and digits.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "delivery_mode": {
+          "description": "Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.",
+          "enum": [
+            "background",
+            "foreground"
+          ],
+          "type": "string"
+        },
+        "element_token": {
+          "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
+          "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+          "type": "string"
+        },
+        "key": {
+          "description": "Key name.",
+          "type": "string"
+        },
+        "modifiers": {
+          "description": "cmd, shift, option/alt, ctrl, fn.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pid": {
+          "description": "Target process ID.",
+          "type": "integer"
+        },
+        "post_action_wait": {
+          "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+          "enum": [
+            "default",
+            "none"
+          ],
+          "type": "string"
+        },
+        "scope": {
+          "default": "window",
+          "description": "\"desktop\" with no pid/window_id sends to the frontmost app.",
+          "enum": [
+            "window",
+            "desktop"
+          ],
+          "type": "string"
+        },
+        "session": {
+          "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": true,
+          "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+          "properties": {
+            "display_id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "window",
+                "desktop"
+              ],
+              "type": "string"
+            },
+            "pid": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "window_id": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "ui_tree_revision": {
+          "description": "The `ui_tree_revision` of the get_window_state read this action was planned from. The action is refused with `stale_revision`, before any input is delivered, when a later read of the same window saw the tree change or the driver has no revision for the window. It covers changes a read has observed: the driver does not watch the window between reads.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_id": {
+          "description": "Target window; required for foreground. Does not raise by itself.",
+          "type": "integer"
+        },
+        "x": {
+          "description": "Screenshot-pixel X: pixel-click to focus, then send the key. With y, no element_token.",
+          "type": "number"
+        },
+        "y": {
+          "description": "Screenshot-pixel Y (see x).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    }
+  }
+]

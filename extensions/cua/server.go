@@ -15,6 +15,10 @@ func Run(ctx context.Context, configPath string) error {
 		return err
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "cua-mcp"}, &mcp.ServerOptions{Logger: mcpLogger})
+	closeDesktop, err := registerDesktopTools(server, cfg)
+	if err != nil {
+		return err
+	}
 	closeShell := registerShortCommand(server, cfg)
 	err = server.Run(ctx, &mcp.StdioTransport{})
 	switch {
@@ -23,7 +27,7 @@ func Run(ctx context.Context, configPath string) error {
 	default:
 		err = errors.New("stdio session failed")
 	}
-	return errors.Join(err, closeShell())
+	return errors.Join(err, closeShell(), closeDesktop())
 }
 
 // Protocol logs can contain raw peer messages.
