@@ -71,7 +71,9 @@ func TestClientInitialize(t *testing.T) {
 	var rpcErr *rpcwire.RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, rpcwire.CodeProtocolState, rpcErr.Code)
-	require.Equal(t, "already_initialized", rpcErr.Reason())
+	var data rpcwire.ProtocolErrorData
+	require.NoError(t, json.Unmarshal(rpcErr.Data, &data))
+	require.Equal(t, "already_initialized", data.Reason)
 }
 
 func TestClientTraceContextWithLegacyPeer(t *testing.T) {

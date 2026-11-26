@@ -387,7 +387,7 @@ func TestClaudeHistoryRejectsInvalidNativeBlockCoordinate(t *testing.T) {
 }
 
 func TestClaudeHistoryMatchesLiveNativeBlockItemIdentity(t *testing.T) {
-	liveService, _, _ := setup(t, prototype.AutoApprovePermissions)
+	liveService, _ := setup(t, prototype.AutoApprovePermissions)
 	live := openNative(t, liveService, "claude", "basic", "live")
 	liveRef := resource.SessionRef{SessionID: live.Status.SessionID}
 	subscription, err := liveService.SubscribeEvents(liveRef)

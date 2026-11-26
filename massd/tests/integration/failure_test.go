@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/internal/massdtest"
@@ -133,17 +134,12 @@ func (s *failureSuite) cancel(kind string) {
 }
 func (s *failureSuite) TestCodexCancelReceipt()  { s.cancel("codex") }
 func (s *failureSuite) TestClaudeCancelReceipt() { s.cancel("claude") }
-func (s *failureSuite) sessionObservation(ref resource.SessionRef) runtime.SessionObservation {
-	s.T().Helper()
-	driver, err := s.reg.Get("agent")
-	s.Require().NoError(err)
-	observer, ok := driver.(interface {
-		SessionObservation(string) runtime.SessionObservation
-	})
-	s.Require().True(ok)
-	observation := observer.SessionObservation(ref.SessionID)
-	s.Require().NotNil(observation)
-	return observation
+func requireObservationLost(t *testing.T, svc *service.Service, ref resource.SessionRef) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		session, err := svc.GetSession(ref)
+		return err == nil && session.Status.State == events.Unknown && session.Status.Reason == "session_observation_lost"
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 func (s *failureSuite) disconnect(kind string) {
@@ -156,21 +152,7 @@ func (s *failureSuite) disconnect(kind string) {
 	receipt := s.input(ref)
 	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
 	s.until(sub, events.Running)
-	observation := s.sessionObservation(ref)
-	select {
-	case <-observation.Done():
-	case <-ctx(s.T()).Done():
-		s.FailNow("native disconnect did not end original observation")
-	}
-	var operation *runtime.OperationError
-	s.Require().ErrorAs(observation.Err(), &operation)
-	if kind == "claude" {
-		s.Equal("unavailable", operation.Code)
-		s.Equal("session_terminated", operation.Reason)
-	} else {
-		s.Equal("outcome_unknown", operation.Code)
-		s.Equal("session_observation_eof", operation.Reason)
-	}
+	requireObservationLost(s.T(), s.svc, ref)
 	// The returned ACK/write evidence is independent of subsequent observation loss.
 	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
 	if kind == "codex" {

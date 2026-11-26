@@ -223,13 +223,4 @@ func (r *Registry) Create(kind, name string, c Config) (Driver, error) {
 	return d, err
 }
 
-func (r *Registry) Get(name string) (Driver, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d := r.drivers[name]
-	if d == nil {
-		return nil, errors.New("driver not registered")
-	}
-	return d, nil
-}
 func (r *Registry) Remove(name string) { r.mu.Lock(); defer r.mu.Unlock(); delete(r.drivers, name) }

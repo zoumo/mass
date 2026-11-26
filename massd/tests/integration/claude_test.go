@@ -63,7 +63,7 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 				observation = newCodexTurnObservation()
 				defer observation.releaseFacts()
 			}
-			svc, _, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
+			svc, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
 			// The executable is still strictly synthetic. Only launch configuration
 			// uses the real-runtime shape: scenario is not a required config field.
 			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{
@@ -618,12 +618,12 @@ func frameWireMethodAt(frames []any, index int) (string, bool) {
 	return method, ok
 }
 
-func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *runtime.Registry, string) {
+func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, string) {
 	t.Helper()
 	return setupWithCodexObservation(t, policy, nil)
 }
 
-func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, observation *codexTurnObservation) (*service.Service, *runtime.Registry, string) {
+func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, observation *codexTurnObservation) (*service.Service, string) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := massdtest.OpenFileStores(dir, false)
@@ -635,7 +635,7 @@ func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, o
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codexFactory})
 	svc := service.NewWithPolicy(st.Meta, st.Events, reg, policy)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
-	return svc, reg, dir
+	return svc, dir
 }
 
 func openNative(t *testing.T, svc *service.Service, kind, mode, name string) resource.Session {
@@ -665,7 +665,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 					policy = nil
 					scenarioMode = "basic"
 				}
-				svc, _, dir := setup(t, policy)
+				svc, dir := setup(t, policy)
 				r := openNative(t, svc, kind, scenarioMode, "demo")
 				if kind == "claude" {
 					_, err := uuid.Parse(r.Status.SessionID)
@@ -829,7 +829,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 
 func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation() {
 	t := claudeSuite.T()
-	svc, reg, _ := setup(t, prototype.AutoApprovePermissions)
+	svc, _ := setup(t, prototype.AutoApprovePermissions)
 	healthy := openNative(t, svc, "claude", "question", "healthy")
 	second, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "second"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: healthy.Spec.Cwd}}})
 	require.NoError(t, err)
@@ -859,21 +859,9 @@ func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation(
 	require.NoError(t, err)
 	_, err = uuid.Parse(opened.Status.SessionID)
 	require.NoError(t, err)
-	missingDriver, err := missingReg.Get("missing")
-	require.NoError(t, err)
-	observation := missingDriver.(interface {
-		SessionObservation(string) runtime.SessionObservation
-	}).SessionObservation(opened.Status.SessionID)
-	select {
-	case <-observation.Done():
-	case <-ctx(t).Done():
-		t.Fatal("native exit before init was not observed")
-	}
-	require.ErrorContains(t, observation.Err(), "session_terminated")
-	d, err := reg.Get("healthy")
-	require.NoError(t, err)
+	requireObservationLost(t, missing, resource.SessionRef{SessionID: opened.Status.SessionID})
 	// Unsupported SDK options reject without starting a replacement process.
-	_, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "bad"}, runtime.SessionSpec{Cwd: work, AdditionalDirs: []string{"/extra"}})
+	_, err = svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "bad"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: work, AdditionalDirs: []string{"/extra"}}}})
 	var rejected *runtime.OperationError
 	require.ErrorAs(t, err, &rejected)
 	require.Equal(t, "unsupported", rejected.Code)
@@ -901,7 +889,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation(
 
 func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	t := claudeSuite.T()
-	svc, _, _ := setup(t, prototype.AutoApprovePermissions)
+	svc, _ := setup(t, prototype.AutoApprovePermissions)
 	r := openNative(t, svc, "claude", "block-item-identity", "blocks")
 	ref := resource.SessionRef{SessionID: r.Status.SessionID}
 	sub, err := svc.SubscribeEvents(ref)

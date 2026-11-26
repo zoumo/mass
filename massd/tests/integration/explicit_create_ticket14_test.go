@@ -33,7 +33,7 @@ import (
 )
 
 func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	path, work := nativeScenario(t, "claude", "explicit-create")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "explicit"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 }
 
 func TestTicket14ExplicitCreateCLI(t *testing.T) {
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	path, work := nativeScenario(t, "claude", "explicit-create")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestTicket14ExplicitCreateCLI(t *testing.T) {
 func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 	for _, kind := range []string{"claude", "codex"} {
 		t.Run(kind, func(t *testing.T) {
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			mode := "explicit-create"
 			bin := mock
 			if kind == "claude" {
@@ -214,7 +214,7 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 
 func TestTicket14ClaimedSessionExposesPreInitPermission(t *testing.T) {
 	requests := make(chan events.InteractionRequested, 1)
-	svc, _, _ := setup(t, func(request events.InteractionRequested) (map[string]any, bool) {
+	svc, _ := setup(t, func(request events.InteractionRequested) (map[string]any, bool) {
 		requests <- request
 		return nil, false
 	})
@@ -267,7 +267,7 @@ func TestTicket14EarlyCompletionContinuedEventsAndResumeNoReplay(t *testing.T) {
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-continuity").CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
-	svc, _, _ := setup(t, nil)
+	svc, _ := setup(t, nil)
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	configDir := t.TempDir()
@@ -372,7 +372,7 @@ func TestTicket14UnrelatedResultsKeepCurrentWorkOpen(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	for _, mode := range []string{"initial-foreign", "initial-child"} {
 		t.Run(mode, func(t *testing.T) {
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
 			work, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -530,7 +530,7 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 		t.Run(strconv.FormatBool(stop), func(t *testing.T) {
 			dir := t.TempDir()
 			release := func() { require.NoError(t, os.WriteFile(filepath.Join(dir, "release"), nil, 0o600)) }
-			svc, _, _ := setup(t, nil)
+			svc, _ := setup(t, nil)
 			// Always release the authored peer before Service cleanup, including failure.
 			t.Cleanup(release)
 			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": testpeer.RuntimeEnv(map[string]string{"EVIDENCE": dir})}}})

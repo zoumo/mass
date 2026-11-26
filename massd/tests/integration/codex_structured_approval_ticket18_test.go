@@ -294,12 +294,9 @@ approvalLoop:
 				require.Error(t, client.Answer(ctx(t), ref, string(p.Interaction), invalid, nil))
 			}
 			require.Error(t, client.Answer(ctx(t), resource.SessionRef{SessionID: "foreign-session"}, string(p.Interaction), valid, nil))
-			driver, err := reg.Get("agent")
-			require.NoError(t, err)
 			canceled, cancel := context.WithCancel(context.Background())
 			cancel()
-			_, err = driver.AnswerInteraction(canceled, ref.SessionID, string(p.Interaction), valid)
-			require.Error(t, err, "NotSent must retain the still-live native capability")
+			require.ErrorIs(t, client.Answer(canceled, ref, string(p.Interaction), valid, nil), context.Canceled)
 			require.NoError(t, client.Answer(ctx(t), ref, string(p.Interaction), valid, &receipt))
 			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
 			require.Nil(t, receipt.Evidence.NativeAccepted)

@@ -95,14 +95,14 @@ func (lifecycleSuite *LifecycleSuite) TestConcurrentDesiredSpecAndStartStatus() 
 	t.Log("PASS stale start-status CAS conflict preserves all 16 concurrent desired revisions; active Driver/session remain generation 1")
 }
 
-func lifecycleService(t *testing.T, dir string) (*service.Service, *massdtest.FileStores, *runtime.Registry) {
+func lifecycleService(t *testing.T, dir string) (*service.Service, *massdtest.FileStores) {
 	t.Helper()
 	st, err := massdtest.OpenFileStores(dir, false)
 	require.NoError(t, err)
 	reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}})
 	svc := service.NewWithPolicy(st.Meta, st.Events, reg, prototype.AutoApprovePermissions)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
-	return svc, st, reg
+	return svc, st
 }
 
 func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, input string) {
@@ -135,7 +135,7 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() {
 	t := lifecycleSuite.T()
 	dir := t.TempDir()
-	svc, st, reg := lifecycleService(t, dir)
+	svc, st := lifecycleService(t, dir)
 	createPath, work := nativeScenario(t, "codex", "lifecycle-create")
 	resumePath, _ := nativeScenario(t, "codex", "lifecycle-resume")
 	// Both phases use the original workspace. Nothing is copied from personal data.
@@ -156,8 +156,6 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	running, err := svc.GetRuntime("agent")
 	require.NoError(t, err)
 	require.Equal(t, "running", running.Status.State)
-	driver, err := reg.Get("agent")
-	require.NoError(t, err)
 	first, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "z", Name: "same"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: first.Status.SessionID}
@@ -176,9 +174,6 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	again, err := svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
 	require.Equal(t, updated, again)
-	sameDriver, err := reg.Get("agent")
-	require.NoError(t, err)
-	require.Same(t, driver, sameDriver)
 	second, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "a", Name: "same"}, Spec: first.Spec})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, second.Status.RuntimeGeneration, "new sessions still use old effective snapshot")
@@ -209,8 +204,6 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	require.Zero(t, saved.Status.AppliedGeneration)
 	_, err = svc.StopRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	_, err = reg.Get("agent")
-	require.Error(t, err)
 	offline, err := svc.GetSession(resource.SessionRef{SessionID: second.Status.SessionID})
 	require.NoError(t, err)
 	require.Zero(t, offline.Status.RuntimeGeneration)
@@ -224,12 +217,13 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	require.NoError(t, err)
 	_, err = svc.ListSessions(resource.SessionQuery{})
 	require.NoError(t, err)
-	_, err = reg.Get("agent")
-	require.Error(t, err)
+	afterList, err := svc.GetRuntime("agent")
+	require.NoError(t, err)
+	require.Equal(t, stopped, afterList)
 	require.NoError(t, svc.Shutdown(ctx(t)))
 	require.NoError(t, st.Close())
 
-	cold, st2, reg2 := lifecycleService(t, dir)
+	cold, st2 := lifecycleService(t, dir)
 	r, err = cold.GetRuntime("agent")
 	require.NoError(t, err)
 	// Simulate deletion/recreation by another resource owner. Service deletion
@@ -292,10 +286,9 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	require.Len(t, after.Events, 8)
 	require.Equal(t, history.Events, after.Events[:4])
 	require.NotEqual(t, *history.SyncedEventID, *after.SyncedEventID)
-	_, err = cold.StopRuntime(ctx(t), "agent")
+	stopped, err = cold.StopRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	_, err = reg2.Get("agent")
-	require.Error(t, err)
+	require.Equal(t, "stopped", stopped.Status.State)
 	t.Log("PASS actual SDK/fake: desired type/config, old Driver, new-session snapshot, native release gate, stop, cold material validation, original ID/ownership/history, no replay")
 }
 
@@ -332,7 +325,7 @@ func replaceWorkspace(t *testing.T, path, work string) string {
 func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	t := lifecycleSuite.T()
 	dir := t.TempDir()
-	svc, st, _ := lifecycleService(t, dir)
+	svc, st := lifecycleService(t, dir)
 	path, work := nativeScenario(t, "claude", "basic")
 	resumePath, _ := nativeScenario(t, "claude", "lifecycle-resume")
 	replaceWorkspace(t, resumePath, work)
@@ -365,7 +358,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	require.NoError(t, err)
 	require.NoError(t, svc.Shutdown(ctx(t)))
 	require.NoError(t, st.Close())
-	cold, _, _ := lifecycleService(t, dir)
+	cold, _ := lifecycleService(t, dir)
 	r, err := cold.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, r.Status.AppliedGeneration)
@@ -395,7 +388,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 
 func (lifecycleSuite *LifecycleSuite) TestCloseResumeKeepsObserversAndIdentity() {
 	t := lifecycleSuite.T()
-	svc, _, _ := lifecycleService(t, t.TempDir())
+	svc, _ := lifecycleService(t, t.TempDir())
 	path, work := nativeScenario(t, "codex", "close-resume")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 	require.NoError(t, err)
