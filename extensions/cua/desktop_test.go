@@ -3,6 +3,7 @@ package cua_test
 import (
 	"context"
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -170,11 +171,14 @@ func desktopToolList(t *testing.T, ctx context.Context, f *bridgeFixture) map[st
 	var names []string
 	for _, tool := range list.Tools {
 		names = append(names, tool.Name)
-		if tool.Name != "space_bash" {
+		if tool.Name != "space_bash" && !strings.HasPrefix(tool.Name, "pty_") {
 			inputs[tool.Name] = tool.InputSchema.(map[string]any)
 		}
 	}
-	require.ElementsMatch(t, []string{"space_bash", "list_windows", "get_window_state", "click", "type_text", "press_key"}, names)
+	require.ElementsMatch(t, []string{
+		"space_bash", "list_windows", "get_window_state", "click", "type_text", "press_key",
+		"pty_start", "pty_read", "pty_write", "pty_stop",
+	}, names)
 	return inputs
 }
 

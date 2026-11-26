@@ -19,6 +19,7 @@ func Run(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
+	closePTY := registerPTY(server, cfg)
 	closeShell := registerShortCommand(server, cfg)
 	err = server.Run(ctx, &mcp.StdioTransport{})
 	switch {
@@ -27,7 +28,7 @@ func Run(ctx context.Context, configPath string) error {
 	default:
 		err = errors.New("stdio session failed")
 	}
-	return errors.Join(err, closeShell(), closeDesktop())
+	return errors.Join(err, closePTY(), closeShell(), closeDesktop())
 }
 
 // Protocol logs can contain raw peer messages.

@@ -31,7 +31,6 @@ func TestShortCommandStdio(t *testing.T) {
 		ctx, f := startBridge(t, binDir, "first-mac")
 		tools, err := f.session.ListTools(ctx, nil)
 		require.NoError(t, err)
-		require.Len(t, tools.Tools, 1)
 		tool := findSpaceBash(t, tools.Tools)
 		assert.Equal(t, []any{"command"}, tool.InputSchema.(map[string]any)["required"])
 
