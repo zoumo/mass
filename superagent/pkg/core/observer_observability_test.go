@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -34,8 +35,20 @@ func TestObserverTraceReadProjectsKnownFields(t *testing.T) {
  ]}`, id, spanID, id, childID, spanID, childID)
 	}))
 	t.Cleanup(server.Close)
-	reader, err := newObserverTraceReader(&TelemetryQueryConfig{Endpoint: server.URL})
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "source.token"), []byte("fixture-source-token-with-32-bytes"), 0o600))
+	configPath := filepath.Join(dir, "core.yaml")
+	data := fmt.Sprintf(`openObserve:
+  endpoint: %q
+sources:
+  - {source: fixture, accountId: fixture, tokenFile: ./source.token}
+`, server.URL)
+	require.NoError(t, os.WriteFile(configPath, []byte(data), 0o600))
+	config, err := LoadConfig(configPath)
 	require.NoError(t, err)
+	reader, err := newObserverTraceReader(config.OpenObserve)
+	require.NoError(t, err)
+	require.NotNil(t, reader)
 	t.Cleanup(reader.client.CloseIdleConnections)
 	s, httpServer := startCoreResourceFixture(t)
 	s.observerTraces = reader

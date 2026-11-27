@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -444,9 +445,23 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 	}
 	t.Run("default without sessions", func(t *testing.T) {
 		dir := t.TempDir()
-		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false)
+		const traceID = "db64663e60fb444b8a93ea9c06c24413"
+		openObserve := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.String() != "/api/fixture_org/_search?type=traces" {
+				http.Error(w, "unexpected OpenObserve request", http.StatusBadRequest)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"hits":[{"trace_id":%q,"span_id":"5b147a1058d5e09f","operation_name":"fixture-span","start_time":1795196579345675000,"duration":1000}]}`, traceID)
+		}))
+		t.Cleanup(openObserve.Close)
+		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + fmt.Sprintf(`  openObserve:
+    endpoint: %q
+    organization: fixture_org
+`, openObserve.URL)
 		first := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := first.startup(t)
+		trace := composeHTTPBody(t, startup.Endpoint+"/v1/telemetry/traces/"+traceID)
+		require.Contains(t, trace, "fixture-span")
 		require.DirExists(t, filepath.Join(dir, "massd-data"))
 		require.NotContains(t, readComposeFile(t, first.stdout), "massdEndpoint")
 		require.NoDirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
