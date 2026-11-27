@@ -4,10 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/netip"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -44,7 +42,7 @@ type config struct {
 
 type computer struct {
 	id     string
-	url    string
+	url    *url.URL
 	token  string
 	driver *driverConfig
 }
@@ -97,7 +95,7 @@ func loadConfig(path string) (*config, error) {
 			return nil, fmt.Errorf("computers[%d] tokenFile: %w", i, err)
 		}
 		cfg.computers[item.ID] = &computer{
-			id: item.ID, url: relay.JoinPath("m", item.ID).String(), token: token, driver: item.Driver,
+			id: item.ID, url: relay.JoinPath("m", item.ID), token: token, driver: item.Driver,
 		}
 	}
 	return cfg, nil
@@ -112,19 +110,15 @@ func configPath(baseDir, path string) string {
 
 func parseRelayURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" || u.User != nil ||
-		u.ForceQuery || u.RawQuery != "" || strings.Contains(raw, "#") {
-		return nil, errors.New("relayURL must be a base URL without credentials, query or fragment")
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, errors.New("relayURL must be an absolute HTTP or HTTPS URL")
 	}
-	ip, _ := netip.ParseAddr(u.Hostname())
-	if u.Scheme != "https" && (u.Scheme != "http" || !ip.IsLoopback() && !strings.EqualFold(u.Hostname(), "localhost")) {
-		return nil, errors.New("relayURL requires HTTPS, except for HTTP on loopback")
+	if u.User != nil {
+		return nil, errors.New("supply relay credentials with tokenFile, not in relayURL")
 	}
-	prefix := strings.TrimSuffix(u.Path, "/")
-	if u.EscapedPath() != u.Path || strings.Contains(u.Path, "//") || prefix != "" && path.Clean(prefix) != prefix {
-		return nil, errors.New("relayURL path prefix must be unescaped and contain no empty or dot segments")
+	if u.Path == "" {
+		u.Path = "/"
 	}
-	u.Path = prefix + "/"
 	return u, nil
 }
 

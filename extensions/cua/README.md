@@ -18,7 +18,7 @@ computers:
       socket: /Users/operator/Library/Caches/cua-driver/cua-driver.sock
 ```
 
-Local relative paths resolve from the configuration file's directory. Set `caFile` to the PEM certificate trusted for the relay when it uses a private CA. When omitted, the clients use their default trust roots. Set `relayURL` to the HTTPS base URL. When a reverse proxy mounts the relay at a prefix, include it in the URL, for example `https://relay.example.com:5999/cua-relay`. HTTP is accepted for loopback tests. Each `tokenFile` holds one static machine access token and must be a regular file with owner-only permissions such as `0600`.
+Local relative paths resolve from the configuration file's directory. Set `caFile` to the PEM certificate trusted for the relay when it uses a private CA. When omitted, the clients use their default trust roots. Set `relayURL` to the HTTP or HTTPS base URL. When a reverse proxy mounts the relay at a prefix, include it in the URL, for example `https://relay.example.com:5999/cua-relay`. Each `tokenFile` holds one static machine access token and must be a regular file with owner-only permissions such as `0600`.
 
 ## Configure the MASS Session
 

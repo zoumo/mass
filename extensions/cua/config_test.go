@@ -10,7 +10,7 @@ import (
 )
 
 func TestRelayURL(t *testing.T) {
-	for _, origin := range []string{"https://relay.invalid:5943/", "http://127.0.0.1:3211", "http://[::1]:3211", "http://localhost"} {
+	for _, origin := range []string{"https://relay.invalid:5943/", "http://relay.invalid", "http://127.0.0.1:3211", "http://[::1]:3211", "http://localhost"} {
 		relay, err := parseRelayURL(origin)
 		require.NoError(t, err, origin)
 		assert.Equal(t, "/m/first-mac", relay.JoinPath("m", "first-mac").EscapedPath())
@@ -20,11 +20,10 @@ func TestRelayURL(t *testing.T) {
 		require.NoError(t, err, base)
 		assert.Equal(t, "https://relay.invalid:5999/cua-relay/m/first-mac", relay.JoinPath("m", "first-mac").String())
 	}
-	for _, origin := range []string{
-		"http://relay.invalid", "file:///tmp/cua", "https://name@relay.invalid", "https://relay.invalid/a/../b",
-		"https://relay.invalid/%2f", "https://relay.invalid/a//b", "https://relay.invalid/a/./",
-		"https://relay.invalid?secret", "https://relay.invalid#", "https:/relay.invalid",
-	} {
+	relay, err := parseRelayURL("https://relay.invalid/project%2Frelay?route=staging")
+	require.NoError(t, err)
+	assert.Equal(t, "https://relay.invalid/project%2Frelay/m/first-mac?route=staging", relay.JoinPath("m", "first-mac").String())
+	for _, origin := range []string{"file:///tmp/cua", "https://name@relay.invalid", "https:/relay.invalid", "/relay"} {
 		_, err := parseRelayURL(origin)
 		assert.Error(t, err, origin)
 	}
