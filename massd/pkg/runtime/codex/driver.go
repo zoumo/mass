@@ -313,7 +313,6 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if err := ctx.Err(); err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
-	openOptions.Features = agentFeatures(spec.Features)
 	openOptions.MCPServers = mcpServers
 	dispatchCtx := context.WithoutCancel(ctx)
 	var native agent.Session
@@ -736,14 +735,6 @@ func sameRecoveryIdentity(saved, observed ct.Thread) bool {
 		observed.ModelProvider == saved.ModelProvider &&
 		!observed.Ephemeral &&
 		reflect.DeepEqual(observed.Path, saved.Path)
-}
-
-func agentFeatures(features *runtime.SessionFeatures) agent.Features {
-	if features == nil || features.AgentQuestions == nil {
-		return agent.Features{}
-	}
-	enabled := *features.AgentQuestions
-	return agent.Features{AgentQuestions: &enabled}
 }
 
 func copyCapabilities(capabilities runtime.Capabilities) runtime.Capabilities {

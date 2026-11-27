@@ -136,15 +136,21 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 			if name == "empty" {
 				spec.Config = &runtime.InitialSessionConfig{PermissionPreset: agent.PermissionPresetAutoReview}
 			}
+			restrictLocal := name == "stdio and http"
+			if restrictLocal {
+				spec.Features = &runtime.SessionFeatures{RestrictLocalTools: runtime.Bool(true)}
+			}
 			opened, err := driver.OpenSession(t.Context(), address, spec)
 			*openedID = opened.SessionID
 			require.NoError(t, err)
+			require.Equal(t, restrictLocal, opened.EffectiveFeatures.RestrictLocalToolsEnabled())
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
 			*openedID = ""
 			rotate(resumeAuth)
 			resumed, err := driver.ResumeSession(t.Context(), opened.SessionID, address, spec)
 			*openedID = resumed.SessionID
 			require.NoError(t, err)
+			require.Equal(t, restrictLocal, resumed.EffectiveFeatures.RestrictLocalToolsEnabled())
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
 			*openedID = ""
 			t.Cleanup(func() {
@@ -185,10 +191,13 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 					continue
 				}
 				require.Equal(t, map[string]any{
-					"mcp_servers.local":   map[string]any{"command": "/mcp-server", "args": []any{"--stdio"}, "env": map[string]any{"TOKEN": "fixture-secret"}, "cwd": "/mcp-work"},
-					"mcp_servers.remote":  map[string]any{"url": "https://example.invalid/mcp", "http_headers": map[string]any{"X-Mode": "fixture"}, "env_http_headers": map[string]any{"X-Token": "TOKEN"}, "bearer_token_env_var": "TOKEN"},
-					"mcp_servers.literal": map[string]any{"url": "http://127.0.0.1/mcp", "http_headers": map[string]any{"Authorization": "Bearer fixture-literal"}},
-					"mcp_servers.file":    map[string]any{"url": "http://127.0.0.1/mcp", "http_headers": map[string]any{"Authorization": fileValues[len(methods)-1], "X-Mode": "from-file"}},
+					"features.shell_tool":       false,
+					"features.view_image":       false,
+					"features.image_generation": false,
+					"mcp_servers.local":         map[string]any{"command": "/mcp-server", "args": []any{"--stdio"}, "env": map[string]any{"TOKEN": "fixture-secret"}, "cwd": "/mcp-work"},
+					"mcp_servers.remote":        map[string]any{"url": "https://example.invalid/mcp", "http_headers": map[string]any{"X-Mode": "fixture"}, "env_http_headers": map[string]any{"X-Token": "TOKEN"}, "bearer_token_env_var": "TOKEN"},
+					"mcp_servers.literal":       map[string]any{"url": "http://127.0.0.1/mcp", "http_headers": map[string]any{"Authorization": "Bearer fixture-literal"}},
+					"mcp_servers.file":          map[string]any{"url": "http://127.0.0.1/mcp", "http_headers": map[string]any{"Authorization": fileValues[len(methods)-1], "X-Mode": "from-file"}},
 				}, record.Params["config"], "SDK emits only declared per-server overrides; native ambient fields remain provider-owned")
 			}
 			require.Equal(t, []string{"thread/start", "thread/resume", "thread/resume"}, methods)

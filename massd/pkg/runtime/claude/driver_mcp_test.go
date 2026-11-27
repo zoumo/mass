@@ -140,9 +140,15 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 			Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{FileKeyRef: &mcp.FileKeyRef{Path: authFile, Key: "MCP_AUTH"}}}},
 		},
 	}
-	session, err := driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "demo"}, runtime.SessionSpec{Cwd: cwd, MCPServers: &servers})
+	spec := runtime.SessionSpec{
+		Cwd:        cwd,
+		Features:   &runtime.SessionFeatures{RestrictLocalTools: runtime.Bool(true)},
+		MCPServers: &servers,
+	}
+	session, err := driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "demo"}, spec)
 	require.NoError(t, err)
 	require.NotEmpty(t, session.SessionID)
+	require.True(t, session.EffectiveFeatures.RestrictLocalToolsEnabled())
 	t.Cleanup(func() { _ = driver.CloseSession(context.Background(), session.SessionID) })
 
 	data, err := os.ReadFile(capture)
@@ -150,6 +156,7 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 	argv := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
 	require.NotContains(t, argv, "--strict-mcp-config")
 	require.Contains(t, argv, "--await-claim")
+	require.Contains(t, argv, "--disallowedTools=Bash,PowerShell,Read,Glob,Grep,Write,Edit,NotebookEdit,EnterWorktree,ExitWorktree")
 	for _, arg := range argv {
 		require.False(t, strings.HasPrefix(arg, "--resume"), "new sessions must not resume")
 		require.False(t, strings.HasPrefix(arg, "--session-id="), "claimed sessions must not assign an identity")

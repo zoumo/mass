@@ -270,7 +270,7 @@ func startPTYBridge(t *testing.T, bin string, relay *processRelayFixture, ids ..
 	der := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: relay.server.Certificate().Raw})
 	require.NoError(t, os.WriteFile(caFile, der, 0o600))
 	var cfg strings.Builder
-	fmt.Fprintf(&cfg, "cuaCLI: /unused-in-pty-test\nrelayURL: %q\ncaFile: ca.pem\ncomputers:\n", relay.server.URL)
+	fmt.Fprintf(&cfg, "cuaCLI: /unused-in-pty-test\nrelayURL: %q\ncaFile: ca.pem\ncomputers:\n", relay.server.URL+"/cua-relay")
 	for _, id := range ids {
 		tokenFile := id + ".token"
 		require.NoError(t, os.WriteFile(filepath.Join(dir, tokenFile), []byte(fixtureTokenPrefix+id), 0o600))
@@ -407,7 +407,9 @@ func newProcessRelay(t *testing.T) *processRelayFixture {
 			mux.ServeHTTP(w, r)
 		})))
 	}
-	f.server = httptest.NewTLSServer(root)
+	gateway := http.NewServeMux()
+	gateway.Handle("/cua-relay/", http.StripPrefix("/cua-relay", root))
+	f.server = httptest.NewTLSServer(gateway)
 	t.Cleanup(f.server.Close)
 	return f
 }

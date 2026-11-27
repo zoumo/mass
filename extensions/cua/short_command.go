@@ -96,7 +96,7 @@ func connectShortCommand(ctx context.Context, cfg *config, target *computer, dir
 
 	// Only the registration process receives the token in its environment. Cua
 	// stores it in its own credentials file inside this private directory.
-	register := exec.CommandContext(setup, cfg.cuaCLI, "spaces", "add", target.url, "--name", target.id,
+	register := exec.CommandContext(setup, cfg.cuaCLI, "spaces", "add", target.url.String(), "--name", target.id,
 		"--embedded", "--state-dir", state)
 	register.Dir = dir
 	register.Env = append([]string{"CUA_ENV_TOKEN=" + target.token}, env...)

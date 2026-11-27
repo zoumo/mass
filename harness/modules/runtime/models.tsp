@@ -88,6 +88,10 @@ model DriverSessionSpec {
 model SessionFeatures {
   /** 是否允许 Agent 向用户提问。省略时为 true，false 表示请求关闭。 */
   agentQuestions?: boolean = true;
+
+  /** 请求限制 Agent 的内置本地文件读写与命令执行工具。Codex 允许保留 apply_patch。
+   * 生效值为 true 表示 Driver 已配置该限制。 */
+  restrictLocalTools?: boolean = false;
 }
 
 model DriverSession {

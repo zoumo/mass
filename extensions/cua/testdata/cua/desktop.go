@@ -16,7 +16,7 @@ func runDesktop(stateDir string, args []string) error {
 	if len(args) != 12 {
 		return errors.New("unexpected Driver command length")
 	}
-	id := strings.TrimPrefix(args[6], "https://relay.invalid:5943/m/")
+	id := strings.TrimPrefix(args[6], "https://relay.invalid:5943/cua-relay/m/")
 	token := os.Getenv("CUA_ENV_TOKEN")
 	if id == args[6] || token != "fixture-only-access."+id ||
 		!slices.Equal(args[2:6], []string{"-i", "--embedded", "--state-dir", stateDir}) ||

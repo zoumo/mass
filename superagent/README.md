@@ -60,6 +60,28 @@ database or a restart, follow the [Trigger data path instructions](triggers/READ
 other filesystem overhead. When the budget runs out, ingestion returns
 `unavailable` without an acceptance receipt.
 
+### Enable a remote computer
+
+Build `cua-mcp` with `make build-cua-mcp` and set `remoteComputer.cua.command`
+to the executable and `remoteComputer.cua.configFile` to its YAML file.
+Put `remoteComputer` at the root for `superagent serve` or under `core`
+for `superagent compose`. Relative paths start at the configuration file's
+directory. Core and MASS must have the same access to those paths.
+Configure the relay, computers and credential files in the
+[CUA MCP configuration](../extensions/cua/README.md).
+
+Core adds `cua-mcp` to Topic and Issue Sessions and requests local tool
+restrictions for Router, Topic and Issue. All three retain the `superagent`
+business MCP. Codex keeps the `apply_patch` exception when the native model
+exposes the tool.
+
+Restart Core after changing `remoteComputer`. The MCP subprocess reads its
+own YAML file at startup. If a binding already has a Session with different
+remote computer options, Core blocks new input with
+`remote_computer_configuration_changed`. Use
+[operator reconciliation in replace mode](API.md#local-operator-reconciliation)
+to release its current Session and prepare a new one with the updated options.
+
 ## Scheduled tasks
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent

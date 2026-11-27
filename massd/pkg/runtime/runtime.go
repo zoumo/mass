@@ -27,29 +27,37 @@ type (
 // SessionFeatures is the extensible feature request stored in Session spec.
 // Omitted fields use their schema defaults.
 type SessionFeatures struct {
-	AgentQuestions *bool `json:"agentQuestions,omitempty"`
+	AgentQuestions     *bool `json:"agentQuestions,omitempty"`
+	RestrictLocalTools *bool `json:"restrictLocalTools,omitempty"`
 }
 
 func (f SessionFeatures) AgentQuestionsEnabled() bool {
 	return f.AgentQuestions == nil || *f.AgentQuestions
 }
 
+func (f SessionFeatures) RestrictLocalToolsEnabled() bool {
+	return f.RestrictLocalTools != nil && *f.RestrictLocalTools
+}
+
 // FeatureSupport declares which requested features the current native runtime
 // can enforce. Unsupported requested features degrade to false; they do not
 // make a session unsupported.
 type FeatureSupport struct {
-	AgentQuestions bool
+	AgentQuestions     bool
+	RestrictLocalTools bool
 }
 
 // ResolveSessionFeatures separates the requested value from the effective
 // value. A disabled request always remains disabled, while an unsupported
 // enabled request degrades to disabled.
 func ResolveSessionFeatures(requested *SessionFeatures, support FeatureSupport) SessionFeatures {
-	agentQuestions := true
-	if requested != nil {
-		agentQuestions = requested.AgentQuestionsEnabled()
+	if requested == nil {
+		requested = &SessionFeatures{}
 	}
-	return SessionFeatures{AgentQuestions: Bool(agentQuestions && support.AgentQuestions)}
+	return SessionFeatures{
+		AgentQuestions:     Bool(requested.AgentQuestionsEnabled() && support.AgentQuestions),
+		RestrictLocalTools: Bool(requested.RestrictLocalToolsEnabled() && support.RestrictLocalTools),
+	}
 }
 
 type Address struct {

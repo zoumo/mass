@@ -41,5 +41,5 @@ func TestSessionFeaturesJSONDefaultsAndExplicitFalse(t *testing.T) {
 
 	raw, err := json.Marshal(ResolveSessionFeatures(nil, FeatureSupport{AgentQuestions: true}))
 	require.NoError(t, err)
-	require.JSONEq(t, `{"agentQuestions":true}`, string(raw))
+	require.JSONEq(t, `{"agentQuestions":true,"restrictLocalTools":false}`, string(raw))
 }

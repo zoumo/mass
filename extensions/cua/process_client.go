@@ -14,7 +14,7 @@ import (
 	pb "github.com/zoumo/mass/extensions/cua/internal/processpb"
 )
 
-const processServicePath = "/cua.env.v1.ProcessService/"
+const processServiceName = "cua.env.v1.ProcessService"
 
 type processClient struct {
 	*computer
@@ -51,16 +51,18 @@ func newProcessHTTPClient(caFile string) (*http.Client, error) {
 }
 
 func newProcessClient(client *http.Client, target *computer) *processClient {
-	base := target.url + processServicePath
+	endpoint := func(method string) string {
+		return target.url.JoinPath(processServiceName, method).String()
+	}
 	option := connect.WithGRPCWeb()
 	return &processClient{
 		computer: target,
-		start:    connect.NewClient[pb.StartProcessRequest, pb.StartProcessResponse](client, base+"StartProcess", option),
-		attach:   connect.NewClient[pb.ConnectProcessRequest, pb.ConnectProcessResponse](client, base+"ConnectProcess", option),
-		list:     connect.NewClient[pb.ListProcessesRequest, pb.ListProcessesResponse](client, base+"ListProcesses", option),
-		input:    connect.NewClient[pb.SendInputRequest, pb.SendInputResponse](client, base+"SendInput", option),
-		signal:   connect.NewClient[pb.SignalProcessRequest, pb.SignalProcessResponse](client, base+"SignalProcess", option),
-		record:   connect.NewClient[pb.GetExecRecordRequest, pb.GetExecRecordResponse](client, base+"GetExecRecord", option),
+		start:    connect.NewClient[pb.StartProcessRequest, pb.StartProcessResponse](client, endpoint("StartProcess"), option),
+		attach:   connect.NewClient[pb.ConnectProcessRequest, pb.ConnectProcessResponse](client, endpoint("ConnectProcess"), option),
+		list:     connect.NewClient[pb.ListProcessesRequest, pb.ListProcessesResponse](client, endpoint("ListProcesses"), option),
+		input:    connect.NewClient[pb.SendInputRequest, pb.SendInputResponse](client, endpoint("SendInput"), option),
+		signal:   connect.NewClient[pb.SignalProcessRequest, pb.SignalProcessResponse](client, endpoint("SignalProcess"), option),
+		record:   connect.NewClient[pb.GetExecRecordRequest, pb.GetExecRecordResponse](client, endpoint("GetExecRecord"), option),
 	}
 }
 

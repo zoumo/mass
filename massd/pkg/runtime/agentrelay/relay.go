@@ -230,7 +230,10 @@ func MapCapabilities(capabilities agent.Capabilities) runtime.Capabilities {
 }
 
 func MapEffectiveFeatures(features agent.EffectiveFeatures) runtime.SessionFeatures {
-	return runtime.SessionFeatures{AgentQuestions: runtime.Bool(features.AgentQuestions)}
+	return runtime.SessionFeatures{
+		AgentQuestions:     runtime.Bool(features.AgentQuestions),
+		RestrictLocalTools: runtime.Bool(features.RestrictLocalTools),
+	}
 }
 
 func MapAcceptance(acceptance agent.Acceptance) runtime.Acceptance {

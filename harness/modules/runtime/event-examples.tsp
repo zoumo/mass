@@ -20,7 +20,10 @@ namespace MASS.Design.Examples;
         resumedSession: #{
           sessionId: "s1",
           capabilities: #{ continuedInput: true },
-          effectiveFeatures: #{ agentQuestions: true },
+          effectiveFeatures: #{
+            agentQuestions: true,
+            restrictLocalTools: true,
+          },
         },
         currentState: null,
       },

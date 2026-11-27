@@ -101,7 +101,7 @@ func assertSessionProfile(t *testing.T, massd *client.Client, peer *nativeSubmit
 	config := runtime.InitialSessionConfig{Model: want.Model, Effort: want.Effort, PermissionPreset: agent.PermissionPresetFullAccess}
 	require.Equal(t, &config, session.Spec.Config)
 	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, session.Spec.Features)
-	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, session.Status.EffectiveFeatures)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false), RestrictLocalTools: new(false)}, session.Status.EffectiveFeatures)
 	native, ok := peer.initialConfigs.Load(binding.SessionID)
 	require.True(t, ok)
 	require.Equal(t, config, native)
@@ -180,7 +180,7 @@ func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
 	var resumed resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), ref, &resumed))
 	require.Equal(t, spec, resumed.Spec)
-	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(true)}, resumed.Status.EffectiveFeatures)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(true), RestrictLocalTools: new(false)}, resumed.Status.EffectiveFeatures)
 	native, ok := peer.resumeConfigs.Load(ready.SessionID)
 	require.True(t, ok)
 	require.Equal(t, *spec.Config, native)

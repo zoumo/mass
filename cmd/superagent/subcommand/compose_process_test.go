@@ -499,6 +499,8 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		dir := t.TempDir()
 		token := strings.Repeat("m", 48)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "massd.token"), []byte(token), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "cua-mcp"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "cua.yaml"), []byte("{}\n"), 0o600))
 		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + `  externalURL: http://127.0.0.1:24370
   massd:
     embedded:
@@ -506,6 +508,8 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
       sessionIdleTimeout: 0s
       writeTimeout: 2s
       expose: {tokenFile: ./massd.token}
+  remoteComputer:
+    cua: {command: ./cua-mcp, configFile: ./cua.yaml}
   sessions:
     routerWorkspace: .
     roles:

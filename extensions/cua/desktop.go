@@ -109,7 +109,7 @@ func connectDriver(ctx context.Context, cfg *config, target *computer, dir strin
 
 	// The relay command and Driver MCP session must outlive individual calls.
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), cfg.cuaCLI,
-		"spacesd", "exec", "-i", "--embedded", "--state-dir", filepath.Join(dir, "sandboxes"), target.url,
+		"spacesd", "exec", "-i", "--embedded", "--state-dir", filepath.Join(dir, "sandboxes"), target.url.String(),
 		"--", target.driver.CLI, "mcp", "--socket", target.driver.Socket)
 	cmd.Dir = dir
 	cmd.Env = append(cuaCommandEnv(cfg, dir), "CUA_ENV_TOKEN="+target.token)

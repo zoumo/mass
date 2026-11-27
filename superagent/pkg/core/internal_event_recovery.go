@@ -184,6 +184,9 @@ func (s *Store) beginRecovery(ctx context.Context, req RecoveryRequest) (Recover
 	if err != nil {
 		return r, b, spec, err
 	}
+	if req.Mode == "retry" && !s.config.RemoteComputer.matchesSessionTools(b.Role, spec) {
+		return r, b, spec, problem("failed_precondition", "remote computer configuration changed; use replace")
+	}
 	if !known {
 		if req.Mode == "retry" {
 			var blocked bool

@@ -20,7 +20,8 @@
             "continuedInput": true
           },
           "effectiveFeatures": {
-            "agentQuestions": true
+            "agentQuestions": true,
+            "restrictLocalTools": true
           }
         },
         "currentState": null

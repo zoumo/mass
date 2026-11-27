@@ -29,6 +29,10 @@ func (s *loadCleanupSession) ID() string { return s.id }
 
 func (*loadCleanupSession) Capabilities() agent.Capabilities { return agent.Capabilities{} }
 
+func (*loadCleanupSession) EffectiveFeatures() agent.EffectiveFeatures {
+	return agent.EffectiveFeatures{AgentQuestions: true}
+}
+
 func (s *loadCleanupSession) Events() (agent.EventStream, error) {
 	s.eventCalls++
 	return nil, s.eventsErr

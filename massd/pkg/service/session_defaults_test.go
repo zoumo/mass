@@ -129,7 +129,7 @@ func TestRuntimeDefaultsAreAppliedOnlyWhenSessionOpens(t *testing.T) {
 	}}
 	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{
 		Type: "fixture", Config: runtime.Config{},
-		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(true)},
+		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(true), RestrictLocalTools: runtime.Bool(true)},
 		MCPServers: &updatedServers,
 	})
 	require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestRuntimeDefaultsAreAppliedOnlyWhenSessionOpens(t *testing.T) {
 	}
 	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{
 		Type: "fixture", Config: runtime.Config{},
-		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)},
+		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false), RestrictLocalTools: runtime.Bool(true)},
 		MCPServers: &finalServers,
 	})
 	require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestRuntimeDefaultsAreAppliedOnlyWhenSessionOpens(t *testing.T) {
 			RuntimeRef: "agent",
 			SessionSpec: runtime.SessionSpec{
 				Cwd:        "/work",
-				Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(true)},
+				Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(true), RestrictLocalTools: runtime.Bool(false)},
 				MCPServers: &sessionServers,
 			},
 		},
@@ -179,8 +179,10 @@ func TestRuntimeDefaultsAreAppliedOnlyWhenSessionOpens(t *testing.T) {
 	starts := driver.starts
 	driver.mu.Unlock()
 	require.True(t, first.Features.AgentQuestionsEnabled())
+	require.True(t, first.Features.RestrictLocalToolsEnabled())
 	require.Equal(t, updatedServers, *first.MCPServers)
 	require.True(t, second.Features.AgentQuestionsEnabled())
+	require.False(t, second.Features.RestrictLocalToolsEnabled())
 	require.Equal(t, []runtime.MCPServer{
 		{Name: "updated", Type: "stdio", Command: "/session-updated"},
 		{Name: "default", Type: "http", URL: "https://example.invalid/default"},
@@ -197,7 +199,7 @@ func TestSessionDefaultsAreReappliedOnResume(t *testing.T) {
 	servers := []runtime.MCPServer{{Name: "runtime", Type: "stdio", Command: "/runtime-mcp"}}
 	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{
 		Type: "fixture", Config: runtime.Config{},
-		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)},
+		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false), RestrictLocalTools: runtime.Bool(true)},
 		MCPServers: &servers,
 	})
 	require.NoError(t, err)
@@ -218,6 +220,7 @@ func TestSessionDefaultsAreReappliedOnResume(t *testing.T) {
 	spec := driver.resumes[0]
 	driver.mu.Unlock()
 	require.False(t, spec.Features.AgentQuestionsEnabled())
+	require.True(t, spec.Features.RestrictLocalToolsEnabled())
 	require.Equal(t, "runtime", (*spec.MCPServers)[0].Name)
 }
 

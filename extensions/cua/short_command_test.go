@@ -21,7 +21,7 @@ import (
 
 const (
 	fixtureTokenPrefix = "fixture-only-access."
-	relayURL           = "https://relay.invalid:5943"
+	relayURL           = "https://relay.invalid:5943/cua-relay"
 )
 
 func TestShortCommandStdio(t *testing.T) {
