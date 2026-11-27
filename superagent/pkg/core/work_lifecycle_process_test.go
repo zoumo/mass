@@ -712,7 +712,7 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.NoError(t, c.GetSession(t.Context(), resource.SessionRef{SessionID: reviewBinding.SessionID}, &reviewSession))
 	require.Equal(t, &runtime.InitialSessionConfig{Model: reviewModel.Model, PermissionPreset: agent.PermissionPresetFullAccess}, reviewSession.Spec.Config)
 	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, reviewSession.Spec.Features)
-	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, reviewSession.Status.EffectiveFeatures)
+	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false), RestrictLocalTools: new(false)}, reviewSession.Status.EffectiveFeatures)
 	historical := readRecord[core.SessionBinding](t, p, "session-bindings/"+next.SessionBinding.ID)
 	require.Equal(t, fresh.SessionID, historical.SessionID)
 	require.Equal(t, issueModel, historical.ExecutionProfile)

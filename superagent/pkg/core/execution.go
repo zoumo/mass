@@ -264,7 +264,7 @@ func createIssueBinding(ctx context.Context, tx *sql.Tx, c Config, issue Issue, 
 	return insertBinding(ctx, tx, c, b, previous)
 }
 
-func usePreviousSession(ctx context.Context, tx *sql.Tx, next *SessionBinding, previous SessionBinding, expectedPrompt string) (*resource.SessionSpec, error) {
+func usePreviousSession(ctx context.Context, tx *sql.Tx, next *SessionBinding, previous SessionBinding, expectedPrompt string, remoteComputer *RemoteComputerConfig) (*resource.SessionSpec, error) {
 	next.PreviousSessionBindingID = previous.ID
 	if previous.Close != nil && previous.Close.Reusable && next.Workspace == previous.Workspace &&
 		next.ExecutionProfile.sameModel(previous.ExecutionProfile) && next.Namespace == previous.Namespace && previous.SessionID != "" {
@@ -272,7 +272,7 @@ func usePreviousSession(ctx context.Context, tx *sql.Tx, next *SessionBinding, p
 		if err != nil {
 			return nil, err
 		}
-		if spec.SystemPrompt != expectedPrompt {
+		if spec.SystemPrompt != expectedPrompt || !remoteComputer.matchesSessionTools(next.Role, spec) {
 			return nil, nil
 		}
 		next.SessionID, next.SessionUID, next.Name = previous.SessionID, previous.SessionUID, previous.Name
@@ -296,7 +296,7 @@ func insertBinding(ctx context.Context, tx *sql.Tx, c Config, b, previous Sessio
 	if err != nil {
 		return SessionBinding{}, err
 	}
-	request, err := usePreviousSession(ctx, tx, &b, previous, fresh.SystemPrompt)
+	request, err := usePreviousSession(ctx, tx, &b, previous, fresh.SystemPrompt, c.RemoteComputer)
 	if err != nil {
 		return SessionBinding{}, err
 	}
@@ -354,10 +354,12 @@ func makeSpec(c Config, b SessionBinding) (resource.SessionSpec, error) {
 		}
 		prompt += "\nConfigured Issue Agent templates\n" + string(raw)
 	}
-	return resource.SessionSpec{RuntimeRef: b.RuntimeRef, SessionSpec: runtime.SessionSpec{
+	spec := resource.SessionSpec{RuntimeRef: b.RuntimeRef, SessionSpec: runtime.SessionSpec{
 		Config: b.sessionConfig(), Cwd: b.Workspace, SystemPrompt: prompt, MCPServers: &servers,
 		Features: &runtime.SessionFeatures{AgentQuestions: new(false)},
-	}}, nil
+	}}
+	c.RemoteComputer.applySessionTools(b.Role, &spec)
+	return spec, nil
 }
 
 func (s *Store) newTopic(ctx context.Context, tx *sql.Tx, key, digest string, n NewTopic, at string) (string, error) {
@@ -536,10 +538,6 @@ func (s *Server) prepare(ctx, call context.Context, b SessionBinding, token stri
 		}
 	}
 	firstPreparation := !b.PreparationStarted
-	if marked, err := s.store.markBindingFlag(ctx, b.ID, "pending", "$.preparationStarted"); err != nil || !marked {
-		return
-	}
-	b.PreparationStarted = true
 	c, err := s.massClient()
 	if err != nil {
 		return
@@ -553,6 +551,32 @@ func (s *Server) prepare(ctx, call context.Context, b SessionBinding, token stri
 	ref := bindingSessionRef(b)
 	var found resource.Session
 	err = c.GetSession(call, ref, &found)
+	if !s.config.RemoteComputer.matchesSessionTools(b.Role, spec) {
+		switch {
+		case errorCode(err) == "not_found" && firstPreparation && b.SessionID == "" && b.SessionUID == "":
+			// A create has never been attempted for this binding. Fix the
+			// saved request before publishing capability or creating a Session.
+			s.config.RemoteComputer.applySessionTools(b.Role, &spec)
+			b.NextAttemptAt = ""
+			if err := s.store.savePendingBindingSpec(ctx, b, spec); err != nil {
+				return
+			}
+		case err == nil || errorCode(err) == "not_found":
+			// Keep the old request for ownership verification during replacement.
+			b.PreparationStarted = b.PreparationStarted || err == nil
+			b.State, b.LastError, b.NextAttemptAt = "blocked", remoteComputerConfigurationChanged, ""
+			record()
+			return
+		default:
+			b.LastError, b.NextAttemptAt = "session_prepare_"+errorCode(err), after(2*time.Second)
+			record()
+			return
+		}
+	}
+	if marked, err := s.store.markBindingFlag(ctx, b.ID, "pending", "$.preparationStarted"); err != nil || !marked {
+		return
+	}
+	b.PreparationStarted = true
 	if b.CapabilityFileID != "" && firstPreparation && !b.PreviousOwnerUnknown &&
 		b.SessionID != "" && b.SessionUID != "" && errorCode(err) == "not_found" {
 		if s.store.previousSessionReleased(ctx, b) {
@@ -708,11 +732,15 @@ func (s *Server) useFreshSession(ctx context.Context, b SessionBinding) error {
 	b.Name = b.Role + "-" + strings.ReplaceAll(b.ID, "_", "-")
 	b.PreparationStarted = false
 	b.SessionID, b.SessionUID, b.CapabilityFileID, b.LastError, b.NextAttemptAt = "", "", "", "session_reuse_failed", ""
-	raw, err := json.Marshal(b)
+	spec, err := makeSpec(s.config, b)
 	if err != nil {
 		return err
 	}
-	spec, err := makeSpec(s.config, b)
+	return s.store.savePendingBindingSpec(ctx, b, spec)
+}
+
+func (s *Store) savePendingBindingSpec(ctx context.Context, b SessionBinding, spec resource.SessionSpec) error {
+	body, err := json.Marshal(b)
 	if err != nil {
 		return err
 	}
@@ -720,7 +748,7 @@ func (s *Server) useFreshSession(ctx context.Context, b SessionBinding) error {
 	if err != nil {
 		return err
 	}
-	return s.store.replacePendingBindingSpec(ctx, b.ID, replacement, raw)
+	return s.replacePendingBindingSpec(ctx, b.ID, replacement, body)
 }
 
 func after(d time.Duration) string {
@@ -869,6 +897,11 @@ func (s *Server) coordinateBinding(ctx context.Context, id string) {
 			s.prepare(ctx, call, b, token, spec)
 		}
 	case "ready":
+		if !s.config.RemoteComputer.matchesSessionTools(b.Role, spec) {
+			b.State, b.LastError, b.NextAttemptAt = "blocked", remoteComputerConfigurationChanged, ""
+			_ = s.store.updateBinding(ctx, b)
+			return
+		}
 		// Serialize input to the same native Session across bindings.
 		if _, busy := s.sessionInputs.LoadOrStore(b.SessionUID, struct{}{}); busy {
 			return

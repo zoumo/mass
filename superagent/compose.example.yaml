@@ -16,6 +16,11 @@ core:
   #   stream: default
   #   credentialFile: ./secrets/openobserve-login.txt
   # Add sessions from config.example.yaml to enable Core Agent execution.
+  # Optional remote computer for Topic and Issue Sessions.
+  # remoteComputer:
+  #   cua:
+  #     command: /opt/mass/bin/cua-mcp
+  #     configFile: ./cua-mcp.yaml
   sources:
     - source: github
       accountId: github-local

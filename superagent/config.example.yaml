@@ -40,6 +40,11 @@ storageMaxPages: 0
 #       tokenFile: ./embedded-massd.token  # private file and dedicated token
 #       allowedOrigins: [https://ops.example.com]  # optional, if clients send Origin
 # operatorTokenFile: ./operator.token  # optional, for loopback ScheduledTask management and input recovery
+# Optional remote computer for Topic and Issue Sessions.
+# remoteComputer:
+#   cua:
+#     command: /opt/mass/bin/cua-mcp
+#     configFile: ./cua-mcp.yaml
 # sessions:
 #   routerWorkspace: /absolute/workspace
 #   namespace: superagent

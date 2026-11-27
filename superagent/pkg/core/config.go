@@ -35,9 +35,10 @@ type Source struct {
 var instanceIDFormat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
 type Config struct {
-	Massd             *MassdConfig    `mapstructure:"massd"`
-	Sessions          *SessionsConfig `mapstructure:"sessions"`
-	OperatorTokenFile string          `mapstructure:"operatorTokenFile"`
+	Massd             *MassdConfig          `mapstructure:"massd"`
+	Sessions          *SessionsConfig       `mapstructure:"sessions"`
+	RemoteComputer    *RemoteComputerConfig `mapstructure:"remoteComputer"`
+	OperatorTokenFile string                `mapstructure:"operatorTokenFile"`
 	operatorToken     string
 	DataDir           string   `mapstructure:"dataDir"`
 	Listen            string   `mapstructure:"listen"`
@@ -71,17 +72,25 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	v.SetConfigType("yaml")
 	v.SetDefault("dataDir", "./superagent-core-data")
 	v.SetDefault("listen", "127.0.0.1:24370")
-	var fields map[string]any
-	var err error
-	if composed {
-		err = yaml.NewDecoder(section).Decode(&fields)
-		if err == nil {
-			err = v.MergeConfigMap(fields)
+	if !composed {
+		file, err := os.Open(path)
+		if err != nil {
+			return c, problem("invalid_argument", "cannot read YAML configuration")
 		}
-	} else {
-		err = v.ReadInConfig()
+		defer file.Close()
+		section = file
 	}
+	var fields map[string]any
+	if err := yaml.NewDecoder(section).Decode(&fields); err != nil {
+		return c, problem("invalid_argument", "cannot read YAML configuration")
+	}
+	// Viper normalizes keys in place. Validate this section against the original
+	// YAML fields so a case-insensitive duplicate cannot hide an invalid value.
+	remoteComputer, err := decodeRemoteComputer(fields)
 	if err != nil {
+		return c, err
+	}
+	if err := v.MergeConfigMap(fields); err != nil {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
 	}
 	if hasRemovedPermissionPreset(v) {
@@ -125,6 +134,12 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		return p
 	}
 	c.DataDir = resolve(c.DataDir)
+	c.RemoteComputer = remoteComputer
+	if c.RemoteComputer != nil {
+		if err := c.RemoteComputer.resolvePaths(resolve); err != nil {
+			return c, err
+		}
+	}
 	if c.OpenObserve != nil {
 		c.OpenObserve.CredentialFile = resolve(c.OpenObserve.CredentialFile)
 	}

@@ -141,12 +141,15 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback() })
 	_, err = insertBinding(t.Context(), tx, config, previous, SessionBinding{})
 	require.NoError(t, err)
+	remote := &RemoteComputerConfig{CUA: CUAConfig{Command: "/cua-mcp", ConfigFile: "/cua.yaml"}}
+	changedRemote := &RemoteComputerConfig{CUA: CUAConfig{Command: "/cua-mcp", ConfigFile: "/another.yaml"}}
 	for _, tc := range []struct {
-		name     string
-		saved    agent.PermissionPreset
-		features *runtime.SessionFeatures
-		modify   func(*SessionBinding)
-		reuse    bool
+		name                      string
+		saved                     agent.PermissionPreset
+		features                  *runtime.SessionFeatures
+		savedRemote, wantedRemote *RemoteComputerConfig
+		modify                    func(*SessionBinding)
+		reuse                     bool
 	}{
 		{name: "matching location and model", reuse: true},
 		{name: "preserves saved permissions and features", saved: agent.PermissionPresetManualReview, features: &runtime.SessionFeatures{AgentQuestions: new(false)}, reuse: true},
@@ -155,18 +158,21 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 		{name: "effort", modify: func(b *SessionBinding) { b.Effort = "" }},
 		{name: "workspace", modify: func(b *SessionBinding) { b.Workspace = "/other" }},
 		{name: "namespace", modify: func(b *SessionBinding) { b.Namespace = "other" }},
+		{name: "matching remote computer", savedRemote: remote, wantedRemote: remote, reuse: true},
+		{name: "changed remote computer", savedRemote: remote, wantedRemote: changedRemote},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spec, err := makeSpec(config, previous)
 			require.NoError(t, err)
 			spec.Config.PermissionPreset = tc.saved
 			spec.Features = tc.features
+			tc.savedRemote.applySessionTools(previous.Role, &spec)
 			require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET spec=?2 WHERE id=?1", spec, previous.ID))
-			next := SessionBinding{ExecutionProfile: previous.ExecutionProfile, Workspace: previous.Workspace, Namespace: previous.Namespace, Name: "new"}
+			next := SessionBinding{Role: previous.Role, ExecutionProfile: previous.ExecutionProfile, Workspace: previous.Workspace, Namespace: previous.Namespace, Name: "new"}
 			if tc.modify != nil {
 				tc.modify(&next)
 			}
-			saved, err := usePreviousSession(t.Context(), tx, &next, previous, spec.SystemPrompt)
+			saved, err := usePreviousSession(t.Context(), tx, &next, previous, spec.SystemPrompt, tc.wantedRemote)
 			require.NoError(t, err)
 			require.Equal(t, previous.ID, next.PreviousSessionBindingID)
 			if tc.reuse {
