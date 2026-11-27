@@ -13,6 +13,7 @@ func CloneSessionFeatures(features *SessionFeatures) *SessionFeatures {
 	}
 	cloned := *features
 	cloned.AgentQuestions = cloneBool(features.AgentQuestions)
+	cloned.RestrictLocalTools = cloneBool(features.RestrictLocalTools)
 	return &cloned
 }
 
@@ -23,8 +24,14 @@ func MergeSessionFeatures(defaults, overrides *SessionFeatures) *SessionFeatures
 		return CloneSessionFeatures(overrides)
 	}
 	merged := CloneSessionFeatures(defaults)
-	if overrides != nil && overrides.AgentQuestions != nil {
+	if overrides == nil {
+		return merged
+	}
+	if overrides.AgentQuestions != nil {
 		merged.AgentQuestions = cloneBool(overrides.AgentQuestions)
+	}
+	if overrides.RestrictLocalTools != nil {
+		merged.RestrictLocalTools = cloneBool(overrides.RestrictLocalTools)
 	}
 	return merged
 }

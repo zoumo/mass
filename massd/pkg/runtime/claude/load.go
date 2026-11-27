@@ -172,10 +172,11 @@ func (d *Driver) LoadSession(ctx context.Context, id string, address runtime.Add
 		return err
 	}
 
+	features := native.EffectiveFeatures()
 	resumed := &events.ResumedSession{
 		SessionID:         id,
 		Capabilities:      agentrelay.MapCapabilities(native.Capabilities()),
-		EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()},
+		EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: features.AgentQuestions, RestrictLocalTools: features.RestrictLocalTools},
 	}
 	if err := d.loadEmit(h, loadEventIdentity{sessionID: id}, map[string]any{
 		"requestedSessionId": id,

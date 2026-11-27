@@ -38,7 +38,8 @@ type ResumedSession struct {
 }
 
 type ResumedSessionFeatures struct {
-	AgentQuestions bool `json:"agentQuestions"`
+	AgentQuestions     bool `json:"agentQuestions"`
+	RestrictLocalTools bool `json:"restrictLocalTools,omitempty"`
 }
 
 type HistoryReplay struct {

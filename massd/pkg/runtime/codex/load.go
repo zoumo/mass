@@ -115,7 +115,6 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	// Once dispatched, a missing resume response cannot prove native release.
 	h.resumeUnknown = true
 	openOptions.Cwd = cwd
-	openOptions.Features = agentFeatures(spec.Features)
 	openOptions.MCPServers = mcpServers
 	native, err := provider.Resume(readCtx, agent.ResumeOptions{
 		SessionID:   id,
@@ -147,10 +146,11 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.vault.Save(id, a, spec, after.Thread); err != nil {
 		return err
 	}
+	features := native.EffectiveFeatures()
 	resumed := &events.ResumedSession{
 		SessionID:         id,
 		Capabilities:      agentrelay.MapCapabilities(native.Capabilities()),
-		EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: native.EffectiveFeatures().AgentQuestions},
+		EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: features.AgentQuestions, RestrictLocalTools: features.RestrictLocalTools},
 	}
 	if err := d.loadEmit(h, id, "", "", nil, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
 		return err

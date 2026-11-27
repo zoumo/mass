@@ -19,6 +19,10 @@ type InitialSessionConfig struct {
 // SDKOpenOptions maps the common Session options to the SDK.
 func (s SessionSpec) SDKOpenOptions() agent.OpenOptions {
 	options := agent.OpenOptions{Cwd: s.Cwd, AdditionalSystemPrompt: s.SystemPrompt}
+	if features := s.Features; features != nil {
+		options.Features.AgentQuestions = cloneBool(features.AgentQuestions)
+		options.Features.RestrictLocalTools = features.RestrictLocalToolsEnabled()
+	}
 	if c := s.Config; c != nil {
 		options.Config = c.SDKConfig()
 		options.PermissionPreset = c.PermissionPreset

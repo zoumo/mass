@@ -133,7 +133,7 @@ type Driver struct {
 	cancel   context.CancelFunc
 }
 
-var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true}
+var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true, RestrictLocalTools: true}
 
 func (d *Driver) Events() (events.Stream, error) {
 	d.mu.Lock()
@@ -370,7 +370,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 
 func sessionOpenOptions(spec runtime.SessionSpec, features runtime.SessionFeatures, servers []mcp.Server) agent.OpenOptions {
 	options := spec.SDKOpenOptions()
-	options.Features = agent.Features{AgentQuestions: features.AgentQuestions}
+	options.Features.AgentQuestions = features.AgentQuestions
 	options.MCPServers = servers
 	return options
 }

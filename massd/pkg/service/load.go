@@ -288,7 +288,10 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 			h.status.NativeVerified = true
 			h.status.NativeResumed = true
 			h.capabilities = p.ResumedSession.Capabilities
-			h.effectiveFeatures = runtime.SessionFeatures{AgentQuestions: runtime.Bool(p.ResumedSession.EffectiveFeatures.AgentQuestions)}
+			h.effectiveFeatures = runtime.SessionFeatures{
+				AgentQuestions:     runtime.Bool(p.ResumedSession.EffectiveFeatures.AgentQuestions),
+				RestrictLocalTools: runtime.Bool(p.ResumedSession.EffectiveFeatures.RestrictLocalTools),
+			}
 			if h.status.Error == nil && !h.status.NativeCompleted {
 				h.status.Phase = "replaying"
 			}
