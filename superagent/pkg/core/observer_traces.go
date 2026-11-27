@@ -43,7 +43,7 @@ func newObserverTraceReader(config *OpenObserveConfig) (*observerTraceReader, er
 	u, err := url.Parse(config.Endpoint)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" ||
 		u.User != nil || (u.Path != "" && u.Path != "/") || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
-		return nil, problem("invalid_argument", "openObserve endpoint must be an HTTP or HTTPS origin")
+		return nil, problem("invalid_argument", "openobserve endpoint must be an HTTP or HTTPS origin")
 	}
 	org, stream := config.Organization, config.Stream
 	if org == "" {
@@ -53,7 +53,7 @@ func newObserverTraceReader(config *OpenObserveConfig) (*observerTraceReader, er
 		stream = "default"
 	}
 	if !traceStreamName.MatchString(org) || !traceStreamName.MatchString(stream) {
-		return nil, problem("invalid_argument", "invalid openObserve organization or stream")
+		return nil, problem("invalid_argument", "invalid openobserve organization or stream")
 	}
 	base := u.Scheme + "://" + u.Host + "/api/" + org
 	reader := &observerTraceReader{
@@ -69,12 +69,12 @@ func newObserverTraceReader(config *OpenObserveConfig) (*observerTraceReader, er
 	if config.CredentialFile != "" {
 		info, err := os.Lstat(config.CredentialFile)
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 4096 {
-			return nil, problem("invalid_argument", "openObserve credentialFile must be a private regular file")
+			return nil, problem("invalid_argument", "openobserve credentialFile must be a private regular file")
 		}
 		data, err := os.ReadFile(config.CredentialFile)
 		lines := strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n"), "\n")
 		if err != nil || len(lines) != 2 || lines[0] == "" || strings.Contains(lines[0], ":") || lines[1] == "" {
-			return nil, problem("invalid_argument", "openObserve credentialFile requires a username and password on separate lines")
+			return nil, problem("invalid_argument", "openobserve credentialFile requires a username and password on separate lines")
 		}
 		reader.user, reader.password = lines[0], lines[1]
 	}

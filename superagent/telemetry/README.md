@@ -74,8 +74,8 @@ Tool attempt metrics are independent of trace sampling.
 
 ## Query process and Go runtime metrics
 
-To query OpenObserve from Superagent Web, set `openObserve` in the
-[Core configuration](../config.example.yaml) or `core.openObserve` in the
+To query OpenObserve from Superagent Web, set `openobserve` in the
+[Core configuration](../config.example.yaml) or `core.openobserve` in the
 [Compose configuration](../compose.example.yaml). Set `endpoint` to the
 OpenObserve HTTP or HTTPS origin. In **Metrics**, filter process charts by
 service and instance. For MCP failure rate, group or filter by role, tool, or
@@ -124,7 +124,7 @@ sum by (superagent_observer_view) (superagent_observer_view_duration_count{servi
 
 Open a Message, Internal Event, Scheduled Task, SessionBinding, or Outbox record
 in Superagent Web Diagnostics. Select its Trace ID to open the waterfall
-when `openObserve` is configured.
+when `openobserve` is configured.
 Core saves the trace association with its business record when tracing is
 enabled and reads saved associations after export is disabled. A singleton
 dispatch continues its source trace. A batch links the source traces, so search

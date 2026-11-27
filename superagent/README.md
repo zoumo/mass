@@ -255,8 +255,8 @@ Use a direct loopback Core endpoint for Operator commands.
 
 If you used `observerAllowedHosts`, use `readAllowedHosts` for additional
 direct Core read hosts. The gateway already sends the Core authority as `Host`.
-Rename `telemetryQuery` or `observerTrace` to `openObserve` in existing Core
-configurations. In Compose, use `core.openObserve`. Keep the credential file
+Rename `telemetryQuery` or `observerTrace` to `openobserve` in existing Core
+configurations. In Compose, use `core.openobserve`. Keep the credential file
 on the Core host. See [OpenObserve queries](telemetry/README.md#query-process-and-go-runtime-metrics).
 
 For local frontend development, run `npm ci` and `npm run dev` in
