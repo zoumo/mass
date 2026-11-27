@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -112,15 +113,18 @@ func configPath(baseDir, path string) string {
 func parseRelayURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" || u.User != nil ||
-		(u.EscapedPath() != "" && u.EscapedPath() != "/") ||
 		u.ForceQuery || u.RawQuery != "" || strings.Contains(raw, "#") {
-		return nil, errors.New("relayURL must be an origin without credentials, path, query or fragment")
+		return nil, errors.New("relayURL must be a base URL without credentials, query or fragment")
 	}
 	ip, _ := netip.ParseAddr(u.Hostname())
 	if u.Scheme != "https" && (u.Scheme != "http" || !ip.IsLoopback() && !strings.EqualFold(u.Hostname(), "localhost")) {
 		return nil, errors.New("relayURL requires HTTPS, except for HTTP on loopback")
 	}
-	u.Path = "/"
+	prefix := strings.TrimSuffix(u.Path, "/")
+	if u.EscapedPath() != u.Path || strings.Contains(u.Path, "//") || prefix != "" && path.Clean(prefix) != prefix {
+		return nil, errors.New("relayURL path prefix must be unescaped and contain no empty or dot segments")
+	}
+	u.Path = prefix + "/"
 	return u, nil
 }
 
