@@ -49,7 +49,7 @@ type Config struct {
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
 	// WebOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
 	WebOTLPEndpoint string             `mapstructure:"-"`
-	OpenObserve     *OpenObserveConfig `mapstructure:"openObserve"`
+	OpenObserve     *OpenObserveConfig `mapstructure:"openobserve"`
 	// ComposeTriggerStatus reads Trigger observations from the local supervisor.
 	ComposeTriggerStatus func(context.Context) TriggerStatuses           `mapstructure:"-"`
 	ComposeWatchdog      func(context.Context) (WatchdogSnapshot, error) `mapstructure:"-"`

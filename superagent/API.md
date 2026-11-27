@@ -171,9 +171,9 @@ reads. Topic activity timelines include the associations with each event.
 An Issue has a creation Trace link when Core saved its creation association.
 
 `/v1/telemetry/traces/{traceId}` returns spans from the OpenObserve stream
-configured under `openObserve`. Specify a 32-character hexadecimal Trace ID. Lookup covers
-the past seven days by default, or seven days on either side of an optional
-RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
+configured under `openobserve`. Specify a 32-character hexadecimal Trace ID.
+Lookup covers the past seven days by default, or seven days on either side of
+an optional RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
 partial results. Superagent Web links to `/superagent/trace?id={traceId}`.
 
 `GET /v1/telemetry/performance` queries OTel time series in OpenObserve. `window`

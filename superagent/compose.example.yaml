@@ -10,7 +10,7 @@ core:
   #     expose:
   #       tokenFile: ./secrets/massd.token
   # Optional. Query traces and metrics from OpenObserve.
-  # openObserve:
+  # openobserve:
   #   endpoint: http://127.0.0.1:15080
   #   organization: default
   #   stream: default

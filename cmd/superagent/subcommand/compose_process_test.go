@@ -446,18 +446,18 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 	t.Run("default without sessions", func(t *testing.T) {
 		dir := t.TempDir()
 		const traceID = "db64663e60fb444b8a93ea9c06c24413"
-		openObserve := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost || r.URL.String() != "/api/fixture_org/_search?type=traces" {
 				http.Error(w, "unexpected OpenObserve request", http.StatusBadRequest)
 				return
 			}
 			_, _ = fmt.Fprintf(w, `{"hits":[{"trace_id":%q,"span_id":"5b147a1058d5e09f","operation_name":"fixture-span","start_time":1795196579345675000,"duration":1000}]}`, traceID)
 		}))
-		t.Cleanup(openObserve.Close)
-		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + fmt.Sprintf(`  openObserve:
+		t.Cleanup(upstream.Close)
+		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + fmt.Sprintf(`  openobserve:
     endpoint: %q
     organization: fixture_org
-`, openObserve.URL)
+`, upstream.URL)
 		first := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := first.startup(t)
 		trace := composeHTTPBody(t, startup.Endpoint+"/v1/telemetry/traces/"+traceID)

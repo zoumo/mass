@@ -21,7 +21,7 @@ storageMaxPages: 0
 
 # Optional OpenObserve queries for Core trace and process metric reads.
 # The private credential file contains a username and password on separate lines.
-# openObserve:
+# openobserve:
 #   endpoint: http://127.0.0.1:15080
 #   organization: default
 #   stream: default
