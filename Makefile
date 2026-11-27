@@ -6,7 +6,7 @@ export GOFLAGS := $(strip $(GOFLAGS) -mod=readonly)
 # Cached lint diagnostics contain absolute source paths.
 export GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
 
-mass_commands := ./cmd/massd/... ./cmd/massctl/... ./cmd/mass-record-diagnose/...
+mass_commands := ./cmd/massd/... ./cmd/massctl/... ./cmd/mass-record-diagnose/... ./cmd/cua-mcp/...
 cua_packages := ./extensions/cua/...
 mass_packages := ./massd/... ./internal/... $(mass_commands) $(cua_packages)
 superagent_packages := ./superagent/... ./cmd/superagent/...
@@ -53,7 +53,7 @@ build-massctl:
 .PHONY: build-cua-mcp
 build-cua-mcp:
 	mkdir -p bin
-	go build -trimpath -o bin/cua-mcp ./extensions/cua/cmd/cua-mcp
+	go build -trimpath -o bin/cua-mcp ./cmd/cua-mcp
 
 build-go: build-massctl build-cua-mcp
 	go build -trimpath -o bin/massd ./cmd/massd

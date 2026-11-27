@@ -155,7 +155,7 @@ func buildBridge(t *testing.T) string {
 	t.Helper()
 	binDir := t.TempDir()
 	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-o", binDir+string(os.PathSeparator),
-		"./cmd/cua-mcp", "./testdata/cua")
+		"../../cmd/cua-mcp", "./testdata/cua")
 	output, err := build.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	return binDir

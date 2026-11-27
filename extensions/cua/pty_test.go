@@ -29,7 +29,7 @@ const rpcProcess = "/cua.env.v1.ProcessService/"
 
 func TestPTYStdio(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "cua-mcp")
-	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-o", bin, "./cmd/cua-mcp")
+	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-o", bin, "../../cmd/cua-mcp")
 	output, err := build.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 
