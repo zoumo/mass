@@ -23,7 +23,7 @@ Session spec 与历史 load 输入都可以携带 `features` 和 `mcpServers` �
 
 ## features
 
-`features` 是带固定字段名的开关集合，当前包含默认开启的 `agentQuestions`。合并按字段进行：
+`features` 按字段合并。各字段的默认值见 [SessionFeatures](models.tsp)。
 
 - Session 显式提供某字段时，该字段覆盖 Runtime 默认值。
 - Session 省略某字段时，继承 Runtime 默认值。
@@ -31,6 +31,14 @@ Session spec 与历史 load 输入都可以携带 `features` 和 `mcpServers` �
 - 显式 `false` 是有效覆盖，不能按缺省值处理。
 
 合并后的请求交给具体 Driver。Driver 支持某项功能时得到请求值；请求开启但 Driver 不支持时，`DriverSession.effectiveFeatures` 对应值为 `false`，不因该降级拒绝 Session。请求关闭始终得到 `false`。其他不支持的会话选项仍明确失败。
+
+### restrictLocalTools
+
+`restrictLocalTools: true` 请求 Driver 在创建、恢复或历史 load 时限制 Agent 内置的本地文件读写和命令执行工具。Runtime 和 Session 都省略该字段时，默认值为 `false`，沿用原生工具配置。
+
+Claude 限制内置的文件读写、搜索和命令工具。Codex 限制本地 shell、exec 和图像工具。**Codex 的 `apply_patch` 是允许的例外**。原生模型声明该工具时，仍可用它修改本地文件。
+
+`effectiveFeatures.restrictLocalTools: true` 表示 Driver 已应用对应的原生限制配置。工具是否可调用由原生工具声明和运行结果确认。MCP 工具、权限预设和进程沙箱各自按原有合同配置。
 
 ## mcpServers
 
@@ -68,6 +76,7 @@ Runtime 的 `config` 仍按运行绑定快照影响 Driver 构造和启动；Ses
 - 创建 Session 时覆盖和持久保存权限预设。更新 Runtime 预设后，恢复仍使用 Session 的初始配置，历史 load 使用自身输入。
 - Runtime 更新 `features` 或 `mcpServers` 后无需重启，下一次 create/resume/load 使用新默认值。已经打开的 Session 保持原运行。
 - feature 字段分别验证继承、同名覆盖、显式关闭及 schema 缺省。
+- 验证 `restrictLocalTools` 与 MCP 可以同时配置。检查原生工具声明并用隔离探针验证本地读、写和 exec 的限制。Codex 声明 `apply_patch` 时，验证该例外仍可修改本地测试文件。
 - MCP 验证同名替换保持位置、新名称按 Session 顺序追加、空 Session 列表不清空默认项，以及重复名称被拒绝。
 - 显式 MCP 列表为空时，Claude strict mode 和 Codex 隔离目录都必须排除 ambient server；Codex 未配置隔离目录时明确失败。
 - 非回环明文 URL、URL userinfo、SSE 的 HTTP-only 认证字段必须被拒绝。

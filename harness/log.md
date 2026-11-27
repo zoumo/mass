@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-28
+
+- **v0.3.7** 增加 Session 功能 [`restrictLocalTools`](modules/runtime/session-defaults.md#restrictlocaltools) 和对应的生效值。Codex 保留 `apply_patch` 例外。同步历史恢复事件示例。
+
 ## 2026-11-26
 
 - [Session 配置合同](modules/runtime/session-config.md#初始配置与恢复)采用 SDK 默认权限 `fullAccess`。创建时 Session 和 Runtime 都省略预设，恢复时已保存的预设为空，或历史加载未指定预设，均由 SDK 应用该默认值。
