@@ -66,7 +66,7 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	if err != nil {
 		return nil, err
 	}
-	traces, err := newObserverTraceReader(c.TelemetryQuery)
+	traces, err := newObserverTraceReader(c.OpenObserve)
 	if err != nil {
 		return nil, err
 	}

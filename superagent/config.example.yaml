@@ -21,8 +21,8 @@ storageMaxPages: 0
 
 # Optional OpenObserve queries for Core trace and process metric reads.
 # The private credential file contains a username and password on separate lines.
-# telemetryQuery:
-#   endpoint: http://127.0.0.1:5080
+# openObserve:
+#   endpoint: http://127.0.0.1:15080
 #   organization: default
 #   stream: default
 #   credentialFile: ./openobserve-login.txt

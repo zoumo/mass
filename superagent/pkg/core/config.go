@@ -47,8 +47,8 @@ type Config struct {
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
 	// WebOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
-	WebOTLPEndpoint string                `mapstructure:"-"`
-	TelemetryQuery  *TelemetryQueryConfig `mapstructure:"telemetryQuery"`
+	WebOTLPEndpoint string             `mapstructure:"-"`
+	OpenObserve     *OpenObserveConfig `mapstructure:"openObserve"`
 	// ComposeTriggerStatus reads Trigger observations from the local supervisor.
 	ComposeTriggerStatus func(context.Context) TriggerStatuses           `mapstructure:"-"`
 	ComposeWatchdog      func(context.Context) (WatchdogSnapshot, error) `mapstructure:"-"`
@@ -125,8 +125,8 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		return p
 	}
 	c.DataDir = resolve(c.DataDir)
-	if c.TelemetryQuery != nil {
-		c.TelemetryQuery.CredentialFile = resolve(c.TelemetryQuery.CredentialFile)
+	if c.OpenObserve != nil {
+		c.OpenObserve.CredentialFile = resolve(c.OpenObserve.CredentialFile)
 	}
 	strict := func(d *mapstructure.DecoderConfig) {
 		d.ErrorUnused = true
