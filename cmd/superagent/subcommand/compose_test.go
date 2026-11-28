@@ -97,14 +97,12 @@ func TestComposeRejectsUnknownCoreFields(t *testing.T) {
 	}
 }
 
-func TestComposeRejectsInvalidEmbeddedMASS(t *testing.T) {
+func TestComposeRejectsInvalidExternalMASS(t *testing.T) {
 	for _, tc := range []struct{ config, errorText string }{
-		{"{endpoint: ws://127.0.0.1:24368}", "Compose uses core.massd.embedded for MASS settings"},
-		{"{tokenFile: ./source.token}", "Compose uses core.massd.embedded for MASS settings"},
-		{"{embedded: {writeTimeout: 10}}", "massd.embedded durations must be strings"},
-		{"{embedded: {writeTimeout: 0s}}", "massd.embedded.writeTimeout must be positive"},
-		{"{embedded: {expose: {}}}", "massd.embedded.expose.tokenFile is required"},
-		{"{embedded: {unused: null}}", "configuration contains unknown or invalid fields"},
+		{"{}", "massd.endpoint must be a ws/wss MASS endpoint"},
+		{"{tokenFile: ./source.token}", "massd.endpoint must be a ws/wss MASS endpoint"},
+		{"{endpoint: http://127.0.0.1:24368}", "massd.endpoint must be a ws/wss MASS endpoint"},
+		{"{embedded: {}}", "massd configuration contains unknown or invalid fields"},
 	} {
 		t.Run(tc.config, func(t *testing.T) {
 			dir := t.TempDir()
@@ -114,7 +112,7 @@ func TestComposeRejectsInvalidEmbeddedMASS(t *testing.T) {
 			command := New()
 			command.SetArgs([]string{"compose", "--config", path})
 			require.ErrorContains(t, command.Execute(), tc.errorText)
-			require.NoDirExists(t, filepath.Join(dir, "massd-data"))
+			require.NoDirExists(t, filepath.Join(dir, "core-state"))
 		})
 	}
 }

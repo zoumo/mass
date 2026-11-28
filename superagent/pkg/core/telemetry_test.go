@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 
 func TestCoreTelemetryHTTP(t *testing.T) {
 	f := fixtureAt(t)
+	f.seedToken("triggers.token", f.token)
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	reader := sdkmetric.NewManualReader()
@@ -151,7 +151,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f := fixtureAt(t)
 	f.token = `mcp-source-test-secret-"quoted"-\escaped`
-	write(t, filepath.Join(f.dir, "source.token"), f.token)
+	f.seedToken("triggers.token", f.token)
 	f.execution(boundary)
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))

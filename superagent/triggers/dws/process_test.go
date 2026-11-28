@@ -35,11 +35,9 @@ func dwsCommand(t *testing.T, args ...string) *exec.Cmd {
 
 func coreStart(t *testing.T, dir, addr string) *triggertest.Process {
 	t.Helper()
-	tokenPath := filepath.Join(dir, "token")
-	if err := os.WriteFile(tokenPath, []byte(triggertest.Token), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\naccessToken: {triggers: %q}\n", filepath.Join(dir, "data"), addr, tokenPath)
+	dataDir := filepath.Join(dir, "data")
+	triggertest.SeedCoreTriggerToken(t, dataDir)
+	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\n", dataDir, addr)
 	path := filepath.Join(dir, "core.yaml")
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)

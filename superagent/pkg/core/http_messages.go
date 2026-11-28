@@ -34,7 +34,7 @@ func (s *Server) authenticateTrigger(r *http.Request) (Source, error) {
 		return Source{}, problem("unauthorized", "valid Core Trigger token is required")
 	}
 	token, ok := strings.CutPrefix(bearer[0], "Bearer ")
-	if !ok || !s.config.acceptsTriggerToken(token) {
+	if !ok || !s.credentials.acceptsTriggerToken(token) {
 		return Source{}, problem("unauthorized", "valid Core Trigger token is required")
 	}
 	source, account := r.Header.Values(triggeridentity.SourceHeader), r.Header.Values(triggeridentity.AccountHeader)

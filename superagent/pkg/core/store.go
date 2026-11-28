@@ -53,12 +53,22 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	if err := os.MkdirAll(c.DataDir, 0o700); err != nil {
 		return nil, problem("unavailable", "cannot create data directory")
 	}
+	info, err := os.Lstat(c.DataDir)
+	if err != nil || !info.IsDir() {
+		return nil, problem("failed_precondition", "Core dataDir must be a directory, without a symlink at that path")
+	}
 	entries, err := os.ReadDir(c.DataDir)
 	if err != nil {
 		return nil, problem("unavailable", "cannot inspect data directory")
 	}
 	allowed := map[string]bool{".core.lock": true, "core.sqlite": true, "core.sqlite-wal": true, "core.sqlite-shm": true}
 	for _, e := range entries {
+		if e.Name() == credentialsDir || e.Name() == embeddedMassdDir {
+			if err := checkCoreSubdirectory(filepath.Join(c.DataDir, e.Name()), e.Name()); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if c.Sessions != nil && e.Name() == mcpCredentialsDir {
 			info, err := e.Info()
 			if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
@@ -219,6 +229,21 @@ func missingQueryIndexes(ctx context.Context, db *sql.DB) (bool, error) {
 
 // Read the main SQLite file directly. Even a read-only SQLite connection can
 // create or modify WAL shared-memory files when opening an earlier database.
+// checkCoreSubdirectory prevents reserved paths from redirecting Core's writes.
+func checkCoreSubdirectory(path, name string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() {
+		return problem("failed_precondition", "Core subdirectory "+name+" must be a directory, without a symlink at that path")
+	}
+	if name == credentialsDir && info.Mode().Perm() != 0o700 {
+		return problem("failed_precondition", "Core credentials directory must use mode 0700")
+	}
+	return nil
+}
+
 func checkDatabaseHeader(path string) (bool, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {

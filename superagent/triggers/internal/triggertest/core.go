@@ -41,15 +41,14 @@ func NewCoreFixture(t *testing.T, clock bool) *CoreFixture {
 	// and no massd outcome is needed to enqueue a role-authored reply.
 	unavailable := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(unavailable.Close)
-	triggerTokenFile := filepath.Join(f.Dir, "test-source")
+	dataDir := filepath.Join(f.Dir, "data")
 	massdTokenFile := filepath.Join(f.Dir, "test-massd")
-	Write(t, triggerTokenFile, []byte(Token))
+	SeedCoreTriggerToken(t, dataDir)
 	Write(t, massdTokenFile, []byte("test-only-massd-token"))
 	f.config = filepath.Join(f.Dir, "core.yaml")
 	f.mcpFiles = filepath.Join(f.Dir, "data", "mcp-files")
 	Write(t, f.config, fmt.Appendf(nil, `dataDir: %q
 listen: %q
-accessToken: {triggers: %q}
 massd:
   endpoint: %q
   tokenFile: %q
@@ -67,11 +66,20 @@ sessions:
       - runtimeRef: test-runtime
         model: test-model
         description: Fixture Issue template
-`, filepath.Join(f.Dir, "data"), FreeAddress(t), triggerTokenFile,
+`, dataDir, FreeAddress(t),
 		"ws"+strings.TrimPrefix(unavailable.URL, "http")+"/jsonrpc", massdTokenFile, f.Dir))
 	f.StartCore(clock)
 	f.RoleToken = f.WaitRoleToken("router", "")
 	return f
+}
+
+func SeedCoreTriggerToken(t *testing.T, dataDir string) {
+	t.Helper()
+	dir := filepath.Join(dataDir, "credentials")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	Write(t, filepath.Join(dir, "triggers.token"), []byte(Token))
 }
 
 func (f *CoreFixture) WaitRoleToken(role, ownerID string) string {

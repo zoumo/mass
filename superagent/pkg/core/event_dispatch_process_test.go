@@ -20,11 +20,10 @@ func eventFixture(t *testing.T, endpoint string) (*fixture, string) {
 	f := fixtureAt(t)
 	saved, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	token := filepath.Join(f.dir, "operator.token")
-	write(t, token, strings.Repeat("O", 48))
+	token := f.seedToken("admin.token", strings.Repeat("O", 48))
 	cwd, err := filepath.EvalSymlinks(f.dir)
 	require.NoError(t, err)
-	write(t, f.config, fixedListen(t, string(saved))+"  admin: "+token+"\nmassd:\n  endpoint: "+endpoint+"\n"+fmt.Sprintf(fixtureSessions, cwd))
+	write(t, f.config, fixedListen(t, string(saved))+"massd:\n  endpoint: "+endpoint+"\n"+fmt.Sprintf(fixtureSessions, cwd))
 	return f, token
 }
 

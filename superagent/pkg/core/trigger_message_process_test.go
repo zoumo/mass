@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,44 +15,21 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-func TestSharedTriggerCredentialConfiguration(t *testing.T) {
-	dir := t.TempDir()
-	token := strings.Repeat("t", 48)
-	write(t, filepath.Join(dir, "trigger.token"), token)
-	write(t, filepath.Join(dir, "role.token"), "cap_"+token)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "public.token"), []byte(token), 0o644))
-	require.NoError(t, os.Symlink("trigger.token", filepath.Join(dir, "link.token")))
-	configFile := filepath.Join(dir, "core.yaml")
-	for _, tc := range []struct{ name, yaml, errorText string }{
-		{"missing token", "listen: 127.0.0.1:0\n", "accessToken.triggers are required"},
-		{"public token", "accessToken: {triggers: ./public.token}\n", "private regular file"},
-		{"symlink token", "accessToken: {triggers: ./link.token}\n", "private regular file"},
-		{"role token", "accessToken: {triggers: ./role.token}\n", "must be distinct"},
-		{"duplicate admin token", "accessToken: {triggers: ./trigger.token, admin: ./trigger.token}\n", "must contain distinct tokens"},
-		{"invalid admin file", "accessToken: {triggers: ./trigger.token, admin: ./link.token}\n", "accessToken.admin must be a readable private regular file"},
-		{"removed token fields", "accessToken: {triggers: ./trigger.token}\ntriggerTokenFile: ./trigger.token\n", "unknown or invalid fields"},
-		{"embedded MASS token", "accessToken: {triggers: ./trigger.token}\nmassd: {embedded: {dataDir: ./massd, expose: {tokenFile: ./trigger.token}}}\n", "must be distinct"},
-		{"removed sources", "accessToken: {triggers: ./trigger.token}\nsources: [{source: old}]\n", "unknown or invalid fields"},
-		{"removed Outbox consumers", "accessToken: {triggers: ./trigger.token}\noutboxConsumers: [{source: example}]\n", "unknown or invalid fields"},
-		{"valid configuration", "accessToken: {triggers: ./trigger.token}\n", ""},
+func TestCoreRejectsRemovedConfigurationFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.yaml")
+	for _, field := range []string{
+		"accessToken: {triggers: ./old.token}",
+		"triggerTokenFile: ./old.token",
+		"sources: [{source: old}]",
+		"outboxConsumers: [{source: example}]",
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			execution := "sessions:\n  router: {workspace: ., runtimeRef: test, model: test}\n  topic: {runtimeRef: test, model: test}\n  issue:\n    templates: [{runtimeRef: test, model: test, description: Test}]\n"
-			standaloneYAML := tc.yaml
-			if tc.name == "embedded MASS token" {
-				standaloneYAML += execution
-			}
-			write(t, configFile, standaloneYAML)
-			_, standaloneErr := core.LoadConfig(configFile)
-			_, composeErr := core.LoadComposeConfig(configFile, strings.NewReader(tc.yaml))
-			for _, err := range []error{standaloneErr, composeErr} {
-				if tc.errorText == "" {
-					require.NoError(t, err)
-				} else {
-					require.ErrorContains(t, err, tc.errorText)
-					require.NotContains(t, err.Error(), token)
-				}
-			}
+		t.Run(field, func(t *testing.T) {
+			payload := "listen: 127.0.0.1:0\n" + field + "\n"
+			write(t, path, payload)
+			_, err := core.LoadConfig(path)
+			require.ErrorContains(t, err, "unknown or invalid fields")
+			_, err = core.LoadComposeConfig(path, strings.NewReader(payload))
+			require.ErrorContains(t, err, "unknown or invalid fields")
 		})
 	}
 }

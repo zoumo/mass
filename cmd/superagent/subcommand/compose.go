@@ -39,7 +39,7 @@ func newCompose() *cobra.Command {
 	var config string
 	cmd := &cobra.Command{
 		Use:   "compose",
-		Short: "Run Core with embedded MASS and enabled components",
+		Short: "Run Core and enabled components",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCompose(cmd, config)
@@ -65,7 +65,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	if err != nil {
 		return errors.New("core configuration: " + err.Error())
 	}
-	triggers, probeEndpoint, err := prepareComposeTriggers(path, config.triggers, coreConfig)
+	triggers, err := prepareComposeTriggers(path, config.triggers, coreConfig)
 	if err != nil {
 		return err
 	}
@@ -74,19 +74,10 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		return fmt.Errorf("cannot find the Superagent executable: %w", err)
 	}
 	environment := os.Environ()
-	for _, trigger := range triggers {
-		err := trigger.check(ctx, superagent, path, probeEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, coreConfig.TriggerToken()))
-		if ctx.Err() != nil {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-	}
 	if ctx.Err() != nil {
 		return nil
 	}
-	sharedEnvironment := composeChildEnvironment(environment, triggers, "", coreConfig.TriggerToken())
+	sharedEnvironment := composeChildEnvironment(environment, triggers, "", "")
 	diagnostics := cmd.ErrOrStderr()
 	if _, ok := diagnostics.(*os.File); !ok {
 		diagnostics = &composeDiagnostics{output: diagnostics}
@@ -127,15 +118,38 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		return err
 	}
 
+	children := []*childProcess{server}
+	var triggerToken string
+	if len(triggers) != 0 {
+		triggerToken, err = coreConfig.ReadTriggerToken()
+		if err != nil {
+			return err
+		}
+	}
+	for _, trigger := range triggers {
+		if err := trigger.validateUpstreamToken(coreConfig, triggerToken); err != nil {
+			return fmt.Errorf("%s preflight: %w", trigger.name(), err)
+		}
+		err := trigger.check(ctx, superagent, path, coreEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, triggerToken))
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := runningComposeChildren(children); err != nil {
+			return err
+		}
+	}
+
 	addresses := composeStartup{
 		Endpoint:         coreEndpoint,
 		TriggerEndpoints: make(map[string]string, len(triggers)),
 		Status:           "ready",
 	}
-	if coreConfig.Massd.Embedded.Expose != nil {
+	if coreConfig.Massd == nil {
 		addresses.MassdEndpoint = "ws" + strings.TrimPrefix(coreEndpoint, "http") + core.MassdMountPath + rpcwire.WebSocketPath
 	}
-	children := []*childProcess{server}
 	var triggerChildren []*childProcess
 	startupComplete := false
 	defer func() {
@@ -148,7 +162,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		if err := runningComposeChildren(children); err != nil {
 			return err
 		}
-		triggerCommand := trigger.command(context.Background(), superagent, "serve", path, coreEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, coreConfig.TriggerToken()))
+		triggerCommand := trigger.command(context.Background(), superagent, "serve", path, coreEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, triggerToken))
 		triggerCommand.Stderr = diagnostics
 		child, err := startChild(trigger.name(), triggerCommand)
 		if err != nil {
