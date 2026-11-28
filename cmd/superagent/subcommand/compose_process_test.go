@@ -548,7 +548,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
     topic: {runtimeRef: codex, model: fixture-topic}
     issue:
       templates:
-        - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
+        - {name: default, runtimeRef: codex, model: fixture-model, description: Fixture Issue}
 `
 		p := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := p.startup(t)

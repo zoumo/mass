@@ -48,10 +48,12 @@ storageMaxPages: 0
 #     effort: medium
 #   issue:
 #     templates:
-#       - runtimeRef: codex-deepseek
+#       - name: default
+#         runtimeRef: codex-deepseek
 #         model: deepseek-chat
 #         description: Implement, fix and verify code.
 #         effort: medium
-#       - runtimeRef: codex-standard
+#       - name: design-review
+#         runtimeRef: codex-standard
 #         model: gpt-6.2-astra
 #         description: Evaluate architecture and diagnose complex problems.

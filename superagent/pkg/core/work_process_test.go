@@ -102,7 +102,7 @@ func checkRoleGoalInput(t *testing.T, p *process, client *roleMCPClient, token, 
 }
 
 func issueInput(workspace, id string) core.CreateIssueRequest {
-	return core.CreateIssueRequest{OperationID: id, Title: "Validate sample output", Goal: "Run the checks and record exact output.", Workspace: workspace, RuntimeRef: "agent", Model: "issue-model"}
+	return core.CreateIssueRequest{OperationID: id, Title: "Validate sample output", Goal: "Run the checks and record exact output.", Workspace: workspace, Template: "default"}
 }
 
 func acceptance(op string, revision int, ref string) core.CompleteRequest {
@@ -185,7 +185,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	longEvent.answer <- nativeSubmitAnswer{complete: true}
 
 	checkRoleGoalInput(t, p, topic, token, "create_issue", "goal", "requirements", map[string]any{
-		"operationId": "check-create-input", "title": "Input check", "runtimeRef": "agent", "model": "issue-model", "goal": "Verify the input contract",
+		"operationId": "check-create-input", "title": "Input check", "template": "default", "goal": "Verify the input contract",
 	})
 	create := issueInput("", "create")
 	create.Materials = []core.Material{{Label: "Original request", MessageID: source.MessageID}, {MessageID: longReceipt.MessageID}, {URI: "notes/check.txt"}}
