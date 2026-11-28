@@ -16,7 +16,10 @@ core:
   #   organization: default
   #   stream: default
   #   credentialFile: ./secrets/openobserve-login.txt
-  # Optional role settings for Core Agent execution.
+  # Omit sessions to use Claude for Router and Codex for Topic and the default Issue template.
+  # The Router workspace defaults to <dataDir>/router-workspace. Core creates it on startup.
+  # Omitted model and effort use Agent defaults. A custom template list supplies the complete set.
+  # Uncomment the fields you want to override.
   # sessions:
   #   namespace: superagent  # shared namespace prefix
   #   router:
@@ -30,7 +33,8 @@ core:
   #     effort: medium
   #   issue:
   #     templates:
-  #       - runtimeRef: codex
+  #       - name: default
+  #         runtimeRef: codex
   #         model: gpt-6.2-sol
   #         description: Implement and verify code changes.
   # Optional remote computer for Topic and Issue Sessions.

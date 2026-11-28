@@ -1247,6 +1247,9 @@
           "status": {
             "type": "string"
           },
+          "template": {
+            "type": "string"
+          },
           "title": {
             "type": "string"
           },
@@ -1273,6 +1276,7 @@
           "goal",
           "goalRevision",
           "workspace",
+          "template",
           "executionProfile",
           "status",
           "revision",
@@ -5948,6 +5952,9 @@
                           "status": {
                             "type": "string"
                           },
+                          "template": {
+                            "type": "string"
+                          },
                           "title": {
                             "type": "string"
                           },
@@ -5973,6 +5980,7 @@
                           "title",
                           "goalRevision",
                           "workspace",
+                          "template",
                           "executionProfile",
                           "status",
                           "revision",

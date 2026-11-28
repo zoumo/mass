@@ -128,9 +128,11 @@ func fixtureAt(t *testing.T) *fixture {
 	return f
 }
 
+const fixtureStableMCP = "externalURL: http://127.0.0.1:24370\n"
+
 func (f *fixture) configure(pages int) {
 	f.t.Helper()
-	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\n", f.data, pages))
+	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\n", f.data, pages)+fixtureStableMCP)
 }
 
 func (f *fixture) seedToken(name, token string) string {
@@ -168,8 +170,13 @@ func (f *fixture) start(env ...string) *process {
 
 func (f *fixture) startConfigured(env ...string) *process {
 	f.t.Helper()
+	return f.startCommand("serve", f.config, env...)
+}
+
+func (f *fixture) startCommand(command, config string, env ...string) *process {
+	f.t.Helper()
 	p := &process{done: make(chan error, 1)}
-	p.cmd = exec.CommandContext(context.Background(), f.coreExecutable(), "serve", "--config", f.config)
+	p.cmd = exec.CommandContext(context.Background(), f.coreExecutable(), command, "--config", config)
 	home := filepath.Join(f.dir, "empty-home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		f.t.Fatal(err)

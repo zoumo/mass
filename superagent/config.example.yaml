@@ -34,7 +34,10 @@ storageMaxPages: 0
 #   cua:
 #     command: /opt/mass/bin/cua-mcp
 #     configFile: ./cua-mcp.yaml
-# Add sessions to enable Agent execution. New Sessions use fullAccess.
+# Omit sessions to use Claude for Router and Codex for Topic and the default Issue template.
+# The Router workspace defaults to <dataDir>/router-workspace. Core creates it on startup.
+# Omitted model and effort use Agent defaults. A custom template list supplies the complete set.
+# Uncomment the fields you want to override. New Sessions use fullAccess.
 # sessions:
 #   namespace: superagent  # shared namespace prefix
 #   router:
@@ -48,10 +51,12 @@ storageMaxPages: 0
 #     effort: medium
 #   issue:
 #     templates:
-#       - runtimeRef: codex-deepseek
+#       - name: default
+#         runtimeRef: codex-deepseek
 #         model: deepseek-chat
 #         description: Implement, fix and verify code.
 #         effort: medium
-#       - runtimeRef: codex-standard
+#       - name: design-review
+#         runtimeRef: codex-standard
 #         model: gpt-6.2-astra
 #         description: Evaluate architecture and diagnose complex problems.

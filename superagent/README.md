@@ -30,9 +30,12 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
    Core lists the built-in Triggers as `not_managed`. Run
    `bin/superagent observe --help` for Core record queries.
 
-Omit `sessions` to collect Messages without starting Agents. To enable execution,
-set `sessions.router`, `sessions.topic`, and at least one template in
-`sessions.issue.templates`.
+Omit `sessions` to use Claude for the Router Session, Codex for Topic Sessions,
+and a Codex Issue template named `default`. Each Agent chooses its configured
+model and effort when those fields are omitted. Core creates the Router
+workspace at `<dataDir>/router-workspace` unless you specify a different path.
+Specify fields under `sessions` to override individual role settings.
+A custom template list supplies the complete set of Issue templates.
 Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
 When MASS runs on another host, set an HTTPS `externalURL` that the MASS host
 can reach. The MASS host must be able to read the Session workspaces and
@@ -43,7 +46,7 @@ Core resource reads need no login. Keep the Core listener within a network
 boundary for trusted readers. When `listen` uses a wildcard, use a
 concrete numeric address to reach Core.
 
-### Reuse an existing Core data directory
+### Restart Core
 
 For a fresh rollout, point `dataDir` at a separate, empty directory. Keep the
 previous directory and its binary together to access the prior state. Core
@@ -58,31 +61,9 @@ installations share `massd`, give them distinct `sessions.namespace` values.
 For a fresh Trigger database or a restart, follow the
 [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
 
-### Upgrade deployed Core data and credentials
-
-Follow the [single-service migration procedure](docs/migrate-single-service.md)
-to keep data, credentials, and Session history across the upgrade and rollback.
-
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
 `unavailable` without an acceptance receipt.
-
-### Migrate Session configuration
-
-For `superagent serve`, edit the root `sessions` section. For
-`superagent compose`, edit `core.sessions`.
-
-| Previous field | New field |
-| --- | --- |
-| `sessions.roles.router` | `sessions.router` |
-| `sessions.routerWorkspace` | `sessions.router.workspace` |
-| `sessions.roles.topic` | `sessions.topic` |
-| `sessions.issueTemplates` | `sessions.issue.templates` |
-
-Copy the existing values to the new fields. Use the same `sessions.namespace`,
-Core and MASS data directories, and role MCP endpoint. Stop the current Core
-and start the updated binary with the new YAML. Compare existing Session names,
-binding IDs, and Session specs with their values before the restart.
 
 ### Enable a remote computer
 
@@ -110,9 +91,8 @@ to release its current Session and prepare a new one with the updated options.
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent
 tasks and triggering from a local script or CLI, use the Core admin token
-and connect directly to Core. Independent schedules also run
-in standalone Core without Session execution. Their Router events remain
-pending until a Router can handle them.
+and connect directly to Core. Independent schedules produce Router events.
+Events remain pending while the Router is unavailable.
 
 See the [scheduled task API](API.md#scheduled-tasks) for schedule modes,
 Operator commands and history queries.

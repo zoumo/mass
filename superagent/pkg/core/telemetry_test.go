@@ -31,6 +31,7 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 		require.NoError(t, traces.Shutdown(context.Background()))
 		require.NoError(t, metrics.Shutdown(context.Background()))
 	})
+	f.executionWithUnavailableMassd()
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
 	server, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{Traces: traces, Metrics: metrics})
@@ -70,7 +71,16 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 	response := request(http.MethodPost, "/apis/core/v1/trigger-messages", "http://foreign.invalid", "00-"+traceID+"-"+parent+"-01", body)
 	require.Equal(t, http.StatusForbidden, response.StatusCode)
 	require.NoError(t, response.Body.Close())
-	require.Empty(t, recorder.Ended())
+	httpSpans := func() []sdktrace.ReadOnlySpan {
+		var spans []sdktrace.ReadOnlySpan
+		for _, span := range recorder.Ended() {
+			if span.Name() != "superagent.session_binding.prepare" {
+				spans = append(spans, span)
+			}
+		}
+		return spans
+	}
+	require.Empty(t, httpSpans())
 
 	for _, sampled := range []string{"01", "00"} {
 		response = request(http.MethodPost, "/apis/core/v1/trigger-messages?ignored="+secret, server.Endpoint(), "00-"+traceID+"-"+parent+"-"+sampled, body)
@@ -84,9 +94,9 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, response.StatusCode)
 	require.NoError(t, response.Body.Close())
 
-	require.Eventually(t, func() bool { return len(recorder.Ended()) == 3 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return len(httpSpans()) == 3 }, time.Second, time.Millisecond)
 	spans := make(map[string]sdktrace.ReadOnlySpan)
-	for _, span := range recorder.Ended() {
+	for _, span := range httpSpans() {
 		spans[span.Name()] = span
 		require.NotContains(t, span.Name(), secret)
 		require.Empty(t, span.SpanContext().TraceState().String())
@@ -121,6 +131,10 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 				}
 			case "superagent.core.operation.duration":
 				for _, point := range sample.Data.(metricdata.Histogram[float64]).DataPoints {
+					operation, _ := point.Attributes.Value(attribute.Key("superagent.operation"))
+					if operation.AsString() != "message.admit" {
+						continue
+					}
 					outcome, ok := point.Attributes.Value(attribute.Key("superagent.outcome"))
 					require.True(t, ok)
 					outcomes[outcome.AsString()] += point.Count

@@ -63,7 +63,8 @@ sessions:
     model: test-model
   issue:
     templates:
-      - runtimeRef: test-runtime
+      - name: default
+        runtimeRef: test-runtime
         model: test-model
         description: Fixture Issue template
 `, dataDir, FreeAddress(t),

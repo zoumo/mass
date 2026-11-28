@@ -414,6 +414,7 @@ func composeFixtureConfig(t *testing.T, dir, coreListen string, github, dws bool
 	config := fmt.Sprintf(`core:
   listen: %q
   dataDir: ./core-state
+  externalURL: http://127.0.0.1:24370
 `, coreListen)
 	if !github && !dws {
 		return config
@@ -463,7 +464,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		out, err := build.CombinedOutput()
 		require.NoError(t, err, "%s", out)
 	}
-	t.Run("default without sessions", func(t *testing.T) {
+	t.Run("default sessions", func(t *testing.T) {
 		dir := t.TempDir()
 		const traceID = "db64663e60fb444b8a93ea9c06c24413"
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -484,7 +485,8 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		require.Contains(t, trace, "fixture-span")
 		require.DirExists(t, filepath.Join(dir, "core-state", "massd"))
 		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/apis/massd/jsonrpc", startup.MassdEndpoint)
-		require.NoDirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
+		require.DirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
+		require.DirExists(t, filepath.Join(dir, "core-state", "router-workspace"))
 		checkStackStatus(t, startup.Endpoint, "ready", "ready", "disabled", "disabled")
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, startup.Endpoint+"/apis/massd/readyz", http.NoBody)
 		require.NoError(t, err)
@@ -540,15 +542,14 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "cua-mcp"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "cua.yaml"), []byte("{}\n"), 0o600))
-		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + `  externalURL: http://127.0.0.1:24370
-  remoteComputer:
+		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + `  remoteComputer:
     cua: {command: ./cua-mcp, configFile: ./cua.yaml}
   sessions:
     router: {workspace: ., runtimeRef: codex, model: fixture-router, effort: low}
     topic: {runtimeRef: codex, model: fixture-topic}
     issue:
       templates:
-        - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
+        - {name: default, runtimeRef: codex, model: fixture-model, description: Fixture Issue}
 `
 		p := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := p.startup(t)

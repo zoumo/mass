@@ -53,7 +53,21 @@ type ExecutionProfile struct {
 
 type IssueTemplate struct {
 	ExecutionProfile `mapstructure:",squash"`
-	Description      string `mapstructure:"description" json:"description"`
+	Name             string `mapstructure:"name"`
+	Description      string `mapstructure:"description"`
+}
+
+type issueTemplateSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (c IssueSessionConfig) templateSummaries() []issueTemplateSummary {
+	summaries := make([]issueTemplateSummary, 0, len(c.Templates))
+	for _, template := range c.Templates {
+		summaries = append(summaries, issueTemplateSummary{Name: template.Name, Description: template.Description})
+	}
+	return summaries
 }
 
 var runtimeNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
@@ -70,7 +84,7 @@ func (p ExecutionProfile) validate(field string) error {
 	if len(p.RuntimeRef) > 253 || !runtimeNamePattern.MatchString(p.RuntimeRef) {
 		return problem("invalid_argument", field+".runtimeRef must be a valid Runtime name")
 	}
-	if strings.TrimSpace(p.Model) == "" || (agent.SessionConfig{Model: p.Model}).Validate() != nil {
+	if p.Model != "" && (strings.TrimSpace(p.Model) == "" || (agent.SessionConfig{Model: p.Model}).Validate() != nil) {
 		return problem("invalid_argument", field+".model must be a nonblank model name")
 	}
 	if (agent.SessionConfig{Effort: p.Effort}).Validate() != nil {
@@ -79,18 +93,19 @@ func (p ExecutionProfile) validate(field string) error {
 	return nil
 }
 
-func (c *SessionsConfig) issueProfile(runtimeRef, model string) (ExecutionProfile, error) {
-	if c != nil {
-		for _, template := range c.Issue.Templates {
-			if template.RuntimeRef == runtimeRef && template.Model == model {
-				return template.ExecutionProfile, nil
-			}
+func (c IssueSessionConfig) issueProfile(name string) (ExecutionProfile, error) {
+	if strings.TrimSpace(name) == "" {
+		return ExecutionProfile{}, problem("invalid_argument", "template is required")
+	}
+	for _, template := range c.Templates {
+		if template.Name == name {
+			return template.ExecutionProfile, nil
 		}
 	}
-	return ExecutionProfile{}, problem("invalid_argument", "runtimeRef and model must match a configured Issue template")
+	return ExecutionProfile{}, problem("invalid_argument", "template must name a configured Issue template")
 }
 
-func (c *SessionsConfig) validate(resolve func(string) string) error {
+func (c *SessionsConfig) validate() error {
 	if c.Namespace == "" {
 		c.Namespace = "superagent"
 	}
@@ -101,33 +116,25 @@ func (c *SessionsConfig) validate(resolve func(string) string) error {
 	if err := c.Router.validate("sessions.router"); err != nil {
 		return err
 	}
-	c.Router.Workspace = resolve(c.Router.Workspace)
-	if !filepath.IsAbs(c.Router.Workspace) {
-		return problem("invalid_argument", "sessions.router.workspace must specify a directory")
-	}
-	if info, statErr := os.Stat(c.Router.Workspace); statErr != nil || !info.IsDir() {
-		return problem("invalid_argument", "sessions.router.workspace must be an existing directory")
-	}
 	if err := c.Topic.validate("sessions.topic"); err != nil {
 		return err
 	}
 	if len(c.Issue.Templates) == 0 {
 		return problem("invalid_argument", "sessions.issue.templates requires at least one template")
 	}
-	seen := make(map[[2]string]bool, len(c.Issue.Templates))
+	seen := make(map[string]bool, len(c.Issue.Templates))
 	for i, template := range c.Issue.Templates {
 		field := fmt.Sprintf("sessions.issue.templates[%d]", i)
 		if err := template.validate(field); err != nil {
 			return err
 		}
-		if strings.TrimSpace(template.Description) == "" {
-			return problem("invalid_argument", field+".description must be nonblank")
+		if strings.TrimSpace(template.Name) == "" {
+			return problem("invalid_argument", field+".name must be nonblank")
 		}
-		pair := [2]string{template.RuntimeRef, template.Model}
-		if seen[pair] {
-			return problem("invalid_argument", field+".runtimeRef and model duplicate an earlier Issue template")
+		if seen[template.Name] {
+			return problem("invalid_argument", field+".name duplicates an earlier Issue template")
 		}
-		seen[pair] = true
+		seen[template.Name] = true
 	}
 	return nil
 }
@@ -168,7 +175,7 @@ Messages
 - decline_message sends a Message back to Router for reconsideration. It takes the routed_message event_id and a reason.
 
 Issues and Reports
-- create_issue uses this Topic and defaults to its workspace. The templates below provide runtimeRef and model pairs. For a release check, the source Message can be attached as materials=[{"messageId":"mass-m1"}]. start=true prepares its Issue Session in the same call. An Issue otherwise starts pending. start_issue schedules an existing Issue at its current revision.
+- create_issue uses this Topic and defaults to its workspace. Choose an Issue template by name and pass it as template, even if only the default template is listed. For a release check, the source Message can be attached as materials=[{"messageId":"mass-m1"}]. start=true prepares its Issue Session in the same call. An Issue otherwise starts pending. start_issue schedules an existing Issue at its current revision. Omit template to keep the saved execution profile.
 - get_issue reads one Issue. list_issues finds Issues in this Topic. update_issue can combine changes at expectedRevision. Resolve blockers when the evidence supports it. A quotedReply can identify a blocker to check. Dependency notices are evidence about same-Topic dependencies.
 - For example, update_issue can resolve the last blocker, set blockers.unblockedStatus="active", and set sessionInput={"mode":"continue"} in one call. Use sessionInput.mode="context_supplement" with content to add facts without starting a turn.
 - Core pushes report_submitted to this Session after the current Issue Session submits a Report for the current goal. Read report.current and the Issue's goalRevision before deciding whether to accept. Use get_report and get_issue to read missing or updated facts. Acceptance requires verified evidence for the current goal.
@@ -206,16 +213,6 @@ func (s *Store) resetReadyBindings(ctx context.Context) error {
 
 func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 	bindings := entClientForTx(tx).SessionBinding
-	if c.Sessions == nil {
-		exists, err := bindings.Query().Exist(ctx)
-		if err != nil {
-			return storageError()
-		}
-		if exists {
-			return problem("failed_precondition", "persisted SessionBindings require sessions configuration")
-		}
-		return nil
-	}
 	b, err := readBinding(ctx, bindings, sessionbinding.RoleEQ("router"), sessionbinding.StateNEQ("revoked"))
 	if err == nil {
 		spec, err := readBindingSpec(ctx, tx, b.ID)
@@ -230,11 +227,9 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 		if err != nil {
 			return err
 		}
-		// Existing Sessions keep their persisted instructions, permissions, and features.
-		expected.SystemPrompt = spec.SystemPrompt
-		expected.Features = spec.Features
-		if spec.Config != nil {
-			expected.Config.PermissionPreset = spec.Config.PermissionPreset
+		// Session preparation reconciles changes to the remote computer policy.
+		if spec.Features != nil {
+			expected.Features.RestrictLocalTools = spec.Features.RestrictLocalTools
 		}
 		if !reflect.DeepEqual(spec, expected) {
 			return problem("failed_precondition", "sessions configuration differs from persisted Router binding")
@@ -254,9 +249,6 @@ func createBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, works
 }
 
 func createRoleBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, workspace, at string, generation int, previous SessionBinding) (SessionBinding, error) {
-	if c.Sessions == nil {
-		return SessionBinding{}, problem("failed_precondition", "sessions configuration is required")
-	}
 	b := SessionBinding{ID: newID("session-binding"), Role: role, OwnerID: owner, Generation: generation, Workspace: workspace, Namespace: c.Sessions.Namespace + "-router", ExecutionProfile: c.Sessions.Router.ExecutionProfile, State: "pending", CreatedAt: at}
 	if role == "topic" {
 		b.ExecutionProfile = c.Sessions.Topic
@@ -271,9 +263,6 @@ func topicNamespace(c Config, topicID string) string {
 }
 
 func createIssueBinding(ctx context.Context, tx *sql.Tx, c Config, issue Issue, previous SessionBinding, at string) (SessionBinding, error) {
-	if c.Sessions == nil {
-		return SessionBinding{}, problem("failed_precondition", "sessions configuration is required")
-	}
 	generation := previous.Generation + 1
 	b := SessionBinding{
 		ID: newID("session-binding"), Role: "issue", OwnerID: issue.ID, TopicID: issue.TopicID, IssueID: issue.ID,
@@ -364,12 +353,8 @@ func makeSpec(c Config, b SessionBinding) (resource.SessionSpec, error) {
 		}}},
 	}}
 	prompt := bindingSystemPrompt(b)
-	if b.Role == "topic" && len(c.Sessions.Issue.Templates) != 0 {
-		templates := make([]map[string]string, 0, len(c.Sessions.Issue.Templates))
-		for _, template := range c.Sessions.Issue.Templates {
-			templates = append(templates, map[string]string{"runtimeRef": template.RuntimeRef, "model": template.Model, "description": template.Description})
-		}
-		raw, err := json.Marshal(templates)
+	if b.Role == "topic" {
+		raw, err := json.Marshal(c.Sessions.Issue.templateSummaries())
 		if err != nil {
 			return resource.SessionSpec{}, err
 		}

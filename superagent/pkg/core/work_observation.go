@@ -40,9 +40,6 @@ func (s *Server) observeIssueSession(ctx context.Context, sessionBindingID strin
 	observation := issueSessionObservation{SessionBindingID: sessionBindingID, State: "unknown", ObservationGap: "issue_session_unavailable"}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	if s.config.Sessions == nil {
-		return observation
-	}
 	b, err := s.store.readyIssueBinding(ctx, sessionBindingID)
 	if err != nil || b.SessionID == "" || b.SessionUID == "" {
 		return observation

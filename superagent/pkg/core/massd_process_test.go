@@ -396,8 +396,9 @@ func TestCoreRejectsDirectoryAliases(t *testing.T) {
 			}
 			target := t.TempDir()
 			require.NoError(t, os.Symlink(target, alias))
-			cfg := core.Config{DataDir: data, Listen: "127.0.0.1:0"}
-			_, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
+			cfg, err := core.LoadComposeConfig(filepath.Join(dir, "stack.yaml"), strings.NewReader("dataDir: data\n"))
+			require.NoError(t, err)
+			_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 			require.ErrorContains(t, err, name)
 			entries, err := os.ReadDir(target)
 			require.NoError(t, err)

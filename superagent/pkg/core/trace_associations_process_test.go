@@ -108,6 +108,7 @@ func TestTraceAssociationsRestartEvent(t *testing.T) {
 	env := append(traceTestEnv(receiver.URL), "OTEL_METRICS_EXPORTER=otlp", "OTEL_METRIC_EXPORT_INTERVAL=150")
 
 	f := fixtureAt(t)
+	config := f.executionWithUnavailableMassd()
 	p := f.start(env...)
 	inputs := []core.SubmitTriggerMessageRequest{input("durable-first"), input("durable-second")}
 	var receipts []core.Receipt
@@ -134,7 +135,7 @@ func TestTraceAssociationsRestartEvent(t *testing.T) {
 	require.Equal(t, first.MessageID, links[current[0].TraceID])
 	p.stop(t, false)
 
-	f.execution(retryBoundary)
+	f.switchMassd(config, retryBoundary.url)
 	p = f.start(env...)
 	for _, receipt := range receipts {
 		waitInternalEvent(t, f, receipt.EventID, "sent")

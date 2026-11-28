@@ -142,7 +142,10 @@ func TestWatchdogComposeForcedStop(t *testing.T) {
 
 func seedComposeReports(t *testing.T, coreDir string) {
 	t.Helper()
-	store, err := core.OpenStore(core.Config{DataDir: coreDir}, core.TelemetryOptions{})
+	config, err := core.LoadComposeConfig(filepath.Join(filepath.Dir(coreDir), "stack.yaml"),
+		strings.NewReader("dataDir: "+filepath.Base(coreDir)+"\n"))
+	require.NoError(t, err)
+	store, err := core.OpenStore(config, core.TelemetryOptions{})
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 	db, err := sql.Open("sqlite", filepath.Join(coreDir, "core.sqlite"))
@@ -156,6 +159,7 @@ func writeWatchdogCompose(t *testing.T, dir string, interval time.Duration) (str
 	path := filepath.Join(dir, "stack.yaml")
 	config := fmt.Sprintf(`core:
   listen: 127.0.0.1:0
+  externalURL: http://127.0.0.1:24370
   dataDir: core-state
 watchdog: {interval: %s}
 `, interval)

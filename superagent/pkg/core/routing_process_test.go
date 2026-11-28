@@ -27,6 +27,7 @@ import (
 	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
@@ -117,15 +118,23 @@ func (d *routeDriver) AnswerInteraction(_ context.Context, _, ref string, answer
 func (*routeDriver) CloseSession(context.Context, string) error { return nil }
 func (d *routeDriver) Stop(context.Context) error               { d.pipe.End(nil); return nil }
 
-type routeFactory struct{ driver *routeDriver }
+type routeFactory map[string]*routeDriver
 
-func (routeFactory) Validate(runtime.Config) error                        { return nil }
-func (f routeFactory) New(string, runtime.Config) (runtime.Driver, error) { return f.driver, nil }
+func (routeFactory) Validate(runtime.Config) error { return nil }
+
+func (f routeFactory) New(name string, _ runtime.Config) (runtime.Driver, error) {
+	driver, found := f[name]
+	if !found {
+		return nil, errors.Join(runtime.ErrResourcesReleased, errors.New("unexpected fixture Runtime"))
+	}
+	return driver, nil
+}
 
 type routeBoundary struct {
 	url            string
 	driver         *routeDriver
 	svc            *service.Service
+	meta           metastore.MetaStore
 	dropNextCreate atomic.Bool
 	dropped        atomic.Int32
 }
@@ -135,21 +144,29 @@ func newRouteBoundary(t *testing.T) *routeBoundary {
 	return newRouteBoundaryWithRuntime(t, "fixture")
 }
 
-func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundary {
+func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string, runtimeNames ...string) *routeBoundary {
 	t.Helper()
+	if len(runtimeNames) == 0 {
+		runtimeNames = []string{"agent"}
+	}
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
-	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
+	drivers := make(routeFactory, len(runtimeNames))
+	for _, name := range runtimeNames {
+		drivers[name] = &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
+	}
 	svc := service.NewWithOptions(
-		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}),
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: drivers}),
 		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
 	)
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
-	require.NoError(t, err)
+	for _, name := range runtimeNames {
+		_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
+		require.NoError(t, err)
+	}
 	api, err := transport.New(svc, transport.Options{WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})
 	require.NoError(t, err)
 	upstream := httptest.NewServer(api)
-	f := &routeBoundary{driver: d, svc: svc}
+	f := &routeBoundary{driver: drivers[runtimeNames[0]], svc: svc, meta: st.Meta}
 	f.url = dropRPCResponse(t, "ws"+strings.TrimPrefix(upstream.URL, "http")+"/jsonrpc", func(method string) bool {
 		return method == "session.create" && f.dropNextCreate.CompareAndSwap(true, false)
 	}, func() { f.dropped.Add(1) })
@@ -258,11 +275,13 @@ const fixtureSessions = `sessions:
     model: topic-model
   issue:
     templates:
-      - runtimeRef: agent
+      - name: default
+        runtimeRef: agent
         model: issue-model
         effort: medium
         description: Implement changes
-      - runtimeRef: agent
+      - name: review
+        runtimeRef: agent
         model: review-model
         description: Review results
 `
@@ -274,6 +293,22 @@ func (f *fixture) execution(boundary *routeBoundary) {
 	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\n", boundary.url)...)
 	b = fmt.Appendf(b, fixtureSessions, f.dir)
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
+}
+
+const unavailableFixtureMassd = "ws://127.0.0.1:1/jsonrpc"
+
+func (f *fixture) executionWithUnavailableMassd() string {
+	f.t.Helper()
+	f.execution(&routeBoundary{url: unavailableFixtureMassd})
+	config, err := os.ReadFile(f.config)
+	require.NoError(f.t, err)
+	return string(config)
+}
+
+func (f *fixture) switchMassd(config, endpoint string) {
+	f.t.Helper()
+	require.Contains(f.t, config, unavailableFixtureMassd)
+	write(f.t, f.config, strings.Replace(config, unavailableFixtureMassd, endpoint, 1))
 }
 
 func bindings(t *testing.T, p *process) []core.SessionBinding {
@@ -554,7 +589,12 @@ func startRoleMCP(t *testing.T, f *fixture, b core.SessionBinding) *roleMCPClien
 	t.Helper()
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	c := &roleMCPClient{t: t, endpoint: "http://" + config.Listen, token: roleToken(t, f, b)}
+	return startRoleMCPAt(t, f, b, "http://"+config.Listen)
+}
+
+func startRoleMCPAt(t *testing.T, f *fixture, b core.SessionBinding, endpoint string) *roleMCPClient {
+	t.Helper()
+	c := &roleMCPClient{t: t, endpoint: endpoint, token: roleToken(t, f, b)}
 	initializeMCP(t, c.endpoint, c.token)
 	return c
 }
@@ -1047,39 +1087,45 @@ func TestRoutingPreviousSchemaRefused(t *testing.T) {
 	}
 }
 
-func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
-	boundary := newRouteBoundary(t)
+func TestRoutingRestartWithPendingEvents(t *testing.T) {
+	boundary := newRouteBoundaryWithRuntime(t, "fixture", "claude", "codex")
+	boundary.driver.allowResume = true
 	f := fixtureAt(t)
-	p := f.start()
-	m := submit(t, p, f, input("intake-before-execution"))
-	require.Empty(t, bindings(t, p))
-	p.stop(t, false)
 	origin := strings.TrimSuffix(boundary.url, "/jsonrpc")
-	f.execution(&routeBoundary{url: origin})
+	config, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	const externalMassd = "massd:\n  endpoint: "
+	write(t, f.config, string(config)+externalMassd+unavailableFixtureMassd+"\n")
+	p := f.start()
+	pending := waitBinding(t, p, "router", "", "pending")
+	m := submit(t, p, f, input("queued-before-restart"))
+	waitWorkEvent(t, p, m.EventID, "pending")
+	p.stop(t, false)
+
+	configured := string(config) + externalMassd + origin + "\n"
+	write(t, f.config, configured)
 	credentials := filepath.Join(f.data, "mcp-files")
 	p = f.start()
 	router := waitBinding(t, p, "router", "", "ready")
+	require.Equal(t, pending.ID, router.ID)
+	require.Equal(t, core.ExecutionProfile{RuntimeRef: "claude"}, router.ExecutionProfile)
+	require.Equal(t, filepath.Join(f.data, "router-workspace"), router.Workspace)
 	info, err := os.Stat(credentials)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 	waitDelivered(t, p, m.MessageID, "router", "")
 	p.stop(t, false)
-	original, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	write(t, f.config, strings.Replace(string(original), origin, "ws://127.0.0.1:1/jsonrpc", 1))
-	p = f.start()
-	waitBinding(t, p, "router", "", "pending")
-	require.Len(t, bindings(t, p), 1)
-	p.stop(t, false)
-	write(t, f.config, strings.Replace(string(original), origin, "ws://", 1))
+	write(t, f.config, strings.Replace(configured, origin, "ws://", 1))
 	_, err = core.LoadConfig(f.config)
 	require.Error(t, err)
-	write(t, f.config, string(original))
+	write(t, f.config, configured)
 	p = f.start()
-	require.Equal(t, router.ID, waitBinding(t, p, "router", "", "ready").ID)
+	restarted := waitBinding(t, p, "router", "", "ready")
+	require.Equal(t, router.ID, restarted.ID)
+	require.Equal(t, router.SessionUID, restarted.SessionUID)
+	require.Len(t, bindings(t, p), 1)
 	require.Len(t, page(t, p, "trigger-messages").Items, 1)
 	require.Len(t, routingEvents(t, p, m.MessageID), 1)
-	t.Log("intake delivery resumed with its original ID; massd endpoint came from startup configuration and the existing binding identity was retained")
 }
 
 func TestRoutedMessageAgentPromptView(t *testing.T) {

@@ -726,7 +726,7 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.True(t, settled.Close.Reusable)
 	reopened = mcpWork[core.WorkReceipt](t, topic, "issue_reopen", issueLifecycle("open-for-review", recanceled.Issue))
 	reselect := startRequest("start-review", reopened.Issue)
-	reselect.RuntimeRef, reselect.Model = new("agent"), new("review-model")
+	reselect.Template = new("review")
 	review := mcpWork[core.WorkReceipt](t, topic, "start_issue", reselect)
 	reviewBinding := waitBinding(t, p, "issue", review.SessionBinding.ID, "ready")
 	require.NotEqual(t, fresh.SessionID, reviewBinding.SessionID)
