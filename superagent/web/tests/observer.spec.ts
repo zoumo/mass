@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { routing } from './endpoints.mjs'
 
 test('Watchdog shows the latest read-only result and links to Topic and Issue', async ({ page, request }) => {
- const issues = await (await request.get(routing + '/v1/core/issues?limit=1')).json()
+ const issues = await (await request.get(routing + '/apis/core/v1/issues?limit=1')).json()
  const { id: issueId, topicId } = issues.items[0]
  const observedAt = '2026-11-24T02:34:00Z'
  await page.goto(routing + '/superagent/')
@@ -17,7 +17,7 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
 
  let finding = true
  let running = true
- await page.route('**/v1/core/watchdog', async route => {
+ await page.route('**/apis/core/v1/watchdog', async route => {
   expect(route.request().method()).toBe('GET')
   expect(route.request().headers()['authorization']).toBeUndefined()
   const latest = finding
@@ -54,14 +54,14 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
 })
 
 test('shows structured Message body and attachment types while retaining Thread navigation', async ({ page, request }) => {
- const result = await (await request.get('/v1/core/trigger-messages?limit=1')).json()
+ const result = await (await request.get('/apis/core/v1/trigger-messages?limit=1')).json()
  const { id } = result.items[0]
  let content = [
   { type: 'text', text: 'Inspect the attached log.' },
   { type: 'resource_link', uri: 'file:///checks.log', name: 'checks.log' },
   { type: 'text', text: 'Confirm the exit code.' },
  ]
- await page.route(`**/v1/core/trigger-messages/${id}*`, async route => {
+ await page.route(`**/apis/core/v1/trigger-messages/${id}*`, async route => {
   const response = await route.fetch()
   const record = await response.json()
   await route.fulfill({ response, json: { ...record, content } })
@@ -110,30 +110,30 @@ test('committed lists, full original text, Thread navigation and safe rendering'
 
 test('read-only API, source isolation, cursor validation and HEAD', async ({ request }) => {
  for (const collection of ['threads', 'internal-events']) {
-  const read = await request.get(`/v1/core/${collection}`)
+  const read = await request.get(`/apis/core/v1/${collection}`)
   expect(read.status()).toBe(200)
-  const head = await request.head(`/v1/core/${collection}`)
+  const head = await request.head(`/apis/core/v1/${collection}`)
   expect(head.status()).toBe(200)
   expect((await head.body()).length).toBe(0)
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-   const response = await request.fetch(`/v1/core/${collection}`, { method })
+   const response = await request.fetch(`/apis/core/v1/${collection}`, { method })
    expect(response.status()).toBe(405)
   }
  }
- expect((await request.post('/v1/core/trigger-messages', { data: {} })).status()).toBe(401)
- expect((await request.get('/v1/core/trigger-messages?cursor=invalid')).status()).toBe(400)
- expect((await request.get('/v1/core/trigger-messages', { headers: { Origin: 'https://foreign.example' } })).status()).toBe(403)
- const messages = (await (await request.get('/v1/core/trigger-messages')).json()).items
- const event = (await (await request.get('/v1/core/internal-events?messageId=' + messages[0].id)).json()).items[0]
+ expect((await request.post('/apis/core/v1/trigger-messages', { data: {} })).status()).toBe(401)
+ expect((await request.get('/apis/core/v1/trigger-messages?cursor=invalid')).status()).toBe(400)
+ expect((await request.get('/apis/core/v1/trigger-messages', { headers: { Origin: 'https://foreign.example' } })).status()).toBe(403)
+ const messages = (await (await request.get('/apis/core/v1/trigger-messages')).json()).items
+ const event = (await (await request.get('/apis/core/v1/internal-events?messageId=' + messages[0].id)).json()).items[0]
  expect(event.status).toBe('pending')
  expect(event.kind).toBe('route_request')
 })
 
 test('copies the persisted trace ID from a selected record', async ({ page, context, request, baseURL }) => {
  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL })
- const records = await (await request.get('/v1/core/trigger-messages?limit=1')).json()
+ const records = await (await request.get('/apis/core/v1/trigger-messages?limit=1')).json()
  const id = records.items[0].id
- const detail = await (await request.get(`/v1/core/trigger-messages/${id}?trace=true`)).json()
+ const detail = await (await request.get(`/apis/core/v1/trigger-messages/${id}?trace=true`)).json()
  expect(detail.traceAssociations).toEqual([{ phase: 'admission', traceId: expect.stringMatching(/^[0-9a-f]{32}$/) }])
  await page.goto(`/superagent/?view=messages&mode=records&id=${id}`)
  const dialog = page.getByRole('dialog')
@@ -149,14 +149,14 @@ test('retired collections are absent from Superagent Web', async ({ page, reques
  await expect(page.getByRole('button', { name: '内部事件', exact: true })).toBeVisible()
  await expect(page.getByRole('button', { name: '渠道健康状态', exact: true })).toHaveCount(0)
  for (const collection of ['pull-requests', 'subscriptions', 'relations', 'routing-events', 'channel-health', 'events', 'decisions', 'deliveries', 'batches', 'attempts', 'recoveries']) {
-  expect((await request.get(`/v1/core/${collection}`)).status()).toBe(404)
+  expect((await request.get(`/apis/core/v1/${collection}`)).status()).toBe(404)
  }
  expect((await request.post('/v1/channel/heartbeat', { data: {} })).status()).toBe(404)
 })
 
 test('offline snapshot stays visible and reconnect gets fresh filtered pages and selected detail', async ({ page, context, request }, testInfo) => {
  await page.goto('/superagent/?view=messages&mode=records')
- const first = (await (await request.get('/v1/core/trigger-messages?limit=1')).json()).items[0]
+ const first = (await (await request.get('/apis/core/v1/trigger-messages?limit=1')).json()).items[0]
  const filter = page.getByRole('textbox', { name: '按线程 ID 筛选' })
  await filter.fill(first.threadId)
  await page.getByRole('button', { name: '筛选', exact: true }).click()
@@ -167,7 +167,7 @@ test('offline snapshot stays visible and reconnect gets fresh filtered pages and
  await context.setOffline(true)
  await expect(page.getByRole('alert')).toContainText('快照已过时')
  await expect(page.getByTestId('message-body')).toHaveText('Browser row 54')
- const submit = async (id: string, threadId: string) => request.post('/v1/core/trigger-messages', {
+ const submit = async (id: string, threadId: string) => request.post('/apis/core/v1/trigger-messages', {
   headers: { Authorization: `Bearer ${'a'.repeat(48)}` },
   data: { operationId: id, message: { threadId, sourceMessageId: id, content: [{ type: 'text', text: id }] } },
  })

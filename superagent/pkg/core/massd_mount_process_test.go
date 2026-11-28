@@ -54,20 +54,21 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	p := f.start("SUPERAGENT_TEST_GATE_STAGE=internal_event_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+gate)
 	t.Cleanup(func() { write(t, filepath.Join(gate, "release"), "released") })
 	router := waitBinding(t, p, "router", "", "ready")
-	for path, state := range map[string]string{"/massd/livez": "alive", "/massd/readyz": "ready"} {
+	for path, state := range map[string]string{"/apis/massd/livez": "alive", "/apis/massd/readyz": "ready"} {
 		probeStatus, body := request(t, http.MethodGet, p.endpoint, path, "", nil)
 		require.Equal(t, http.StatusOK, probeStatus, string(body))
 		require.JSONEq(t, `{"status":"`+state+`"}`, string(body))
 	}
 
-	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/massd"
+	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/apis/massd"
 	dial := &websocket.Dialer{HandshakeTimeout: time.Second}
 	for _, credential := range []string{"", f.token, roleToken(t, f, router)} {
 		checkMassdUpgrade(t, dial, mount, credential, "", "", http.StatusUnauthorized)
 	}
 	checkMassdUpgrade(t, dial, mount, token, "", "foreign.example.test", http.StatusForbidden)
 	checkMassdUpgrade(t, dial, mount, token, p.endpoint, "", http.StatusForbidden)
-	status, _ := request(t, http.MethodGet, p.endpoint, "/massd/rpc", token, nil)
+	checkMassdUpgrade(t, dial, "ws"+strings.TrimPrefix(p.endpoint, "http")+"/massd", token, "", "", http.StatusNotFound)
+	status, _ := request(t, http.MethodGet, p.endpoint, "/apis/massd/rpc", token, nil)
 	require.Equal(t, http.StatusNotFound, status)
 	checkMassctlMountedSession(t, mount, token, router)
 
@@ -87,7 +88,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	slowSubscription, err := slow.Subscribe(ctx, ref)
 	require.NoError(t, err)
 
-	preview := "/v1/core/session-bindings/" + router.ID
+	preview := "/apis/core/v1/session-bindings/" + router.ID
 	previewCtx, cancelPreview := context.WithCancel(ctx)
 	defer cancelPreview()
 	req, err := http.NewRequestWithContext(previewCtx, http.MethodGet, p.endpoint+preview+"/live", http.NoBody)
@@ -103,7 +104,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	submitted := input("mounted-mass-router")
 	submitted.Message.Content[0].Text.Text += " " + token
 	receipt := submit(t, p, f, submitted)
-	status, observed := request(t, http.MethodGet, p.endpoint, "/v1/core/trigger-messages", "", nil)
+	status, observed := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/trigger-messages", "", nil)
 	require.Equal(t, http.StatusOK, status)
 	require.NotContains(t, string(observed), token)
 	require.Contains(t, string(observed), "[redacted]")
@@ -195,7 +196,7 @@ func TestOperatorAndEmbeddedMASSViaDeploymentAddress(t *testing.T) {
 		{token: operatorToken, origin: p.endpoint, status: http.StatusForbidden},
 		{token: operatorToken, fetchSite: "same-origin", status: http.StatusForbidden},
 	} {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, p.endpoint+"/v1/core/scheduled-tasks", http.NoBody)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, p.endpoint+"/apis/core/v1/scheduled-tasks", http.NoBody)
 		require.NoError(t, err)
 		req.Host = tc.host
 		if tc.token != "" {
@@ -217,7 +218,7 @@ func TestOperatorAndEmbeddedMASSViaDeploymentAddress(t *testing.T) {
 	require.NoError(t, err, "%s", output)
 	require.JSONEq(t, `{"items":[]}`, string(output))
 
-	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/massd"
+	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/apis/massd"
 	dial := &websocket.Dialer{HandshakeTimeout: time.Second}
 	for _, token := range []string{"", f.token} {
 		checkMassdUpgrade(t, dial, mount, token, "", "", http.StatusUnauthorized)
@@ -278,7 +279,7 @@ func startMASSProxy(t *testing.T, endpoint string) (string, *x509.CertPool) {
 	target, err := url.Parse(endpoint)
 	require.NoError(t, err)
 	routes := http.NewServeMux()
-	routes.Handle("/massd/", &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
+	routes.Handle("/apis/massd/", &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
 		r.SetURL(target)
 		r.Out.Host = target.Host
 	}})
@@ -286,7 +287,7 @@ func startMASSProxy(t *testing.T, endpoint string) (string, *x509.CertPool) {
 	t.Cleanup(proxy.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(proxy.Certificate())
-	return "wss" + strings.TrimPrefix(proxy.URL, "https") + "/massd", roots
+	return "wss" + strings.TrimPrefix(proxy.URL, "https") + "/apis/massd", roots
 }
 
 func mountedMASSClient(t *testing.T, endpoint, token string, queue int) *client.Client {

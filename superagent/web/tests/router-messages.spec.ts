@@ -13,7 +13,7 @@ async function list<T>(request: APIRequestContext, url: string): Promise<T[]> {
 }
 
 test('Router lists distinct Messages with a stable cursor while a new Message arrives', async ({ page, request }) => {
-  const before = await list<RouterRow>(request, '/v1/core/trigger-messages?view=router&limit=100')
+  const before = await list<RouterRow>(request, '/apis/core/v1/trigger-messages?view=router&limit=100')
   expect(before.length).toBeGreaterThan(50)
   const tiedAt = before.find((row, i) => i > 0 && row.activityAt === before[i - 1].activityAt)!.activityAt
   const tiedIDs = before.filter(row => row.activityAt === tiedAt).map(row => row.id)
@@ -26,7 +26,7 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
   const flow = page.getByRole('region', { name: 'Router 处理流程' })
   await expect(flow.locator('.flow-state').first()).toHaveText(/待决策/)
   await expect(flow.locator('.flow-topic')).toHaveCount(0)
-  const insert = await request.post('/v1/core/trigger-messages', {
+  const insert = await request.post('/apis/core/v1/trigger-messages', {
     headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
     data: { operationId: 'router-browser-insert', message: {
       sourceMessageId: 'router-browser-insert', threadId: 'dws:observer-router-new-message',
@@ -51,7 +51,7 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
 
 test('Router connects each target and return reason to its source event', async ({ page, request }, testInfo) => {
   const endpoint = fixtureOrigins['message-path-fixture']
-  const api = endpoint + '/v1/core/'
+  const api = endpoint + '/apis/core/v1/'
   const messages = await list<Message>(request, api + 'trigger-messages?preview=true')
   const bySource = (id: string) => messages.find(m => m.sourceMessageId === id)!
   const direct = bySource('observer-path-direct')
@@ -129,9 +129,9 @@ test('Router connects each target and return reason to its source event', async 
 })
 
 test('ignored Message displays the recorded return time and identifies the missing ignore reason', async ({ page, request }) => {
-  const messages = await list<Message>(request, routing + '/v1/core/trigger-messages?preview=true')
+  const messages = await list<Message>(request, routing + '/apis/core/v1/trigger-messages?preview=true')
   const ignored = messages.find(m => m.sourceMessageId === 'observer-routing')!
-  const internalEvents = await list<InternalEvent>(request, routing + '/v1/core/internal-events?messageId=' + ignored.id)
+  const internalEvents = await list<InternalEvent>(request, routing + '/apis/core/v1/internal-events?messageId=' + ignored.id)
   const returned = internalEvents.find(d => d.returnedEventId)!
   await page.goto(routing + '/superagent/router?id=' + ignored.id)
   const row = page.locator(`[data-message-id="${ignored.id}"]`)
@@ -151,7 +151,7 @@ test('ignored Message displays the recorded return time and identifies the missi
 for (const [size, width, height] of [['desktop', 1360, 900], ['narrow', 390, 844]] as const) {
   test(`Router navigation opens a populated flow diagram before the list (${size})`, async ({ page, request }, testInfo) => {
     const endpoint = fixtureOrigins['message-path-fixture']
-    const api = endpoint + '/v1/core/'
+    const api = endpoint + '/apis/core/v1/'
     const messages = await list<Message>(request, api + 'trigger-messages?preview=true')
     const partial = messages.find(m => m.sourceMessageId === 'observer-path-partial-return')!
     const result = await list<RouterRow>(request, api + 'trigger-messages?view=router')

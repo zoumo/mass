@@ -102,11 +102,12 @@ func TestObserveCoreResourceCLI(t *testing.T) {
 }
 
 type process struct {
-	cmd      *exec.Cmd
-	endpoint string
-	stderr   bytes.Buffer
-	done     chan error
-	stopped  bool
+	cmd           *exec.Cmd
+	endpoint      string
+	massdEndpoint string
+	stderr        bytes.Buffer
+	done          chan error
+	stopped       bool
 }
 type fixture struct {
 	t                        *testing.T
@@ -190,7 +191,8 @@ func (f *fixture) startConfigured(env ...string) *process {
 	select {
 	case b := <-line:
 		var info struct {
-			Endpoint string `json:"endpoint"`
+			Endpoint      string `json:"endpoint"`
+			MassdEndpoint string `json:"massdEndpoint"`
 		}
 		if json.Unmarshal(b, &info) != nil || info.Endpoint == "" {
 			_ = p.cmd.Process.Kill()
@@ -198,6 +200,7 @@ func (f *fixture) startConfigured(env ...string) *process {
 			f.t.Fatalf("startup failed: %v %s %s", waitErr, b, p.stderr.String())
 		}
 		p.endpoint = info.Endpoint
+		p.massdEndpoint = info.MassdEndpoint
 	case <-time.After(20 * time.Second):
 		_ = p.cmd.Process.Kill()
 		<-p.done
@@ -305,7 +308,7 @@ func request(t *testing.T, method, endpoint, path, token string, body any, sourc
 	}
 	if len(sources) != 0 {
 		setTriggerHeaders(req, sources[0])
-	} else if token != "" && (req.URL.Path == "/v1/core/trigger-messages" || strings.HasPrefix(req.URL.Path, channelOutbox)) {
+	} else if token != "" && (req.URL.Path == "/apis/core/v1/trigger-messages" || strings.HasPrefix(req.URL.Path, channelOutbox)) {
 		setTriggerHeaders(req, fixtureTriggerSource)
 	}
 	c := http.Client{Timeout: 10 * time.Second}
@@ -323,7 +326,7 @@ func request(t *testing.T, method, endpoint, path, token string, body any, sourc
 
 func submit(t *testing.T, p *process, f *fixture, r core.SubmitTriggerMessageRequest) core.Receipt {
 	t.Helper()
-	status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, r)
+	status, b := request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", f.token, r)
 	if status != 200 {
 		t.Fatalf("submit %d: %s", status, b)
 	}
@@ -336,7 +339,7 @@ func submit(t *testing.T, p *process, f *fixture, r core.SubmitTriggerMessageReq
 
 func page(t *testing.T, p *process, kind string) core.Page {
 	t.Helper()
-	status, b := request(t, "GET", p.endpoint, "/v1/core/"+kind, "", nil)
+	status, b := request(t, "GET", p.endpoint, "/apis/core/v1/"+kind, "", nil)
 	if status != 200 {
 		t.Fatalf("query %d %s", status, b)
 	}
@@ -399,7 +402,7 @@ func TestPublicIngressDurability(t *testing.T) {
 			case "reply":
 				conflict.ReplyTarget = json.RawMessage(`{"anotherAddress":"opaque"}`)
 			}
-			status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, conflict)
+			status, b := request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", f.token, conflict)
 			errorCode(t, status, b, 409, "conflict")
 		})
 	}
@@ -410,7 +413,7 @@ func TestPublicIngressDurability(t *testing.T) {
 	if !bytes.Contains(event.Items[0], []byte(`"status":"pending"`)) || !bytes.Contains(event.Items[0], []byte(`"kind":"route_request"`)) {
 		t.Fatal("event was not pending")
 	}
-	status, b := request(t, "GET", p.endpoint, "/v1/core/trigger-messages/"+accepted.MessageID, "", nil)
+	status, b := request(t, "GET", p.endpoint, "/apis/core/v1/trigger-messages/"+accepted.MessageID, "", nil)
 	if status != 200 {
 		t.Fatalf("detail %s", b)
 	}
@@ -467,29 +470,32 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	r := input("one")
 	for _, path := range []string{
 		"/v1/channel/messages", "/v1/channel/outbox/result", "/v1/observer/health", "/v1/operator/input-recovery",
-		"/v1/core/pull-requests", "/v1/core/subscriptions", "/v1/core/relations", "/v1/core/routing-events", "/v1/core/trigger-message-receipts",
+		"/v1/core/topics", "/v1/core/trigger-messages", "/v1/core/outbox-messages", "/v1/core/scheduled-tasks", "/v1/mcp",
+		"/v1/telemetry/performance", "/v1/telemetry/traces", "/v1/telemetry/metrics",
+		"/massd/livez", "/massd/readyz", "/massd/jsonrpc", "/superagent/", "/apis/unknown",
+		"/apis/core/v1/pull-requests", "/apis/core/v1/subscriptions", "/apis/core/v1/relations", "/apis/core/v1/routing-events", "/apis/core/v1/trigger-message-receipts",
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
 			status, body := request(t, method, p.endpoint, path, f.token, nil)
 			errorCode(t, status, body, http.StatusNotFound, "not_found")
 		}
 	}
-	status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", "", r)
+	status, b := request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", "", r)
 	errorCode(t, status, b, 401, "unauthorized")
 	for _, field := range []string{"source", "accountId", "threadRef", "text", "actor", "addressed", "channel", "quotedMessage"} {
 		t.Run(field, func(t *testing.T) {
 			bad := map[string]any{"operationId": "legacy-" + field, "message": map[string]any{
 				"sourceMessageId": field, "threadId": r.Message.ThreadID, "content": r.Message.Content, field: "legacy",
 			}}
-			gotStatus, gotBody := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, bad)
+			gotStatus, gotBody := request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", f.token, bad)
 			errorCode(t, gotStatus, gotBody, 400, "invalid_argument")
 		})
 	}
 	reservedThread := r
 	reservedThread.Message.ThreadID = "core%3Ascheduled-task:mass-st1"
-	status, b = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, reservedThread)
+	status, b = request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", f.token, reservedThread)
 	errorCode(t, status, b, 403, "forbidden")
-	for _, path := range []string{"/v1/core/threads", "/v1/core/internal-events", "/status"} {
+	for _, path := range []string{"/apis/core/v1/threads", "/apis/core/v1/internal-events", "/status"} {
 		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 			gotStatus, _ := request(t, method, p.endpoint, path, f.token, map[string]string{"write": "no"})
 			if gotStatus != 405 {
@@ -498,7 +504,7 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 		}
 	}
 	for _, h := range []string{"Origin", "Sec-Fetch-Site", "Host"} {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.endpoint+"/v1/core/trigger-messages", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.endpoint+"/apis/core/v1/trigger-messages", http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -524,11 +530,11 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 	}
 	r.Message.Content[0].Text.Text = "Untrusted content: " + f.token + " <script>window.attack=true</script>"
 	submit(t, p, f, r)
-	_, b = request(t, "GET", p.endpoint, "/v1/core/trigger-messages", "", nil)
+	_, b = request(t, "GET", p.endpoint, "/apis/core/v1/trigger-messages", "", nil)
 	if bytes.Contains(b, []byte(f.token)) || !bytes.Contains(b, []byte("[redacted]")) {
 		t.Fatal("query leaked source credential")
 	}
-	status, b = request(t, "HEAD", p.endpoint, "/v1/core/trigger-messages", "", nil)
+	status, b = request(t, "HEAD", p.endpoint, "/apis/core/v1/trigger-messages", "", nil)
 	if status != 200 || len(b) != 0 {
 		t.Fatal("HEAD returned body")
 	}
@@ -540,7 +546,7 @@ func TestPublicStablePagination(t *testing.T) {
 	for i := range 6 {
 		submit(t, p, f, input(strconv.Itoa(i)))
 	}
-	status, b := request(t, "GET", p.endpoint, "/v1/core/trigger-messages?limit=2", "", nil)
+	status, b := request(t, "GET", p.endpoint, "/apis/core/v1/trigger-messages?limit=2", "", nil)
 	if status != 200 {
 		t.Fatalf("list %s", b)
 	}
@@ -571,7 +577,7 @@ func TestPublicStablePagination(t *testing.T) {
 		if result.NextCursor == "" {
 			break
 		}
-		status, b = request(t, "GET", p.endpoint, "/v1/core/trigger-messages?limit=2&cursor="+result.NextCursor, "", nil)
+		status, b = request(t, "GET", p.endpoint, "/apis/core/v1/trigger-messages?limit=2&cursor="+result.NextCursor, "", nil)
 		if status != 200 {
 			t.Fatalf("cursor %s", b)
 		}
@@ -584,7 +590,7 @@ func TestPublicStablePagination(t *testing.T) {
 		t.Fatalf("pagination lost rows %d", len(seen))
 	}
 	for _, path := range []string{"trigger-messages?limit=201", "trigger-messages?limit=0", "trigger-messages?cursor=bad", "threads?cursor=" + first.NextCursor, "trigger-messages?cursor=" + first.NextCursor + "&threadId=other"} {
-		status, b = request(t, "GET", p.endpoint, "/v1/core/"+path, "", nil)
+		status, b = request(t, "GET", p.endpoint, "/apis/core/v1/"+path, "", nil)
 		errorCode(t, status, b, 400, "invalid_argument")
 	}
 }
@@ -600,7 +606,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 			outcome := make(chan error, 1)
 			go func() {
 				b, _ := json.Marshal(r)
-				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, p.endpoint+"/v1/core/trigger-messages", bytes.NewReader(b))
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, p.endpoint+"/apis/core/v1/trigger-messages", bytes.NewReader(b))
 				if err != nil {
 					outcome <- err
 					return
@@ -701,7 +707,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		p := f.start()
 		r := input("oversize")
 		r.Message.Content[0].Text.Text = strings.Repeat("x", 512*1024)
-		status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, r)
+		status, b := request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", f.token, r)
 		errorCode(t, status, b, 503, "unavailable")
 		for _, kind := range []string{"trigger-messages", "threads", "internal-events"} {
 			if len(page(t, p, kind).Items) != 0 {
@@ -794,7 +800,7 @@ func TestPublicOptionalReplyAddress(t *testing.T) {
 	r := input("no-reply-address")
 	r.ReplyTarget = nil
 	receipt := submit(t, p, f, r)
-	status, b := request(t, "GET", p.endpoint, "/v1/core/trigger-messages/"+receipt.MessageID, "", nil)
+	status, b := request(t, "GET", p.endpoint, "/apis/core/v1/trigger-messages/"+receipt.MessageID, "", nil)
 	var m core.Message
 	if status != 200 || json.Unmarshal(b, &m) != nil || len(m.ReplyTarget) != 0 {
 		t.Fatalf("reply address was required or fabricated: %s", b)
@@ -806,7 +812,7 @@ func TestPublicOptionalReplyAddress(t *testing.T) {
 	}
 	r.OperationID = "conflicting-address"
 	r.ReplyTarget = json.RawMessage(`{"resource":"https://example.com/review/3","replyTokenRef":"external-adapter-reference"}`)
-	status, b = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, r)
+	status, b = request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", f.token, r)
 	errorCode(t, status, b, 409, "conflict")
 	r = input("generic-reply-address")
 	r.ReplyTarget = json.RawMessage(`{"resource":"https://example.com/review/3"}`)
@@ -833,7 +839,7 @@ func TestConfigDefaultAndExplicitListen(t *testing.T) {
 	p := f.start()
 	_, port, _ := net.SplitHostPort(strings.TrimPrefix(p.endpoint, "http://"))
 	p.endpoint = "http://127.0.0.1:" + port
-	status, b := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", "", input("unauth"))
+	status, b := request(t, "POST", p.endpoint, "/apis/core/v1/trigger-messages", "", input("unauth"))
 	errorCode(t, status, b, 401, "unauthorized")
 	submit(t, p, f, input("explicit-bind"))
 }

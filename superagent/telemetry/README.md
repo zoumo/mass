@@ -40,7 +40,7 @@ smoke test.
 ## Query Core telemetry
 
 In **Traces**, search by the Message's `trace_id` across services. A Message
-submission produces `POST /v1/core/trigger-messages` and its `superagent.message.admit`
+submission produces `POST /apis/core/v1/trigger-messages` and its `superagent.message.admit`
 child span. A single-source workflow continues through role input, routing, Issue
 creation, Issue Session preparation, and the Report. The trace can also include
 MASS RPC, Service, and SDK spans.
@@ -68,7 +68,7 @@ Each authenticated `tools/call` attempt contributes one observation, including
 business errors and retries. Initialization and tool discovery contribute to
 the HTTP request metrics.
 
-Filter `POST /v1/mcp` spans by `superagent.caller.id` and `superagent.role`.
+Filter `POST /apis/core/v1/mcp` spans by `superagent.caller.id` and `superagent.role`.
 For an Issue, use its Topic and SessionBinding IDs to follow role calls.
 Tool attempt metrics are independent of trace sampling.
 

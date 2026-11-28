@@ -14,7 +14,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
       expect(r.headers()['authorization']).toBeUndefined()
     }
   })
-  const { items: topics } = await (await request.get(routingURL + '/v1/core/topics')).json()
+  const { items: topics } = await (await request.get(routingURL + '/apis/core/v1/topics')).json()
   const { id: topicID } = topics.find((record: { title: string }) => record.title === 'Observer routing Topic')
   const otherTopic = topics.find((record: { id: string }) => record.id !== topicID).id
   const topicURL = routingURL + '/superagent/topic?id=' + topicID
@@ -63,14 +63,14 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await expect(binding.getByText('模型', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText('topic-model')
   await expect(binding.getByText('推理强度', { exact: true })).toHaveCount(0)
   expect(errors).toEqual([])
-  const topicEvents = `${routingURL}/v1/core/topics/${topicID}/activity?filter=message`
+  const topicEvents = `${routingURL}/apis/core/v1/topics/${topicID}/activity?filter=message`
   const first = await (await request.get(`${topicEvents}&limit=1&order=newest`)).json()
   expect(first.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
   const cursor = encodeURIComponent(first.nextCursor)
   const next = await (await request.get(`${topicEvents}&limit=1&order=newest&cursor=${cursor}`)).json()
   expect(next.items.map((row: { kind: string }) => row.kind)).toEqual(['routed_message'])
   const scheduledMessage = await (
-    await request.get(`${routingURL}/v1/core/trigger-messages/${next.items[0].messageId}`)
+    await request.get(`${routingURL}/apis/core/v1/trigger-messages/${next.items[0].messageId}`)
   ).json()
   expect(scheduledMessage.source).toBe('core:scheduled-task')
   expect(scheduledMessage.content).toEqual([{ type: 'text', text: 'Review the archived build.' }])
@@ -84,7 +84,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   expect(
     (
       await request.get(
-        `${routingURL}/v1/core/topics/${otherTopic}/activity?filter=message&order=newest&cursor=${cursor}`,
+        `${routingURL}/apis/core/v1/topics/${otherTopic}/activity?filter=message&order=newest&cursor=${cursor}`,
       )
     ).status(),
   ).toBe(400)
@@ -97,7 +97,7 @@ test('Narrow Trigger view shows the original and supports pagination without pag
   await page.setViewportSize({ width: 390, height: 844 })
   const {
     items: [original],
-  } = await (await request.get('/v1/core/trigger-messages?limit=1')).json()
+  } = await (await request.get('/apis/core/v1/trigger-messages?limit=1')).json()
   await page.goto(`/superagent/message?id=${original.id}`)
   const message = page.getByRole('article', { name: '当前消息' })
   await expect(message.getByTestId('message-body')).toContainText('Long original text '.repeat(1500))

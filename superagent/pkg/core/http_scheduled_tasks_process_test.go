@@ -19,8 +19,8 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 	token := strings.Repeat("O", 48)
 	f.seedToken("admin.token", token)
 	p := f.start()
-	const tasks = "/v1/core/scheduled-tasks"
-	const messages = "/v1/core/trigger-messages"
+	const tasks = "/apis/core/v1/scheduled-tasks"
+	const messages = "/apis/core/v1/trigger-messages"
 	sourceFilter := "source=" + url.QueryEscape("core:scheduled-task")
 	call := func(method, path string, body any, want int) []byte {
 		t.Helper()
@@ -40,7 +40,7 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 		status, data := request(t, http.MethodGet, p.endpoint, path, f.token, nil)
 		require.Equal(t, http.StatusUnauthorized, status, string(data))
 	}
-	for _, path := range []string{messages + "?sourceMessageId=example", "/v1/core/outbox-messages?view=delivery"} {
+	for _, path := range []string{messages + "?sourceMessageId=example", "/apis/core/v1/outbox-messages?view=delivery"} {
 		status, data := request(t, http.MethodGet, p.endpoint, path, token, nil, fixtureTriggerSource)
 		require.Equal(t, http.StatusUnauthorized, status, string(data))
 	}
@@ -71,7 +71,7 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 	require.NotEmpty(t, first.MessageID)
 	require.NotEmpty(t, first.EventID)
 	require.False(t, first.Duplicate)
-	call(http.MethodGet, "/v1/core/internal-events/"+first.EventID, nil, http.StatusOK)
+	call(http.MethodGet, "/apis/core/v1/internal-events/"+first.EventID, nil, http.StatusOK)
 	var afterTrigger map[string]any
 	require.NoError(t, json.Unmarshal(call(http.MethodGet, taskPath, nil, http.StatusOK), &afterTrigger))
 	require.Equal(t, task.NextRunAt, afterTrigger["nextRunAt"])
@@ -129,7 +129,7 @@ func TestScheduledTaskRequestValidationMatchesOpenAPI(t *testing.T) {
 	p := f.start()
 
 	doc := core.OpenAPI()
-	const tasks = "/v1/core/scheduled-tasks"
+	const tasks = "/apis/core/v1/scheduled-tasks"
 	post := doc.Paths[tasks].Post.RequestBody.Content["application/json"].Schema
 	createSchema := doc.Components.Schemas.SchemaFromRef(post.Ref)
 	require.Contains(t, createSchema.Required, "content")

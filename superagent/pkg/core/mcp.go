@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	rpc2 "github.com/sourcegraph/jsonrpc2"
+
+	"github.com/zoumo/mass/internal/superagentapi"
 )
 
 type mcpTool struct {
@@ -22,7 +24,7 @@ func objectSchema(props map[string]any, required ...string) map[string]any {
 func stringSchema() map[string]any { return map[string]any{"type": "string", "minLength": 1} }
 
 const (
-	mcpPath            = "/v1/mcp"
+	mcpPath            = superagentapi.Prefix + "/mcp"
 	mcpProtocolVersion = "2025-11-25"
 	mcpBindingMeta     = "mass.dev/session-binding"
 )

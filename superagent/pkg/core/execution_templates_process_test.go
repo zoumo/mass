@@ -87,7 +87,7 @@ func TestExecutionTemplateConfig(t *testing.T) {
 		{"remote cleartext", "sessions:", "externalURL: http://core.example.com\nsessions:", "externalURL"},
 		{"embedded credentials", "sessions:", "externalURL: https://user:pass@core.example.com\nsessions:", "externalURL"},
 		{"endpoint query", "sessions:", "externalURL: https://core.example.com?token=value\nsessions:", "externalURL"},
-		{"endpoint path", "sessions:", "externalURL: https://core.example.com/v1/mcp\nsessions:", "externalURL"},
+		{"endpoint path", "sessions:", "externalURL: https://core.example.com/apis/core/v1/mcp\nsessions:", "externalURL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Contains(t, string(valid), tc.from)

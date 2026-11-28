@@ -95,7 +95,7 @@ func TestGitHubNotificationsRecoverPagesReadbacksAndCoreReceipts(t *testing.T) {
 	var captureMu sync.Mutex
 	var captures [][]byte
 	proxy := f.Proxy(func(_ http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/core/trigger-messages" &&
+		if r.Method == http.MethodPost && r.URL.Path == "/apis/core/v1/trigger-messages" &&
 			(r.Header.Get("X-Superagent-Source") != "github" || r.Header.Get("X-Superagent-Account-Id") != "account") {
 			t.Error("GitHub submission did not declare its Source and Account")
 		}

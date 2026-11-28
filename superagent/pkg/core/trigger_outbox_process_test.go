@@ -30,7 +30,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 			SourceMessageID: id, ThreadID: thread, Content: []events.ContentBlock{events.Text(text)},
 		}}
 	}
-	const ingress = "/v1/core/trigger-messages"
+	const ingress = "/apis/core/v1/trigger-messages"
 	submit := func(input core.SubmitTriggerMessageRequest) core.Receipt {
 		t.Helper()
 		status, raw := request(t, http.MethodPost, p.endpoint, ingress, f.token, input, consumer)

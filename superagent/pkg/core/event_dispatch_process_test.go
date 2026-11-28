@@ -29,7 +29,7 @@ func eventFixture(t *testing.T, endpoint string) (*fixture, string) {
 
 func readRecord[T any](t *testing.T, p *process, path string) T {
 	t.Helper()
-	status, data := request(t, http.MethodGet, p.endpoint, "/v1/core/"+path, "", nil)
+	status, data := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/"+path, "", nil)
 	require.Equal(t, http.StatusOK, status, string(data))
 	var out T
 	require.NoError(t, json.Unmarshal(data, &out))

@@ -54,7 +54,7 @@ func TestReadAllowedHostsHTTP(t *testing.T) {
 	const allowed = "observer.example.com:5970"
 	const allowedIPv4 = "192.0.2.10:5970"
 	const allowedIPv6 = "[2001:db8::10]:5970"
-	const readPath = "/v1/core/threads"
+	const readPath = "/apis/core/v1/threads"
 	f := fixtureAt(t)
 	base, err := os.ReadFile(f.config)
 	require.NoError(t, err)
@@ -91,14 +91,14 @@ func TestReadAllowedHostsHTTP(t *testing.T) {
 		{name: "allowed IPv4 GET", method: http.MethodGet, path: readPath, host: allowedIPv4, want: http.StatusOK},
 		{name: "allowed IPv6 GET", method: http.MethodGet, path: readPath, host: allowedIPv6, want: http.StatusOK},
 		{name: "allowed HEAD", method: http.MethodHead, path: readPath, host: allowed, want: http.StatusOK},
-		{name: "allowed Core read", method: http.MethodGet, path: "/v1/core/topics", host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
-		{name: "operator evidence requires the direct Core host", method: http.MethodGet, path: "/v1/core/session-bindings/example/runtime-evidence", host: allowed, want: http.StatusForbidden},
+		{name: "allowed Core read", method: http.MethodGet, path: "/apis/core/v1/topics", host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
+		{name: "operator evidence requires the direct Core host", method: http.MethodGet, path: "/apis/core/v1/session-bindings/example/runtime-evidence", host: allowed, want: http.StatusForbidden},
 		{name: "numeric GET", method: http.MethodGet, path: readPath, want: http.StatusOK},
 		{name: "numeric POST", method: http.MethodPost, path: readPath, want: http.StatusMethodNotAllowed},
 		{name: "allowed host POST", method: http.MethodPost, path: readPath, host: allowed, want: http.StatusForbidden},
-		{name: "allowed host MCP", method: http.MethodPost, path: "/v1/mcp", host: allowed, want: http.StatusForbidden},
-		{name: "allowed host channel", method: http.MethodPost, path: "/v1/core/trigger-messages", host: allowed, want: http.StatusForbidden},
-		{name: "allowed host telemetry", method: http.MethodPost, path: "/v1/telemetry/traces", host: allowed, want: http.StatusForbidden},
+		{name: "allowed host MCP", method: http.MethodPost, path: "/apis/core/v1/mcp", host: allowed, want: http.StatusForbidden},
+		{name: "allowed host channel", method: http.MethodPost, path: "/apis/core/v1/trigger-messages", host: allowed, want: http.StatusForbidden},
+		{name: "allowed host telemetry", method: http.MethodPost, path: "/apis/core/v1/telemetry/traces", host: allowed, want: http.StatusForbidden},
 		{name: "allowed host unrelated GET", method: http.MethodGet, path: "/", host: allowed, want: http.StatusForbidden},
 		{name: "host prefix", method: http.MethodGet, path: readPath, host: "other." + allowed, want: http.StatusForbidden},
 		{name: "missing port", method: http.MethodGet, path: readPath, host: strings.TrimSuffix(allowed, ":5970"), want: http.StatusForbidden},

@@ -46,14 +46,14 @@ func TestCoreInstanceCredentialsProcess(t *testing.T) {
 		{trigger, http.StatusUnauthorized},
 		{"", http.StatusUnauthorized},
 	} {
-		status, _ := request(t, http.MethodGet, p.endpoint, "/v1/core/scheduled-tasks", tc.token, nil)
+		status, _ := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/scheduled-tasks", tc.token, nil)
 		require.Equal(t, tc.state, status)
 	}
-	status, _ := request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", admin, input("instance-token"))
+	status, _ := request(t, http.MethodPost, p.endpoint, "/apis/core/v1/trigger-messages", admin, input("instance-token"))
 	require.Equal(t, http.StatusUnauthorized, status)
 	f.token = trigger
 	receipt := submit(t, p, f, input("instance-token"))
-	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/massd"
+	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/apis/massd"
 	c := mountedMASSClient(t, mount, admin, 8)
 	var runtime resource.Runtime
 	require.NoError(t, c.GetRuntime(t.Context(), "codex", &runtime))
@@ -68,7 +68,7 @@ func TestCoreInstanceCredentialsProcess(t *testing.T) {
 	require.Equal(t, admin, instanceToken(t, adminPath))
 	require.Equal(t, trigger, instanceToken(t, triggerPath))
 	require.Equal(t, receipt.MessageID, submit(t, p, f, input("instance-token")).MessageID)
-	c = mountedMASSClient(t, "ws"+strings.TrimPrefix(p.endpoint, "http")+"/massd", admin, 8)
+	c = mountedMASSClient(t, "ws"+strings.TrimPrefix(p.endpoint, "http")+"/apis/massd", admin, 8)
 	var restored resource.Runtime
 	require.NoError(t, c.GetRuntime(t.Context(), "codex", &restored))
 	require.Equal(t, runtime.Metadata.UID, restored.Metadata.UID)

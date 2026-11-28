@@ -29,7 +29,7 @@ test('Topic and Issue preserve their external PR links and source messages', asy
  await expect(workContext.getByRole('link', { name: github, exact: true })).toHaveAttribute('href', github)
 
  // The Thread URL includes nested escapes, slashes, query parameters and a fragment.
- const thread = await request.get('/v1/core/threads/' + encodeURIComponent(internal))
+ const thread = await request.get('/apis/core/v1/threads/' + encodeURIComponent(internal))
  expect(thread.status()).toBe(200)
  expect(await thread.json()).toMatchObject({ id: internal })
  await page.goto('/superagent/?view=threads&id=' + encodeURIComponent(internal))

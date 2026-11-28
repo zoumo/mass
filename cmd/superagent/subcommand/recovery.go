@@ -17,6 +17,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/zoumo/mass/internal/httpaddress"
+	"github.com/zoumo/mass/internal/superagentapi"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -33,7 +34,7 @@ func newRecoverInput() *cobra.Command {
 		Use: "recover-input SESSION_BINDING_ID", Short: "Reconcile a local SessionBinding before retry, settlement or replacement",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "/v1/core/session-bindings/" + url.PathEscape(args[0]) + "/recoveries"
+			path := superagentapi.Prefix + "/session-bindings/" + url.PathEscape(args[0]) + "/recoveries"
 			return operator.request(cmd, http.MethodPost, path, req)
 		},
 	}
@@ -55,7 +56,7 @@ func newInspectBinding() *cobra.Command {
 		Use: "inspect-session-binding SESSION_BINDING_ID", Short: "Read a SessionBinding and its live massd evidence",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return operator.request(cmd, http.MethodGet, "/v1/core/session-bindings/"+url.PathEscape(args[0])+"/runtime-evidence", nil)
+			return operator.request(cmd, http.MethodGet, superagentapi.Prefix+"/session-bindings/"+url.PathEscape(args[0])+"/runtime-evidence", nil)
 		},
 	}
 	operator.addFlags(cmd.Flags())

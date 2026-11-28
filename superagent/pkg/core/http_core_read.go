@@ -11,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/zoumo/mass/internal/superagentapi"
 )
 
-const coreResourcePrefix = "/v1/core/"
+const coreResourcePrefix = superagentapi.Prefix + "/"
 
 func isTrustedResourceRead(path string) bool {
 	if path == watchdogReadPath || path == telemetryPerformancePath || strings.HasPrefix(path, telemetryTracePath+"/") {

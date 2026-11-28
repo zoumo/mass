@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 test.use({ baseURL: 'http://127.0.0.1:' + (process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894') })
 
 test('Issue shows blockers and report provenance before explicit acceptance', async ({ page, request }, testInfo) => {
-  const issues = (await (await request.get('/v1/core/issues')).json()).items
+  const issues = (await (await request.get('/apis/core/v1/issues')).json()).items
   const blocked = issues.find((r: {title: string}) => r.title === 'Review blocked build')
   await page.goto('/superagent/issue?id=' + blocked.id)
   const issue = page.getByRole('article', { name: '当前 Issue' })
@@ -30,9 +30,9 @@ test('Issue shows blockers and report provenance before explicit acceptance', as
   await issue.getByRole('button', {name:'补充 Issue Session 上下文'}).last().click()
   await expect(issue.getByRole('heading', {name:'Archive review checklist'})).toBeVisible()
   await expect(issue.getByRole('link', {name:'查看接收指令的会话'})).toHaveAttribute('href', sessionHref)
-  const sessionBindings = await (await request.get('/v1/core/session-bindings?issueId=' + blocked.id)).json()
+  const sessionBindings = await (await request.get('/apis/core/v1/session-bindings?issueId=' + blocked.id)).json()
   expect(sessionBindings.items.map((binding: { id: string }) => binding.id)).toEqual([blocked.currentSessionBindingId])
-  const scoped = await request.get('/v1/core/internal-events?preview=true&issueId=' + blocked.id)
+  const scoped = await request.get('/apis/core/v1/internal-events?preview=true&issueId=' + blocked.id)
   expect(scoped.ok()).toBeTruthy()
   const {items} = await scoped.json()
   expect(items.some((d:{goalUpdate:boolean}) => d.goalUpdate)).toBeTruthy()

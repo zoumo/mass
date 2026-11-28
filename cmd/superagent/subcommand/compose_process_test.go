@@ -212,7 +212,7 @@ func runComposeHTTPFixture(dir, name string) int {
 				recordComposeEvent(dir, "core:ready")
 			}
 			w.WriteHeader(http.StatusOK)
-		case "/v1/core/reports":
+		case "/apis/core/v1/reports":
 			recordComposeEvent(dir, "core:reports")
 			fmt.Fprintln(w, `{"items":[]}`)
 		case "/status":
@@ -228,7 +228,7 @@ func runComposeHTTPFixture(dir, name string) int {
 			default:
 				fmt.Fprintln(w, `{"source":"github","notifications":{"state":"stale","lastError":"fixture-private-github-status","nextAttemptAt":"2026-11-22T12:00:00Z"},"repositories":{}}`)
 			}
-		case "/v1/core/trigger-messages":
+		case "/apis/core/v1/trigger-messages":
 			composeFixtureAdmission(dir, w, r)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -480,13 +480,13 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 `, upstream.URL+"/observability/")
 		first := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := first.startup(t)
-		trace := composeHTTPBody(t, startup.Endpoint+"/v1/telemetry/traces/"+traceID)
+		trace := composeHTTPBody(t, startup.Endpoint+"/apis/core/v1/telemetry/traces/"+traceID)
 		require.Contains(t, trace, "fixture-span")
 		require.DirExists(t, filepath.Join(dir, "core-state", "massd"))
-		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/massd/jsonrpc", startup.MassdEndpoint)
+		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/apis/massd/jsonrpc", startup.MassdEndpoint)
 		require.NoDirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
 		checkStackStatus(t, startup.Endpoint, "ready", "ready", "disabled", "disabled")
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, startup.Endpoint+"/massd/readyz", http.NoBody)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, startup.Endpoint+"/apis/massd/readyz", http.NoBody)
 		require.NoError(t, err)
 		response, err := (&http.Client{Timeout: time.Second}).Do(req)
 		require.NoError(t, err)
@@ -556,8 +556,8 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		trigger := strings.TrimSpace(readComposeFile(t, composeTokenPath(dir, "triggers.token")))
 		require.DirExists(t, filepath.Join(dir, "core-state", "massd"))
 		require.DirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
-		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/massd/jsonrpc", startup.MassdEndpoint)
-		require.JSONEq(t, `{"status":"ready"}`, composeHTTPBody(t, startup.Endpoint+"/massd/readyz"))
+		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/apis/massd/jsonrpc", startup.MassdEndpoint)
+		require.JSONEq(t, `{"status":"ready"}`, composeHTTPBody(t, startup.Endpoint+"/apis/massd/readyz"))
 		dial := &websocket.Dialer{HandshakeTimeout: time.Second}
 		for _, credential := range []string{"", trigger} {
 			header := make(http.Header)
@@ -693,7 +693,7 @@ func TestComposeProcessCombinations(t *testing.T) {
 					return json.Unmarshal([]byte(composeHTTPBody(t, endpoint+"/status")), &status) == nil &&
 						status.Connection == "ready" && status.ConsumerReady && status.Accepted == 1
 				}, 5*time.Second, 20*time.Millisecond)
-				require.Contains(t, composeHTTPBody(t, startup.Endpoint+"/v1/core/trigger-messages"), "last-message")
+				require.Contains(t, composeHTTPBody(t, startup.Endpoint+"/apis/core/v1/trigger-messages"), "last-message")
 				assertComposeOrder(t, dir, "core:start", "dws:check", "dws:serve", "consumer:start")
 			} else {
 				require.NotContains(t, startup.TriggerEndpoints, "dws")

@@ -278,7 +278,7 @@ func (f *fixture) execution(boundary *routeBoundary) {
 
 func bindings(t *testing.T, p *process) []core.SessionBinding {
 	t.Helper()
-	_, data := request(t, http.MethodGet, p.endpoint, "/v1/core/session-bindings", "", nil)
+	_, data := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/session-bindings", "", nil)
 	var page struct {
 		Items []core.SessionBinding `json:"items"`
 	}
@@ -654,7 +654,7 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 		result = append(result, code)
 	}
 	require.ElementsMatch(t, []int{200, 409}, result)
-	_, data := request(t, http.MethodGet, p.endpoint, "/v1/core/topics", "", nil)
+	_, data := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/topics", "", nil)
 	var page core.Page
 	require.NoError(t, json.Unmarshal(data, &page))
 	require.Len(t, page.Items, 1)
@@ -669,7 +669,7 @@ func TestRoutingAtomicConcurrentDecisions(t *testing.T) {
 	r.Targets = append(r.Targets, core.RouteTarget{TopicID: "missing-topic", MessageIDs: []string{m.MessageID}})
 	status, data := requestMCPTool(t, p.endpoint, "route_messages", token, r)
 	require.Equal(t, 404, status, string(data))
-	_, data = request(t, http.MethodGet, p.endpoint, "/v1/core/topics", "", nil)
+	_, data = request(t, http.MethodGet, p.endpoint, "/apis/core/v1/topics", "", nil)
 	require.NoError(t, json.Unmarshal(data, &page))
 	require.Len(t, page.Items, 1)
 	require.Len(t, bindings(t, p), 2)
@@ -708,7 +708,7 @@ func TestRoutingLostCreateAndPreparationRetry(t *testing.T) {
 	waitBinding(t, p, "topic", id, "ready")
 	require.EqualValues(t, 2, boundary.dropped.Load())
 	waitDelivered(t, p, receipt.MessageID, "topic", id)
-	_, data := request(t, http.MethodGet, p.endpoint, "/v1/core/topics", "", nil)
+	_, data := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/topics", "", nil)
 	var page core.Page
 	require.NoError(t, json.Unmarshal(data, &page))
 	require.Len(t, page.Items, 1)
@@ -1311,7 +1311,7 @@ func TestRoutingTargetRecoveryAndLateReceipt(t *testing.T) {
 	own = page(t, p, "topics/"+b.OwnerID+"/activity?filter=message")
 	require.NotEmpty(t, own.Items)
 	require.Contains(t, string(own.Items[0]), m.MessageID)
-	_, raw = request(t, http.MethodGet, p.endpoint, "/v1/core/threads/"+url.PathEscape(m.ThreadID), "", nil)
+	_, raw = request(t, http.MethodGet, p.endpoint, "/apis/core/v1/threads/"+url.PathEscape(m.ThreadID), "", nil)
 	require.Contains(t, string(raw), a.OwnerID)
 	require.Contains(t, string(raw), b.OwnerID)
 	peer.quiet(t, 300*time.Millisecond)

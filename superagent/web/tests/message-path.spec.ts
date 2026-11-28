@@ -15,7 +15,7 @@ async function get<T>(request: APIRequestContext, url: string): Promise<T> {
   return response.json()
 }
 async function findMessage(request: APIRequestContext, origin: string, nativeID: string) {
-  const { items } = await get<{ items: Message[] }>(request, origin + '/v1/core/trigger-messages?limit=200')
+  const { items } = await get<{ items: Message[] }>(request, origin + '/apis/core/v1/trigger-messages?limit=200')
   return items.find(row => row.sourceMessageId === nativeID)!
 }
 async function sampleOrigin(request: APIRequestContext) {
@@ -25,7 +25,7 @@ async function sampleOrigin(request: APIRequestContext) {
 test('Message branches use the sender, acceptance and explicit return ID committed by Core', async ({ request, page }, testInfo) => {
   const origin = await sampleOrigin(request)
   const msg = await findMessage(request, origin, 'observer-path-rerouted')
-  const api = origin + '/v1/core/'
+  const api = origin + '/apis/core/v1/'
   const routes = (await get<{ items: InternalEvent[] }>(request, api + 'internal-events?messageId=' + msg.id)).items
   const returned = routes.find(row => row.returnedEventId)!
   const original = routes.find(row => row.event_id === returned.returnedEventId)!
@@ -132,7 +132,7 @@ test('a failed reference page preserves known branches and does not announce an 
   const graph = page.getByRole('region', { name: '消息路径' })
   await page.getByRole('button', { name: '暂停自动刷新' }).click()
   const more = graph.getByRole('button', { name: '加载更多Issue 引用' })
-  const match = '**/v1/core/issues?*cursor=*'
+  const match = '**/apis/core/v1/issues?*cursor=*'
   await page.route(match, route => route.fulfill({ status: 503, body: '{}' }))
   await more.click()
   await expect(graph.getByRole('status')).toContainText('读取失败（HTTP 503）')

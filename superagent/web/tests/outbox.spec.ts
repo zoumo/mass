@@ -62,6 +62,6 @@ test('Message and Thread link to read-only reply history and channel evidence', 
  await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
  await page.screenshot({ path: testInfo.outputPath('outbox-sent.png'), fullPage: true, animations: 'disabled' })
  expect(methods).toEqual(new Set(['GET']))
- expect((await request.head('/v1/core/outbox-messages')).status()).toBe(200)
- expect((await request.post('/v1/core/outbox-messages', { data: {} })).status()).toBe(405)
+ expect((await request.head('/apis/core/v1/outbox-messages')).status()).toBe(200)
+ expect((await request.post('/apis/core/v1/outbox-messages', { data: {} })).status()).toBe(405)
 })

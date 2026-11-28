@@ -29,9 +29,9 @@ test('routing, preparation and returns are visible through read-only navigation'
  await expect(page.getByTestId('routing-record')).toContainText('"returnedEventId": "evt_')
  await page.screenshot({ path: testInfo.outputPath('routing-return.png'), fullPage: true, animations: 'disabled' })
  for (const collection of ['topics', 'internal-events', 'session-bindings']) {
-  expect((await request.get(`/v1/core/${collection}`)).status()).toBe(200)
-  expect((await request.head(`/v1/core/${collection}`)).status()).toBe(200)
-  expect((await request.post(`/v1/core/${collection}`, { data: {} })).status()).toBe(405)
+  expect((await request.get(`/apis/core/v1/${collection}`)).status()).toBe(200)
+  expect((await request.head(`/apis/core/v1/${collection}`)).status()).toBe(200)
+  expect((await request.post(`/apis/core/v1/${collection}`, { data: {} })).status()).toBe(405)
  }
  expect(errors).toEqual([])
  expect(methods.every(method => method === 'GET')).toBeTruthy()
@@ -47,8 +47,8 @@ test('internal event shows Session acceptance and stable identity', async ({ pag
  await expect(page.getByTestId('routing-record')).toContainText('"kind": "context_supplement"')
  await expect(dialog.getByRole('button', { name: /重试|替换|恢复|确认投递/ })).toHaveCount(0)
  await page.screenshot({ path: testInfo.outputPath('internal-event.png'), fullPage: true, animations: 'disabled' })
- expect((await request.head('/v1/core/internal-events/browser-accepted')).status()).toBe(200)
- expect((await request.post('/v1/core/internal-events/browser-accepted', { data: {} })).status()).toBe(405)
+ expect((await request.head('/apis/core/v1/internal-events/browser-accepted')).status()).toBe(200)
+ expect((await request.post('/apis/core/v1/internal-events/browser-accepted', { data: {} })).status()).toBe(405)
  expect(methods.length).toBeGreaterThan(0)
  expect(methods.every(method => method === 'GET')).toBeTruthy()
 })

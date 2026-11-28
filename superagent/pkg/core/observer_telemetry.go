@@ -57,9 +57,9 @@ func newObserverTelemetryGateway(endpoint string) (*observerTelemetryGateway, er
 func (g *observerTelemetryGateway) serve(w http.ResponseWriter, r *http.Request) {
 	var upstreamPath string
 	switch r.URL.Path {
-	case "/v1/telemetry/traces":
+	case telemetryTracePath:
 		upstreamPath = "/v1/traces"
-	case "/v1/telemetry/metrics":
+	case telemetryMetricsPath:
 		upstreamPath = "/v1/metrics"
 	default:
 		http.NotFound(w, r)

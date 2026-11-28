@@ -16,7 +16,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/zoumo/mass/internal/httpaddress"
 	"github.com/zoumo/mass/massd"
-	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
 	"github.com/zoumo/mass/superagent/pkg/core"
 	"github.com/zoumo/mass/superagent/pkg/watchdog"
 )
@@ -148,7 +146,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		Status:           "ready",
 	}
 	if coreConfig.Massd == nil {
-		addresses.MassdEndpoint = "ws" + strings.TrimPrefix(coreEndpoint, "http") + core.MassdMountPath + rpcwire.WebSocketPath
+		addresses.MassdEndpoint = embeddedMASSRPCURL(coreEndpoint)
 	}
 	var triggerChildren []*childProcess
 	startupComplete := false

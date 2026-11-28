@@ -13,7 +13,7 @@ test('HTTPS gateway serves the built Web and validates Origin before proxying', 
   await page.reload()
   await expect(page.getByText('核心服务已就绪', { exact: true })).toBeVisible()
 
-  const query = httpsOrigin + '/v1/core/threads'
+  const query = httpsOrigin + '/apis/core/v1/threads'
   expect((await request.get(query, { headers: { Origin: httpsOrigin, 'Sec-Fetch-Site': 'same-origin' } })).status()).toBe(200)
   const forged = {
     Forwarded: 'for=127.0.0.1;proto=https;host=foreign.example',
@@ -24,11 +24,11 @@ test('HTTPS gateway serves the built Web and validates Origin before proxying', 
   expect((await request.get(query, { headers: { ...forged, Origin: 'https://foreign.example' } })).status()).toBe(403)
   expect((await request.get(query, { headers: { ...forged, Origin: httpsOrigin, 'Sec-Fetch-Site': 'cross-site' } })).status()).toBe(403)
   for (const action of ['runtime-evidence', '%72untime-evidence', 'recoveries', '%72ecoveries']) {
-    const path = `${httpsOrigin}/v1/core/session-bindings/example/${action}`
+    const path = `${httpsOrigin}/apis/core/v1/session-bindings/example/${action}`
     expect((await request.fetch(path, { method: action.endsWith('evidence') ? 'GET' : 'POST', headers: forged })).status()).toBe(404)
   }
 
-  const missingAPI = await request.get(httpsOrigin + '/v1/core/topics/missing')
+  const missingAPI = await request.get(httpsOrigin + '/apis/core/v1/topics/missing')
   expect(missingAPI.status()).toBe(404)
   expect(missingAPI.headers()['content-type']).toContain('application/json')
   expect((await request.get(httpsOrigin + '/superagent/assets/missing.js')).status()).toBe(404)

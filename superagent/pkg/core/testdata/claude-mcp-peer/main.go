@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,23 @@ func check(err error) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func callMCP(client *http.Client, endpoint string, headers map[string]string, body string, result any) {
+	request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBufferString(body))
+	check(err)
+	for name, value := range headers {
+		request.Header.Set(name, os.ExpandEnv(value))
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := client.Do(request)
+	check(err)
+	if resp.StatusCode != http.StatusOK {
+		check(fmt.Errorf("native HTTP MCP request returned %d", resp.StatusCode))
+	}
+	check(json.NewDecoder(resp.Body).Decode(result))
+	check(resp.Body.Close())
 }
 
 func main() {
@@ -49,35 +67,42 @@ func main() {
 	if server.Type != "http" || server.Headers["Authorization"] == "" {
 		check(fmt.Errorf("native HTTP MCP configuration missing"))
 	}
-	request, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"controlled-native","version":"1"}}}`))
+	endpoint, err := url.Parse(server.URL)
 	check(err)
-	for name, value := range server.Headers {
-		request.Header.Set(name, os.ExpandEnv(value))
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json, text/event-stream")
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(request)
-	check(err)
-	if resp.StatusCode != http.StatusOK {
-		check(fmt.Errorf("native HTTP MCP initialization returned %d", resp.StatusCode))
-	}
 	var response struct {
 		Result struct {
 			Meta map[string]json.RawMessage `json:"_meta"`
 		}
 	}
-	check(json.NewDecoder(resp.Body).Decode(&response))
-	check(resp.Body.Close())
+	callMCP(client, server.URL, server.Headers, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"controlled-native","version":"1"}}}`, &response)
 	binding := response.Result.Meta["mass.dev/session-binding"]
-	if len(binding) == 0 {
-		check(fmt.Errorf("native HTTP MCP initialization returned no binding"))
+	var identity struct{ Role string }
+	check(json.Unmarshal(binding, &identity))
+	tool := map[string]string{"router": "list_topics", "topic": "get_topic", "issue": "get_issue"}[identity.Role]
+	if tool == "" {
+		check(fmt.Errorf("native HTTP MCP initialization returned an unexpected role"))
+	}
+	var toolResponse struct {
+		Error  json.RawMessage
+		Result struct {
+			IsError           bool
+			StructuredContent json.RawMessage
+		}
+	}
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":%q,"arguments":{}}}`, tool)
+	callMCP(client, server.URL, server.Headers, body, &toolResponse)
+	if toolResponse.Error != nil || toolResponse.Result.IsError || len(toolResponse.Result.StructuredContent) == 0 {
+		check(fmt.Errorf("native HTTP MCP tool %s returned no result", tool))
 	}
 	record, err := os.OpenFile(filepath.Join(os.Getenv("PEER_DIR"), "mcp.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	check(err)
 	check(native.Start())
 	log := json.NewEncoder(record)
-	check(log.Encode(map[string]any{"method": "opened", "nativePid": native.Process.Pid, "binding": binding, "questionsDisabled": questionsDisabled}))
+	check(log.Encode(map[string]any{
+		"method": "opened", "nativePid": native.Process.Pid, "binding": binding,
+		"questionsDisabled": questionsDisabled, "mcpPath": endpoint.Path, "tool": tool,
+	}))
 	nativeErr := native.Wait()
 	check(log.Encode(map[string]any{"method": "released", "nativePid": native.Process.Pid, "binding": binding}))
 	check(record.Close())

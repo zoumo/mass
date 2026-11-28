@@ -250,7 +250,7 @@ func seedObserverSessionReuse(t *testing.T) map[string]string {
 	const stored = "Session history recorded before the binding changed"
 	require.NoError(t, emitObserverMessage(t.Context(), boundary.driver, original, stored, true))
 	require.Eventually(t, func() bool {
-		status, data := request(t, http.MethodGet, p.endpoint, "/v1/core/session-bindings/"+original.ID+"/history", "", nil)
+		status, data := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/session-bindings/"+original.ID+"/history", "", nil)
 		return status == http.StatusOK && strings.Contains(string(data), stored)
 	}, 5*time.Second, 25*time.Millisecond)
 	oldReport := roleWork[core.Report](t, p, roleToken(t, f, original), "submit_report", core.ReportRequest{

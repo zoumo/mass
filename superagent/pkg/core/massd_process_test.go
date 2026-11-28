@@ -45,7 +45,7 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	liveCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	preview := "/v1/core/session-bindings/" + router.ID
+	preview := "/apis/core/v1/session-bindings/" + router.ID
 	req, err := http.NewRequestWithContext(liveCtx, http.MethodGet, p.endpoint+preview+"/live", http.NoBody)
 	require.NoError(t, err)
 	httpClient := &http.Client{Timeout: 8 * time.Second}
@@ -126,7 +126,7 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
  FROM session_bindings WHERE id=?`, router.ID)
 	require.NoError(t, err)
 	for _, view := range []string{"history", "live"} {
-		path := "/v1/core/session-bindings/stale-binding/" + view
+		path := "/apis/core/v1/session-bindings/stale-binding/" + view
 		status, body := request(t, http.MethodGet, p.endpoint, path, "", nil)
 		errorCode(t, status, body, http.StatusServiceUnavailable, "unavailable")
 		status, body = request(t, http.MethodHead, p.endpoint, path, "", nil)
@@ -146,7 +146,7 @@ func TestEmbeddedMASSDispatchDuringShutdown(t *testing.T) {
 	p := f.start("SUPERAGENT_TEST_GATE_STAGE="+stage, "SUPERAGENT_TEST_GATE_DIR="+gate)
 	t.Cleanup(func() { write(t, filepath.Join(gate, "release"), "released") })
 	router := waitBinding(t, p, "router", "", "ready")
-	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/massd"
+	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/apis/massd"
 	external, err := client.New(mount, token, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, external.Close()) })
@@ -259,7 +259,7 @@ func embeddedProcessFixture(t *testing.T, peer *nativeSubmitPeer) (*fixture, str
 
 func requireEmbeddedHistory(t *testing.T, p *process, bindingID string, messages ...string) {
 	t.Helper()
-	path := "/v1/core/session-bindings/" + bindingID + "/history"
+	path := "/apis/core/v1/session-bindings/" + bindingID + "/history"
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		status, history := request(t, http.MethodGet, p.endpoint, path, "", nil)
 		assert.Equal(collect, http.StatusOK, status, string(history))
