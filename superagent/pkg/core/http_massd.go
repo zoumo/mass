@@ -12,7 +12,6 @@ import (
 
 func (s *Server) registerMassd(api *httpAPI) {
 	const exposure = "Available when Core runs embedded MASS."
-	api.router.HandleFunc(MassdMountPath+"/*", s.serveMassd)
 	errorSchema := api.schema(reflect.TypeFor[transport.Error]())
 	for _, probe := range []struct{ path, id, summary string }{
 		{"/livez", "massdLiveness", "Check that the massd process can respond"},

@@ -28,7 +28,7 @@ type SessionBinding = WorkbenchRow & { id: string; createdAt: string; startEvent
 type Event = { id: string; at: string; title: string; detail?: ReactNode; traces?: TraceAssociation[] }
 
 function recordLink(view: string, id: string) {
-  return '/superagent/?' + new URLSearchParams({ view, id, mode: 'records' })
+  return '/?' + new URLSearchParams({ view, id, mode: 'records' })
 }
 function Evidence({ items }: { items?: string[] }) {
   return items?.length ? <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul> : null

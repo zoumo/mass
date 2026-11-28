@@ -38,7 +38,7 @@ function href(view: Kind, filterId = '', scope: Filter = 'topicId', id = '') {
   if (id) q.set('id', id)
   if (filterId) q.set(scope, filterId)
   if (view in workViews) q.set('mode', 'records')
-  return '/superagent/?' + q
+  return '/?' + q
 }
 function nameOf(kind: Kind, row: DiagnosticRow) {
   if (kind === 'messages') return row.text || identity(row)

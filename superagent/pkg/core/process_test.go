@@ -29,6 +29,7 @@ import (
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 	"github.com/zoumo/mass/superagent/pkg/core"
+	"github.com/zoumo/mass/superagent/web"
 )
 
 var (
@@ -40,7 +41,11 @@ var (
 func build(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
-		cmd := exec.CommandContext(context.Background(), "go", "build", "-race", "-tags", "coretest", "-o", binary, "../../../cmd/superagent")
+		tags := "coretest"
+		if web.Assets() != nil {
+			tags += ",superagentweb"
+		}
+		cmd := exec.CommandContext(context.Background(), "go", "build", "-race", "-tags", tags, "-o", binary, "../../../cmd/superagent")
 		cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build: %w: %s", err, b)
@@ -774,8 +779,7 @@ func TestObserverBrowserFixture(t *testing.T) {
 	if port == "" {
 		port = "18793"
 	}
-	config := strings.Replace(string(b), "127.0.0.1:0", "127.0.0.1:"+port, 1)
-	write(t, f.config, config+"    instanceId: browser-collector\n")
+	write(t, f.config, strings.Replace(string(b), "127.0.0.1:0", "127.0.0.1:"+port, 1))
 	receiver, _ := coreOTLPReceiver(t, "")
 	p := f.start(traceTestEnv(receiver.URL)...)
 	r := input("browser-one")
@@ -787,7 +791,7 @@ func TestObserverBrowserFixture(t *testing.T) {
 		submit(t, p, f, r)
 	}
 	tieBrowserRouterRegistrations(t, f)
-	t.Logf("browser fixture: %s message=%s platform=%s/%s", p.endpoint, receipt.MessageID, runtime.GOOS, runtime.GOARCH)
+	t.Logf("observer browser fixture ready at %s message=%s platform=%s/%s", p.endpoint, receipt.MessageID, runtime.GOOS, runtime.GOARCH)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
 	defer signal.Stop(signals)

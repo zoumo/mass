@@ -3,9 +3,11 @@ package core_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"maps"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -15,6 +17,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	metricexport "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	traceexport "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/zoumo/mass/massd/pkg/events"
 	"github.com/zoumo/mass/massd/pkg/resource"
@@ -30,6 +35,42 @@ type observerBrowserAudit struct {
 	offers      atomic.Int64
 	pending     atomic.Int64
 	sends       atomic.Int64
+	webTraces   atomic.Int64
+	webMetrics  atomic.Int64
+}
+
+func (a *observerBrowserAudit) startWebOTLPReceiver(t *testing.T) string {
+	t.Helper()
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, "cannot read OTLP payload", http.StatusBadRequest)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/traces":
+			var traces traceexport.ExportTraceServiceRequest
+			if err := proto.Unmarshal(data, &traces); err != nil || len(traces.GetResourceSpans()) == 0 {
+				http.Error(w, "expected OTLP traces", http.StatusBadRequest)
+				return
+			}
+			a.webTraces.Add(1)
+		case "/v1/metrics":
+			var metrics metricexport.ExportMetricsServiceRequest
+			if err := proto.Unmarshal(data, &metrics); err != nil || len(metrics.GetResourceMetrics()) == 0 {
+				http.Error(w, "expected OTLP metrics", http.StatusBadRequest)
+				return
+			}
+			a.webMetrics.Add(1)
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(receiver.Close)
+	return receiver.URL
 }
 
 func (a *observerBrowserAudit) recordRPC(method string, closeConnection func()) bool {
@@ -67,6 +108,7 @@ func (a *observerBrowserAudit) pollOutbox(ctx context.Context, endpoint, token, 
 				return
 			}
 			req.Header.Set("Authorization", "Bearer "+token)
+			setTriggerHeaders(req, fixtureTriggerSource)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				continue
@@ -145,6 +187,10 @@ func serveObserverBrowserAudit(t *testing.T, audit *observerBrowserAudit, bounda
 			"rpc": methods, "polls": audit.polls.Load(), "sentOffers": audit.offers.Load(), "pendingOffers": audit.pending.Load(),
 			"channelSends": audit.sends.Load(), "sentId": sentID, "sessionBindingId": binding.ID,
 		})
+	})
+	mux.HandleFunc("GET /web-telemetry", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]int64{"traces": audit.webTraces.Load(), "metrics": audit.webMetrics.Load()})
 	})
 	mux.HandleFunc("POST /emit-live", func(w http.ResponseWriter, r *http.Request) {
 		if err := emit(r.Context(), "Live before disconnect "+f.token+" "+roleToken, false); err != nil {

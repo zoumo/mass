@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { fixtureOrigins } from './endpoints.mjs'
+import { audit, routing } from './endpoints.mjs'
 
 test.use({
- baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`,
+ baseURL: routing,
  viewport: { width: 1280, height: 1060 },
 })
 
@@ -13,7 +13,7 @@ test('Scheduled Trigger Messages and their delivery use the normal read-only vie
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/superagent/?view=messages&mode=records')
+ await page.goto('/?view=messages&mode=records')
  await expect(page.getByText('定时任务', { exact: true }).locator('xpath=following-sibling::dd[1]')).toContainText('已完成')
  await page.getByRole('button', { name: 'Review the archived build.', exact: true }).click()
  const dialog = page.getByRole('dialog')
@@ -29,9 +29,9 @@ test('Scheduled Trigger Messages and their delivery use the normal read-only vie
  await page.goto(messageURL)
  await dialog.getByRole('button', { name: /^查看线程 / }).click()
  await expect(dialog.getByRole('button', { name: '查看线程消息' })).toBeVisible()
- expect((await request.get('/apis/core/v1/scheduled-tasks')).status()).toBe(404)
- expect((await request.get('/apis/core/v1/trigger-messages?source=core%3Ascheduled-task')).status()).toBe(404)
- expect((await request.get('/apis/core/v1/trigger-messages?scheduledTaskId=mass-st1')).status()).toBe(404)
+ expect((await request.get('/apis/core/v1/scheduled-tasks')).status()).toBe(401)
+ expect((await request.get('/apis/core/v1/trigger-messages?source=core%3Ascheduled-task')).status()).toBe(401)
+ expect((await request.get('/apis/core/v1/trigger-messages?scheduledTaskId=mass-st1')).status()).toBe(401)
 })
 
 test('Issue requirements, reports, input evidence and business acceptance are read only', async ({ page, request }, testInfo) => {
@@ -44,7 +44,7 @@ test('Issue requirements, reports, input evidence and business acceptance are re
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/superagent/?view=topics&mode=records')
+ await page.goto('/?view=topics&mode=records')
  await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
  await page.getByRole('button', { name: '查看 Topic 下的 Issue', exact: true }).click()
  await expect(page).toHaveURL(/view=issues&topicId=/)
@@ -94,7 +94,7 @@ test('Issue requirements, reports, input evidence and business acceptance are re
 })
 
 test('Blocked Issue shows separate Issue Session observation, dependency and requirements delivery', async ({ page }, testInfo) => {
- await page.goto('/superagent/?view=issues&mode=records')
+ await page.goto('/?view=issues&mode=records')
  await page.getByRole('button', { name: 'Review blocked build', exact: true }).click()
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByText('受阻', { exact: true })).toBeVisible()
@@ -112,7 +112,7 @@ test('Blocked Issue shows separate Issue Session observation, dependency and req
  await page.screenshot({ path: testInfo.outputPath('issue-blocked.png'), fullPage: true, animations: 'disabled' })
  await dialog.getByRole('button', { name: '通知事件', exact: true }).click()
  await expect(dialog.getByTestId('routing-record')).toContainText('issue_session_update')
- await page.goto('/superagent/?view=issues&mode=records')
+ await page.goto('/?view=issues&mode=records')
  await page.getByRole('button', { name: 'Review blocked build', exact: true }).click()
  await dialog.getByRole('button', { name: /^查看依赖的 Issue mass-t[1-9]\d*-i[1-9]\d*$/ }).click()
  await expect(dialog.getByText('Reviewed the sample build log', { exact: true })).toBeVisible()
@@ -127,7 +127,7 @@ test('Cancellation and native stop evidence remain separate and read only', asyn
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/superagent/?view=issues&mode=records')
+ await page.goto('/?view=issues&mode=records')
  await page.getByRole('button', { name: 'Canceled sample validation', exact: true }).click()
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByText('已取消', { exact: true })).toBeVisible()
@@ -151,12 +151,10 @@ test('Cancellation and native stop evidence remain separate and read only', asyn
 
 
 test('A reopened Issue links each report to its own binding and retains shared MASS history', async ({ page, request }) => {
- const audit = `http://127.0.0.1:${process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795'}`
  const seed = await request.get(`${audit}/session-reuse-fixture`)
  expect(seed.ok()).toBeTruthy()
  const fixture = await seed.json()
- const endpoint = fixtureOrigins['session-reuse-fixture']
- const { issueId, originalSessionBindingId, currentSessionBindingId, originalReportId, currentReportId, retainedHistory } = fixture
+ const { endpoint, issueId, originalSessionBindingId, currentSessionBindingId, originalReportId, currentReportId, retainedHistory } = fixture
  const [original, current, reports] = await Promise.all([
   request.get(`${endpoint}/apis/core/v1/session-bindings/${originalSessionBindingId}`),
   request.get(`${endpoint}/apis/core/v1/session-bindings/${currentSessionBindingId}`),
@@ -168,13 +166,13 @@ test('A reopened Issue links each report to its own binding and retains shared M
   expect.objectContaining({ id: originalReportId, current: false, sessionBindingId: originalSessionBindingId }),
   expect.objectContaining({ id: currentReportId, current: true, sessionBindingId: currentSessionBindingId }),
  ]))
- await page.goto(`${endpoint}/superagent/issue?id=${issueId}`)
+ await page.goto(`${endpoint}/issue?id=${issueId}`)
  const issue = page.getByRole('article', { name: '当前 Issue' })
  const currentSession = issue.getByRole('link', { name: '查看当前会话 →' })
- await expect(currentSession).toHaveAttribute('href', `/superagent/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
+ await expect(currentSession).toHaveAttribute('href', `/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
  await issue.getByRole('button', { name: /Report after Session reuse/ }).click()
  await expect(issue.getByText(/^当前报告 · 目标版本/)).toBeVisible()
- await expect(issue.getByRole('link', { name: '查看提交报告的会话' })).toHaveAttribute('href', `/superagent/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
+ await expect(issue.getByRole('link', { name: '查看提交报告的会话' })).toHaveAttribute('href', `/?view=session-bindings&id=${currentSessionBindingId}&mode=records`)
  await issue.getByRole('button', { name: /Report before Session reuse/ }).click()
  await expect(issue.getByText(/^历史报告 · 目标版本/)).toBeVisible()
  await issue.getByRole('link', { name: '查看提交报告的会话' }).click()

@@ -152,15 +152,15 @@ Session Binding ID. It exposes blockers and completion as `blocked` and
 The Watchdog snapshot includes `enabled`, `running`, and the latest completed
 check when available. Compose retains that check after Watchdog exits.
 
-Superagent Web serves `/superagent/` and its assets from a separate static
-service. The same-origin gateway forwards resource requests to Core.
+Core serves Superagent Web at `/` and its assets under `/assets/`. The
+browser reads Core resources at the same origin.
 
 ### Session chat
 
 The Topic and Issue avatars open the current Topic or Worker Session.
-Anyone who can reach Superagent Web can use Session chat through the same-origin
-gateway. Core uses its configured MASS client and checks the current binding
-and MASS Session identity on each request.
+Anyone who can reach Superagent Web can use Session chat. Core uses its
+configured MASS client and checks the current binding and MASS Session
+identity on each request.
 
 | Method | Path suffix under `/apis/core/v1/session-bindings/{bindingId}` | Result |
 | --- | --- | --- |
@@ -189,7 +189,7 @@ An Issue has a creation Trace link when Core saved its creation association.
 configured under `openobserve`. Specify a 32-character hexadecimal Trace ID.
 Lookup covers the past seven days by default, or seven days on either side of
 an optional RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
-partial results. Superagent Web links to `/superagent/trace?id={traceId}`.
+partial results. Superagent Web links to `/trace?id={traceId}`.
 
 `GET /apis/core/v1/telemetry/performance` queries OTel time series in OpenObserve. `window`
 accepts `15m`, `1h`, `6h` and `24h` and defaults to `1h`.

@@ -12,7 +12,7 @@ import './conversation.css'
 const view = 'topic-conversation'
 const activity = (topicId: string, params: Record<string, string>) =>
   'topics/' + encodeURIComponent(topicId) + '/activity?' + new URLSearchParams({ view: 'conversation', ...params })
-const recordHref = (view: string, id: string) => '/superagent/?' + new URLSearchParams({ view, id })
+const recordHref = (view: string, id: string) => '/?' + new URLSearchParams({ view, id })
 const labels = {
   all: '全部', router_routed: 'Router 路由入群', thread_direct: 'Core Thread 直投',
   issue_created: '创建 Issue', issue_session_dispatch: '任务派发', report: 'Issue Report',

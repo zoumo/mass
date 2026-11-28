@@ -39,8 +39,8 @@ can reach. The MASS host must be able to read the Session workspaces and
 `<dataDir>/mcp-files` at the absolute paths Core puts in the Session spec.
 See the [Session preparation contract](API.md#session-configuration-and-preparation).
 
-Core resource reads need no login. Keep Core and the Web gateway within a
-network boundary for trusted readers. When `listen` uses a wildcard, use a
+Core resource reads need no login. Keep the Core listener within a network
+boundary for trusted readers. When `listen` uses a wildcard, use a
 concrete numeric address to reach Core.
 
 ### Reuse an existing Core data directory
@@ -205,7 +205,7 @@ Use a positive Go duration string, such as `10m` or `1h`. Under
 On shutdown, Compose cancels the active check and waits for Watchdog and the
 Codex process group to exit.
 
-Open **Watchdog** at `/superagent/watchdog` to see whether Watchdog is running
+Open **Watchdog** at `/watchdog` to see whether Watchdog is running
 and read the latest completed check. Use the Topic and Issue links to review
 its judgment and recommendation in context. Compose keeps the latest result
 after Watchdog exits and starts with an empty snapshot after restart.
@@ -240,58 +240,49 @@ exits unexpectedly, Compose stops the Triggers and returns an error.
 
 ## Start Superagent Web
 
-Build `superagent-web` and start its static service with Caddy 2.11.2.
-Run these commands from the repository root in one terminal.
+Run `make build-superagent` and start `bin/superagent serve` or
+`bin/superagent compose`. Open the printed Core endpoint at `/`, for example
+`http://127.0.0.1:24370/`. The Core listener serves the Web, Core API, probes,
+and embedded MASS. The binary contains the Web files. To deploy a Web update,
+replace the binary and restart it.
 
-```sh
-make build-superagent-web
-cd superagent/web
-caddy run --config Caddyfile
-```
-
-Start the same-origin gateway in a second terminal.
-
-```sh
-cd superagent/web
-caddy run --config Gateway.Caddyfile
-```
-
-Open `http://127.0.0.1:24372/superagent/`. The Web service listens on
-`127.0.0.1:24371` and serves `superagent/web/dist`. The gateway sends
-`/superagent/` and its assets to Web. It sends `/apis/core/v1/*`, `/status`,
-`/livez`, and `/readyz` to Core. Restart Web to serve a
-new build. Core and Compose can keep running during that restart.
-
-| Setting | Use |
-|---|---|
-| `SUPERAGENT_WEB_LISTEN` | Host and port of the static Web service. Set `SUPERAGENT_WEB_BIND` to change its loopback bind. |
-| `SUPERAGENT_WEB_DIST` | Absolute path to the Web build when you run Caddy outside `superagent/web`. |
-| `SUPERAGENT_PUBLIC_ORIGIN` | Gateway address with scheme, such as `https://superagent.example.com`. Use your TLS hostname for HTTPS. Set `SUPERAGENT_GATEWAY_BIND` to the intended interface. |
-| `SUPERAGENT_WEB_UPSTREAM` | Host and port of the Web service. Defaults to `127.0.0.1:24371`. |
-| `SUPERAGENT_CORE_UPSTREAM` | Host and port of the Core listener. Defaults to `127.0.0.1:24370`. |
-| `SUPERAGENT_MASSD_ROUTE` | `embedded_massd` forwards `/apis/massd/` to Core. `standalone_massd` removes the `/apis/massd` prefix and forwards to `SUPERAGENT_MASSD_UPSTREAM`, which defaults to `127.0.0.1:24368`. |
-
-The gateway checks the browser Origin against the incoming scheme and host. It
-checks Fetch Metadata and normalizes `Host` before forwarding to Core. Keep
-backend listeners private. Configure `externalURL` with the origin that role
-Sessions use for MCP, including the gateway origin if they connect there.
-Connect directly to Core for Operator commands.
+Use your deployment ingress to terminate TLS and control access. Keep the
+Core listener private. At the ingress, validate browser Origin against the
+public origin and forward the request using the upstream Core authority as
+`Host`. If a validated browser request includes `Origin` on a Core API request,
+rewrite it to the upstream Core origin and retain `Sec-Fetch-Site`. Keep
+Operator clients on a direct trusted Core connection. Set `externalURL` to
+the origin role Sessions use for MCP.
 
 If you used `observerAllowedHosts`, use `readAllowedHosts` for additional
-direct Core read hosts. The gateway already sends the Core authority as `Host`.
-Rename `telemetryQuery` or `observerTrace` to `openobserve` in existing Core
-configurations. In Compose, use `core.openobserve`. Keep the credential file
-on the Core host. See [OpenObserve queries](telemetry/README.md#query-process-and-go-runtime-metrics).
+direct Core resource read hosts. Rename `telemetryQuery` or `observerTrace` to
+`openobserve` in existing Core configurations. In Compose, use
+`core.openobserve`. Keep the credential file on the Core host. See the
+[OpenObserve setup](telemetry/README.md#query-process-and-go-runtime-metrics).
 
-For local frontend development, run `npm ci` and `npm run dev` in
-`superagent/web`. Open the printed Vite origin at `/superagent/`. Vite proxies
-Core and embedded MASS paths to `SUPERAGENT_CORE_ORIGIN`, which defaults to
-`http://127.0.0.1:24370`.
+### Develop the Web locally
+
+Start Core on `127.0.0.1:24370`. You can use a Go-only build for the Vite
+workflow.
+
+```sh
+go run ./cmd/superagent serve --config /absolute/run/core.yaml
+```
+
+In another terminal, run these commands and open the Vite origin at `/`.
+
+```sh
+cd superagent/web
+npm ci
+npm run dev
+```
+
+Vite proxies API and probe requests to
+`SUPERAGENT_CORE_ORIGIN`, which defaults to `http://127.0.0.1:24370`.
 
 ## Cut over the HTTP API
 
-Use Core, Compose, the Superagent Web build, the gateway configuration,
-Operator CLI, and Trigger binaries that use the same resource API. This
+Use Superagent and Trigger binaries that use the same resource API. This
 includes the separately built AntCode Trigger. Configure probes for `/livez`
 and `/readyz` and use `/status` to inspect the stack.
 
@@ -299,16 +290,18 @@ and `/readyz` and use `/status` to inspect the stack.
    or standalone Core. For standalone massd, stop it after Core if you are
    replacing its binary. Verify that the old processes have exited and
    released their data directories before starting replacements.
-2. Update the binaries, Web build, gateway configuration, and caller
-   configuration together. Use a schema 28 Core directory and schema 3 Trigger
-   databases. Preserve the massd data directory, credential paths, and Session
-   MCP origin. See the Core [data directory requirements](#reuse-an-existing-core-data-directory)
+2. Update the binaries, ingress routes, and caller configuration together.
+   Point the public origin at the Core listener for Web pages, assets, probes,
+   and APIs. Remove the old Web and gateway services. Use a schema 28 Core
+   directory and schema 3 Trigger databases. Preserve the massd data directory,
+   credential paths, and Session MCP origin.
+   See the Core [data directory requirements](#reuse-an-existing-core-data-directory)
    and [Trigger cutover steps](triggers/README.md#replace-deployed-triggers).
    Run one owner per data directory and one active Outbox sender per account.
 3. Start standalone massd first if you stopped it. Then start Compose or Core
    and check `/readyz` and `/status` at the printed Core origin. If you expose
-   massd, check `/apis/massd/readyz` at its public origin. Start Web and the gateway
-   and open `/superagent/` at the gateway origin.
+   embedded MASS, check `/apis/massd/readyz` at the Core origin. Open `/` and
+   update saved Web links to remove the `/superagent` prefix.
 4. Start standalone Triggers and resume traffic. Verify that a Trigger Message
    can be submitted and its receipt read back by `sourceMessageId`. Inspect
    pending Outbox delivery before retrying an uncertain send. Keep the original
@@ -336,6 +329,8 @@ See [the Core API](API.md) for the resource contract.
 ## Checks
 
 Run `make test-superagent` for the offline Core and Trigger process tests. They
-use synthetic peers and do not call live models or channel accounts. Run
-`make check-superagent` for the full local checks, including Superagent Web browser tests with Caddy and Chrome.
-See the [Makefile](../Makefile).
+use synthetic peers and do not call live models or channel accounts.
+Run `make check-superagent` for the full checks, including Playwright in Chrome
+against Core processes that embed the Web. Use `make check-superagent-web` to
+run the browser tests alone. Use `make openapi-superagent` to export the API
+contract with Go tooling. See the [Makefile](../Makefile).
