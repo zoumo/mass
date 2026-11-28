@@ -221,7 +221,8 @@ func (p *process) waitStopped(t *testing.T, kill bool) {
 		_ = p.cmd.Process.Kill()
 		t.Fatal("process failed to exit")
 	}
-	client := http.Client{Timeout: 300 * time.Millisecond}
+	client := http.Client{Timeout: 300 * time.Millisecond, Transport: &http.Transport{}}
+	defer client.CloseIdleConnections()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.endpoint+"/status", http.NoBody)
 	if err != nil {
 		t.Fatal(err)

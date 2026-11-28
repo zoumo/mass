@@ -7450,7 +7450,7 @@
     },
     "/v1/core/scheduled-tasks": {
       "get": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "listScheduledTasks",
         "parameters": [
           {
@@ -7584,7 +7584,7 @@
         ]
       },
       "head": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "listScheduledTasksHead",
         "parameters": [
           {
@@ -7662,7 +7662,7 @@
         ]
       },
       "post": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "createScheduledTask",
         "requestBody": {
           "content": {
@@ -7759,7 +7759,7 @@
     },
     "/v1/core/scheduled-tasks/{scheduledTaskId}": {
       "delete": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "deleteScheduledTask",
         "parameters": [
           {
@@ -7863,7 +7863,7 @@
         ]
       },
       "get": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "getScheduledTask",
         "parameters": [
           {
@@ -7956,7 +7956,7 @@
         ]
       },
       "head": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "getScheduledTaskHead",
         "parameters": [
           {
@@ -8007,7 +8007,7 @@
         ]
       },
       "patch": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "updateScheduledTask",
         "parameters": [
           {
@@ -8114,7 +8114,7 @@
     },
     "/v1/core/scheduled-tasks/{scheduledTaskId}/trigger": {
       "post": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "triggerScheduledTask",
         "parameters": [
           {
@@ -8221,7 +8221,7 @@
     },
     "/v1/core/scheduled-tasks/{scheduledTaskId}/trigger-messages": {
       "get": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "listScheduledTaskTriggerMessages",
         "parameters": [
           {
@@ -8351,7 +8351,7 @@
         ]
       },
       "head": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "listScheduledTaskTriggerMessagesHead",
         "parameters": [
           {
@@ -9269,7 +9269,7 @@
     },
     "/v1/core/session-bindings/{bindingId}/recoveries": {
       "post": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "recoverSessionBinding",
         "parameters": [
           {
@@ -9376,7 +9376,7 @@
     },
     "/v1/core/session-bindings/{bindingId}/runtime-evidence": {
       "get": {
-        "description": "Requires a Core operator Bearer credential and a direct loopback CLI connection.",
+        "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "getSessionBindingRuntimeEvidence",
         "parameters": [
           {
@@ -10263,7 +10263,7 @@
     },
     "/v1/core/trigger-messages": {
       "get": {
-        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access over direct loopback. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
         "operationId": "listTriggerMessages",
         "parameters": [
           {
@@ -10467,7 +10467,7 @@
         }
       },
       "head": {
-        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access over direct loopback. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
         "operationId": "listTriggerMessagesHead",
         "parameters": [
           {
@@ -11019,7 +11019,7 @@
     },
     "/v1/telemetry/metrics": {
       "post": {
-        "description": "Available when the loopback OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
+        "description": "Available when the Web OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
         "operationId": "exportTelemetryMetrics",
         "requestBody": {
           "content": {
@@ -11326,7 +11326,7 @@
     },
     "/v1/telemetry/traces": {
       "post": {
-        "description": "Available when the loopback OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
+        "description": "Available when the Web OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
         "operationId": "exportTelemetryTraces",
         "requestBody": {
           "content": {

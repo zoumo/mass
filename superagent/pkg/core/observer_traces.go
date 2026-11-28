@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zoumo/mass/internal/httpaddress"
 )
 
 const (
@@ -40,10 +42,9 @@ func newObserverTraceReader(config *OpenObserveConfig) (*observerTraceReader, er
 	if config == nil {
 		return nil, nil
 	}
-	u, err := url.Parse(config.Endpoint)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" ||
-		u.User != nil || (u.Path != "" && u.Path != "/") || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
-		return nil, problem("invalid_argument", "openobserve endpoint must be an HTTP or HTTPS origin")
+	u, err := httpaddress.ParseBaseURL(config.Endpoint)
+	if err != nil {
+		return nil, problem("invalid_argument", "openobserve endpoint "+err.Error())
 	}
 	org, stream := config.Organization, config.Stream
 	if org == "" {
@@ -55,7 +56,7 @@ func newObserverTraceReader(config *OpenObserveConfig) (*observerTraceReader, er
 	if !traceStreamName.MatchString(org) || !traceStreamName.MatchString(stream) {
 		return nil, problem("invalid_argument", "invalid openobserve organization or stream")
 	}
-	base := u.Scheme + "://" + u.Host + "/api/" + org
+	base := u.JoinPath("api", org).String()
 	reader := &observerTraceReader{
 		url: base + "/_search?type=traces", stream: stream,
 		metricsURL: base + "/prometheus/api/v1/query_range",

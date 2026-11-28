@@ -4,7 +4,7 @@ Superagent Core can start MASS in the same process or use a standalone MASS
 instance. Both paths use the public MASS JSON-RPC client and handler. In
 embedded mode, Core connects to the handler in process. If operators enable the
 HTTP mount, external MASS clients reach the same instance over WebSocket on
-Core's loopback listener or through a configured reverse proxy.
+Core's listener or through a configured reverse proxy.
 
 Calling the underlying Service directly from embedded Core would give that
 mode its own request and subscription path. Using the same client and handler

@@ -21,4 +21,4 @@ if they were still unconfirmed.
 [SessionBinding decision commit](https://github.com/zoumo/mass/commit/0e42c2d89241608388da016fd612a8202946be2e) ·
 [Confirmed authority loss fix](https://github.com/zoumo/mass/commit/93fcaa1809c47059504ebbf36c49bbc8bcbec93d) ·
 [Lost receipt and retirement process tests](../../pkg/core/internal_event_process_test.go) ·
-[Operator recovery](../../API.md#local-operator-reconciliation)
+[Operator recovery](../../API.md#operator-reconciliation)

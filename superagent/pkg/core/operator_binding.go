@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"net"
 	"net/http"
 	"time"
 
@@ -21,9 +20,8 @@ type SessionBindingInspection struct {
 }
 
 func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool {
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if !net.ParseIP(host).IsLoopback() || r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" {
-		s.fail(w, problem("forbidden", "operator access is available to local CLI clients"))
+	if r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" {
+		s.fail(w, problem("forbidden", "operator access requires a non-browser client"))
 		return false
 	}
 	if s.config.operatorToken == "" {

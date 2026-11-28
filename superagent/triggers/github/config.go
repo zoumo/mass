@@ -13,10 +13,11 @@ import (
 const githubSource = "github"
 
 type githubConfig struct {
-	GitHubTokenEnv        string             `yaml:"githubTokenEnv"`
-	AccountID             string             `yaml:"accountId"`
-	InstanceID            string             `yaml:"instanceId"`
-	CoreEndpoint          string             `yaml:"coreEndpoint"`
+	GitHubTokenEnv string `yaml:"githubTokenEnv"`
+	AccountID      string `yaml:"accountId"`
+	InstanceID     string `yaml:"instanceId"`
+	CoreEndpoint   string `yaml:"coreEndpoint"`
+	// Deprecated: HTTP is accepted on any Core host.
 	AllowInsecureCoreHTTP bool               `yaml:"allowInsecureCoreHTTP,omitempty"`
 	TokenEnv              string             `yaml:"coreTokenEnv"`
 	Listen                string             `yaml:"statusListen"`
@@ -63,7 +64,7 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 	if c.PollSeconds < 1 || c.PollSeconds > 86400 || c.RequestMillis < 10 || c.RequestMillis > 60000 {
 		return c, errors.New("invalid GitHub timing limits")
 	}
-	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint, c.AllowInsecureCoreHTTP); err != nil {
+	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint); err != nil {
 		return c, err
 	}
 	if err := trigger.ValidateStatusListen(c.Listen); err != nil {

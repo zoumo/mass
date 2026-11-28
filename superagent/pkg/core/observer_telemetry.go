@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/zoumo/mass/internal/httpaddress"
 )
 
 const (
@@ -22,7 +22,7 @@ const (
 )
 
 type observerTelemetryGateway struct {
-	origin   string
+	endpoint *url.URL
 	client   *http.Client
 	limit    *rate.Limiter
 	inFlight chan struct{}
@@ -32,17 +32,12 @@ func newObserverTelemetryGateway(endpoint string) (*observerTelemetryGateway, er
 	if endpoint == "" {
 		return nil, nil
 	}
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "http" || u.Opaque != "" || u.User != nil ||
-		u.ForceQuery || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" ||
-		(u.Path != "" && u.Path != "/") || !net.ParseIP(u.Hostname()).IsLoopback() {
-		return nil, problem("invalid_argument", "Web OTLP endpoint must be an HTTP loopback origin with a port")
-	}
-	if port, portErr := strconv.ParseUint(u.Port(), 10, 16); portErr != nil || port == 0 {
-		return nil, problem("invalid_argument", "Web OTLP endpoint must be an HTTP loopback origin with a port")
+	u, err := httpaddress.ParseBaseURL(endpoint)
+	if err != nil {
+		return nil, problem("invalid_argument", "Web OTLP endpoint "+err.Error())
 	}
 	return &observerTelemetryGateway{
-		origin: "http://" + u.Host,
+		endpoint: u,
 		client: &http.Client{
 			// A dedicated transport avoids environment proxies and implicit compression.
 			Transport: &http.Transport{
@@ -124,7 +119,7 @@ func (g *observerTelemetryGateway) serve(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.origin+upstreamPath, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint.JoinPath(upstreamPath).String(), bytes.NewReader(payload))
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		return
