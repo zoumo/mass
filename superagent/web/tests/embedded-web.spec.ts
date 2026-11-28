@@ -1,9 +1,16 @@
 import { expect, test } from '@playwright/test'
 import { audit, main, routing } from './endpoints.mjs'
 
-test('Core serves the built Web, reloads deep links, and applies the HTTP boundary', async ({ page, request }) => {
+test('Core redirects to the console, serves built assets, and applies the HTTP boundary', async ({ page, request }) => {
+  for (const path of ['/', '/console']) {
+    const redirect = await request.get(path + '?view=internal-events', { maxRedirects: 0 })
+    expect(redirect.status()).toBe(308)
+    expect(redirect.headers()['location']).toBe('/console/?view=internal-events')
+  }
+  const stylesheet = page.waitForResponse(result => result.url().startsWith(main + '/console/assets/') && result.url().endsWith('.css'))
   const response = await page.goto('/?view=internal-events')
   expect(response?.status()).toBe(200)
+  await expect(page).toHaveURL(main + '/console/?view=internal-events')
   expect(response?.headers()).toMatchObject({
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
@@ -16,28 +23,32 @@ test('Core serves the built Web, reloads deep links, and applies the HTTP bounda
   await expect(page.getByText('核心服务已就绪', { exact: true })).toBeVisible()
 
   const asset = await page.locator('script[type="module"]').getAttribute('src')
-  expect(asset).toMatch(/^\/assets\/.+\.js$/)
+  expect(asset).toMatch(/^\/console\/assets\/.+\.js$/)
+  const css = await stylesheet
+  expect(css.status()).toBe(200)
+  expect(css.headers()['content-type']).toContain('text/css')
   const code = await request.get(asset!)
   expect(code.status()).toBe(200)
   expect(code.headers()['content-type']).toContain('javascript')
   expect((await request.head(asset!)).status()).toBe(200)
-  for (const path of ['/', '/topic-conversation', '/message', '/router', '/topic', '/issue', '/trace', '/metrics', '/watchdog']) {
+  for (const path of ['/console/', '/console/issue', '/console/topic', '/console/new/deep/page']) {
     const head = await request.head(path + '?id=fixture')
     expect(head.status(), path).toBe(200)
     expect(head.headers()['content-type']).toContain('text/html')
     expect(await head.body()).toHaveLength(0)
   }
   await page.getByRole('link', { name: 'Watchdog', exact: true }).click()
-  await expect(page).toHaveURL(main + '/watchdog')
+  await expect(page).toHaveURL(main + '/console/watchdog')
   expect((await page.reload())?.status()).toBe(200)
   await expect(page.getByRole('link', { name: 'Superagent Web 首页' })).toBeVisible()
 
-  for (const path of ['/', '/issue', asset!]) {
+  for (const path of ['/', '/console/issue', asset!]) {
     const result = await request.post(path)
     expect(result.status(), path).toBe(405)
     expect(result.headers()['allow']).toBe('GET, HEAD')
   }
-  for (const path of ['/assets/', '/assets/missing', '/assets/missing.js', '/unknown', '/superagent', '/superagent/',
+  for (const path of ['/console/assets', '/console/assets/', '/console/assets/missing', '/console/assets/missing.js',
+    '/console/missing.css', '/console/index.html', '/assets/', '/assets/missing.js', '/issue', '/topic', '/unknown', '/superagent', '/superagent/',
     '/superagent/topic', '/v1/core/topics', '/massd/jsonrpc', '/apis', '/apis/unknown', '/apis/core/v1/unknown',
     '/apis/massd/unknown', '/status/unknown', '/livez/unknown', '/readyz/unknown']) {
     const result = await request.get(path)
@@ -48,7 +59,7 @@ test('Core serves the built Web, reloads deep links, and applies the HTTP bounda
   const query = '/apis/core/v1/threads'
   expect((await request.get(query, { headers: { Origin: main, 'Sec-Fetch-Site': 'same-origin' } })).status()).toBe(200)
   const forged = { Forwarded: 'proto=https;host=foreign.example', 'X-Forwarded-Host': 'foreign.example' }
-  for (const path of ['/', asset!, query, '/apis/massd/readyz']) {
+  for (const path of ['/', '/console/', asset!, query, '/apis/massd/readyz']) {
     expect((await request.get(path, { headers: { ...forged, Origin: 'http://foreign.example' } })).status()).toBe(403)
     expect((await request.get(path, { headers: { ...forged, Origin: main, 'Sec-Fetch-Site': 'cross-site' } })).status()).toBe(403)
   }
@@ -63,6 +74,27 @@ test('Core serves the built Web, reloads deep links, and applies the HTTP bounda
   }
 })
 
+test('direct Issue and Topic URLs retain query and selection after refresh', async ({ page, request }) => {
+  const issues = await request.get(routing + '/apis/core/v1/issues?limit=1')
+  expect(issues.ok()).toBe(true)
+  const { id, title, topicId } = (await issues.json()).items[0]
+  const topic = await request.get(routing + '/apis/core/v1/topics/' + topicId)
+  expect(topic.ok()).toBe(true)
+  const topicTitle = (await topic.json()).title
+  for (const [path, name, heading] of [
+    [`/console/issue?id=${id}&topicId=${topicId}`, '当前 Issue', title],
+    [`/console/topic?id=${topicId}&filter=message`, '当前 Topic', topicTitle],
+  ]) {
+    const url = routing + path
+    const detail = page.getByRole('article', { name }).getByRole('heading', { name: heading, exact: true })
+    expect((await page.goto(url))?.status()).toBe(200)
+    await expect(detail).toBeVisible()
+    expect((await page.reload())?.status()).toBe(200)
+    await expect(page).toHaveURL(url)
+    await expect(detail).toBeVisible()
+  }
+})
+
 test('browser telemetry uses the Core origin and reaches the OTLP receiver when enabled', async ({ page, request }) => {
   for (const signal of ['traces', 'metrics']) {
     const response = await request.post(`/apis/core/v1/telemetry/${signal}`, {
@@ -74,7 +106,7 @@ test('browser telemetry uses the Core origin and reaches the OTLP receiver when 
 
   const traces = page.waitForResponse(`${routing}/apis/core/v1/telemetry/traces`)
   const metrics = page.waitForResponse(`${routing}/apis/core/v1/telemetry/metrics`)
-  await page.goto(routing + '/?view=internal-events')
+  await page.goto(routing + '/console/?view=internal-events')
   await expect(page.getByText('核心服务已就绪', { exact: true })).toBeVisible()
   expect((await traces).status()).toBe(200)
   expect((await metrics).status()).toBe(200)

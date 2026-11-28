@@ -92,7 +92,7 @@ connect to the same daemon directly. See the
 
 Superagent is an experimental application for routing messages and coordinating
 agent work. You can run it for message intake with execution disabled. Enable
-execution to run Issue Sessions through `massd`. Open `/` on the Core listener
+execution to run Issue Sessions through `massd`. Open `/console/` on the Core listener
 to inspect message routing and Issue progress.
 
 Most of Superagent's design and core concepts were inspired by the

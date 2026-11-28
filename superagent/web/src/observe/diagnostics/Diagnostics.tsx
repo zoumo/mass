@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { stateLabel, eventStatusLabel } from '../../workbench'
-import { navigate, observerView, usePages, useRecord, useRefresh, viewHref } from '../observer'
+import { observerHome, navigate, observerView, usePages, useRecord, useRefresh, viewHref } from '../observer'
 import RecordDetail from './RecordDetail'
 import { TraceLinks } from '../TraceLinks'
 import {
@@ -38,7 +38,7 @@ function href(view: Kind, filterId = '', scope: Filter = 'topicId', id = '') {
   if (id) q.set('id', id)
   if (filterId) q.set(scope, filterId)
   if (view in workViews) q.set('mode', 'records')
-  return '/?' + q
+  return observerHome + '?' + q
 }
 function nameOf(kind: Kind, row: DiagnosticRow) {
   if (kind === 'messages') return row.text || identity(row)

@@ -17,7 +17,7 @@ test('Router lists distinct Messages with a stable cursor while a new Message ar
   const tiedAt = before.find((row, i) => i > 0 && row.activityAt === before[i - 1].activityAt)!.activityAt
   const tiedIDs = before.filter(row => row.activityAt === tiedAt).map(row => row.id)
   expect(tiedIDs).toEqual([...tiedIDs].sort().reverse())
-  await page.goto('/router')
+  await page.goto('/console/router')
   await page.getByRole('button', { name: '暂停自动刷新' }).click()
   const rows = page.locator('[data-message-id]')
   await expect(rows).toHaveCount(20)
@@ -73,7 +73,7 @@ test('Router connects each target and return reason to its source event', async 
     }
   })
   await page.setViewportSize({ width: 1360, height: 900 })
-  await page.goto(endpoint + '/router')
+  await page.goto(endpoint + '/console/router')
   const row = page.locator(`[data-message-id="${partial.id}"]`)
   await expect(row).toContainText('已分发')
   await expect(row.locator('.router-brief')).toHaveCount(2)
@@ -108,11 +108,11 @@ test('Router connects each target and return reason to its source event', async 
   })
   await page.screenshot({ path: testInfo.outputPath('router-desktop.png'), animations: 'disabled' })
   await row.getByRole('link', { name: '查看消息路径' }).click()
-  await expect(page).toHaveURL(new RegExp('/message\\?id=' + partial.id))
+  await expect(page).toHaveURL(new RegExp('/console/message\\?id=' + partial.id))
   await page.goBack()
   await expect(history).toBeVisible()
   await row.locator('.router-brief a').first().click()
-  await expect(page).toHaveURL(new RegExp('/topic\\?id=' + summary.targets[0].topicId))
+  await expect(page).toHaveURL(new RegExp('/console/topic\\?id=' + summary.targets[0].topicId))
   await page.goBack()
   await expect(history).toBeVisible()
   await page.reload()
@@ -132,7 +132,7 @@ test('ignored Message displays the recorded return time and identifies the missi
   const ignored = messages.find(m => m.sourceMessageId === 'observer-routing')!
   const internalEvents = await list<InternalEvent>(request, routing + '/apis/core/v1/internal-events?messageId=' + ignored.id)
   const returned = internalEvents.find(d => d.returnedEventId)!
-  await page.goto(routing + '/router?id=' + ignored.id)
+  await page.goto(routing + '/console/router?id=' + ignored.id)
   const row = page.locator(`[data-message-id="${ignored.id}"]`)
   await expect(row.locator('.router-grid')).toContainText('已忽略')
   await expect(row.locator('.router-grid')).toContainText('原因未记录')
@@ -156,7 +156,7 @@ for (const [size, width, height] of [['desktop', 1360, 900], ['narrow', 390, 844
     const result = await list<RouterRow>(request, api + 'trigger-messages?view=router')
     const record = result.find(row => row.id === partial.id)!
     await page.setViewportSize({ width, height })
-    await page.goto(endpoint + '/')
+    await page.goto(endpoint + '/console/')
     await page.getByRole('navigation', { name: '观察视角' }).getByRole('link', { name: 'Router' }).click()
     const flow = page.getByRole('region', { name: 'Router 处理流程' })
     await expect(flow.getByRole('heading')).toBeInViewport()
@@ -182,7 +182,7 @@ for (const [size, width, height] of [['desktop', 1360, 900], ['narrow', 390, 844
     await expect(lane.getByRole('link', { name: /事件记录/ })).toHaveAttribute('href', new RegExp(record.targets[1].id))
     await expect(flow.locator('.flow-message').first()).toHaveAttribute('href', new RegExp(partial.id))
     await lane.locator('.flow-topic').click()
-    await expect(page).toHaveURL(new RegExp('/topic\\?id=' + record.targets[1].topicId))
+    await expect(page).toHaveURL(new RegExp('/console/topic\\?id=' + record.targets[1].topicId))
     await page.goBack()
     await expect(flow).toContainText('当前消息')
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)

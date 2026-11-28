@@ -6,7 +6,7 @@ import { measureView, observerRequest } from './telemetry'
 export const perspectives = ['topic-conversation', 'message', 'router', 'topic', 'issue', 'trace', 'metrics', 'watchdog'] as const
 export type Perspective = typeof perspectives[number]
 const defaultPerspective = 'topic-conversation'
-export const observerHome = '/'
+export const observerHome = import.meta.env.BASE_URL
 export type ViewProps = { query: URLSearchParams }
 export type MessageRecord = WorkbenchRow & {
   id: string
@@ -15,8 +15,8 @@ export type MessageRecord = WorkbenchRow & {
   eventId?: string
 }
 
-export const sessionChatDemoHref = '/?prototype=session-chat'
-export const sessionChatHref = (role: 'topic' | 'issue', id: string) => '/?' + new URLSearchParams({ chat: role, id })
+export const sessionChatDemoHref = observerHome + '?prototype=session-chat'
+export const sessionChatHref = (role: 'topic' | 'issue', id: string) => observerHome + '?' + new URLSearchParams({ chat: role, id })
 
 export function perspectiveFromPath(path: string): Perspective | undefined {
   return perspectives.find(view => path === observerHome + view)

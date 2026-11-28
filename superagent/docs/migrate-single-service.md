@@ -15,9 +15,10 @@ MASS Session history available for rollback.
    credentials under `<dataDir>/credentials`. To use a standalone MASS,
    configure its endpoint and choose a new `sessions.namespace` for Core.
 3. Start Compose. Read its ready record, then check `/readyz`, `/status` and the
-   Web homepage at `/console/`. In embedded mode, use `credentials/admin.token` to verify
-   MASS RPC and Core management commands.
-4. Point ingress and API clients at the Core listener. Match these paths.
+   Web homepage at `/console/`. In embedded mode, use `credentials/admin.token`
+   to verify MASS RPC and Core management commands.
+4. Point ingress and API clients at the Core listener. Forward `/` so Core
+   can redirect it to `/console/`. Route these paths to the same listener.
 
 | Previous path | Replacement path |
 | --- | --- |

@@ -4,7 +4,7 @@ import { audit, routing } from './endpoints.mjs'
 test.use({ baseURL: routing, viewport: { width: 1340, height: 980 } })
 
 test('Message and Thread lead to scoped work, reports, explicit acceptance and Session delivery', async ({ page }, testInfo) => {
- await page.goto('/?view=messages&mode=records')
+ await page.goto('/console/?view=messages&mode=records')
  const drawer = page.getByRole('dialog')
  const overview = page.getByRole('region', { name: '运行概况' })
  await expect(overview.getByText('路由器准备状态')).toBeVisible()
@@ -57,7 +57,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  const errors: string[] = []
  const headers: Promise<Record<string, string>>[] = []
  await page.context().addCookies([{ name: 'observer_fixture', value: 'browser-cookie', url: routing }])
- const documentRequest = page.waitForRequest(r => new URL(r.url()).pathname === '/')
+ const documentRequest = page.waitForRequest(r => new URL(r.url()).pathname === '/console/')
  page.on('pageerror', error => errors.push(error.message))
  page.on('request', r => {
   const path = new URL(r.url()).pathname
@@ -67,7 +67,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
   expect(r.method()).toBe('GET')
   headers.push(r.allHeaders())
  })
- await page.goto(`/?view=session-bindings&id=${before.sessionBindingId}`)
+ await page.goto(`/console/?view=session-bindings&id=${before.sessionBindingId}`)
  expect((await (await documentRequest).allHeaders())['cookie']).toContain('observer_fixture=browser-cookie')
  const history = page.getByRole('region', { name: 'Session 历史' })
  const live = page.getByRole('region', { name: 'Session 实时预览' })
@@ -102,7 +102,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  await page.getByRole('button', { name: '查看目标消息', exact: true }).click()
  await expect(page.getByTestId('message-body')).toHaveText('Original input outbox-observer-source')
  const previewPath = `/apis/core/v1/session-bindings/${before.sessionBindingId}`
- for (const path of [`${previewPath}/history`, `${previewPath}/live`, sentPath, '/']) {
+ for (const path of [`${previewPath}/history`, `${previewPath}/live`, sentPath, '/console/']) {
   const head = await request.head(path)
   expect(head.status()).toBe(200)
   expect(await head.body()).toHaveLength(0)
