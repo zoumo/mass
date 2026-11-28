@@ -30,7 +30,8 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
    `bin/superagent observe --help` for Core record queries.
 
 Omit `sessions` to collect Messages without starting Agents. To enable execution,
-configure role Sessions and at least one Issue template in the example YAML.
+set `sessions.router`, `sessions.topic`, and at least one template in
+`sessions.issue.templates`.
 Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
 Use the same host and OS account for Core and standalone `massd` so native
 Sessions can read their credential files. See the [Session preparation contract](API.md#session-configuration-and-preparation).
@@ -59,6 +60,23 @@ database or a restart, follow the [Trigger data path instructions](triggers/READ
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
 `unavailable` without an acceptance receipt.
+
+### Migrate Session configuration
+
+For `superagent serve`, edit the root `sessions` section. For
+`superagent compose`, edit `core.sessions`.
+
+| Previous field | New field |
+| --- | --- |
+| `sessions.roles.router` | `sessions.router` |
+| `sessions.routerWorkspace` | `sessions.router.workspace` |
+| `sessions.roles.topic` | `sessions.topic` |
+| `sessions.issueTemplates` | `sessions.issue.templates` |
+
+Copy the existing values to the new fields. Use the same `sessions.namespace`,
+Core and MASS data directories, and role MCP endpoint. Stop the current Core
+and start the updated binary with the new YAML. Compare existing Session names,
+binding IDs, and Session specs with their values before the restart.
 
 ### Enable a remote computer
 

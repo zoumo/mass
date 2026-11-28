@@ -3,6 +3,7 @@ package core_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,7 +30,17 @@ func TestExecutionTemplateConfig(t *testing.T) {
 	require.Equal(t, []core.IssueTemplate{
 		{ExecutionProfile: issueModel, Description: "Implement changes"},
 		{ExecutionProfile: reviewModel, Description: "Review results"},
-	}, config.Sessions.IssueTemplates)
+	}, config.Sessions.Issue.Templates)
+
+	require.Equal(t, f.dir, config.Sessions.Router.Workspace)
+	require.Equal(t, "superagent", config.Sessions.Namespace)
+	loadCompose := func(raw string) (core.Config, error) {
+		section := strings.Replace(raw, "massd:\n  endpoint: wss://mass.example.test/massd/\n", "", 1)
+		return core.LoadComposeConfig(f.config, strings.NewReader(section))
+	}
+	composed, err := loadCompose(string(valid))
+	require.NoError(t, err)
+	require.Equal(t, config.Sessions, composed.Sessions)
 
 	// A stable HTTPS endpoint can point at Core from a different massd host.
 	remote := "https://core.example.com"
@@ -41,43 +52,54 @@ func TestExecutionTemplateConfig(t *testing.T) {
 	require.Equal(t, remote, config.ExternalURL)
 	require.Equal(t, "127.0.0.1:0", config.Listen)
 
-	_, templates, found := strings.Cut(fixtureExecutionProfiles, "  issueTemplates:\n")
+	_, templates, found := strings.Cut(fixtureSessions, "    templates:\n")
 	require.True(t, found)
+	router := fmt.Sprintf("  router:\n    workspace: %q\n    runtimeRef: agent\n    model: router-model\n    effort: low\n", f.dir)
 	for _, tc := range []struct {
-		name, from, to string
+		name, from, to, field string
 	}{
-		{"missing router", "    router:\n      runtimeRef: agent\n      model: router-model\n      effort: low\n", ""},
-		{"missing topic model", "      model: topic-model\n", ""},
-		{"bad runtime name", "    topic:\n      runtimeRef: agent", "    topic:\n      runtimeRef: Invalid/Runtime"},
-		{"empty issue list", "  issueTemplates:\n" + templates, "  issueTemplates: []\n"},
-		{"missing description", "      description: Review results\n", ""},
-		{"blank description", "description: Review results", "description: '   '"},
-		{"duplicate pair", "model: review-model", "model: issue-model"},
-		{"unknown role field", "model: topic-model", "model: topic-model\n      other: value"},
-		{"unknown template field", "description: Review results", "description: Review results\n      other: value"},
-		{"numeric model", "model: router-model", "model: 123"},
-		{"numeric effort", "effort: medium", "effort: 2"},
-		{"numeric permission preset", "model: router-model", "model: router-model\n      permissionPreset: 2"},
-		{"boolean permission preset", "model: topic-model", "model: topic-model\n      permissionPreset: true"},
-		{"invalid permission preset", "model: issue-model", "model: issue-model\n      permissionPreset: fullaccess"},
-		{"null permission preset", "model: review-model", "model: review-model\n      permissionPreset: null"},
-		{"legacy field", "  issueTemplates:", "  runtimeRef: agent\n  issueTemplates:"},
-		{"removed execution block", "sessions:", "execution:"},
-		{"removed MCP command", "sessions:", "sessions:\n  mcpCommand: superagent"},
-		{"remote cleartext", "sessions:", "externalURL: http://core.example.com\nsessions:"},
-		{"embedded credentials", "sessions:", "externalURL: https://user:pass@core.example.com\nsessions:"},
-		{"endpoint query", "sessions:", "externalURL: https://core.example.com?token=value\nsessions:"},
-		{"endpoint path", "sessions:", "externalURL: https://core.example.com/v1/mcp\nsessions:"},
+		{"empty sessions", fmt.Sprintf(fixtureSessions, f.dir), "sessions: {}\n", "sessions.router"},
+		{"missing router", router, "", "sessions.router"},
+		{"missing router workspace", fmt.Sprintf("    workspace: %q\n", f.dir), "", "sessions.router.workspace"},
+		{"missing workspace directory", fmt.Sprintf("    workspace: %q", f.dir), "    workspace: missing", "sessions.router.workspace"},
+		{"invalid router mapping", router, "  router: false\n", "sessions.router"},
+		{"missing topic", "  topic:\n    runtimeRef: agent\n    model: topic-model\n", "", "sessions.topic"},
+		{"missing topic model", "    model: topic-model\n", "", "sessions.topic.model"},
+		{"bad runtime name", "  topic:\n    runtimeRef: agent", "  topic:\n    runtimeRef: Invalid/Runtime", "sessions.topic.runtimeRef"},
+		{"missing issue section", "  issue:\n    templates:\n" + templates, "", "sessions.issue"},
+		{"empty issue list", "    templates:\n" + templates, "    templates: []\n", "sessions.issue.templates"},
+		{"missing description", "        description: Review results\n", "", "sessions.issue.templates[1].description"},
+		{"blank description", "description: Review results", "description: '   '", "sessions.issue.templates[1].description"},
+		{"duplicate pair", "model: review-model", "model: issue-model", "sessions.issue.templates[1].runtimeRef and model"},
+		{"unknown role field", "model: topic-model", "model: topic-model\n    other: null", "sessions.topic"},
+		{"unknown template field", "description: Review results", "description: Review results\n        other: value", "sessions.issue.templates[1]"},
+		{"numeric model", "model: router-model", "model: 123", "sessions.router.model"},
+		{"numeric effort", "effort: medium", "effort: 2", "sessions.issue.templates[0].effort"},
+		{"numeric permission preset", "model: router-model", "model: router-model\n    permissionPreset: 2", "remove permissionPreset from sessions.router"},
+		{"boolean permission preset", "model: topic-model", "model: topic-model\n    permissionPreset: true", "remove permissionPreset from sessions.topic"},
+		{"invalid permission preset", "model: issue-model", "model: issue-model\n        permissionPreset: fullaccess", "remove permissionPreset from sessions.issue.templates[0]"},
+		{"null permission preset", "model: review-model", "model: review-model\n        permissionPreset: null", "remove permissionPreset from sessions.issue.templates[1]"},
+		{"legacy workspace field", "sessions:", "sessions:\n  routerWorkspace: .", "sessions"},
+		{"legacy roles field", "sessions:", "sessions:\n  roles: {}", "sessions"},
+		{"legacy templates field", "sessions:", "sessions:\n  issueTemplates: []", "sessions"},
+		{"removed execution block", "sessions:", "execution:", "configuration"},
+		{"removed MCP command", "sessions:", "sessions:\n  mcpCommand: superagent", "sessions"},
+		{"remote cleartext", "sessions:", "externalURL: http://core.example.com\nsessions:", "externalURL"},
+		{"embedded credentials", "sessions:", "externalURL: https://user:pass@core.example.com\nsessions:", "externalURL"},
+		{"endpoint query", "sessions:", "externalURL: https://core.example.com?token=value\nsessions:", "externalURL"},
+		{"endpoint path", "sessions:", "externalURL: https://core.example.com/v1/mcp\nsessions:", "externalURL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Contains(t, string(valid), tc.from)
-			write(t, f.config, strings.Replace(string(valid), tc.from, tc.to, 1))
-			_, err := core.LoadConfig(f.config)
-			var configErr *core.Error
-			require.ErrorAs(t, err, &configErr)
-			require.Equal(t, "invalid_argument", configErr.Code)
-			if strings.Contains(tc.to, "permissionPreset") {
-				require.ErrorContains(t, err, "remove permissionPreset")
+			raw := strings.Replace(string(valid), tc.from, tc.to, 1)
+			write(t, f.config, raw)
+			_, standaloneErr := core.LoadConfig(f.config)
+			_, composeErr := loadCompose(raw)
+			for _, err := range []error{standaloneErr, composeErr} {
+				var configErr *core.Error
+				require.ErrorAs(t, err, &configErr)
+				require.Equal(t, "invalid_argument", configErr.Code)
+				require.ErrorContains(t, err, tc.field)
 			}
 		})
 	}
@@ -200,14 +222,20 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	f, _ := eventFixture(t, endpoint)
 	raw, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	config := strings.Replace(string(raw), "runtimeRef: agent\n      model: router-model", "runtimeRef: router-agent\n      model: router-model", 1)
-	config = strings.Replace(config, "runtimeRef: agent\n      model: topic-model", "runtimeRef: topic-agent\n      model: topic-model", 1)
-	const missingTemplate = "    - runtimeRef: missing-agent\n      model: missing-model\n      description: Missing Runtime fixture\n"
+	cwd, err := filepath.EvalSymlinks(f.dir)
+	require.NoError(t, err)
+	routerWorkspace := filepath.Join(cwd, "router-workspace")
+	require.NoError(t, os.Mkdir(routerWorkspace, 0o700))
+	config := strings.Replace(string(raw), fmt.Sprintf("workspace: %q", cwd), fmt.Sprintf("workspace: %q", routerWorkspace), 1)
+	config = strings.Replace(config, "runtimeRef: agent\n    model: router-model", "runtimeRef: router-agent\n    model: router-model", 1)
+	config = strings.Replace(config, "runtimeRef: agent\n    model: topic-model", "runtimeRef: topic-agent\n    model: topic-model\n    effort: medium", 1)
+	const missingTemplate = "      - runtimeRef: missing-agent\n        model: missing-model\n        description: Missing Runtime fixture\n"
 	write(t, f.config, config+missingTemplate)
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
 	routerProfile := core.ExecutionProfile{RuntimeRef: "router-agent", Model: "router-model", Effort: "low"}
+	require.Equal(t, routerWorkspace, routerBinding.Workspace)
 	assertSessionProfile(t, massd, peer, routerBinding, routerProfile)
 	routerRef := resource.SessionRef{SessionID: routerBinding.SessionID}
 	require.NoError(t, massd.CloseSession(t.Context(), routerRef, nil))
@@ -219,7 +247,8 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 
 	topicBinding, _ := nativeWorkTopic(t, f, p, peer, router, "execution-templates")
 	topic := startRoleMCP(t, f, topicBinding)
-	topicProfile := core.ExecutionProfile{RuntimeRef: "topic-agent", Model: "topic-model"}
+	topicProfile := core.ExecutionProfile{RuntimeRef: "topic-agent", Model: "topic-model", Effort: "medium"}
+	require.Equal(t, f.dir, topicBinding.Workspace)
 	assertSessionProfile(t, massd, peer, topicBinding, topicProfile)
 	var topicSession resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: topicBinding.SessionID}, &topicSession))
@@ -282,8 +311,36 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	require.Len(t, bindings(t, p), 3)
 	require.Len(t, workEvents(t, p, "issue_session_started"), 1)
 
+	originalBindings := []core.SessionBinding{routerBinding, topicBinding, first}
+	originalSpecs := make([]resource.SessionSpec, 0, len(originalBindings))
+	for _, binding := range originalBindings {
+		var session resource.Session
+		require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: binding.SessionID}, &session))
+		originalSpecs = append(originalSpecs, session.Spec)
+	}
+
 	p.stop(t, false)
-	updated := strings.Replace(config, "    - runtimeRef: agent\n      model: issue-model\n      effort: medium\n      description: Implement changes\n", "", 1)
+	equivalent := strings.Replace(config, "sessions:\n", "sessions:\n  namespace: superagent\n", 1)
+	write(t, f.config, equivalent+missingTemplate)
+	p = f.start()
+	for i, binding := range originalBindings {
+		identity := binding.OwnerID
+		if binding.Role == "issue" {
+			identity = binding.ID
+		}
+		restored := waitBinding(t, p, binding.Role, identity, "ready")
+		require.Equal(t, binding.ID, restored.ID)
+		require.Equal(t, binding.Name, restored.Name)
+		require.Equal(t, binding.Namespace, restored.Namespace)
+		require.Equal(t, binding.SessionID, restored.SessionID)
+		require.Equal(t, binding.SessionUID, restored.SessionUID)
+		var session resource.Session
+		require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: restored.SessionID}, &session))
+		require.Equal(t, originalSpecs[i], session.Spec)
+	}
+
+	p.stop(t, false)
+	updated := strings.Replace(equivalent, "      - runtimeRef: agent\n        model: issue-model\n        effort: medium\n        description: Implement changes\n", "", 1)
 	updated = strings.Replace(updated, "description: Review results", "description: Review results with new guidance", 1)
 	write(t, f.config, strings.Replace(updated, "effort: low", "effort: high", 1)+missingTemplate)
 	f.fails("failed_precondition")

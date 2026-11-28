@@ -15,7 +15,23 @@ core:
   #   organization: default
   #   stream: default
   #   credentialFile: ./secrets/openobserve-login.txt
-  # Add sessions from config.example.yaml to enable Core Agent execution.
+  # Optional role settings for Core Agent execution.
+  # sessions:
+  #   namespace: superagent
+  #   router:
+  #     workspace: /absolute/workspace
+  #     runtimeRef: codex
+  #     model: gpt-6.2-sol
+  #     effort: low
+  #   topic:
+  #     runtimeRef: codex
+  #     model: gpt-6.2-sol
+  #     effort: medium
+  #   issue:
+  #     templates:
+  #       - runtimeRef: codex
+  #         model: gpt-6.2-sol
+  #         description: Implement and verify code changes.
   # Optional remote computer for Topic and Issue Sessions.
   # remoteComputer:
   #   cua:

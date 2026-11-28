@@ -511,12 +511,11 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
   remoteComputer:
     cua: {command: ./cua-mcp, configFile: ./cua.yaml}
   sessions:
-    routerWorkspace: .
-    roles:
-      router: {runtimeRef: codex, model: fixture-model}
-      topic: {runtimeRef: codex, model: fixture-model}
-    issueTemplates:
-      - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
+    router: {workspace: ., runtimeRef: codex, model: fixture-router, effort: low}
+    topic: {runtimeRef: codex, model: fixture-topic}
+    issue:
+      templates:
+        - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
 `
 		p := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := p.startup(t)

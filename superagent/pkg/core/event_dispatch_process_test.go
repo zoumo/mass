@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -23,7 +24,7 @@ func eventFixture(t *testing.T, endpoint string) (*fixture, string) {
 	write(t, token, strings.Repeat("O", 48))
 	cwd, err := filepath.EvalSymlinks(f.dir)
 	require.NoError(t, err)
-	write(t, f.config, fixedListen(t, string(saved))+"massd:\n  endpoint: "+endpoint+"\noperatorTokenFile: "+token+"\nsessions:\n  routerWorkspace: "+cwd+"\n"+fixtureExecutionProfiles)
+	write(t, f.config, fixedListen(t, string(saved))+"massd:\n  endpoint: "+endpoint+"\noperatorTokenFile: "+token+"\n"+fmt.Sprintf(fixtureSessions, cwd))
 	return f, token
 }
 

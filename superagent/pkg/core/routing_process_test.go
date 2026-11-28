@@ -247,30 +247,32 @@ func proxyRPC(t *testing.T, upstream string, intercept func(string, func()) bool
 	return "ws" + strings.TrimPrefix(proxy.URL, "http") + "/jsonrpc"
 }
 
-const fixtureExecutionProfiles = `  roles:
-    router:
-      runtimeRef: agent
-      model: router-model
-      effort: low
-    topic:
-      runtimeRef: agent
-      model: topic-model
-  issueTemplates:
-    - runtimeRef: agent
-      model: issue-model
-      effort: medium
-      description: Implement changes
-    - runtimeRef: agent
-      model: review-model
-      description: Review results
+const fixtureSessions = `sessions:
+  router:
+    workspace: %q
+    runtimeRef: agent
+    model: router-model
+    effort: low
+  topic:
+    runtimeRef: agent
+    model: topic-model
+  issue:
+    templates:
+      - runtimeRef: agent
+        model: issue-model
+        effort: medium
+        description: Implement changes
+      - runtimeRef: agent
+        model: review-model
+        description: Review results
 `
 
 func (f *fixture) execution(boundary *routeBoundary) {
 	f.t.Helper()
 	b, err := os.ReadFile(f.config)
 	require.NoError(f.t, err)
-	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\nsessions:\n  routerWorkspace: %s\n  namespace: superagent\n", boundary.url, f.dir)...)
-	b = append(b, fixtureExecutionProfiles...)
+	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\n", boundary.url)...)
+	b = fmt.Appendf(b, fixtureSessions, f.dir)
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
 }
 
