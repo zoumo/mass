@@ -58,6 +58,7 @@ function proxy(target: string, massd = false): ProxyOptions {
 
 export default defineConfig({
   plugins: [sameOriginProxy(), tailwindcss()],
+  base: '/console/',
   build: { outDir: 'dist' },
   server: {
     proxy: {

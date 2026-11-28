@@ -5,11 +5,11 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
  const issues = await (await request.get(routing + '/apis/core/v1/issues?limit=1')).json()
  const { id: issueId, topicId } = issues.items[0]
  const observedAt = '2026-11-24T02:34:00Z'
- await page.goto(routing + '/')
+ await page.goto(routing + '/console/')
  const watchdog = page.getByRole('link', { name: 'Watchdog', exact: true })
- await expect(watchdog).toHaveAttribute('href', '/watchdog')
+ await expect(watchdog).toHaveAttribute('href', '/console/watchdog')
  await watchdog.click()
- await expect(page).toHaveURL(routing + '/watchdog')
+ await expect(page).toHaveURL(routing + '/console/watchdog')
  await expect(page.getByRole('heading', { name: 'Watchdog', exact: true })).toBeVisible()
  await page.reload()
  await expect(page.getByRole('heading', { name: 'Watchdog', exact: true })).toBeVisible()
@@ -33,14 +33,14 @@ test('Watchdog shows the latest read-only result and links to Topic and Issue', 
  await expect(page.getByText('Report 已送达，尚无验收记录。')).toBeVisible()
  await expect(page.getByText('请复核 Report。')).toBeVisible()
  await page.getByRole('link', { name: '查看 Topic' }).click()
- await expect(page).toHaveURL(routing + `/topic?id=${topicId}`)
+ await expect(page).toHaveURL(routing + `/console/topic?id=${topicId}`)
  await expect(page.getByRole('article', { name: '当前 Topic' }).locator('h2').first()).toBeVisible()
  await page.goBack()
  await page.getByRole('link', { name: '查看 Issue' }).click()
- await expect(page).toHaveURL(routing + `/issue?id=${issueId}`)
+ await expect(page).toHaveURL(routing + `/console/issue?id=${issueId}`)
  await expect(page.getByRole('article', { name: '当前 Issue' })).toBeVisible()
  await page.goBack()
- await expect(page).toHaveURL(routing + '/watchdog')
+ await expect(page).toHaveURL(routing + '/console/watchdog')
  await expect(page.getByText('有发现', { exact: true })).toBeVisible()
  running = false
  await page.getByRole('button', { name: '刷新', exact: true }).click()
@@ -66,7 +66,7 @@ test('shows structured Message body and attachment types while retaining Thread 
   const record = await response.json()
   await route.fulfill({ response, json: { ...record, content } })
  })
- const url = `/message?id=${id}`
+ const url = `/console/message?id=${id}`
  await page.goto(url)
  await page.getByText('查看全文', { exact: true }).click()
  await expect(page.getByTestId('message-body')).toHaveText('Inspect the attached log.\nConfirm the exit code.')
@@ -83,7 +83,7 @@ test('committed lists, full original text, Thread navigation and safe rendering'
  page.on('pageerror', e => bad.push(e.message))
  const methods: string[] = []
  page.on('request', request => { if (request.url().includes('/v1/')) { methods.push(request.method()); expect(request.headers()['authorization']).toBeUndefined() } })
- await page.goto('/?view=messages&mode=records')
+ await page.goto('/console/?view=messages&mode=records')
  await expect(page.getByText('核心服务已就绪', { exact: true })).toBeVisible()
  await expect(page.getByText('显示 50 条消息', { exact: false })).toBeVisible()
  await page.getByRole('button', { name: /^Browser original body/ }).click()
@@ -135,7 +135,7 @@ test('copies the persisted trace ID from a selected record', async ({ page, cont
  const id = records.items[0].id
  const detail = await (await request.get(`/apis/core/v1/trigger-messages/${id}?trace=true`)).json()
  expect(detail.traceAssociations).toEqual([{ phase: 'admission', traceId: expect.stringMatching(/^[0-9a-f]{32}$/) }])
- await page.goto(`/?view=messages&mode=records&id=${id}`)
+ await page.goto(`/console/?view=messages&mode=records&id=${id}`)
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByRole('heading', { name: '关联 Trace' })).toBeVisible()
  await dialog.getByRole('button', { name: '复制 Trace ID' }).click()
@@ -144,7 +144,7 @@ test('copies the persisted trace ID from a selected record', async ({ page, cont
 })
 
 test('retired collections are absent from Superagent Web', async ({ page, request }) => {
- await page.goto('/')
+ await page.goto('/console/')
  await page.getByText('诊断', { exact: true }).click()
  await expect(page.getByRole('button', { name: '内部事件', exact: true })).toBeVisible()
  await expect(page.getByRole('button', { name: '渠道健康状态', exact: true })).toHaveCount(0)
@@ -155,7 +155,7 @@ test('retired collections are absent from Superagent Web', async ({ page, reques
 })
 
 test('offline snapshot stays visible and reconnect gets fresh filtered pages and selected detail', async ({ page, context, request }, testInfo) => {
- await page.goto('/?view=messages&mode=records')
+ await page.goto('/console/?view=messages&mode=records')
  const { items } = await (await request.get('/apis/core/v1/trigger-messages?limit=100')).json()
  const { threadId } = items.find((row: { sourceMessageId: string }) => row.sourceMessageId === 'browser-54')
  const filter = page.getByRole('textbox', { name: '按线程 ID 筛选' })

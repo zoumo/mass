@@ -187,7 +187,7 @@ Use a positive Go duration string, such as `10m` or `1h`. Under
 On shutdown, Compose cancels the active check and waits for Watchdog and the
 Codex process group to exit.
 
-Open **Watchdog** at `/watchdog` to see whether Watchdog is running
+Open **Watchdog** at `/console/watchdog` to see whether Watchdog is running
 and read the latest completed check. Use the Topic and Issue links to review
 its judgment and recommendation in context. Compose keeps the latest result
 after Watchdog exits and starts with an empty snapshot after restart.
@@ -223,10 +223,10 @@ exits unexpectedly, Compose stops the Triggers and returns an error.
 ## Start Superagent Web
 
 Run `make build-superagent` and start `bin/superagent serve` or
-`bin/superagent compose`. Open the printed Core endpoint at `/`, for example
-`http://127.0.0.1:24370/`. The Core listener serves the Web, Core API, probes,
-and embedded MASS. The binary contains the Web files. To deploy a Web update,
-replace the binary and restart it.
+`bin/superagent compose`. Open `/console/` on the printed Core endpoint, for
+example `http://127.0.0.1:24370/console/`. Core redirects `/` to `/console/`.
+The same listener serves the Core API, probes, and embedded MASS. To deploy
+a Web update, replace the binary and restart it.
 
 Use your deployment ingress to terminate TLS and control access. Keep the
 Core listener private. At the ingress, validate browser Origin against the
@@ -251,7 +251,7 @@ workflow.
 go run ./cmd/superagent serve --config /absolute/run/core.yaml
 ```
 
-In another terminal, run these commands and open the Vite origin at `/`.
+In another terminal, run these commands and open the Vite origin at `/console/`.
 
 ```sh
 cd superagent/web

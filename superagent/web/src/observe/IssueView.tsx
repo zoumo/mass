@@ -6,7 +6,7 @@ import { formatTime, eventStatusLabel, stateLabel, type WorkbenchRow } from '../
 import ExecutionProfileFields from './ExecutionProfileFields'
 import ObjectWorkspace from './ObjectWorkspace'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
-import { sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { observerHome, sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
 import { ObjectAvatar } from './ConversationCard'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
@@ -28,7 +28,7 @@ type SessionBinding = WorkbenchRow & { id: string; createdAt: string; startEvent
 type Event = { id: string; at: string; title: string; detail?: ReactNode; traces?: TraceAssociation[] }
 
 function recordLink(view: string, id: string) {
-  return '/?' + new URLSearchParams({ view, id, mode: 'records' })
+  return observerHome + '?' + new URLSearchParams({ view, id, mode: 'records' })
 }
 function Evidence({ items }: { items?: string[] }) {
   return items?.length ? <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul> : null

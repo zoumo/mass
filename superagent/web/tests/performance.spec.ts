@@ -38,7 +38,7 @@ test('plots four system metrics, preserves instance boundaries and restores the 
   await route.fulfill({ json: { from, until: t(range === '6h' ? 360 : 60), stepSeconds, metrics: defaultMetrics } })
  })
 
- await page.goto('/metrics')
+ await page.goto('/console/metrics')
  const range = page.getByRole('combobox', { name: '时间范围', exact: true })
  await expect(range).toHaveValue('1h')
  for (const title of titles) await expect(page.getByRole('region', { name: title, exact: true })).toBeVisible()
@@ -96,7 +96,7 @@ test('shows loading, distinguishes missing samples from unavailable metrics, and
    metrics: [{ id: 'cpu', series: [] }, { id: 'rss', series: [], unavailable: true }, ...defaultMetrics.slice(2)],
   } })
  })
- await page.goto('/metrics')
+ await page.goto('/console/metrics')
  await expect(page.getByRole('status')).toHaveText('正在读取指标…')
  release()
  await expect(page.getByRole('region', { name: titles[0], exact: true })).toContainText('当前范围暂无样本。')
@@ -120,7 +120,7 @@ test('selects and groups MCP metrics with matching filters', async ({ page }) =>
    : [{ id, series: [{ dimensions, points: [[t(0), id === 'mcp_failure_rate' ? 0.25 : 0.5]] }] }]
   await route.fulfill({ json: { from, until: t(60), stepSeconds, metrics: result } })
  })
- await page.goto('/metrics?metric=cpu&groupBy=service&service=massd')
+ await page.goto('/console/metrics?metric=cpu&groupBy=service&service=massd')
  await expect(page.getByRole('region', { name: 'CPU 使用量', exact: true })).toBeVisible()
  expect(Object.fromEntries(requests.at(-1)!)).toEqual({ metric: 'cpu', window: '1h', groupBy: 'service', service: 'massd' })
  await page.getByRole('textbox', { name: '服务实例' }).fill(massdSeries.dimensions.instance)

@@ -39,7 +39,7 @@ for (const [size, width, height] of [
       )
     })
     await page.setViewportSize({ width, height })
-    const documentResponse = await page.goto(endpoint + '/message')
+    const documentResponse = await page.goto(endpoint + '/console/message')
     expect(documentResponse?.headers()['content-security-policy']).toContain("script-src 'self'")
     const capture = async (name: string) => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
@@ -127,7 +127,7 @@ for (const width of [1380, 390]) {
   test(`each primary tab opens its own populated flow at ${width}px`, async ({ page, request }, info) => {
     const endpoint = await fixtureOrigin(request, 'message-path-fixture')
     await page.setViewportSize({ width, height: width === 390 ? 844 : 920 })
-    await page.goto(endpoint + '/')
+    await page.goto(endpoint + '/console/')
     const tabs = page.getByRole('navigation', { name: '观察视角' })
     for (const [tab, region] of [
       ['Message', '消息路径'],
@@ -136,7 +136,7 @@ for (const width of [1380, 390]) {
       ['Issue', 'Issue 进展流程'],
     ]) {
       await tabs.getByRole('link', { name: tab, exact: true }).click()
-      await expect(page).toHaveURL(`${endpoint}/${tab.toLowerCase()}`)
+      await expect(page).toHaveURL(`${endpoint}/console/${tab.toLowerCase()}`)
       await expect(tabs.getByRole('link', { name: tab, exact: true })).toHaveAttribute('aria-current', 'page')
       if (tab === 'Message' && width === 390) {
         await page.getByRole('complementary', { name: '最近消息' }).getByRole('link').first().click()
