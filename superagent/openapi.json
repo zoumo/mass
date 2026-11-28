@@ -5405,12 +5405,12 @@
     },
     "securitySchemes": {
       "massdBearer": {
-        "description": "massd instance credential",
+        "description": "Core admin.token credential for embedded MASS",
         "scheme": "bearer",
         "type": "http"
       },
       "operatorBearer": {
-        "description": "Core accessToken.admin credential for Operators",
+        "description": "Core admin.token credential for Operators",
         "scheme": "bearer",
         "type": "http"
       },
@@ -5420,7 +5420,7 @@
         "type": "http"
       },
       "triggerBearer": {
-        "description": "Core accessToken.triggers credential",
+        "description": "Core triggers.token credential",
         "scheme": "bearer",
         "type": "http"
       }
@@ -5432,275 +5432,7 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/livez": {
-      "get": {
-        "operationId": "coreLiveness",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProbeState"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Core request origin not allowed"
-          }
-        },
-        "summary": "Check that the Core process can respond",
-        "tags": [
-          "Status"
-        ]
-      }
-    },
-    "/massd/jsonrpc": {
-      "get": {
-        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
-        "operationId": "connectMassd",
-        "responses": {
-          "101": {
-            "description": "WebSocket handshake accepted"
-          },
-          "400": {
-            "description": "Invalid WebSocket handshake"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationError"
-                }
-              }
-            },
-            "description": "massd instance credential required"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/CoreHTTPError"
-                    },
-                    {
-                      "$ref": "#/components/schemas/OperationError"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Core request host or WebSocket Origin not allowed"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "massd exposure disabled"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationError"
-                }
-              }
-            },
-            "description": "massd admission closed"
-          }
-        },
-        "security": [
-          {
-            "massdBearer": []
-          }
-        ],
-        "summary": "Upgrade to massd JSON-RPC over WebSocket",
-        "tags": [
-          "massd"
-        ]
-      }
-    },
-    "/massd/livez": {
-      "get": {
-        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
-        "operationId": "massdLiveness",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProbeState"
-                }
-              }
-            },
-            "description": "Successful probe"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Core request host not allowed"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "massd exposure disabled"
-          }
-        },
-        "summary": "Check that the massd process can respond",
-        "tags": [
-          "massd"
-        ]
-      }
-    },
-    "/massd/readyz": {
-      "get": {
-        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
-        "operationId": "massdReadiness",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProbeState"
-                }
-              }
-            },
-            "description": "Successful probe"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Core request host not allowed"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "massd exposure disabled"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationError"
-                }
-              }
-            },
-            "description": "massd admission closed"
-          }
-        },
-        "summary": "Check that massd can admit requests",
-        "tags": [
-          "massd"
-        ]
-      }
-    },
-    "/readyz": {
-      "get": {
-        "operationId": "coreReadiness",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProbeState"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Core request origin not allowed"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProbeState"
-                }
-              }
-            },
-            "description": "Core admission unavailable"
-          }
-        },
-        "summary": "Check that Core can admit requests",
-        "tags": [
-          "Status"
-        ]
-      }
-    },
-    "/status": {
-      "get": {
-        "description": "Returns partial status when a component is unavailable. In standalone Core, GitHub and DWS are not managed. Core reports ScheduledTask states.",
-        "operationId": "getStackStatus",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StackStatus"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Core request origin not allowed"
-          }
-        },
-        "summary": "Read Core, massd and built-in Trigger status",
-        "tags": [
-          "Status"
-        ]
-      }
-    },
-    "/v1/core/internal-events": {
+    "/apis/core/v1/internal-events": {
       "get": {
         "operationId": "listInternalEvents",
         "parameters": [
@@ -5916,7 +5648,7 @@
         ]
       }
     },
-    "/v1/core/internal-events/{eventId}": {
+    "/apis/core/v1/internal-events/{eventId}": {
       "get": {
         "operationId": "getInternalEvent",
         "parameters": [
@@ -6037,7 +5769,7 @@
         ]
       }
     },
-    "/v1/core/issues": {
+    "/apis/core/v1/issues": {
       "get": {
         "operationId": "listIssues",
         "parameters": [
@@ -6387,7 +6119,7 @@
         ]
       }
     },
-    "/v1/core/issues/{issueId}": {
+    "/apis/core/v1/issues/{issueId}": {
       "get": {
         "operationId": "getIssue",
         "parameters": [
@@ -6535,7 +6267,118 @@
         ]
       }
     },
-    "/v1/core/outbox-messages": {
+    "/apis/core/v1/mcp": {
+      "post": {
+        "operationId": "callRoleMcp",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "MCP-Protocol-Version",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpHTTPRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpHTTPResponse"
+                }
+              }
+            },
+            "description": "JSON-RPC reply"
+          },
+          "202": {
+            "description": "Notification accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/McpHTTPResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CoreHTTPError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Invalid request or protocol version"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Role credential required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Role request forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Role binding is stale"
+          },
+          "413": {
+            "description": "Request too large"
+          },
+          "415": {
+            "description": "Content-Type must be application/json"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core unavailable"
+          }
+        },
+        "security": [
+          {
+            "roleBearer": []
+          }
+        ],
+        "summary": "Exchange role MCP JSON-RPC messages",
+        "tags": [
+          "MCP"
+        ]
+      }
+    },
+    "/apis/core/v1/outbox-messages": {
       "get": {
         "description": "The history view uses the trusted-read boundary. The delivery view requires the Trigger token and the Source and Account headers. It returns pending or retry-eligible records using limit and cursor.",
         "operationId": "listOutboxMessages",
@@ -6876,7 +6719,7 @@
         }
       }
     },
-    "/v1/core/outbox-messages/{outboxId}": {
+    "/apis/core/v1/outbox-messages/{outboxId}": {
       "get": {
         "description": "History uses the trusted-read boundary. Delivery requires the Trigger token and the Source and Account headers. The delivery view includes the reply target when present. Terminal states are readable.",
         "operationId": "getOutboxMessage",
@@ -7233,7 +7076,7 @@
         ]
       }
     },
-    "/v1/core/reports": {
+    "/apis/core/v1/reports": {
       "get": {
         "operationId": "listReports",
         "parameters": [
@@ -7433,7 +7276,7 @@
         ]
       }
     },
-    "/v1/core/reports/{reportId}": {
+    "/apis/core/v1/reports/{reportId}": {
       "get": {
         "operationId": "getReport",
         "parameters": [
@@ -7554,7 +7397,7 @@
         ]
       }
     },
-    "/v1/core/scheduled-tasks": {
+    "/apis/core/v1/scheduled-tasks": {
       "get": {
         "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "listScheduledTasks",
@@ -7863,7 +7706,7 @@
         ]
       }
     },
-    "/v1/core/scheduled-tasks/{scheduledTaskId}": {
+    "/apis/core/v1/scheduled-tasks/{scheduledTaskId}": {
       "delete": {
         "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "deleteScheduledTask",
@@ -8218,7 +8061,7 @@
         ]
       }
     },
-    "/v1/core/scheduled-tasks/{scheduledTaskId}/trigger": {
+    "/apis/core/v1/scheduled-tasks/{scheduledTaskId}/trigger": {
       "post": {
         "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "triggerScheduledTask",
@@ -8325,7 +8168,7 @@
         ]
       }
     },
-    "/v1/core/scheduled-tasks/{scheduledTaskId}/trigger-messages": {
+    "/apis/core/v1/scheduled-tasks/{scheduledTaskId}/trigger-messages": {
       "get": {
         "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "listScheduledTaskTriggerMessages",
@@ -8545,7 +8388,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings": {
+    "/apis/core/v1/session-bindings": {
       "get": {
         "operationId": "listSessionBindings",
         "parameters": [
@@ -8745,7 +8588,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}": {
+    "/apis/core/v1/session-bindings/{bindingId}": {
       "get": {
         "operationId": "getSessionBinding",
         "parameters": [
@@ -8866,7 +8709,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}/chat": {
+    "/apis/core/v1/session-bindings/{bindingId}/chat": {
       "post": {
         "description": "A prompt resumes a verified offline Session with the submitted input.",
         "operationId": "controlSessionChat",
@@ -8968,7 +8811,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}/chat/history": {
+    "/apis/core/v1/session-bindings/{bindingId}/chat/history": {
       "get": {
         "operationId": "getSessionChatHistory",
         "parameters": [
@@ -9057,7 +8900,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}/chat/live": {
+    "/apis/core/v1/session-bindings/{bindingId}/chat/live": {
       "get": {
         "operationId": "streamSessionChat",
         "parameters": [
@@ -9141,7 +8984,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}/history": {
+    "/apis/core/v1/session-bindings/{bindingId}/history": {
       "get": {
         "operationId": "getSessionBindingHistory",
         "parameters": [
@@ -9262,7 +9105,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}/live": {
+    "/apis/core/v1/session-bindings/{bindingId}/live": {
       "get": {
         "description": "Returns newline-delimited JSON. Each line is a frame. The first frame confirms the connection.",
         "operationId": "streamSessionBinding",
@@ -9373,7 +9216,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}/recoveries": {
+    "/apis/core/v1/session-bindings/{bindingId}/recoveries": {
       "post": {
         "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "recoverSessionBinding",
@@ -9480,7 +9323,7 @@
         ]
       }
     },
-    "/v1/core/session-bindings/{bindingId}/runtime-evidence": {
+    "/apis/core/v1/session-bindings/{bindingId}/runtime-evidence": {
       "get": {
         "description": "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client.",
         "operationId": "getSessionBindingRuntimeEvidence",
@@ -9557,7 +9400,530 @@
         ]
       }
     },
-    "/v1/core/threads": {
+    "/apis/core/v1/telemetry/metrics": {
+      "post": {
+        "description": "Available when the Web OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
+        "operationId": "exportTelemetryMetrics",
+        "requestBody": {
+          "content": {
+            "application/x-protobuf": {
+              "schema": {
+                "contentMediaType": "application/octet-stream",
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/x-protobuf": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OTLP export response"
+          },
+          "400": {
+            "description": "Invalid or unreadable OTLP export request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OTLP gateway disabled or invalid request target"
+          },
+          "413": {
+            "description": "OTLP request exceeds 1 MiB"
+          },
+          "415": {
+            "description": "Expected uncompressed application/x-protobuf"
+          },
+          "429": {
+            "description": "OTLP export rate or concurrency limit reached"
+          },
+          "502": {
+            "description": "OTLP backend failed, timed out or returned an oversized response"
+          },
+          "503": {
+            "description": "OTLP backend or gateway unavailable"
+          }
+        },
+        "summary": "Export OTLP Metrics",
+        "tags": [
+          "Telemetry"
+        ]
+      }
+    },
+    "/apis/core/v1/telemetry/performance": {
+      "get": {
+        "operationId": "getTelemetryPerformance",
+        "parameters": [
+          {
+            "description": "process, cpu, rss, goroutines, file_descriptors, mcp_rate, mcp_failure_rate or mcp_p95",
+            "in": "query",
+            "name": "metric",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "15m, 1h, 6h or 24h. Defaults to 1h.",
+            "in": "query",
+            "name": "window",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Process dimensions are instance, service and all. MCP dimensions are role, tool, action, outcome and all.",
+            "in": "query",
+            "name": "groupBy",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter process metrics by massd or superagent-core",
+            "in": "query",
+            "name": "service",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter process metrics by service instance",
+            "in": "query",
+            "name": "instance",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by role",
+            "in": "query",
+            "name": "role",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by tool",
+            "in": "query",
+            "name": "tool",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by action",
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by outcome. Unavailable for mcp_failure_rate.",
+            "in": "query",
+            "name": "outcome",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryPerformance"
+                }
+              }
+            },
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Performance query source is not configured"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read performance time series",
+        "tags": [
+          "Telemetry"
+        ]
+      },
+      "head": {
+        "operationId": "getTelemetryPerformanceHead",
+        "parameters": [
+          {
+            "description": "process, cpu, rss, goroutines, file_descriptors, mcp_rate, mcp_failure_rate or mcp_p95",
+            "in": "query",
+            "name": "metric",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "15m, 1h, 6h or 24h. Defaults to 1h.",
+            "in": "query",
+            "name": "window",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Process dimensions are instance, service and all. MCP dimensions are role, tool, action, outcome and all.",
+            "in": "query",
+            "name": "groupBy",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter process metrics by massd or superagent-core",
+            "in": "query",
+            "name": "service",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter process metrics by service instance",
+            "in": "query",
+            "name": "instance",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by role",
+            "in": "query",
+            "name": "role",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by tool",
+            "in": "query",
+            "name": "tool",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by action",
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter MCP metrics by outcome. Unavailable for mcp_failure_rate.",
+            "in": "query",
+            "name": "outcome",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "409": {
+            "description": "Performance query source is not configured"
+          },
+          "503": {
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read performance time series",
+        "tags": [
+          "Telemetry"
+        ]
+      }
+    },
+    "/apis/core/v1/telemetry/traces": {
+      "post": {
+        "description": "Available when the Web OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
+        "operationId": "exportTelemetryTraces",
+        "requestBody": {
+          "content": {
+            "application/x-protobuf": {
+              "schema": {
+                "contentMediaType": "application/octet-stream",
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/x-protobuf": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OTLP export response"
+          },
+          "400": {
+            "description": "Invalid or unreadable OTLP export request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OTLP gateway disabled or invalid request target"
+          },
+          "413": {
+            "description": "OTLP request exceeds 1 MiB"
+          },
+          "415": {
+            "description": "Expected uncompressed application/x-protobuf"
+          },
+          "429": {
+            "description": "OTLP export rate or concurrency limit reached"
+          },
+          "502": {
+            "description": "OTLP backend failed, timed out or returned an oversized response"
+          },
+          "503": {
+            "description": "OTLP backend or gateway unavailable"
+          }
+        },
+        "summary": "Export OTLP Traces",
+        "tags": [
+          "Telemetry"
+        ]
+      }
+    },
+    "/apis/core/v1/telemetry/traces/{traceId}": {
+      "get": {
+        "operationId": "getTelemetryTrace",
+        "parameters": [
+          {
+            "description": "32-character hexadecimal Trace ID",
+            "in": "path",
+            "name": "traceId",
+            "required": true,
+            "schema": {
+              "description": "32-character hexadecimal Trace ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional RFC3339 time anchor",
+            "explode": false,
+            "in": "query",
+            "name": "at",
+            "schema": {
+              "description": "Optional RFC3339 time anchor",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryTrace"
+                }
+              }
+            },
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Trace query source is not configured"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read a Trace",
+        "tags": [
+          "Telemetry"
+        ]
+      },
+      "head": {
+        "operationId": "getTelemetryTraceHead",
+        "parameters": [
+          {
+            "description": "32-character hexadecimal Trace ID",
+            "in": "path",
+            "name": "traceId",
+            "required": true,
+            "schema": {
+              "description": "32-character hexadecimal Trace ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional RFC3339 time anchor",
+            "explode": false,
+            "in": "query",
+            "name": "at",
+            "schema": {
+              "description": "Optional RFC3339 time anchor",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resource query succeeded"
+          },
+          "400": {
+            "description": "Invalid query, filter, path parameter or cursor"
+          },
+          "403": {
+            "description": "Request is outside the trusted Host or Origin boundary"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "409": {
+            "description": "Trace query source is not configured"
+          },
+          "503": {
+            "description": "Resource query unavailable"
+          }
+        },
+        "summary": "Read a Trace",
+        "tags": [
+          "Telemetry"
+        ]
+      }
+    },
+    "/apis/core/v1/threads": {
       "get": {
         "operationId": "listThreads",
         "parameters": [
@@ -9709,7 +10075,7 @@
         ]
       }
     },
-    "/v1/core/threads/{threadId}": {
+    "/apis/core/v1/threads/{threadId}": {
       "get": {
         "operationId": "getThread",
         "parameters": [
@@ -9818,7 +10184,7 @@
         ]
       }
     },
-    "/v1/core/topics": {
+    "/apis/core/v1/topics": {
       "get": {
         "operationId": "listTopics",
         "parameters": [
@@ -10021,7 +10387,7 @@
         ]
       }
     },
-    "/v1/core/topics/{topicId}": {
+    "/apis/core/v1/topics/{topicId}": {
       "get": {
         "operationId": "getTopic",
         "parameters": [
@@ -10126,7 +10492,7 @@
         ]
       }
     },
-    "/v1/core/topics/{topicId}/activity": {
+    "/apis/core/v1/topics/{topicId}/activity": {
       "get": {
         "operationId": "listTopicActivity",
         "parameters": [
@@ -10367,7 +10733,7 @@
         ]
       }
     },
-    "/v1/core/trigger-messages": {
+    "/apis/core/v1/trigger-messages": {
       "get": {
         "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the Core access token and both Source and Account headers. It returns the acceptance receipt.",
         "operationId": "listTriggerMessages",
@@ -10883,7 +11249,7 @@
         ]
       }
     },
-    "/v1/core/trigger-messages/{messageId}": {
+    "/apis/core/v1/trigger-messages/{messageId}": {
       "get": {
         "operationId": "getTriggerMessage",
         "parameters": [
@@ -11004,7 +11370,7 @@
         ]
       }
     },
-    "/v1/core/watchdog": {
+    "/apis/core/v1/watchdog": {
       "get": {
         "operationId": "getWatchdog",
         "responses": {
@@ -11076,80 +11442,45 @@
         ]
       }
     },
-    "/v1/mcp": {
-      "post": {
-        "operationId": "callRoleMcp",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "MCP-Protocol-Version",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/McpHTTPRequest"
-              }
-            }
-          },
-          "required": true
-        },
+    "/apis/massd/jsonrpc": {
+      "get": {
+        "description": "Available when Core runs embedded MASS.",
+        "operationId": "connectMassd",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpHTTPResponse"
-                }
-              }
-            },
-            "description": "JSON-RPC reply"
-          },
-          "202": {
-            "description": "Notification accepted"
+          "101": {
+            "description": "WebSocket handshake accepted"
           },
           "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/McpHTTPResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/CoreHTTPError"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "Invalid request or protocol version"
+            "description": "Invalid WebSocket handshake"
           },
           "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
+                  "$ref": "#/components/schemas/OperationError"
                 }
               }
             },
-            "description": "Role credential required"
+            "description": "Core admin token required"
           },
           "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/CoreHTTPError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OperationError"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Role request forbidden"
+            "description": "Core request host or WebSocket Origin not allowed"
           },
-          "409": {
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11157,207 +11488,44 @@
                 }
               }
             },
-            "description": "Role binding is stale"
-          },
-          "413": {
-            "description": "Request too large"
-          },
-          "415": {
-            "description": "Content-Type must be application/json"
+            "description": "Core is configured for external MASS"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
+                  "$ref": "#/components/schemas/OperationError"
                 }
               }
             },
-            "description": "Core unavailable"
+            "description": "massd admission closed"
           }
         },
         "security": [
           {
-            "roleBearer": []
+            "massdBearer": []
           }
         ],
-        "summary": "Exchange role MCP JSON-RPC messages",
+        "summary": "Upgrade to massd JSON-RPC over WebSocket",
         "tags": [
-          "MCP"
+          "massd"
         ]
       }
     },
-    "/v1/telemetry/metrics": {
-      "post": {
-        "description": "Available when the Web OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
-        "operationId": "exportTelemetryMetrics",
-        "requestBody": {
-          "content": {
-            "application/x-protobuf": {
-              "schema": {
-                "contentMediaType": "application/octet-stream",
-                "format": "binary",
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/x-protobuf": {
-                "schema": {
-                  "contentMediaType": "application/octet-stream",
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": "OTLP export response"
-          },
-          "400": {
-            "description": "Invalid or unreadable OTLP export request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "404": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "OTLP gateway disabled or invalid request target"
-          },
-          "413": {
-            "description": "OTLP request exceeds 1 MiB"
-          },
-          "415": {
-            "description": "Expected uncompressed application/x-protobuf"
-          },
-          "429": {
-            "description": "OTLP export rate or concurrency limit reached"
-          },
-          "502": {
-            "description": "OTLP backend failed, timed out or returned an oversized response"
-          },
-          "503": {
-            "description": "OTLP backend or gateway unavailable"
-          }
-        },
-        "summary": "Export OTLP Metrics",
-        "tags": [
-          "Telemetry"
-        ]
-      }
-    },
-    "/v1/telemetry/performance": {
+    "/apis/massd/livez": {
       "get": {
-        "operationId": "getTelemetryPerformance",
-        "parameters": [
-          {
-            "description": "process, cpu, rss, goroutines, file_descriptors, mcp_rate, mcp_failure_rate or mcp_p95",
-            "in": "query",
-            "name": "metric",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "15m, 1h, 6h or 24h. Defaults to 1h.",
-            "in": "query",
-            "name": "window",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Process dimensions are instance, service and all. MCP dimensions are role, tool, action, outcome and all.",
-            "in": "query",
-            "name": "groupBy",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter process metrics by massd or superagent-core",
-            "in": "query",
-            "name": "service",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter process metrics by service instance",
-            "in": "query",
-            "name": "instance",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by role",
-            "in": "query",
-            "name": "role",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by tool",
-            "in": "query",
-            "name": "tool",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by action",
-            "in": "query",
-            "name": "action",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by outcome. Unavailable for mcp_failure_rate.",
-            "in": "query",
-            "name": "outcome",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "description": "Available when Core runs embedded MASS.",
+        "operationId": "massdLiveness",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TelemetryPerformance"
+                  "$ref": "#/components/schemas/ProbeState"
                 }
               }
             },
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Invalid query, filter, path parameter or cursor"
+            "description": "Successful probe"
           },
           "403": {
             "content": {
@@ -11367,252 +11535,39 @@
                 }
               }
             },
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Performance query source is not configured"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Resource query unavailable"
-          }
-        },
-        "summary": "Read performance time series",
-        "tags": [
-          "Telemetry"
-        ]
-      },
-      "head": {
-        "operationId": "getTelemetryPerformanceHead",
-        "parameters": [
-          {
-            "description": "process, cpu, rss, goroutines, file_descriptors, mcp_rate, mcp_failure_rate or mcp_p95",
-            "in": "query",
-            "name": "metric",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "15m, 1h, 6h or 24h. Defaults to 1h.",
-            "in": "query",
-            "name": "window",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Process dimensions are instance, service and all. MCP dimensions are role, tool, action, outcome and all.",
-            "in": "query",
-            "name": "groupBy",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter process metrics by massd or superagent-core",
-            "in": "query",
-            "name": "service",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter process metrics by service instance",
-            "in": "query",
-            "name": "instance",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by role",
-            "in": "query",
-            "name": "role",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by tool",
-            "in": "query",
-            "name": "tool",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by action",
-            "in": "query",
-            "name": "action",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Filter MCP metrics by outcome. Unavailable for mcp_failure_rate.",
-            "in": "query",
-            "name": "outcome",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "description": "Invalid query, filter, path parameter or cursor"
-          },
-          "403": {
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "409": {
-            "description": "Performance query source is not configured"
-          },
-          "503": {
-            "description": "Resource query unavailable"
-          }
-        },
-        "summary": "Read performance time series",
-        "tags": [
-          "Telemetry"
-        ]
-      }
-    },
-    "/v1/telemetry/traces": {
-      "post": {
-        "description": "Available when the Web OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
-        "operationId": "exportTelemetryTraces",
-        "requestBody": {
-          "content": {
-            "application/x-protobuf": {
-              "schema": {
-                "contentMediaType": "application/octet-stream",
-                "format": "binary",
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/x-protobuf": {
-                "schema": {
-                  "contentMediaType": "application/octet-stream",
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": "OTLP export response"
-          },
-          "400": {
-            "description": "Invalid or unreadable OTLP export request"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Request is outside the trusted Host or Origin boundary"
+            "description": "Core request host not allowed"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/CoreHTTPError"
                 }
               }
             },
-            "description": "OTLP gateway disabled or invalid request target"
-          },
-          "413": {
-            "description": "OTLP request exceeds 1 MiB"
-          },
-          "415": {
-            "description": "Expected uncompressed application/x-protobuf"
-          },
-          "429": {
-            "description": "OTLP export rate or concurrency limit reached"
-          },
-          "502": {
-            "description": "OTLP backend failed, timed out or returned an oversized response"
-          },
-          "503": {
-            "description": "OTLP backend or gateway unavailable"
+            "description": "Core is configured for external MASS"
           }
         },
-        "summary": "Export OTLP Traces",
+        "summary": "Check that the massd process can respond",
         "tags": [
-          "Telemetry"
+          "massd"
         ]
       }
     },
-    "/v1/telemetry/traces/{traceId}": {
+    "/apis/massd/readyz": {
       "get": {
-        "operationId": "getTelemetryTrace",
-        "parameters": [
-          {
-            "description": "32-character hexadecimal Trace ID",
-            "in": "path",
-            "name": "traceId",
-            "required": true,
-            "schema": {
-              "description": "32-character hexadecimal Trace ID",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Optional RFC3339 time anchor",
-            "explode": false,
-            "in": "query",
-            "name": "at",
-            "schema": {
-              "description": "Optional RFC3339 time anchor",
-              "type": "string"
-            }
-          }
-        ],
+        "description": "Available when Core runs embedded MASS.",
+        "operationId": "massdReadiness",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TelemetryTrace"
+                  "$ref": "#/components/schemas/ProbeState"
                 }
               }
             },
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Invalid query, filter, path parameter or cursor"
+            "description": "Successful probe"
           },
           "403": {
             "content": {
@@ -11622,7 +11577,7 @@
                 }
               }
             },
-            "description": "Request is outside the trusted Host or Origin boundary"
+            "description": "Core request host not allowed"
           },
           "404": {
             "content": {
@@ -11632,81 +11587,126 @@
                 }
               }
             },
-            "description": "Resource not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
-                }
-              }
-            },
-            "description": "Trace query source is not configured"
+            "description": "Core is configured for external MASS"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CoreHTTPError"
+                  "$ref": "#/components/schemas/OperationError"
                 }
               }
             },
-            "description": "Resource query unavailable"
+            "description": "massd admission closed"
           }
         },
-        "summary": "Read a Trace",
+        "summary": "Check that massd can admit requests",
         "tags": [
-          "Telemetry"
+          "massd"
         ]
-      },
-      "head": {
-        "operationId": "getTelemetryTraceHead",
-        "parameters": [
-          {
-            "description": "32-character hexadecimal Trace ID",
-            "in": "path",
-            "name": "traceId",
-            "required": true,
-            "schema": {
-              "description": "32-character hexadecimal Trace ID",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Optional RFC3339 time anchor",
-            "explode": false,
-            "in": "query",
-            "name": "at",
-            "schema": {
-              "description": "Optional RFC3339 time anchor",
-              "type": "string"
-            }
-          }
-        ],
+      }
+    },
+    "/livez": {
+      "get": {
+        "operationId": "coreLiveness",
         "responses": {
           "200": {
-            "description": "Resource query succeeded"
-          },
-          "400": {
-            "description": "Invalid query, filter, path parameter or cursor"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "OK"
           },
           "403": {
-            "description": "Request is outside the trusted Host or Origin boundary"
-          },
-          "404": {
-            "description": "Resource not found"
-          },
-          "409": {
-            "description": "Trace query source is not configured"
-          },
-          "503": {
-            "description": "Resource query unavailable"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request origin not allowed"
           }
         },
-        "summary": "Read a Trace",
+        "summary": "Check that the Core process can respond",
         "tags": [
-          "Telemetry"
+          "Status"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "coreReadiness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request origin not allowed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeState"
+                }
+              }
+            },
+            "description": "Core admission unavailable"
+          }
+        },
+        "summary": "Check that Core can admit requests",
+        "tags": [
+          "Status"
+        ]
+      }
+    },
+    "/status": {
+      "get": {
+        "description": "Returns partial status when a component is unavailable. In standalone Core, GitHub and DWS are not managed. Core reports ScheduledTask states.",
+        "operationId": "getStackStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StackStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreHTTPError"
+                }
+              }
+            },
+            "description": "Core request origin not allowed"
+          }
+        },
+        "summary": "Read Core, massd and built-in Trigger status",
+        "tags": [
+          "Status"
         ]
       }
     }

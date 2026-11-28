@@ -57,7 +57,7 @@ func TestThreadResourceEscapedID(t *testing.T) {
 	require.NoError(t, err)
 	proxy := httptest.NewServer(&httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(backend) }})
 	t.Cleanup(proxy.Close)
-	path := "/v1/core/threads/" + url.PathEscape(threadID)
+	path := "/apis/core/v1/threads/" + url.PathEscape(threadID)
 	for _, endpoint := range []string{server.URL, proxy.URL} {
 		status, header, body := resourceRequest(t, endpoint, http.MethodGet, path)
 		require.Equal(t, http.StatusOK, status, "%s", body)
@@ -86,7 +86,7 @@ INSERT INTO internal_events(event_id,kind,sender,recipient,body,refs,created_at,
  ('independent','context_supplement','{"kind":"core"}','{"kind":"router"}',NULL,'[]','2026-01-04','pending');
 INSERT INTO trace_associations VALUES('internal-events','returned','enqueue',0,'00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01','','2026-01-03');`)
 	require.NoError(t, err)
-	const collection = "/v1/core/internal-events"
+	const collection = "/apis/core/v1/internal-events"
 	const filter = "?messageId=message-1&limit=1&order=newest&preview=true&trace=true"
 	status, _, body := resourceRequest(t, server.URL, http.MethodGet, collection+filter)
 	require.Equal(t, http.StatusOK, status, "%s", body)

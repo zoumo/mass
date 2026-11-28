@@ -34,7 +34,7 @@ type conversationRow struct {
 }
 
 func topicConversationPath(query url.Values) string {
-	path := "/v1/core/topics"
+	path := "/apis/core/v1/topics"
 	if id := query.Get("topicId"); id != "" {
 		path += "/" + url.PathEscape(id) + "/activity"
 		query.Del("topicId")

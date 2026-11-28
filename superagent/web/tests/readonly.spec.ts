@@ -1,11 +1,10 @@
 import { expect, test } from '@playwright/test'
+import { audit, routing } from './endpoints.mjs'
 
-const corePort = process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'
-const audit = `http://127.0.0.1:${process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795'}`
-test.use({ baseURL: `http://127.0.0.1:${corePort}`, viewport: { width: 1340, height: 980 } })
+test.use({ baseURL: routing, viewport: { width: 1340, height: 980 } })
 
 test('Message and Thread lead to scoped work, reports, explicit acceptance and Session delivery', async ({ page }, testInfo) => {
- await page.goto('/superagent/?view=messages&mode=records')
+ await page.goto('/console/?view=messages&mode=records')
  const drawer = page.getByRole('dialog')
  const overview = page.getByRole('region', { name: '运行概况' })
  await expect(overview.getByText('路由器准备状态')).toBeVisible()
@@ -50,24 +49,25 @@ test('Session reconnect rereads durable history while browsing produces no depen
   rpc: Record<string, number>; polls: number; sentOffers: number; pendingOffers: number; channelSends: number; sentId: string; sessionBindingId: string
  }>
  const before = await state()
- const sentPath = `/v1/core/outbox-messages/${before.sentId}`
+ const sentPath = `/apis/core/v1/outbox-messages/${before.sentId}`
  const sentBefore = await (await request.get(sentPath)).json()
  expect(sentBefore).toMatchObject({
   status: 'sent', receipt: { taskId: 'observer-send-task' },
  })
  const errors: string[] = []
  const headers: Promise<Record<string, string>>[] = []
- await page.context().addCookies([{ name: 'observer_fixture', value: 'browser-cookie', url: `http://127.0.0.1:${corePort}` }])
- const documentRequest = page.waitForRequest(r => new URL(r.url()).pathname === '/superagent/')
+ await page.context().addCookies([{ name: 'observer_fixture', value: 'browser-cookie', url: routing }])
+ const documentRequest = page.waitForRequest(r => new URL(r.url()).pathname === '/console/')
  page.on('pageerror', error => errors.push(error.message))
  page.on('request', r => {
   const path = new URL(r.url()).pathname
-  if (!path.startsWith('/v1/')) return
-  expect(path).toMatch(/^\/v1\/core\//)
+  expect(path).not.toMatch(/^\/v1(?:\/|$)/)
+  if (!path.startsWith('/apis/')) return
+  expect(path).toMatch(/^\/apis\/core\/v1\//)
   expect(r.method()).toBe('GET')
   headers.push(r.allHeaders())
  })
- await page.goto(`/superagent/?view=session-bindings&id=${before.sessionBindingId}`)
+ await page.goto(`/console/?view=session-bindings&id=${before.sessionBindingId}`)
  expect((await (await documentRequest).allHeaders())['cookie']).toContain('observer_fixture=browser-cookie')
  const history = page.getByRole('region', { name: 'Session 历史' })
  const live = page.getByRole('region', { name: 'Session 实时预览' })
@@ -77,7 +77,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
  expect((await request.post(`${audit}/emit-live`)).status()).toBe(204)
  await expect(live.getByText('Live before disconnect [redacted] [redacted]', { exact: true })).toBeVisible()
  await expect(history.getByText(/Live before disconnect/)).toHaveCount(0)
- const historyRoute = `**/v1/core/session-bindings/${before.sessionBindingId}/history?*`
+ const historyRoute = `**/apis/core/v1/session-bindings/${before.sessionBindingId}/history?*`
  await page.route(historyRoute, route => route.abort())
  expect((await request.post(`${audit}/emit-stored`)).status()).toBe(204)
  await expect(history.getByText(/无法读取历史/)).toBeVisible()
@@ -101,8 +101,8 @@ test('Session reconnect rereads durable history while browsing produces no depen
  await expect(page.getByRole('dialog').getByText('已发送', { exact: true })).toBeVisible()
  await page.getByRole('button', { name: '查看目标消息', exact: true }).click()
  await expect(page.getByTestId('message-body')).toHaveText('Original input outbox-observer-source')
- const previewPath = `/v1/core/session-bindings/${before.sessionBindingId}`
- for (const path of [`${previewPath}/history`, `${previewPath}/live`, sentPath, '/superagent/']) {
+ const previewPath = `/apis/core/v1/session-bindings/${before.sessionBindingId}`
+ for (const path of [`${previewPath}/history`, `${previewPath}/live`, sentPath, '/console/']) {
   const head = await request.head(path)
   expect(head.status()).toBe(200)
   expect(await head.body()).toHaveLength(0)
@@ -111,7 +111,7 @@ test('Session reconnect rereads durable history while browsing produces no depen
   const allowed = result.headers()['allow'].split(',').map(method => method.trim())
   expect(allowed.sort()).toEqual(path === sentPath ? ['GET', 'HEAD', 'PATCH'] : ['GET', 'HEAD'])
  }
- const toolCall = await request.post('/v1/mcp', {
+ const toolCall = await request.post('/apis/core/v1/mcp', {
   headers: { Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-11-25' },
   data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'report_submit', arguments: {} } },
  })

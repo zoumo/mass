@@ -55,7 +55,7 @@ func scheduledTaskHistory(t *testing.T, p *process, operatorFile, id string) []c
 	t.Helper()
 	token, err := core.ReadOperatorToken(operatorFile)
 	require.NoError(t, err)
-	status, body := request(t, http.MethodGet, p.endpoint, "/v1/core/scheduled-tasks/"+id+"/trigger-messages", token, nil)
+	status, body := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/scheduled-tasks/"+id+"/trigger-messages", token, nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var history struct{ Items []core.Message }
 	require.NoError(t, json.Unmarshal(body, &history))

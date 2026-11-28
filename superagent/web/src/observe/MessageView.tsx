@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Inbox, ListFilter, Mail, Text } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { formatTime, messageBody, messageTitle, sourceLabel, stateLabel } from '../workbench'
-import { navigate, usePages, useRecord, viewHref, type MessageRecord, type ViewProps } from './observer'
+import { observerHome, navigate, usePages, useRecord, viewHref, type MessageRecord, type ViewProps } from './observer'
 import MessagePath from './MessagePath'
 
 export default function MessageView({ query }: ViewProps) {
@@ -103,8 +103,8 @@ function MessageDetail({ row, threadId }: { row: MessageRecord, threadId: string
         <h2 ref={heading} tabIndex={-1}>{messageTitle(row)}</h2>
         <div className="message-meta"><span><Clock3/><time dateTime={row.receivedAt}>{formatTime(row.receivedAt)}</time></span></div>
         <details className="original-text"><summary><Text size={16}/><span>查看全文</span><ChevronDown size={15}/></summary><pre data-testid="message-body" tabIndex={0}>{messageBody(row) || '渠道未提供正文。'}</pre></details>
-        <div className="topic-links"><a href={'/superagent/?' + new URLSearchParams({view:'messages',mode:'records',id:row.id})}>完整记录</a>
-          {row.threadId && <a href={'/superagent/?' + new URLSearchParams({view:'threads',id:row.threadId})}>查看线程</a>}</div>
+        <div className="topic-links"><a href={observerHome + '?' + new URLSearchParams({view:'messages',mode:'records',id:row.id})}>完整记录</a>
+          {row.threadId && <a href={observerHome + '?' + new URLSearchParams({view:'threads',id:row.threadId})}>查看线程</a>}</div>
       </div>
     </div>
     <MessagePath message={row}/>

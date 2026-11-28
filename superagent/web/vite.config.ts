@@ -1,9 +1,9 @@
 import { defineConfig, type Plugin, type ProxyOptions } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 
-const backendPaths = '^/(?:v1/(?:core/|telemetry/|mcp(?:\\?|$))|(?:status|livez|readyz)(?:\\?|$))'
+const backendPaths = '^/(?:apis(?:/|\\?|$)|(?:status|livez|readyz)(?:\\?|$))'
 const backendPath = new RegExp(backendPaths)
-const operatorPath = /^\/v1\/core\/(?:session-bindings\/.*\/(?:runtime-evidence|recoveries)$|scheduled-tasks(?:\/|$))/
+const coreOrigin = process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370'
 
 function sameOriginProxy(): Plugin {
   return {
@@ -20,17 +20,11 @@ function sameOriginProxy(): Plugin {
           res.writeHead(400).end()
           return
         }
-        if (!backendPath.test(path) && !path.startsWith('/massd/')) return next()
+        if (!backendPath.test(path)) return next()
         const origin = req.headers.origin
         const site = req.headers['sec-fetch-site']
         if (origin && origin !== `http://${req.headers.host}` || site && site !== 'same-origin' && site !== 'none') {
           res.writeHead(403).end()
-          return
-        }
-        const q = new URLSearchParams(queryStart === -1 ? '' : rawTarget.slice(queryStart + 1))
-        const operatorFilter = path === '/v1/core/trigger-messages' && (q.has('source') || q.has('scheduledTaskId'))
-        if (operatorPath.test(path) || operatorFilter) {
-          res.writeHead(404).end()
           return
         }
         next()
@@ -59,12 +53,12 @@ function proxy(target: string, massd = false): ProxyOptions {
 
 export default defineConfig({
   plugins: [sameOriginProxy(), tailwindcss()],
-  base: '/superagent/',
+  base: '/console/',
   build: { outDir: 'dist' },
   server: {
     proxy: {
-      [backendPaths]: proxy(process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370'),
-      '/massd/': proxy(process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370', true),
+      '/apis/massd/': proxy(coreOrigin, true),
+      [backendPaths]: proxy(coreOrigin),
     },
   },
 })

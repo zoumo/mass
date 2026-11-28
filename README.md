@@ -92,34 +92,33 @@ connect to the same daemon directly. See the
 
 Superagent is an experimental application for routing messages and coordinating
 agent work. You can run it for message intake with execution disabled. Enable
-execution to run Issue Sessions through `massd`. Run Superagent Web and open `/superagent/` on the gateway to inspect
-message routing and Issue progress.
+execution to run Issue Sessions through `massd`. Open `/console/` on the Core listener
+to inspect message routing and Issue progress.
 
 Most of Superagent's design and core concepts were inspired by the
 [DeepSeek Harness `dsh-superagent` prototype](https://github.com/deepseek-ai/dsh-superagent-prototype).
 
-Build Core with `make build-superagent` and Web with `make build-superagent-web`.
+Run `make build-superagent` to build Core with its embedded Web assets.
 For startup and data-directory instructions, see the [Superagent guide](superagent/README.md).
 
 ## Build
 
 Run build commands from the repository root with **Go 1.26.9 or later**.
 `make build-go` builds `massd` and `massctl` as separate executables. The full
-build also produces `bin/superagent` and the Superagent Web assets.
-The Web build requires Node.js
-20.19 or later in the 20.x series, or 22.12 or later, and a populated npm cache.
+build also produces `bin/superagent` with its Web assets embedded.
+The Web build requires Node.js 20.19 or later in the 20.x series, or 22.12 or
+later, and a populated npm cache.
 
 ```sh
 make build
-# Produces bin/massctl, bin/massd, bin/superagent and superagent/web/dist
+# Produces bin/massctl, bin/massd, and bin/superagent
 ```
 
 | Build output | Role |
 |---|---|
 | `bin/massd` | 🛠️ Daemon for the WebSocket JSON-RPC API and health probes. |
 | `bin/massctl` | ⌨️ CLI for managing Runtimes and Sessions. |
-| `bin/superagent` | Experimental message routing and work coordination service. |
-| `superagent/web/dist` | Static assets for the independent Superagent Web service. |
+| `bin/superagent` | Message routing and work coordination service with embedded Superagent Web. |
 
 To build a single executable, select its package in `cmd/`.
 

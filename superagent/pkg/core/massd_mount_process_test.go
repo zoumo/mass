@@ -30,12 +30,6 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-const (
-	mountedMASSOrigin = "https://ops.example.test"
-	mountedMASSConfig = "massd:\n  embedded:\n    dataDir: ./massd\n    sessionIdleTimeout: 0s\n    writeTimeout: 2s"
-	mountedMASSExpose = "\n    expose:\n      tokenFile: ./embedded-massd.token\n      allowedOrigins: [" + mountedMASSOrigin + "]"
-)
-
 func TestEmbeddedMASSMount(t *testing.T) {
 	// Go's default TLS roots can only be set once per process.
 	if os.Getenv("MASS_TEST_ISOLATED_TLS_ROOTS") != "1" {
@@ -50,48 +44,38 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	f, operator := eventFixture(t, "ws://127.0.0.1:1")
 	saved, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	config := strings.Replace(string(saved), "massd:\n  endpoint: ws://127.0.0.1:1", mountedMASSConfig, 1)
-	data := filepath.Join(f.dir, "massd")
+	config := strings.Replace(string(saved), "massd:\n  endpoint: ws://127.0.0.1:1\n", "", 1)
+	data := filepath.Join(f.data, "massd")
 	seedEmbeddedRuntime(t, data, relay, peer.listener.Addr().String())
 	write(t, f.config, config)
-	p := f.start()
-	status, _ := request(t, http.MethodGet, p.endpoint, "/massd/jsonrpc", "", nil)
-	require.Equal(t, http.StatusNotFound, status)
-	disabledDefaults := waitBinding(t, p, "router", "", "ready")
-	p.stop(t, false)
-
-	token := strings.Repeat("M", 48)
-	write(t, filepath.Join(f.dir, "embedded-massd.token"), token+"\n")
-	write(t, f.config, strings.Replace(config, mountedMASSConfig, mountedMASSConfig+mountedMASSExpose, 1))
+	token, err := core.ReadOperatorToken(operator)
+	require.NoError(t, err)
 	gate := t.TempDir()
-	p = f.start("SUPERAGENT_TEST_GATE_STAGE=internal_event_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+gate)
+	p := f.start("SUPERAGENT_TEST_GATE_STAGE=internal_event_before_settlement", "SUPERAGENT_TEST_GATE_DIR="+gate)
 	t.Cleanup(func() { write(t, filepath.Join(gate, "release"), "released") })
 	router := waitBinding(t, p, "router", "", "ready")
-	require.Equal(t, disabledDefaults.SessionID, router.SessionID)
-	require.Equal(t, disabledDefaults.SessionUID, router.SessionUID)
-	for path, state := range map[string]string{"/massd/livez": "alive", "/massd/readyz": "ready"} {
+	for path, state := range map[string]string{"/apis/massd/livez": "alive", "/apis/massd/readyz": "ready"} {
 		probeStatus, body := request(t, http.MethodGet, p.endpoint, path, "", nil)
 		require.Equal(t, http.StatusOK, probeStatus, string(body))
 		require.JSONEq(t, `{"status":"`+state+`"}`, string(body))
 	}
 
-	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/massd"
-	operatorToken, err := os.ReadFile(operator)
-	require.NoError(t, err)
+	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/apis/massd"
 	dial := &websocket.Dialer{HandshakeTimeout: time.Second}
-	for _, credential := range []string{"", f.token, string(operatorToken), roleToken(t, f, router)} {
+	for _, credential := range []string{"", f.token, roleToken(t, f, router)} {
 		checkMassdUpgrade(t, dial, mount, credential, "", "", http.StatusUnauthorized)
 	}
 	checkMassdUpgrade(t, dial, mount, token, "", "foreign.example.test", http.StatusForbidden)
 	checkMassdUpgrade(t, dial, mount, token, p.endpoint, "", http.StatusForbidden)
-	status, _ = request(t, http.MethodGet, p.endpoint, "/massd/rpc", token, nil)
+	checkMassdUpgrade(t, dial, "ws"+strings.TrimPrefix(p.endpoint, "http")+"/massd", token, "", "", http.StatusNotFound)
+	status, _ := request(t, http.MethodGet, p.endpoint, "/apis/massd/rpc", token, nil)
 	require.Equal(t, http.StatusNotFound, status)
 	checkMassctlMountedSession(t, mount, token, router)
 
 	wss, roots := startMASSProxy(t, p.endpoint)
 	x509.SetFallbackRoots(roots)
 	tlsDial := &websocket.Dialer{HandshakeTimeout: time.Second}
-	checkMassdUpgrade(t, tlsDial, wss, token, mountedMASSOrigin, "", http.StatusSwitchingProtocols)
+	checkMassdUpgrade(t, tlsDial, wss, token, "", "", http.StatusSwitchingProtocols)
 	checkMassdUpgrade(t, tlsDial, wss, token, "https://foreign.example.test", "", http.StatusForbidden)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
@@ -104,7 +88,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	slowSubscription, err := slow.Subscribe(ctx, ref)
 	require.NoError(t, err)
 
-	preview := "/v1/core/session-bindings/" + router.ID
+	preview := "/apis/core/v1/session-bindings/" + router.ID
 	previewCtx, cancelPreview := context.WithCancel(ctx)
 	defer cancelPreview()
 	req, err := http.NewRequestWithContext(previewCtx, http.MethodGet, p.endpoint+preview+"/live", http.NoBody)
@@ -120,7 +104,7 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	submitted := input("mounted-mass-router")
 	submitted.Message.Content[0].Text.Text += " " + token
 	receipt := submit(t, p, f, submitted)
-	status, observed := request(t, http.MethodGet, p.endpoint, "/v1/core/trigger-messages", "", nil)
+	status, observed := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/trigger-messages", "", nil)
 	require.Equal(t, http.StatusOK, status)
 	require.NotContains(t, string(observed), token)
 	require.Contains(t, string(observed), "[redacted]")
@@ -170,42 +154,6 @@ func TestEmbeddedMASSMount(t *testing.T) {
 	require.NoError(t, instance.Shutdown(ctx))
 }
 
-func TestEmbeddedMASSExposureConfig(t *testing.T) {
-	f, operator := eventFixture(t, "ws://127.0.0.1:1")
-	saved, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	config := strings.Replace(string(saved), "massd:\n  endpoint: ws://127.0.0.1:1", mountedMASSConfig+mountedMASSExpose, 1)
-	path := filepath.Join(f.dir, "embedded-massd.token")
-	write(t, f.config, config)
-	_, err = core.LoadConfig(f.config)
-	require.ErrorContains(t, err, "readable private regular file")
-	operatorToken, err := os.ReadFile(operator)
-	require.NoError(t, err)
-	for _, credential := range []string{f.token, string(operatorToken), "cap_" + strings.Repeat("m", 48)} {
-		write(t, path, credential)
-		_, err := core.LoadConfig(f.config)
-		require.ErrorContains(t, err, "distinct from Core credentials")
-	}
-	write(t, path, strings.Repeat("x", 32)+"\u2003"+strings.Repeat("x", 32))
-	_, err = core.LoadConfig(f.config)
-	require.ErrorContains(t, err, "without whitespace or control characters")
-	write(t, path, strings.Repeat("m", 48))
-	require.NoError(t, os.Chmod(path, 0o644))
-	_, err = core.LoadConfig(f.config)
-	require.ErrorContains(t, err, "readable private regular file")
-	require.NoError(t, os.Chmod(path, 0o600))
-	cfg, err := core.LoadConfig(f.config)
-	require.NoError(t, err)
-	require.Equal(t, path, cfg.Massd.Embedded.Expose.TokenFile)
-	write(t, f.config, strings.Replace(config, "listen: 127.0.0.1:", "listen: 0.0.0.0:", 1))
-	cfg, err = core.LoadConfig(f.config)
-	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(cfg.Listen, "0.0.0.0:"))
-	cfg.Massd.Embedded.Expose.TokenFile = ""
-	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
-	require.ErrorContains(t, err, "expose.tokenFile is required")
-}
-
 func TestOperatorAndEmbeddedMASSViaDeploymentAddress(t *testing.T) {
 	addresses, err := net.InterfaceAddrs()
 	require.NoError(t, err)
@@ -225,12 +173,10 @@ func TestOperatorAndEmbeddedMASSViaDeploymentAddress(t *testing.T) {
 	require.NoError(t, err)
 	operatorToken, err := core.ReadOperatorToken(operatorFile)
 	require.NoError(t, err)
-	massdToken := strings.Repeat("M", 48)
-	write(t, filepath.Join(f.dir, "embedded-massd.token"), massdToken)
 	beforeListen, listenAndRest, _ := strings.Cut(string(config), "listen: ")
 	_, afterListen, _ := strings.Cut(listenAndRest, "\n")
 	deploymentConfig := beforeListen + "listen: " + net.JoinHostPort(host, "0") + "\nexternalURL: https://core.example.test\n" + afterListen
-	write(t, f.config, strings.Replace(deploymentConfig, "massd:\n  endpoint: ws://127.0.0.1:1", mountedMASSConfig+mountedMASSExpose, 1))
+	write(t, f.config, strings.Replace(deploymentConfig, "massd:\n  endpoint: ws://127.0.0.1:1\n", "", 1))
 	p := f.start()
 	endpoint, err := url.Parse(p.endpoint)
 	require.NoError(t, err)
@@ -246,12 +192,11 @@ func TestOperatorAndEmbeddedMASSViaDeploymentAddress(t *testing.T) {
 		{token: operatorToken, status: http.StatusOK},
 		{status: http.StatusUnauthorized},
 		{token: f.token, status: http.StatusUnauthorized},
-		{token: massdToken, status: http.StatusUnauthorized},
 		{token: operatorToken, host: "foreign.example.test", status: http.StatusForbidden},
 		{token: operatorToken, origin: p.endpoint, status: http.StatusForbidden},
 		{token: operatorToken, fetchSite: "same-origin", status: http.StatusForbidden},
 	} {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, p.endpoint+"/v1/core/scheduled-tasks", http.NoBody)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, p.endpoint+"/apis/core/v1/scheduled-tasks", http.NoBody)
 		require.NoError(t, err)
 		req.Host = tc.host
 		if tc.token != "" {
@@ -273,14 +218,14 @@ func TestOperatorAndEmbeddedMASSViaDeploymentAddress(t *testing.T) {
 	require.NoError(t, err, "%s", output)
 	require.JSONEq(t, `{"items":[]}`, string(output))
 
-	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/massd"
+	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/apis/massd"
 	dial := &websocket.Dialer{HandshakeTimeout: time.Second}
-	for _, token := range []string{"", operatorToken, f.token} {
+	for _, token := range []string{"", f.token} {
 		checkMassdUpgrade(t, dial, mount, token, "", "", http.StatusUnauthorized)
 	}
-	checkMassdUpgrade(t, dial, mount, massdToken, "", "", http.StatusSwitchingProtocols)
-	checkMassdUpgrade(t, dial, mount, massdToken, "", "foreign.example.test", http.StatusForbidden)
-	checkMassdUpgrade(t, dial, mount, massdToken, "https://foreign.example.test", "", http.StatusForbidden)
+	checkMassdUpgrade(t, dial, mount, operatorToken, "", "", http.StatusSwitchingProtocols)
+	checkMassdUpgrade(t, dial, mount, operatorToken, "", "foreign.example.test", http.StatusForbidden)
+	checkMassdUpgrade(t, dial, mount, operatorToken, "https://foreign.example.test", "", http.StatusForbidden)
 }
 
 func checkMassctlMountedSession(t *testing.T, mount, token string, binding core.SessionBinding) {
@@ -334,7 +279,7 @@ func startMASSProxy(t *testing.T, endpoint string) (string, *x509.CertPool) {
 	target, err := url.Parse(endpoint)
 	require.NoError(t, err)
 	routes := http.NewServeMux()
-	routes.Handle("/massd/", &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
+	routes.Handle("/apis/massd/", &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
 		r.SetURL(target)
 		r.Out.Host = target.Host
 	}})
@@ -342,7 +287,7 @@ func startMASSProxy(t *testing.T, endpoint string) (string, *x509.CertPool) {
 	t.Cleanup(proxy.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(proxy.Certificate())
-	return "wss" + strings.TrimPrefix(proxy.URL, "https") + "/massd", roots
+	return "wss" + strings.TrimPrefix(proxy.URL, "https") + "/apis/massd", roots
 }
 
 func mountedMASSClient(t *testing.T, endpoint, token string, queue int) *client.Client {

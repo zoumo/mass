@@ -10,13 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zoumo/mass/internal/superagentapi"
 	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 	"github.com/zoumo/mass/superagent/triggers/internal/trigger"
 )
 
 const (
-	TriggerMessagesPath = "/v1/core/trigger-messages"
-	OutboxMessagesPath  = "/v1/core/outbox-messages"
+	TriggerMessagesPath = superagentapi.Prefix + "/trigger-messages"
+	OutboxMessagesPath  = superagentapi.Prefix + "/outbox-messages"
 )
 
 type Client struct {

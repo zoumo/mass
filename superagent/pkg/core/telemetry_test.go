@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 
 func TestCoreTelemetryHTTP(t *testing.T) {
 	f := fixtureAt(t)
+	f.seedToken("triggers.token", f.token)
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	reader := sdkmetric.NewManualReader()
@@ -67,20 +67,20 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 	}
 	body, err := json.Marshal(input(secret))
 	require.NoError(t, err)
-	response := request(http.MethodPost, "/v1/core/trigger-messages", "http://foreign.invalid", "00-"+traceID+"-"+parent+"-01", body)
+	response := request(http.MethodPost, "/apis/core/v1/trigger-messages", "http://foreign.invalid", "00-"+traceID+"-"+parent+"-01", body)
 	require.Equal(t, http.StatusForbidden, response.StatusCode)
 	require.NoError(t, response.Body.Close())
 	require.Empty(t, recorder.Ended())
 
 	for _, sampled := range []string{"01", "00"} {
-		response = request(http.MethodPost, "/v1/core/trigger-messages?ignored="+secret, server.Endpoint(), "00-"+traceID+"-"+parent+"-"+sampled, body)
+		response = request(http.MethodPost, "/apis/core/v1/trigger-messages?ignored="+secret, server.Endpoint(), "00-"+traceID+"-"+parent+"-"+sampled, body)
 		require.Equal(t, http.StatusOK, response.StatusCode)
 		var receipt core.Receipt
 		require.NoError(t, json.NewDecoder(response.Body).Decode(&receipt))
 		require.NoError(t, response.Body.Close())
 		require.Equal(t, sampled == "00", receipt.Duplicate)
 	}
-	response = request(http.MethodGet, "/v1/core/trigger-messages/"+secret, "", "invalid", nil)
+	response = request(http.MethodGet, "/apis/core/v1/trigger-messages/"+secret, "", "invalid", nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode)
 	require.NoError(t, response.Body.Close())
 
@@ -95,7 +95,7 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 			require.NotContains(t, attr.Value.String(), f.token)
 		}
 	}
-	serverSpan := spans["POST /v1/core/trigger-messages"]
+	serverSpan := spans["POST /apis/core/v1/trigger-messages"]
 	operation := spans["superagent.message.admit"]
 	require.NotNil(t, serverSpan)
 	require.NotNil(t, operation)
@@ -103,8 +103,8 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 	require.Equal(t, parent, serverSpan.Parent().SpanID().String())
 	require.Equal(t, traceID, serverSpan.SpanContext().TraceID().String())
 	require.Equal(t, serverSpan.SpanContext(), operation.Parent())
-	require.NotNil(t, spans["GET /v1/core/trigger-messages/{messageId}"])
-	require.False(t, spans["GET /v1/core/trigger-messages/{messageId}"].Parent().IsValid())
+	require.NotNil(t, spans["GET /apis/core/v1/trigger-messages/{messageId}"])
+	require.False(t, spans["GET /apis/core/v1/trigger-messages/{messageId}"].Parent().IsValid())
 
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &collected))
@@ -151,7 +151,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f := fixtureAt(t)
 	f.token = `mcp-source-test-secret-"quoted"-\escaped`
-	write(t, filepath.Join(f.dir, "source.token"), f.token)
+	f.seedToken("triggers.token", f.token)
 	f.execution(boundary)
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -225,7 +225,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	status, body = call(topicToken, "ping", json.RawMessage(`1.5`), nil)
 	require.Equal(t, http.StatusBadRequest, status)
 	require.Contains(t, string(body), "Invalid Request")
-	status, _ = request(t, http.MethodGet, p.endpoint, "/v1/mcp", topicToken, nil)
+	status, _ = request(t, http.MethodGet, p.endpoint, "/apis/core/v1/mcp", topicToken, nil)
 	require.Equal(t, http.StatusMethodNotAllowed, status)
 	status, _ = request(t, http.MethodPost, p.endpoint, "/v1/role/topic_query", topicToken, struct{}{})
 	require.Equal(t, http.StatusNotFound, status)
@@ -331,7 +331,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		spans := map[[3]string]uint64{}
 		for _, span := range recorder.Ended() {
-			if span.Name() != "POST /v1/mcp" {
+			if span.Name() != "POST /apis/core/v1/mcp" {
 				continue
 			}
 			attrs := attribute.NewSet(span.Attributes()...)
@@ -359,6 +359,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 func TestMCPMutationTelemetryByAuthenticatedCaller(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f := fixtureAt(t)
+	f.seedToken("triggers.token", f.token)
 	f.execution(boundary)
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -444,7 +445,7 @@ func TestMCPMutationTelemetryByAuthenticatedCaller(t *testing.T) {
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		recorded := map[[3]string]uint64{}
 		for _, span := range recorder.Ended() {
-			if span.Name() != "POST /v1/mcp" {
+			if span.Name() != "POST /apis/core/v1/mcp" {
 				continue
 			}
 			attrs := attribute.NewSet(span.Attributes()...)

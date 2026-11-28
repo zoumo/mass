@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUpRight, ChevronDown, ChevronRight, GitBranch, List, Undo2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { formatTime, messageTitle, eventStatusLabel, sourceLabel, type Page } from '../workbench'
-import { navigate, usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { observerHome, navigate, usePages, useRecord, viewHref, type ViewProps } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './router.css'
 
@@ -83,7 +83,7 @@ function routerLanes(row: RouterMessage, limit: string): FlowLane[] {
   function evidence(id: string, reason?: string) {
     return <div className="router-flow-evidence">
       {reason && <p>{reason}</p>}
-      <a href={'/superagent/?' + new URLSearchParams({ view: 'internal-events', id })}>事件记录 · {id}<ArrowUpRight size={13}/></a>
+      <a href={observerHome + '?' + new URLSearchParams({ view: 'internal-events', id })}>事件记录 · {id}<ArrowUpRight size={13}/></a>
     </div>
   }
   function edge(action: string, reason?: string) {

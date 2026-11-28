@@ -44,7 +44,7 @@ func spanLinksTrace(span *tracepb.Span, traceID string) bool {
 
 func observedTraces(t *testing.T, p *process, collection, id string) []observerTrace {
 	t.Helper()
-	status, body := request(t, http.MethodGet, p.endpoint, "/v1/core/"+collection+"/"+id+"?trace=true", "", nil)
+	status, body := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/"+collection+"/"+id+"?trace=true", "", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	for _, key := range []string{`"traceparent"`, `"tracestate"`, `"spanId"`, `"baggage"`} {
 		require.NotContains(t, string(body), key)
@@ -235,9 +235,9 @@ func TestTraceAssociationsSingleEventParent(t *testing.T) {
 	}
 	require.NotNil(t, issue)
 	for _, name := range []string{
-		"POST /v1/mcp", "superagent.internal_event.dispatch", "superagent.routing.decide",
-		"POST /v1/mcp", "superagent.internal_event.dispatch", "superagent.message.admit",
-		"POST /v1/core/trigger-messages",
+		"POST /apis/core/v1/mcp", "superagent.internal_event.dispatch", "superagent.routing.decide",
+		"POST /apis/core/v1/mcp", "superagent.internal_event.dispatch", "superagent.message.admit",
+		"POST /apis/core/v1/trigger-messages",
 	} {
 		parent := byID[hex.EncodeToString(issue.GetParentSpanId())]
 		require.NotNil(t, parent, "missing parent %s of %s", name, issue.GetName())

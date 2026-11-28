@@ -36,7 +36,7 @@ func TestWatchdogCompose(t *testing.T) {
 	child := fixtureParentPID(t, first.ParentPID)
 	require.Equal(t, pid, fixtureParentPID(t, child), "native Codex is owned by the Watchdog child")
 	require.Equal(t, core.WatchdogSnapshot{Enabled: true, Running: true}, readWatchdogSnapshot(t, endpoint))
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint+"/v1/core/watchdog", http.NoBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint+"/apis/core/v1/watchdog", http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Origin", "https://foreign.example")
 	response, err := http.DefaultClient.Do(req)
@@ -154,11 +154,9 @@ func seedComposeReports(t *testing.T, coreDir string) {
 func writeWatchdogCompose(t *testing.T, dir string, interval time.Duration) (string, string) {
 	t.Helper()
 	path := filepath.Join(dir, "stack.yaml")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "source-token"), []byte(strings.Repeat("x", 40)), 0o600))
 	config := fmt.Sprintf(`core:
   listen: 127.0.0.1:0
   dataDir: core-state
-  accessToken: {triggers: ./source-token}
 watchdog: {interval: %s}
 `, interval)
 	require.NoError(t, os.WriteFile(path, []byte(config), 0o600))
@@ -169,7 +167,7 @@ func readWatchdogSnapshot(t *testing.T, endpoint string) core.WatchdogSnapshot {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/core/watchdog", http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/apis/core/v1/watchdog", http.NoBody)
 	require.NoError(t, err)
 	response, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

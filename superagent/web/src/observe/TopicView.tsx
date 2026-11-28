@@ -6,7 +6,7 @@ import { formatTime, eventStatusLabel, messageBody, sourceLabel, stateLabel, typ
 import ObjectWorkspace from './ObjectWorkspace'
 import { ObjectAvatar } from './ConversationCard'
 import PerspectiveFlow, { type FlowLane, type FlowNode } from './PerspectiveFlow'
-import { sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
+import { observerHome, sessionChatHref, usePages, useRecord, viewHref, type ViewProps } from './observer'
 import StructuredContent, { type StructuredBody } from './StructuredContent'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './topic.css'
@@ -36,7 +36,7 @@ type Detail = WorkbenchRow & {
 const actors: Record<string, string> = { core: 'Core', topic: 'Topic', router: 'Router', issue: 'Issue Session' }
 const categories = { all: '全部', message: '消息', issue: 'Issue' } as const
 const recordHref = (view: string, filters: Record<string, string>) =>
-  '/superagent/?' + new URLSearchParams({ view, ...filters })
+  observerHome + '?' + new URLSearchParams({ view, ...filters })
 
 function ReadError({ message, stale }: { message: string; stale?: boolean }) {
   return <p role="alert" className="read-error">{message}{stale && ' · 快照已过时'} · 可点「刷新」重试</p>

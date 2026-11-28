@@ -66,9 +66,9 @@ func (t composeTrigger) check(ctx context.Context, executable, path, coreEndpoin
 	return nil
 }
 
-func prepareComposeTriggers(path string, sections map[string][]byte, config core.Config) ([]composeTrigger, string, error) {
+func prepareComposeTriggers(path string, sections map[string][]byte, config core.Config) ([]composeTrigger, error) {
 	if len(sections) == 0 {
-		return nil, "", nil
+		return nil, nil
 	}
 	coreHost, corePort, _ := net.SplitHostPort(config.Listen) // Validated by Core.
 	probeHost := coreHost
@@ -78,18 +78,15 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 	probeURL := url.URL{Scheme: "http", Host: net.JoinHostPort(probeHost, "1")}
 	probe := childHTTPOrigin(probeURL.String(), coreHost)
 	if probe == nil {
-		return nil, "", errors.New("core configuration: cannot determine the Trigger connection origin")
+		return nil, errors.New("core configuration: cannot determine the Trigger connection origin")
 	}
 	var configured []composeTrigger
 	statePaths := make(map[string]string)
 	if err := reserveComposePath(statePaths, path, "Compose configuration"); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if err := reserveComposePath(statePaths, config.DataDir, "core dataDir"); err != nil {
-		return nil, "", err
-	}
-	if err := reserveComposePath(statePaths, config.Massd.Embedded.DataDir, "core.massd.embedded dataDir"); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	statusListeners := make(map[string]string)
 	for _, kind := range []string{triggers.GitHub, triggers.DWS} {
@@ -100,31 +97,28 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		t := composeTrigger{kind: kind, config: section}
 		component, err := triggers.Load(kind, path, bytes.NewReader(section), probe.String())
 		if err != nil {
-			return nil, "", fmt.Errorf("%s configuration (using core.listen): %w", t.name(), err)
+			return nil, fmt.Errorf("%s configuration (using core.listen): %w", t.name(), err)
 		}
 		t.binding = component.Describe()
-		if err := t.validateUpstreamToken(config); err != nil {
-			return nil, "", fmt.Errorf("%s preflight: %w", t.name(), err)
-		}
 		if err := t.reserveState(statePaths); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		if err := t.reserveStatus(coreHost, corePort, statusListeners); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		configured = append(configured, t)
 	}
 	for _, native := range configured {
 		for _, adapter := range configured {
 			if native.binding.UpstreamTokenEnv == adapter.binding.CoreTokenEnv {
-				return nil, "", fmt.Errorf("%s githubTokenEnv conflicts with %s coreTokenEnv", native.name(), adapter.name())
+				return nil, fmt.Errorf("%s githubTokenEnv conflicts with %s coreTokenEnv", native.name(), adapter.name())
 			}
 		}
 	}
-	return configured, probe.String(), nil
+	return configured, nil
 }
 
-func (t composeTrigger) validateUpstreamToken(config core.Config) error {
+func (t composeTrigger) validateUpstreamToken(config core.Config, triggerToken string) error {
 	if t.binding.UpstreamTokenEnv == "" {
 		return nil
 	}
@@ -132,7 +126,7 @@ func (t composeTrigger) validateUpstreamToken(config core.Config) error {
 	if token == "" {
 		return errors.New("githubTokenEnv must reference a nonempty GitHub credential")
 	}
-	return config.CheckUpstreamToken(token)
+	return config.CheckUpstreamToken(token, triggerToken)
 }
 
 func (t composeTrigger) reserveState(paths map[string]string) error {

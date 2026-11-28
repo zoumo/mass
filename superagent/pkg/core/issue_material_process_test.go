@@ -25,7 +25,7 @@ func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	router := waitBinding(t, p, "router", "", "ready")
 	submitMaterial := func(id string, content ...events.ContentBlock) core.Receipt {
 		t.Helper()
-		status, body := request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, core.SubmitTriggerMessageRequest{
+		status, body := request(t, http.MethodPost, p.endpoint, "/apis/core/v1/trigger-messages", f.token, core.SubmitTriggerMessageRequest{
 			OperationID: id,
 			Message: core.TriggerMessage{
 				SourceMessageID: id, ThreadID: threadID, Content: content,

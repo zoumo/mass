@@ -182,7 +182,7 @@ func TestRemoteComputerRoleSessionsAndReplacement(t *testing.T) {
 
 	operatorToken, err := os.ReadFile(operator)
 	require.NoError(t, err)
-	code, data := request(t, http.MethodPost, p.endpoint, fmt.Sprintf("/v1/core/session-bindings/%s/recoveries", blocked.ID),
+	code, data := request(t, http.MethodPost, p.endpoint, fmt.Sprintf("/apis/core/v1/session-bindings/%s/recoveries", blocked.ID),
 		strings.TrimSpace(string(operatorToken)), map[string]any{
 			"operationId": "retry-before-replace", "mode": "retry", "reconciliation": "Checked tool configuration",
 			"acceptPossibleDuplicate": true,

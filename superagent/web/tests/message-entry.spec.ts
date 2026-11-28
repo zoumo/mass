@@ -1,10 +1,11 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
+import { fixtureTriggerHeaders } from './endpoints.mjs'
 
 const subject = '发布前检查：请确认本次发布涉及的配置变更。'
 const body = subject + '\n' + '服务配置已更新，请核对本次发布的配置项和回归结果。'.repeat(120) + '\n<script>window.injected = true</script>'
 async function seed(request: APIRequestContext) {
-  const response = await request.post('/v1/core/trigger-messages', {
-    headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
+  const response = await request.post('/apis/core/v1/trigger-messages', {
+    headers: fixtureTriggerHeaders,
     data: { operationId: 'observer-entry-chinese', message: {
       sourceMessageId: 'observer-entry-chinese', threadId: 'dws:observer-entry',
       content: [{ type: 'text', text: body }],
@@ -12,7 +13,7 @@ async function seed(request: APIRequestContext) {
   })
   expect(response.ok()).toBeTruthy()
   const receipt = await response.json()
-  return (await request.get('/v1/core/trigger-messages/' + receipt.messageId)).json()
+  return (await request.get('/apis/core/v1/trigger-messages/' + receipt.messageId)).json()
 }
 
 test('Message entry reads the selected record, its full text and Core receipt', async ({ page, request, context }, testInfo) => {
@@ -21,12 +22,12 @@ test('Message entry reads the selected record, its full text and Core receipt', 
   const methods: string[] = []
   page.on('request', req => {
     if (req.url().includes('/v1/')) {
-      expect(new URL(req.url()).pathname).toMatch(/^\/v1\/core\//)
+      expect(new URL(req.url()).pathname).toMatch(/^\/apis\/core\/v1\//)
       methods.push(req.method())
     }
   })
   await page.setViewportSize({ width: 1360, height: 900 })
-  await page.goto('/superagent/message')
+  await page.goto('/console/message')
   await expect(page.getByRole('navigation', { name: '观察视角' }).getByRole('link', { name: 'Message' })).toHaveAttribute('aria-current', 'page')
   const list = page.getByRole('complementary', { name: '最近消息' })
   await list.getByRole('link', { name: /发布前检查/ }).click()
@@ -82,7 +83,7 @@ test('Message entry reads the selected record, its full text and Core receipt', 
 test('narrow Message entry opens an individual record and returns to its list', async ({ page, request }, testInfo) => {
   const record = await seed(request)
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/superagent/message')
+  await page.goto('/console/message')
   const list = page.getByRole('complementary', { name: '最近消息' })
   await expect(list).toBeVisible()
   const selected = list.getByRole('link', { name: /发布前检查/ })

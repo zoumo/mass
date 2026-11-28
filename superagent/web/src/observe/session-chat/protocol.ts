@@ -101,7 +101,7 @@ async function* readFrames(body: NonNullable<Response['body']>) {
 }
 
 export function liveSession(binding: Binding, onEvent: (event: SessionEvent) => void, onEnd: (reason: string) => void) {
-  const path = '/v1/core/session-bindings/' + encodeURIComponent(binding.id) + '/chat'
+  const path = '/apis/core/v1/session-bindings/' + encodeURIComponent(binding.id) + '/chat'
   const controller = new AbortController()
   const { signal } = controller
   const matches = (e: SessionEvent) => e.sessionId === binding.sessionId && e.namespace === binding.namespace && e.sessionName === binding.name

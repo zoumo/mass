@@ -12,13 +12,16 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/internal/httpaddress"
+	"github.com/zoumo/mass/internal/superagentapi"
 	"github.com/zoumo/mass/massd"
+	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -105,16 +108,16 @@ func New() *cobra.Command {
 				return &core.Error{Code: "invalid_argument", Message: "endpoint " + err.Error()}
 			}
 
-			path := "/v1/core/" + kind
+			path := superagentapi.Prefix + "/" + kind
 			q := url.Values{}
 			switch kind {
 			case "status":
 				path = "/status"
 			case "router-messages":
-				path = "/v1/core/trigger-messages"
+				path = superagentapi.Prefix + "/trigger-messages"
 				q.Set("view", "router")
 			case "topic-activity":
-				path = "/v1/core/topics/" + url.PathEscape(args[0]) + "/activity"
+				path = superagentapi.Prefix + "/topics/" + url.PathEscape(args[0]) + "/activity"
 				if activityFilter != "" {
 					q.Set("filter", activityFilter)
 				}
@@ -208,7 +211,7 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config) (resul
 	}()
 	defer func() {
 		budget := coreShutdownTimeout
-		if config.Massd != nil && config.Massd.Embedded != nil {
+		if config.Massd == nil {
 			budget += massd.ShutdownTimeout
 		}
 		shutdown, cancel := context.WithTimeout(context.Background(), budget)
@@ -221,6 +224,9 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config) (resul
 	}()
 
 	addresses := map[string]string{"endpoint": server.Endpoint(), "status": "ready"}
+	if config.Massd == nil {
+		addresses["massdEndpoint"] = embeddedMASSRPCURL(addresses["endpoint"])
+	}
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -233,4 +239,8 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config) (resul
 	case <-ctx.Done():
 		return nil
 	}
+}
+
+func embeddedMASSRPCURL(coreEndpoint string) string {
+	return "ws" + strings.TrimPrefix(coreEndpoint, "http") + core.MassdMountPath + rpcwire.WebSocketPath
 }

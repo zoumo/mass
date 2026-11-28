@@ -40,7 +40,7 @@ smoke test.
 ## Query Core telemetry
 
 In **Traces**, search by the Message's `trace_id` across services. A Message
-submission produces `POST /v1/core/trigger-messages` and its `superagent.message.admit`
+submission produces `POST /apis/core/v1/trigger-messages` and its `superagent.message.admit`
 child span. A single-source workflow continues through role input, routing, Issue
 creation, Issue Session preparation, and the Report. The trace can also include
 MASS RPC, Service, and SDK spans.
@@ -68,7 +68,7 @@ Each authenticated `tools/call` attempt contributes one observation, including
 business errors and retries. Initialization and tool discovery contribute to
 the HTTP request metrics.
 
-Filter `POST /v1/mcp` spans by `superagent.caller.id` and `superagent.role`.
+Filter `POST /apis/core/v1/mcp` spans by `superagent.caller.id` and `superagent.role`.
 For an Issue, use its Topic and SessionBinding IDs to follow role calls.
 Tool attempt metrics are independent of trace sampling.
 
@@ -104,11 +104,11 @@ and Agent subprocess measurements.
 
 ## Enable Superagent Web telemetry
 
-Build Web with `VITE_SUPERAGENT_WEB_TELEMETRY=on make build-superagent-web`.
+Build the binary with `VITE_SUPERAGENT_WEB_TELEMETRY=on make build-superagent`.
 Set `SUPERAGENT_WEB_OTLP_ENDPOINT=http://127.0.0.1:14320` when starting Core.
 Set the endpoint to the receiver's HTTP or HTTPS base URL. Include the path
-prefix if a proxy uses one. Web submits telemetry through the same-origin
-gateway and Core to the Collector's browser receiver. Use the
+prefix if a proxy uses one. The browser sends telemetry to Core at the same
+origin. Core forwards it to the Collector's browser receiver. Use the
 updated Collector configuration to set `service.name` to `superagent-web`.
 
 Open a Superagent Web view and search **Traces** for `service_name = superagent-web`.

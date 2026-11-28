@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
+import { routing } from './endpoints.mjs'
 
 test.use({
- baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`,
+ baseURL: routing,
  viewport: { width: 1280, height: 1060 },
 })
 
@@ -10,7 +11,7 @@ test('Outbox detail renders Markdown and ordered options', async ({ page }) => {
  page.on('request', request => {
   if (request.url().includes('outbox-image.png')) imageRequests.push(request.url())
  })
- await page.goto('/superagent/?view=outbox')
+ await page.goto('/console/?view=outbox')
  const dialog = page.getByRole('dialog')
  const content = dialog.getByTestId('structured-content')
  await page.getByRole('button', { name: '**Formatted reply**', exact: true }).click()
@@ -32,7 +33,7 @@ test('Message and Thread link to read-only reply history and channel evidence', 
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/superagent/?view=messages&mode=records')
+ await page.goto('/console/?view=messages&mode=records')
  const dialog = page.getByRole('dialog')
  await page.getByRole('button', { name: 'Original input outbox-observer-source', exact: true }).click()
  await dialog.getByRole('button', { name: '查看消息回执' }).click()
@@ -62,6 +63,6 @@ test('Message and Thread link to read-only reply history and channel evidence', 
  await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
  await page.screenshot({ path: testInfo.outputPath('outbox-sent.png'), fullPage: true, animations: 'disabled' })
  expect(methods).toEqual(new Set(['GET']))
- expect((await request.head('/v1/core/outbox-messages')).status()).toBe(200)
- expect((await request.post('/v1/core/outbox-messages', { data: {} })).status()).toBe(405)
+ expect((await request.head('/apis/core/v1/outbox-messages')).status()).toBe(200)
+ expect((await request.post('/apis/core/v1/outbox-messages', { data: {} })).status()).toBe(405)
 })

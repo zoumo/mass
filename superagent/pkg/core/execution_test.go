@@ -196,7 +196,7 @@ func TestRoleMCPEndpointDefaultsToLoopback(t *testing.T) {
 	config := Config{Listen: "0.0.0.0:24370"}
 	endpoint, err := config.roleMCPEndpoint()
 	require.NoError(t, err)
-	require.Equal(t, "http://127.0.0.1:24370/v1/mcp", endpoint)
+	require.Equal(t, "http://127.0.0.1:24370/apis/core/v1/mcp", endpoint)
 }
 
 func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
@@ -214,7 +214,7 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	require.NoError(t, readJSON(t.Context(), tx, "SELECT spec FROM session_bindings WHERE id=?", &spec, binding.ID))
 	require.Len(t, *spec.MCPServers, 1)
 	require.Equal(t, runtime.MCPTransportHTTP, (*spec.MCPServers)[0].Type)
-	require.Equal(t, "https://core.example.com/v1/mcp", (*spec.MCPServers)[0].URL)
+	require.Equal(t, "https://core.example.com/apis/core/v1/mcp", (*spec.MCPServers)[0].URL)
 	require.Equal(t, agent.PermissionPresetFullAccess, spec.Config.PermissionPreset)
 	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, spec.Features)
 	require.Contains(t, spec.SystemPrompt, "deduplicate by event_id")

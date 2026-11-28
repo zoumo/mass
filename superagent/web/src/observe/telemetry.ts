@@ -22,11 +22,11 @@ function resourceRequest(path: string) {
   const [collection, id, action] = path.split('?', 1)[0].split('/')
   if (path === 'status') return { endpoint: '/status', api: 'status' }
   if (collection === 'performance' || collection === 'traces') {
-    return { endpoint: '/v1/telemetry/' + path, api: collection }
+    return { endpoint: '/apis/core/v1/telemetry/' + path, api: collection }
   }
   const resource = collection === 'messages' ? 'trigger-messages' : collection === 'outbox' ? 'outbox-messages' : collection
   const api = !apiCollections.has(collection) ? undefined : action && id ? `${resource}/${action}` : resource
-  return { endpoint: '/v1/core/' + resource + path.slice(collection.length), api }
+  return { endpoint: '/apis/core/v1/' + resource + path.slice(collection.length), api }
 }
 
 type Outcome = 'ok' | 'error' | 'canceled'
@@ -39,7 +39,7 @@ function instanceId() {
 }
 
 function createTelemetry() {
-  const url = (signal: 'metrics' | 'traces') => new URL(`/v1/telemetry/${signal}`, location.origin).href
+  const url = (signal: 'metrics' | 'traces') => new URL(`/apis/core/v1/telemetry/${signal}`, location.origin).href
   const resource = resourceFromAttributes({
     'service.name': 'superagent-web',
     'service.instance.id': instanceId(),

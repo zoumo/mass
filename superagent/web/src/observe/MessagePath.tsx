@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { ArrowDownRight, ArrowRight, CheckCheck, CircuitBoard, CornerDownRight, FileCheck2, GitBranch, Layers, Mail, Route, X } from 'lucide-react'
 import { eventStatusLabel, messageBody, sourceLabel, stateLabel, type WorkbenchRow } from '../workbench'
-import { usePages, useRecord, viewHref, type MessageRecord } from './observer'
+import { observerHome, usePages, useRecord, viewHref, type MessageRecord } from './observer'
 import { TraceLinks, type TraceAssociation } from './TraceLinks'
 import './message-path.css'
 
@@ -157,7 +157,7 @@ export default function MessagePath({ message }: { message: MessageRecord }) {
     {(replies.data?.length || replies.next || replies.error) ? <section className="path-outbox"><h3><ArrowDownRight size={16}/>渠道回执 · {source}</h3>
       {replies.data?.map(row => <details key={row.id}><summary><span>{row.preview}</span><b>{row.status === 'sent' ? '渠道已发送' : '渠道 · ' + stateLabel(row.status)}</b></summary>
         <Fields fields={[['Outbox ID', row.id], ['任务 ID', row.receipt?.taskId], ['错误码', row.receipt?.errorCode], ['Trace', <TraceLinks associations={row.traceAssociations} at={row.createdAt}/>]]}/>
-        <a className="path-link" href={'/superagent/?view=outbox&id=' + encodeURIComponent(row.id)}>查看渠道回执<ArrowRight size={14}/></a>
+        <a className="path-link" href={observerHome + '?view=outbox&id=' + encodeURIComponent(row.id)}>查看渠道回执<ArrowRight size={14}/></a>
       </details>)}<PageStatus page={replies} name="渠道回执"/></section> : null}
   </section>
 }

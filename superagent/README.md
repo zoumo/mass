@@ -6,10 +6,10 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
 ## Start Core
 
 1. Copy [the Core example](config.example.yaml) to a private run directory.
-   Set `accessToken.triggers` to a private file containing the shared Trigger
-   token. Set `accessToken.admin` to a separate private file to enable
-   Operator commands. Use at least 32 bytes per token without whitespace or
-   control characters. Relative paths start at the YAML file's directory.
+   Resolve relative paths from the YAML file's directory. Core creates
+   `<dataDir>/credentials/admin.token` for Operators and embedded MASS, and
+   `<dataDir>/credentials/triggers.token` for Triggers. Core reuses these files
+   on restart.
 2. Build and start Core from the repository root.
 
    ```sh
@@ -34,11 +34,13 @@ Omit `sessions` to collect Messages without starting Agents. To enable execution
 set `sessions.router`, `sessions.topic`, and at least one template in
 `sessions.issue.templates`.
 Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
-Use the same host and OS account for Core and standalone `massd` so native
-Sessions can read their credential files. See the [Session preparation contract](API.md#session-configuration-and-preparation).
+When MASS runs on another host, set an HTTPS `externalURL` that the MASS host
+can reach. The MASS host must be able to read the Session workspaces and
+`<dataDir>/mcp-files` at the absolute paths Core puts in the Session spec.
+See the [Session preparation contract](API.md#session-configuration-and-preparation).
 
-Core resource reads need no login. Keep Core and the Web gateway within a
-network boundary for trusted readers. When `listen` uses a wildcard, use a
+Core resource reads need no login. Keep the Core listener within a network
+boundary for trusted readers. When `listen` uses a wildcard, use a
 concrete numeric address to reach Core.
 
 ### Reuse an existing Core data directory
@@ -56,22 +58,10 @@ installations share `massd`, give them distinct `sessions.namespace` values.
 For a fresh Trigger database or a restart, follow the
 [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
 
-### Migrate Core access tokens
+### Upgrade deployed Core data and credentials
 
-1. Stop the existing Core and Trigger owners. Preserve the Core data directory
-   and each adapter's database, send evidence, and feedback state.
-2. Set `accessToken.triggers` to the shared Trigger token file. Move the
-   former `operatorTokenFile` value to `accessToken.admin`. In Compose,
-   place `accessToken` under `core`. Remove the old `triggerTokenFile`,
-   `operatorTokenFile`, `sources`, and `outboxConsumers` settings.
-3. Upgrade Core and all Triggers together. Set the standalone adapters'
-   configured token environment variables to the shared value. Compose
-   supplies the value from `core.accessToken.triggers`. Keep the original
-   account IDs, instance IDs, and database paths so each adapter can resume
-   its queue.
-4. Check Core readiness, the adapter status, and a stored Source receipt.
-   For reply-enabled adapters, check that the shared token and the adapter's
-   Source and Account reach its Outbox. Start Outbox pagination again.
+Follow the [single-service migration procedure](docs/migrate-single-service.md)
+to keep data, credentials, and Session history across the upgrade and rollback.
 
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
@@ -119,7 +109,7 @@ to release its current Session and prepare a new one with the updated options.
 ## Scheduled tasks
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent
-tasks and triggering from a local script or CLI, configure `accessToken.admin`
+tasks and triggering from a local script or CLI, use the Core admin token
 and connect directly to Core. Independent schedules also run
 in standalone Core without Session execution. Their Router events remain
 pending until a Router can handle them.
@@ -131,53 +121,35 @@ Core parses five-field cron expressions with [robfig/cron v3](https://github.com
 
 ## Running MASS inside Core
 
-Replace `massd.endpoint` and `massd.tokenFile` with an `embedded` block. Keep
-Core and MASS in separate directories. Set the role profiles and Issue
-profiles to Runtime names available in that MASS instance. MASS registers
-missing `codex` and `claude` Runtimes on startup.
+Core starts embedded MASS in `<dataDir>/massd` when you omit the `massd`
+section. Set the Session role profiles and Issue templates to Runtime names
+available in that instance. MASS registers missing `codex` and `claude`
+Runtimes on startup.
 
-```yaml
-dataDir: ./superagent
-massd:
-  embedded:
-    dataDir: ./massd
-```
-
-Start Core as above. Core prepares embedded MASS before it prints the ready
-record. See [ADR 0001](docs/adr/0001-use-one-mass-rpc-boundary.md) for the
-shared RPC boundary and data ownership.
-
-To switch between embedded and standalone MASS:
-
-1. Stop Core and the current MASS owner. Verify both exited successfully
-   before starting the replacement.
-2. Keep the same MASS data directory, metadata backend, and recovery material.
-   Keep Core's data directory, role MCP address, and credential file paths.
-3. For embedded mode, set `massd.embedded.dataDir`. For standalone mode, start
-   `massd` with the same directory and set `massd.endpoint` in Core.
-4. Restart Core. Compare the Session IDs, resource UIDs, and specs of existing
-   bindings with the pre-cutover records. Reconcile uncertain input before
-   manually resubmitting it. See [operator reconciliation](API.md#operator-reconciliation).
+To connect to external MASS, set `massd.endpoint` to its WebSocket RPC
+address and set `massd.tokenFile` if the service requires a bearer token.
+When moving the MASS data between owners, stop Core and MASS before the
+handoff. Keep the same MASS metadata and recovery material. After restarting
+Core, compare the Session IDs, resource UIDs, and specs against the saved
+bindings. Reconcile any uncertain input before manually resubmitting it.
+See [operator reconciliation](API.md#operator-reconciliation).
 
 ### Accessing embedded MASS with massctl
 
-Set `massd.embedded.expose.tokenFile` to a private file with a dedicated MASS
-token of at least 32 bytes. The token can't contain whitespace or control
-characters. Use separate credentials for Core Source, Operator, and role MCP
-access. Reserve the `cap_` prefix for role MCP.
-The MASS token grants access to all Runtime and Session operations, including
-Sessions managed by Core.
+Use `<dataDir>/credentials/admin.token`. It authorizes all MASS Runtime and
+Session operations, including operations on Sessions managed by Core.
 
 ```sh
-MASS_TOKEN="$(cat /absolute/run/embedded-massd.token)" \
-	bin/massctl --url ws://127.0.0.1:24370/massd session list
+MASS_TOKEN="$(cat /absolute/run/superagent-core-data/credentials/admin.token)" \
+	bin/massctl --url ws://127.0.0.1:24370/apis/massd session list
 ```
 
-For remote access, use a trusted TLS reverse proxy. Forward `/massd/`, the
+For remote access, use a trusted TLS reverse proxy. Forward `/apis/massd/`, the
 Bearer header, and the WebSocket Upgrade. Set upstream `Host` to the Core
-listen address with its port. Clients use `wss://<proxy-host>/massd`. If they
-send `Origin`, add the exact value to `massd.embedded.expose.allowedOrigins`.
-See the [WebSocket binding](../harness/bindings/websocket.md#认证与部署).
+listen address with its port. Native clients use `wss://<proxy-host>/apis/massd`.
+Embedded MASS rejects upgrades containing an `Origin` header.
+In embedded mode, both `superagent serve` and `superagent compose` print
+`massdEndpoint` with the full WebSocket RPC path in the ready record.
 
 ## Run one Watchdog check
 
@@ -215,7 +187,7 @@ Use a positive Go duration string, such as `10m` or `1h`. Under
 On shutdown, Compose cancels the active check and waits for Watchdog and the
 Codex process group to exit.
 
-Open **Watchdog** at `/superagent/watchdog` to see whether Watchdog is running
+Open **Watchdog** at `/console/watchdog` to see whether Watchdog is running
 and read the latest completed check. Use the Topic and Issue links to review
 its judgment and recommendation in context. Compose keeps the latest result
 after Watchdog exits and starts with an empty snapshot after restart.
@@ -223,13 +195,11 @@ after Watchdog exits and starts with an empty snapshot after restart.
 ## Run the stack with Compose
 
 1. Copy [the Compose example](compose.example.yaml) to a private run directory.
-   Keep `core` and the Trigger sections you want to run. Compose starts
-   embedded MASS. Keep Core, MASS, and Trigger data in separate paths.
-2. Set `core.accessToken.triggers`. Compose supplies the shared token to the
-   Trigger subprocesses. Reply-enabled Triggers use the token and their
-   Source and Account to read and update the Outbox. Supply
-   native GitHub and DWS credentials as described in the
-   [Trigger guide](triggers/README.md).
+   Keep `core` and the Trigger sections you want to run. Keep Trigger files
+   outside `core.dataDir`.
+2. Supply native GitHub and DWS credentials. Compose waits for Core readiness,
+   reads `<core.dataDir>/credentials/triggers.token`, and injects the token into
+   each Trigger subprocess. See the [Trigger guide](triggers/README.md).
 3. Start Compose from the repository root.
 
    ```sh
@@ -242,9 +212,9 @@ after Watchdog exits and starts with an empty snapshot after restart.
    while `/readyz` continues to report Core admission. For adapter details,
    use the corresponding address in `triggerEndpoints`. Compose reports the
    actual bound port and uses a loopback address for a wildcard listener.
-5. If you enabled embedded MASS exposure, use `massdEndpoint` with its
-   dedicated token. Use `/massd/livez` and `/massd/readyz` at the Core origin
-   to check the exposed instance.
+5. When Core runs embedded MASS, the ready record includes `massdEndpoint`.
+   Connect with the Core admin token. Use `/apis/massd/livez` and `/apis/massd/readyz`
+   at the Core origin to check the embedded instance.
 
 Press Ctrl-C to stop the Triggers before Core and embedded MASS. After startup,
 Compose logs a Trigger exit and keeps the other processes running. If Core
@@ -252,79 +222,50 @@ exits unexpectedly, Compose stops the Triggers and returns an error.
 
 ## Start Superagent Web
 
-Build `superagent-web` and start its static service with Caddy 2.11.2.
-Run these commands from the repository root in one terminal.
+Run `make build-superagent` and start `bin/superagent serve` or
+`bin/superagent compose`. Open `/console/` on the printed Core endpoint, for
+example `http://127.0.0.1:24370/console/`. Core redirects `/` to `/console/`.
+The same listener serves the Core API, probes, and embedded MASS. To deploy
+a Web update, replace the binary and restart it.
 
-```sh
-make build-superagent-web
-cd superagent/web
-caddy run --config Caddyfile
-```
-
-Start the same-origin gateway in a second terminal.
-
-```sh
-cd superagent/web
-caddy run --config Gateway.Caddyfile
-```
-
-Open `http://127.0.0.1:24372/superagent/`. The Web service listens on
-`127.0.0.1:24371` and serves `superagent/web/dist`. The gateway sends
-`/superagent/` and its assets to Web. It sends `/v1/core/`, `/v1/telemetry/`,
-`/v1/mcp`, `/status`, `/livez`, and `/readyz` to Core. Restart Web to serve a
-new build. Core and Compose can keep running during that restart.
-
-| Setting | Use |
-|---|---|
-| `SUPERAGENT_WEB_LISTEN` | Host and port of the static Web service. Set `SUPERAGENT_WEB_BIND` to change its loopback bind. |
-| `SUPERAGENT_WEB_DIST` | Absolute path to the Web build when you run Caddy outside `superagent/web`. |
-| `SUPERAGENT_PUBLIC_ORIGIN` | Gateway address with scheme, such as `https://superagent.example.com`. Use your TLS hostname for HTTPS. Set `SUPERAGENT_GATEWAY_BIND` to the intended interface. |
-| `SUPERAGENT_WEB_UPSTREAM` | Host and port of the Web service. Defaults to `127.0.0.1:24371`. |
-| `SUPERAGENT_CORE_UPSTREAM` | Host and port of the Core listener. Defaults to `127.0.0.1:24370`. |
-| `SUPERAGENT_MASSD_ROUTE` | `embedded_massd` forwards `/massd/` to Core. `standalone_massd` removes the `/massd` prefix and forwards to `SUPERAGENT_MASSD_UPSTREAM`, which defaults to `127.0.0.1:24368`. |
-
-The gateway checks the browser Origin against the incoming scheme and host. It
-checks Fetch Metadata and normalizes `Host` before forwarding to Core. Keep
-backend listeners private. Configure `externalURL` with the origin that role
-Sessions use for MCP, including the gateway origin if they connect there.
-Connect directly to Core for Operator commands.
+Use your deployment ingress to terminate TLS and control access. Keep the
+Core listener private. At the ingress, validate browser Origin against the
+public origin and forward the request using the upstream Core authority as
+`Host`. If a validated browser request includes `Origin` on a Core API request,
+rewrite it to the upstream Core origin and retain `Sec-Fetch-Site`. Keep
+Operator clients on a direct trusted Core connection. Set `externalURL` to
+the origin role Sessions use for MCP.
 
 If you used `observerAllowedHosts`, use `readAllowedHosts` for additional
-direct Core read hosts. The gateway already sends the Core authority as `Host`.
-Rename `telemetryQuery` or `observerTrace` to `openobserve` in existing Core
-configurations. In Compose, use `core.openobserve`. Keep the credential file
-on the Core host. See [OpenObserve queries](telemetry/README.md#query-process-and-go-runtime-metrics).
+direct Core resource read hosts. Rename `telemetryQuery` or `observerTrace` to
+`openobserve` in existing Core configurations. In Compose, use
+`core.openobserve`. Keep the credential file on the Core host. See the
+[OpenObserve setup](telemetry/README.md#query-process-and-go-runtime-metrics).
 
-For local frontend development, run `npm ci` and `npm run dev` in
-`superagent/web`. Open the printed Vite origin at `/superagent/`. Vite proxies
-Core and embedded MASS paths to `SUPERAGENT_CORE_ORIGIN`, which defaults to
-`http://127.0.0.1:24370`.
+### Develop the Web locally
+
+Start Core on `127.0.0.1:24370`. You can use a Go-only build for the Vite
+workflow.
+
+```sh
+go run ./cmd/superagent serve --config /absolute/run/core.yaml
+```
+
+In another terminal, run these commands and open the Vite origin at `/console/`.
+
+```sh
+cd superagent/web
+npm ci
+npm run dev
+```
+
+Vite proxies API and probe requests to
+`SUPERAGENT_CORE_ORIGIN`, which defaults to `http://127.0.0.1:24370`.
 
 ## Cut over the HTTP API
 
-Use Core, Compose, the Superagent Web build, the gateway configuration,
-Operator CLI, and Trigger binaries that use the same resource API. This
-includes the separately built AntCode Trigger. Configure probes for `/livez`
-and `/readyz` and use `/status` to inspect the stack.
-
-1. Pause incoming Trigger traffic. Stop standalone Triggers and stop Compose
-   or standalone Core. For standalone massd, stop it after Core if you are
-   replacing its binary. Verify that the old processes have exited and
-   released their data directories before starting replacements.
-2. Update the binaries, Web build, gateway configuration, and caller
-   configuration together. Use a schema 28 Core directory and schema 3 Trigger
-   databases. Preserve the massd data directory, credential paths, and Session
-   MCP origin. See the Core [data directory requirements](#reuse-an-existing-core-data-directory)
-   and [Trigger cutover steps](triggers/README.md#replace-deployed-triggers).
-   Run one owner per data directory and one active Outbox sender per account.
-3. Start standalone massd first if you stopped it. Then start Compose or Core
-   and check `/readyz` and `/status` at the printed Core origin. If you expose
-   massd, check `/massd/readyz` at its public origin. Start Web and the gateway
-   and open `/superagent/` at the gateway origin.
-4. Start standalone Triggers and resume traffic. Verify that a Trigger Message
-   can be submitted and its receipt read back by `sourceMessageId`. Inspect
-   pending Outbox delivery before retrying an uncertain send. Keep the original
-   native Message identity and the saved Outbox item ID across retries.
+Use the [direct cutover and rollback guide](docs/migrate-single-service.md)
+when deploying this release with standalone Triggers.
 
 ## Inspect delivery and recover input
 
@@ -348,6 +289,8 @@ See [the Core API](API.md) for the resource contract.
 ## Checks
 
 Run `make test-superagent` for the offline Core and Trigger process tests. They
-use synthetic peers and do not call live models or channel accounts. Run
-`make check-superagent` for the full local checks, including Superagent Web browser tests with Caddy and Chrome.
-See the [Makefile](../Makefile).
+use synthetic peers and do not call live models or channel accounts.
+Run `make check-superagent` for the full checks, including Playwright in Chrome
+against Core processes that embed the Web. Use `make check-superagent-web` to
+run the browser tests alone. Use `make openapi-superagent` to export the API
+contract with Go tooling. See the [Makefile](../Makefile).

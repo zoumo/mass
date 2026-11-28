@@ -15,11 +15,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/zoumo/mass/internal/httpaddress"
+	"github.com/zoumo/mass/internal/superagentapi"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
 const (
-	resourcePrefix = "/v1/core/"
+	resourcePrefix = superagentapi.Prefix + "/"
 	maxBodyBytes   = 8 << 20
 	maxTextBytes   = 1500
 )

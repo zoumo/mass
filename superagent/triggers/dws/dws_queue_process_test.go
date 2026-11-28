@@ -110,7 +110,7 @@ func TestDWSQueueRestartsAfterOutageInOrder(t *testing.T) {
 	var submissions []coreclient.TriggerSubmission
 	var bodies [][]byte
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/core/trigger-messages" {
+		if r.Method == http.MethodPost && r.URL.Path == "/apis/core/v1/trigger-messages" {
 			data, err := io.ReadAll(r.Body)
 			var item coreclient.TriggerSubmission
 			if err != nil || json.Unmarshal(data, &item) != nil {
@@ -284,7 +284,7 @@ func TestDWSQueueReplaysLostReceiptWithFeedback(t *testing.T) {
 	}
 	triggertest.Write(t, feedbackPath, raw)
 	lost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		forwardDWSRequest(t, w, r, f.Endpoint, r.Method == http.MethodPost && r.URL.Path == "/v1/core/trigger-messages")
+		forwardDWSRequest(t, w, r, f.Endpoint, r.Method == http.MethodPost && r.URL.Path == "/apis/core/v1/trigger-messages")
 	}))
 	defer lost.Close()
 	emptyFeed := t.TempDir()
@@ -354,7 +354,7 @@ func TestDWSQueueWriteFailurePreservesCommittedRow(t *testing.T) {
 
 func TestDWSQueueRetainsPermanentFailure(t *testing.T) {
 	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/core/trigger-messages" {
+		if r.Method == http.MethodPost && r.URL.Path == "/apis/core/v1/trigger-messages" {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(w, `{"error":{"code":"forbidden"}}`)
 			return

@@ -4,12 +4,16 @@ export const corePort = process.env.SUPERAGENT_BROWSER_PORT || '18793'
 export const routingPort = process.env.SUPERAGENT_ROUTING_BROWSER_PORT || '18794'
 export const auditPort = process.env.SUPERAGENT_OBSERVER_AUDIT_PORT || '18795'
 export const audit = loopback(auditPort)
-export const main = loopback(process.env.SUPERAGENT_BROWSER_GATEWAY_PORT || '18893')
-export const routing = loopback(process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894')
-export const webPort = process.env.SUPERAGENT_BROWSER_WEB_PORT || '18898'
-export const httpsOrigin = `https://127.0.0.1:${process.env.SUPERAGENT_BROWSER_HTTPS_PORT || '18899'}`
-export const fixtureOrigins = {
-  'message-path-fixture': loopback(process.env.SUPERAGENT_MESSAGE_PATH_GATEWAY_PORT || '18895'),
-  'topic-conversation-fixture': loopback(process.env.SUPERAGENT_CONVERSATION_GATEWAY_PORT || '18896'),
-  'session-reuse-fixture': loopback(process.env.SUPERAGENT_SESSION_REUSE_GATEWAY_PORT || '18897'),
+export const main = loopback(corePort)
+export const routing = loopback(routingPort)
+export const fixtureTriggerHeaders = {
+  Authorization: 'Bearer ' + 'a'.repeat(48),
+  'X-Superagent-Source': 'dws',
+  'X-Superagent-Account-Id': 'account-1',
+}
+
+export async function fixtureOrigin(request, name) {
+  const response = await request.get(`${audit}/${name}`)
+  if (!response.ok()) throw new Error(`Fixture ${name} returned HTTP ${response.status()}`)
+  return (await response.json()).endpoint
 }

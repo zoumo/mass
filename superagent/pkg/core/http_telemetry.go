@@ -7,12 +7,14 @@ import (
 	"reflect"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/zoumo/mass/internal/superagentapi"
 )
 
 const (
-	telemetryPerformancePath = "/v1/telemetry/performance"
-	telemetryTracePath       = "/v1/telemetry/traces"
-	telemetryMetricsPath     = "/v1/telemetry/metrics"
+	telemetryPerformancePath = superagentapi.Prefix + "/telemetry/performance"
+	telemetryTracePath       = superagentapi.Prefix + "/telemetry/traces"
+	telemetryMetricsPath     = superagentapi.Prefix + "/telemetry/metrics"
 )
 
 type telemetryTraceInput struct {

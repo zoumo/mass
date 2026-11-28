@@ -8,12 +8,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/zoumo/mass/internal/superagentapi"
 	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
 const (
-	triggerMessagesPath = "/v1/core/trigger-messages"
-	outboxMessagesPath  = "/v1/core/outbox-messages"
+	triggerMessagesPath = superagentapi.Prefix + "/trigger-messages"
+	outboxMessagesPath  = superagentapi.Prefix + "/outbox-messages"
 )
 
 func (s *Server) observeMessageHTTP(next http.HandlerFunc) http.HandlerFunc {
@@ -34,7 +35,7 @@ func (s *Server) authenticateTrigger(r *http.Request) (Source, error) {
 		return Source{}, problem("unauthorized", "valid Core Trigger token is required")
 	}
 	token, ok := strings.CutPrefix(bearer[0], "Bearer ")
-	if !ok || !s.config.acceptsTriggerToken(token) {
+	if !ok || !s.credentials.acceptsTriggerToken(token) {
 		return Source{}, problem("unauthorized", "valid Core Trigger token is required")
 	}
 	source, account := r.Header.Values(triggeridentity.SourceHeader), r.Header.Values(triggeridentity.AccountHeader)

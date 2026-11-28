@@ -1,13 +1,14 @@
 import { test, expect } from '@playwright/test'
+import { routing } from './endpoints.mjs'
 
-test.use({ baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}` })
+test.use({ baseURL: routing })
 
 test('routing, preparation and returns are visible through read-only navigation', async ({ page, request }, testInfo) => {
  const methods: string[] = []
  const errors: string[] = []
  page.on('pageerror', e => errors.push(e.message))
  page.on('request', r => { if (r.url().includes('/v1/')) { methods.push(r.method()); expect(r.headers()['authorization']).toBeUndefined() } })
- await page.goto('/superagent/?view=topics&mode=records')
+ await page.goto('/console/?view=topics&mode=records')
  await expect(page.getByText('核心服务已就绪', { exact: true })).toBeVisible()
  await page.getByRole('button', { name: 'Observer routing Topic', exact: true }).click()
  await expect(page.getByRole('dialog').getByText('进行中', { exact: true })).toBeVisible()
@@ -29,9 +30,9 @@ test('routing, preparation and returns are visible through read-only navigation'
  await expect(page.getByTestId('routing-record')).toContainText('"returnedEventId": "evt_')
  await page.screenshot({ path: testInfo.outputPath('routing-return.png'), fullPage: true, animations: 'disabled' })
  for (const collection of ['topics', 'internal-events', 'session-bindings']) {
-  expect((await request.get(`/v1/core/${collection}`)).status()).toBe(200)
-  expect((await request.head(`/v1/core/${collection}`)).status()).toBe(200)
-  expect((await request.post(`/v1/core/${collection}`, { data: {} })).status()).toBe(405)
+  expect((await request.get(`/apis/core/v1/${collection}`)).status()).toBe(200)
+  expect((await request.head(`/apis/core/v1/${collection}`)).status()).toBe(200)
+  expect((await request.post(`/apis/core/v1/${collection}`, { data: {} })).status()).toBe(405)
  }
  expect(errors).toEqual([])
  expect(methods.every(method => method === 'GET')).toBeTruthy()
@@ -40,15 +41,15 @@ test('routing, preparation and returns are visible through read-only navigation'
 test('internal event shows Session acceptance and stable identity', async ({ page, request }, testInfo) => {
  const methods: string[] = []
  page.on('request', r => { if (r.url().includes('/v1/')) methods.push(r.method()) })
- await page.goto('/superagent/?view=internal-events&id=browser-accepted')
+ await page.goto('/console/?view=internal-events&id=browser-accepted')
  const dialog = page.getByRole('dialog')
  await expect(dialog.getByText('Session 已受理', { exact: true })).toBeVisible()
  await expect(page.getByTestId('routing-record')).toContainText('"event_id": "browser-accepted"')
  await expect(page.getByTestId('routing-record')).toContainText('"kind": "context_supplement"')
  await expect(dialog.getByRole('button', { name: /重试|替换|恢复|确认投递/ })).toHaveCount(0)
  await page.screenshot({ path: testInfo.outputPath('internal-event.png'), fullPage: true, animations: 'disabled' })
- expect((await request.head('/v1/core/internal-events/browser-accepted')).status()).toBe(200)
- expect((await request.post('/v1/core/internal-events/browser-accepted', { data: {} })).status()).toBe(405)
+ expect((await request.head('/apis/core/v1/internal-events/browser-accepted')).status()).toBe(200)
+ expect((await request.post('/apis/core/v1/internal-events/browser-accepted', { data: {} })).status()).toBe(405)
  expect(methods.length).toBeGreaterThan(0)
  expect(methods.every(method => method === 'GET')).toBeTruthy()
 })
