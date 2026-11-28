@@ -3,7 +3,6 @@ package core_test
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,9 +17,6 @@ import (
 func TestStructuredIssueMaterialsProcess(t *testing.T) {
 	f, boundary := fixtureAt(t), newRouteBoundary(t)
 	const threadID = "work/structured-material"
-	config, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	write(t, f.config, string(config)+"    threadIds: ['"+threadID+"']\n")
 	f.execution(boundary)
 	boundary.driver.mu.Lock()
 	boundary.driver.injectReceipt = runtime.InjectReceipt{Acceptance: runtime.Acceptance{Sent: runtime.Bool(true), NativeAccepted: runtime.Bool(true)}}
