@@ -55,7 +55,7 @@ func TestComposeConfigurationDocument(t *testing.T) {
 		{"unknown", valid + secret + ": {}", "unknown Compose configuration section at line 2"},
 		{"duplicate section", valid + "core: {}\n", "duplicate key at line 2"},
 		{"duplicate component key", "core: {listen: " + secret + ", Listen: ''}", "core configuration contains a duplicate key at line 1"},
-		{"duplicate item key", "core: {outboxConsumers: [{name: " + secret + ", name: duplicate}]}", "core configuration contains a duplicate key at line 1"},
+		{"duplicate item key", "core: {readAllowedHosts: [{name: " + secret + ", name: duplicate}]}", "core configuration contains a duplicate key at line 1"},
 		{"nonmapping root", "- " + secret, "compose configuration must be a mapping"},
 		{"null section", "core: null", "core configuration must be a mapping"},
 		{"nonmapping section", "core: " + secret, "core configuration must be a mapping"},

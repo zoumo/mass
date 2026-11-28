@@ -28,14 +28,14 @@ func (s *Server) observeMessageHTTP(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) authenticateTrigger(r *http.Request, requiresInstance bool) (Source, error) {
+func (s *Server) authenticateTrigger(r *http.Request) (Source, error) {
 	bearer := r.Header.Values("Authorization")
 	if len(bearer) != 1 {
-		return Source{}, problem("unauthorized", "valid shared Trigger credential is required")
+		return Source{}, problem("unauthorized", "valid Core Trigger token is required")
 	}
 	token, ok := strings.CutPrefix(bearer[0], "Bearer ")
 	if !ok || !s.config.acceptsTriggerToken(token) {
-		return Source{}, problem("unauthorized", "valid shared Trigger credential is required")
+		return Source{}, problem("unauthorized", "valid Core Trigger token is required")
 	}
 	source, account := r.Header.Values(triggeridentity.SourceHeader), r.Header.Values(triggeridentity.AccountHeader)
 	if len(source) != 1 || len(account) != 1 {
@@ -47,19 +47,11 @@ func (s *Server) authenticateTrigger(r *http.Request, requiresInstance bool) (So
 	if !triggeridentity.ValidSource(source[0]) || !triggeridentity.ValidAccount(account[0]) {
 		return Source{}, problem("invalid_argument", "X-Superagent-Source and X-Superagent-Account-Id must be valid identifiers")
 	}
-	identity := Source{Source: source[0], AccountID: account[0]}
-	if requiresInstance {
-		instance := r.Header.Values(triggeridentity.InstanceHeader)
-		if len(instance) != 1 || !triggeridentity.ValidInstance(instance[0]) {
-			return Source{}, problem("invalid_argument", "one valid X-Superagent-Instance-Id header is required")
-		}
-		identity.InstanceID = instance[0]
-	}
-	return identity, nil
+	return Source{Source: source[0], AccountID: account[0]}, nil
 }
 
 func (s *Server) postTriggerMessage(w http.ResponseWriter, r *http.Request) {
-	source, err := s.authenticateTrigger(r, false)
+	source, err := s.authenticateTrigger(r)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -77,7 +69,7 @@ func (s *Server) postTriggerMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) readTriggerReceipt(w http.ResponseWriter, r *http.Request) {
-	source, err := s.authenticateTrigger(r, false)
+	source, err := s.authenticateTrigger(r)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -156,7 +148,7 @@ func (s *Server) readOutboxMessages(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "outboxId")
 	switch q.Get("view") {
 	case "delivery":
-		source, err := s.authenticateOutboxConsumer(r)
+		source, err := s.authenticateTrigger(r)
 		if err != nil {
 			s.fail(w, err)
 			return
@@ -226,7 +218,7 @@ type outboxPatch struct {
 }
 
 func (s *Server) patchOutboxMessage(w http.ResponseWriter, r *http.Request) {
-	source, err := s.authenticateOutboxConsumer(r)
+	source, err := s.authenticateTrigger(r)
 	if err != nil {
 		s.fail(w, err)
 		return

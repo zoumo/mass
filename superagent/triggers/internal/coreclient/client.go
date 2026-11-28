@@ -24,7 +24,6 @@ type Client struct {
 	token    string
 	source   string
 	account  string
-	instance string
 	http     *http.Client
 }
 type Receipt struct {
@@ -41,13 +40,13 @@ type SubmitResult struct {
 	Retry   bool
 }
 
-func New(endpoint string, timeout time.Duration, token, source, account, instance string) (*Client, error) {
+func New(endpoint string, timeout time.Duration, token, source, account string) (*Client, error) {
 	if !triggeridentity.ValidToken(token) {
 		return nil, errors.New("the Core credential reference must resolve to at least 32 non-whitespace bytes")
 	}
 	return &Client{
 		endpoint: strings.TrimRight(endpoint, "/"), token: token,
-		source: source, account: account, instance: instance, http: trigger.HTTPClient(timeout),
+		source: source, account: account, http: trigger.HTTPClient(timeout),
 	}, nil
 }
 
@@ -80,9 +79,6 @@ func (c *Client) Request(ctx context.Context, method, path string, body io.Reade
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set(triggeridentity.SourceHeader, c.source)
 	req.Header.Set(triggeridentity.AccountHeader, c.account)
-	if strings.HasPrefix(req.URL.Path, OutboxMessagesPath) {
-		req.Header.Set(triggeridentity.InstanceHeader, c.instance)
-	}
 	res, err := c.http.Do(req)
 	if err != nil {
 		return nil, "core_unreachable_or_outcome_unknown", true

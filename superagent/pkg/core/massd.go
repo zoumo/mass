@@ -98,7 +98,7 @@ func (c Config) massdExposureToken() (string, error) {
 		return "", problem("invalid_argument", "embedded MASS token must have at least 32 bytes without whitespace or control characters")
 	}
 	// Core assigns this prefix to both new and persisted role MCP credentials.
-	if token == c.operatorToken || token == c.triggerToken || strings.HasPrefix(token, roleTokenPrefix+"_") {
+	if token == c.adminToken || token == c.triggerToken || strings.HasPrefix(token, roleTokenPrefix+"_") {
 		return "", problem("invalid_argument", "embedded MASS token must be distinct from Core credentials")
 	}
 	return token, nil

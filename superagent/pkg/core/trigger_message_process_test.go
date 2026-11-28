@@ -25,25 +25,17 @@ func TestSharedTriggerCredentialConfiguration(t *testing.T) {
 	require.NoError(t, os.Symlink("trigger.token", filepath.Join(dir, "link.token")))
 	configFile := filepath.Join(dir, "core.yaml")
 	for _, tc := range []struct{ name, yaml, errorText string }{
-		{"missing token", "listen: 127.0.0.1:0\n", "triggerTokenFile are required"},
-		{"public token", "triggerTokenFile: ./public.token\n", "private regular file"},
-		{"symlink token", "triggerTokenFile: ./link.token\n", "private regular file"},
-		{"role token", "triggerTokenFile: ./role.token\n", "must be distinct"},
-		{"Operator token", "triggerTokenFile: ./trigger.token\noperatorTokenFile: ./trigger.token\n", "must be distinct"},
-		{"embedded MASS token", "triggerTokenFile: ./trigger.token\nmassd: {embedded: {dataDir: ./massd, expose: {tokenFile: ./trigger.token}}}\n", "must be distinct"},
-		{"removed sources", "triggerTokenFile: ./trigger.token\nsources: [{source: old}]\n", "unknown or invalid fields"},
-		{"duplicate Outbox consumer", `triggerTokenFile: ./trigger.token
-outboxConsumers:
-  - {source: example, accountId: account, instanceId: sender-a}
-  - {source: example, accountId: account, instanceId: sender-b}
-`, "one instance per source and account"},
-		{"reserved Outbox source", "triggerTokenFile: ./trigger.token\noutboxConsumers: [{source: 'core:scheduled-task', accountId: account, instanceId: sender}]\n", "valid external source"},
-		{"valid configuration", `triggerTokenFile: ./trigger.token
-outboxConsumers:
-  - {source: example, accountId: account-a, instanceId: sender}
-  - {source: example, accountId: account-b, instanceId: sender}
-  - {source: another, accountId: account-a, instanceId: sender}
-`, ""},
+		{"missing token", "listen: 127.0.0.1:0\n", "accessToken.triggers are required"},
+		{"public token", "accessToken: {triggers: ./public.token}\n", "private regular file"},
+		{"symlink token", "accessToken: {triggers: ./link.token}\n", "private regular file"},
+		{"role token", "accessToken: {triggers: ./role.token}\n", "must be distinct"},
+		{"duplicate admin token", "accessToken: {triggers: ./trigger.token, admin: ./trigger.token}\n", "must contain distinct tokens"},
+		{"invalid admin file", "accessToken: {triggers: ./trigger.token, admin: ./link.token}\n", "accessToken.admin must be a readable private regular file"},
+		{"removed token fields", "accessToken: {triggers: ./trigger.token}\ntriggerTokenFile: ./trigger.token\n", "unknown or invalid fields"},
+		{"embedded MASS token", "accessToken: {triggers: ./trigger.token}\nmassd: {embedded: {dataDir: ./massd, expose: {tokenFile: ./trigger.token}}}\n", "must be distinct"},
+		{"removed sources", "accessToken: {triggers: ./trigger.token}\nsources: [{source: old}]\n", "unknown or invalid fields"},
+		{"removed Outbox consumers", "accessToken: {triggers: ./trigger.token}\noutboxConsumers: [{source: example}]\n", "unknown or invalid fields"},
+		{"valid configuration", "accessToken: {triggers: ./trigger.token}\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			execution := "sessions:\n  router: {workspace: ., runtimeRef: test, model: test}\n  topic: {runtimeRef: test, model: test}\n  issue:\n    templates: [{runtimeRef: test, model: test, description: Test}]\n"

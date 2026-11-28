@@ -17,20 +17,17 @@ import (
 	"github.com/zoumo/mass/superagent/triggers/internal/trigger"
 )
 
-const OperatorToken = "test-only-operator-token-01234567890123456789"
-
 type CoreFixture struct {
-	t                 *testing.T
-	Dir, Binary       string
-	Endpoint, config  string
-	OperatorTokenFile string
-	mcpFiles          string
-	RoleToken         string
-	started           time.Time
-	Core              *Process
+	t                *testing.T
+	Dir, Binary      string
+	Endpoint, config string
+	mcpFiles         string
+	RoleToken        string
+	started          time.Time
+	Core             *Process
 }
 
-func NewCoreFixture(t *testing.T, clock bool, source string) *CoreFixture {
+func NewCoreFixture(t *testing.T, clock bool) *CoreFixture {
 	t.Helper()
 	f := &CoreFixture{t: t, Dir: t.TempDir(), Binary: CorePath(t), started: time.Now().UTC()}
 	if clock {
@@ -45,22 +42,17 @@ func NewCoreFixture(t *testing.T, clock bool, source string) *CoreFixture {
 	unavailable := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(unavailable.Close)
 	triggerTokenFile := filepath.Join(f.Dir, "test-source")
-	f.OperatorTokenFile = filepath.Join(f.Dir, "test-operator")
 	massdTokenFile := filepath.Join(f.Dir, "test-massd")
 	Write(t, triggerTokenFile, []byte(Token))
-	Write(t, f.OperatorTokenFile, []byte(OperatorToken))
 	Write(t, massdTokenFile, []byte("test-only-massd-token"))
 	f.config = filepath.Join(f.Dir, "core.yaml")
 	f.mcpFiles = filepath.Join(f.Dir, "data", "mcp-files")
 	Write(t, f.config, fmt.Appendf(nil, `dataDir: %q
 listen: %q
-triggerTokenFile: %q
-outboxConsumers:
-  - {source: %s, accountId: account, instanceId: fixture-instance}
+accessToken: {triggers: %q}
 massd:
   endpoint: %q
   tokenFile: %q
-operatorTokenFile: %q
 sessions:
   namespace: trigger-fixture
   router:
@@ -75,8 +67,8 @@ sessions:
       - runtimeRef: test-runtime
         model: test-model
         description: Fixture Issue template
-`, filepath.Join(f.Dir, "data"), FreeAddress(t), triggerTokenFile, source,
-		"ws"+strings.TrimPrefix(unavailable.URL, "http")+"/jsonrpc", massdTokenFile, f.OperatorTokenFile, f.Dir))
+`, filepath.Join(f.Dir, "data"), FreeAddress(t), triggerTokenFile,
+		"ws"+strings.TrimPrefix(unavailable.URL, "http")+"/jsonrpc", massdTokenFile, f.Dir))
 	f.StartCore(clock)
 	f.RoleToken = f.WaitRoleToken("router", "")
 	return f

@@ -23,7 +23,7 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 	write(t, operatorFile, token)
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(config)+"operatorTokenFile: "+operatorFile+"\n")
+	write(t, f.config, string(config)+"  admin: "+operatorFile+"\n")
 	p := f.start()
 	const tasks = "/v1/core/scheduled-tasks"
 	const messages = "/v1/core/trigger-messages"
@@ -44,6 +44,10 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 	create := json.RawMessage(`{"operationId":"create-independent","schedule":{"type":"interval","every":"24h"},"content":[{"type":"text","text":"Check the release."}]}`)
 	for _, path := range []string{tasks, messages + "?" + sourceFilter, messages + "?scheduledTaskId=example"} {
 		status, data := request(t, http.MethodGet, p.endpoint, path, f.token, nil)
+		require.Equal(t, http.StatusUnauthorized, status, string(data))
+	}
+	for _, path := range []string{messages + "?sourceMessageId=example", "/v1/core/outbox-messages?view=delivery"} {
+		status, data := request(t, http.MethodGet, p.endpoint, path, token, nil, fixtureTriggerSource)
 		require.Equal(t, http.StatusUnauthorized, status, string(data))
 	}
 	status, data := request(t, http.MethodGet, p.endpoint, messages, "", nil)
@@ -131,7 +135,7 @@ func TestScheduledTaskRequestValidationMatchesOpenAPI(t *testing.T) {
 	write(t, operatorFile, token)
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(config)+"operatorTokenFile: "+operatorFile+"\n")
+	write(t, f.config, string(config)+"  admin: "+operatorFile+"\n")
 	p := f.start()
 
 	doc := core.OpenAPI()

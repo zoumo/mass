@@ -25,7 +25,7 @@ func Load(path string, section io.Reader, coreEndpoint string) (Component, error
 func (c Component) Describe() trigger.Descriptor {
 	g := c.config
 	return trigger.Descriptor{
-		Source: githubSource, AccountID: g.AccountID, InstanceID: g.InstanceID,
+		Source:       githubSource,
 		CoreTokenEnv: g.TokenEnv, UpstreamTokenEnv: g.GitHubTokenEnv,
 		StatusListen: g.Listen, DatabasePath: g.DatabasePath,
 	}
@@ -60,7 +60,7 @@ func (c Component) clients() (*githubAPI, *coreclient.Client, error) {
 		return nil, nil, errors.New("GitHub credential reference must resolve to a non-whitespace token distinct from the Core token")
 	}
 	timeout := time.Duration(g.RequestMillis) * time.Millisecond
-	core, err := coreclient.New(g.CoreEndpoint, timeout, coreToken, githubSource, g.AccountID, g.InstanceID)
+	core, err := coreclient.New(g.CoreEndpoint, timeout, coreToken, githubSource, g.AccountID)
 	if err != nil {
 		return nil, nil, err
 	}

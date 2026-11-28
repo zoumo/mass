@@ -742,7 +742,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	audit := &observerBrowserAudit{methods: make(map[string]int)}
 	boundary.url = proxyRPC(t, boundary.url, audit.recordRPC, func() {})
 	f := fixtureAt(t)
-	configureOutboxSource(t, f)
+
 	f.execution(boundary)
 	data, err := os.ReadFile(f.config)
 	require.NoError(t, err)
@@ -1087,7 +1087,7 @@ func TestRoutedMessageAgentPromptView(t *testing.T) {
 	peer := newNativeSubmitPeer(t)
 	endpoint, massd := startEventTestMassd(t, peer)
 	f, _ := eventFixture(t, endpoint)
-	configureOutboxSource(t, f)
+
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)

@@ -19,7 +19,7 @@ type quotedReplyRecord struct {
 func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
-	configureOutboxSource(t, f)
+
 	otherSource := core.Source{Source: "other", AccountID: "account-2"}
 	f.execution(boundary)
 	p := f.start()

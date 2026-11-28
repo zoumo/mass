@@ -124,9 +124,6 @@ func (s *Store) reply(ctx context.Context, b SessionBinding, req ReplyRequest) (
 	if len(message.ReplyTarget) == 0 {
 		return nil, problem("failed_precondition", "selected Message has no reply target")
 	}
-	if !s.config.hasOutboxConsumer(message.Source, message.AccountID) {
-		return nil, problem("failed_precondition", "no Outbox consumer is configured for the Message account")
-	}
 	if s.telemetry.tracesEnabled {
 		addTraceLinks(ctx, messageAdmission.links(ctx, tx, nil, message.ID, 0))
 	}

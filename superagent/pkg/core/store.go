@@ -450,11 +450,8 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		scopeID = binding.ID
 	}
 	if source != nil {
-		scopeID = strings.Join([]string{
-			strings.ReplaceAll(url.PathEscape(source.Source), ":", "%3A"),
-			strings.ReplaceAll(url.PathEscape(source.AccountID), ":", "%3A"),
-			strings.ReplaceAll(url.PathEscape(source.InstanceID), ":", "%3A"),
-		}, ":")
+		scopeID = strings.ReplaceAll(url.PathEscape(source.Source), ":", "%3A") + ":" +
+			strings.ReplaceAll(url.PathEscape(source.AccountID), ":", "%3A")
 	}
 	var parentColumn, parent string
 	var relatedFilter string

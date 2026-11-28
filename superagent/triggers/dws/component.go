@@ -24,9 +24,8 @@ func Load(path string, section io.Reader, coreEndpoint string) (Component, error
 func (c Component) Describe() trigger.Descriptor {
 	d := c.config
 	paths := trigger.Descriptor{
-		Source: d.Source, AccountID: d.AccountID, InstanceID: d.InstanceID,
+		Source:       d.Source,
 		CoreTokenEnv: d.TokenEnv, StatusListen: d.Listen, DatabasePath: d.DatabasePath,
-		OutboxConsumer: d.repliesEnabled(),
 	}
 	if d.Feedback != nil {
 		paths.FeedbackPath = d.Feedback.StatePath
@@ -67,7 +66,7 @@ func (c Component) Serve(ctx context.Context, out io.Writer) error {
 
 func (c Component) preflight(ctx context.Context) (*coreclient.Client, string, error) {
 	d := c.config
-	core, err := coreclient.New(d.CoreEndpoint, time.Duration(d.RequestMillis)*time.Millisecond, os.Getenv(d.TokenEnv), d.Source, d.AccountID, d.InstanceID)
+	core, err := coreclient.New(d.CoreEndpoint, time.Duration(d.RequestMillis)*time.Millisecond, os.Getenv(d.TokenEnv), d.Source, d.AccountID)
 	if err != nil {
 		return nil, "", err
 	}

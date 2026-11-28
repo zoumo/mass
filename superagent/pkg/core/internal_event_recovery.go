@@ -49,18 +49,6 @@ type Recovery struct {
 	RelatedReleases             []RuntimeBindingRelease `json:"relatedReleases,omitempty"`
 }
 
-func ReadOperatorToken(path string) (string, error) {
-	data, err := readPrivate(path)
-	if err != nil {
-		return "", err
-	}
-	token := strings.TrimSpace(string(data))
-	if len(token) < 32 || strings.ContainsAny(token, " \r\n\t") {
-		return "", problem("invalid_argument", "operator token requires at least 32 non-whitespace bytes")
-	}
-	return token, nil
-}
-
 func (s *Server) recoverBindingInput(w http.ResponseWriter, r *http.Request, id string) {
 	if !s.authorizeOperator(w, r) {
 		return

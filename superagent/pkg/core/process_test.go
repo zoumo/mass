@@ -125,7 +125,7 @@ func fixtureAt(t *testing.T) *fixture {
 
 func (f *fixture) configure(pages int) {
 	f.t.Helper()
-	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\ntriggerTokenFile: %s\n", f.data, pages, filepath.Join(f.dir, "source.token")))
+	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\naccessToken:\n  triggers: %s\n", f.data, pages, filepath.Join(f.dir, "source.token")))
 }
 
 func write(t *testing.T, p, s string) {
@@ -254,7 +254,7 @@ func input(id string) core.SubmitTriggerMessageRequest {
 	return req
 }
 
-var fixtureTriggerSource = core.Source{Source: "dws", AccountID: "account-1", InstanceID: "collector-1"}
+var fixtureTriggerSource = core.Source{Source: "dws", AccountID: "account-1"}
 
 func setTriggerHeaders(req *http.Request, source core.Source) {
 	if source.Source != "" {
@@ -262,9 +262,6 @@ func setTriggerHeaders(req *http.Request, source core.Source) {
 	}
 	if source.AccountID != "" {
 		req.Header.Set(triggeridentity.AccountHeader, source.AccountID)
-	}
-	if source.InstanceID != "" {
-		req.Header.Set(triggeridentity.InstanceHeader, source.InstanceID)
 	}
 }
 
@@ -648,15 +645,12 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 }
 
 func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
-	t.Run("exclusive_and_reconfigured_consumer", func(t *testing.T) {
+	t.Run("exclusive_and_restart", func(t *testing.T) {
 		f := fixtureAt(t)
 		p := f.start()
 		f.fails("conflict")
 		accepted := submit(t, p, f, input("retained"))
 		p.stop(t, false)
-		config, err := os.ReadFile(f.config)
-		require.NoError(t, err)
-		write(t, f.config, string(config)+"outboxConsumers: [{source: dws, accountId: another-account, instanceId: collector-1}]\n")
 		p = f.start()
 		require.Len(t, page(t, p, "trigger-messages").Items, 1)
 		replay := submit(t, p, f, input("retained"))

@@ -29,17 +29,6 @@ func decodeOutboxResult(w http.ResponseWriter, r *http.Request, request any) err
 	return nil
 }
 
-func (s *Server) authenticateOutboxConsumer(r *http.Request) (Source, error) {
-	source, err := s.authenticateTrigger(r, true)
-	if err != nil {
-		return Source{}, err
-	}
-	if s.store.config.outboxConsumer(source.Source, source.AccountID) != source.InstanceID {
-		return Source{}, problem("forbidden", "Outbox requires the configured account consumer")
-	}
-	return source, nil
-}
-
 func (s *Server) readOutboxDelivery(w http.ResponseWriter, r *http.Request, id string, list bool, source Source) {
 	var result any
 	var err error
