@@ -26,11 +26,13 @@ func TestCutoverDefaultAndSchema(t *testing.T) {
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
 	write(t, f.config, strings.Replace(string(config), "dataDir: "+f.data+"\n", "", 1))
-	p := f.start()
+	p := f.startConfigured()
+	defaultData := filepath.Join(f.dir, "superagent-core-data")
+	f.token = instanceToken(t, filepath.Join(defaultData, "credentials", "triggers.token"))
 	require.NotEmpty(t, submit(t, p, f, input("session-binding-schema")).MessageID)
 	p.stop(t, false)
 	require.NoFileExists(t, filepath.Join(f.data, "core.sqlite"))
-	assertCutoverSchema(t, filepath.Join(f.dir, "superagent-core-data", "core.sqlite"))
+	assertCutoverSchema(t, filepath.Join(defaultData, "core.sqlite"))
 }
 
 const dropStartupQueryIndexes = dropIssueQueryIndexes + `

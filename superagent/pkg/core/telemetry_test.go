@@ -359,6 +359,7 @@ func TestCoreMCPEndpointTelemetry(t *testing.T) {
 func TestMCPMutationTelemetryByAuthenticatedCaller(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f := fixtureAt(t)
+	f.seedToken("triggers.token", f.token)
 	f.execution(boundary)
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))

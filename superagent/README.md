@@ -34,8 +34,10 @@ Omit `sessions` to collect Messages without starting Agents. To enable execution
 set `sessions.router`, `sessions.topic`, and at least one template in
 `sessions.issue.templates`.
 Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
-Use the same host and OS account for Core and standalone `massd` so native
-Sessions can read their credential files. See the [Session preparation contract](API.md#session-configuration-and-preparation).
+When MASS runs on another host, set an HTTPS `externalURL` that the MASS host
+can reach. The MASS host must be able to read the Session workspaces and
+`<dataDir>/mcp-files` at the absolute paths Core puts in the Session spec.
+See the [Session preparation contract](API.md#session-configuration-and-preparation).
 
 Core resource reads need no login. Keep Core and the Web gateway within a
 network boundary for trusted readers. When `listen` uses a wildcard, use a
