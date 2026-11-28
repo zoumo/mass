@@ -27,6 +27,7 @@ import (
 	"github.com/zoumo/mass/internal/massdtest"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/massd/pkg/metastore"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/massd/pkg/service"
@@ -133,6 +134,7 @@ type routeBoundary struct {
 	url            string
 	driver         *routeDriver
 	svc            *service.Service
+	meta           metastore.MetaStore
 	dropNextCreate atomic.Bool
 	dropped        atomic.Int32
 }
@@ -164,7 +166,7 @@ func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string, runtimeNames 
 	api, err := transport.New(svc, transport.Options{WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})
 	require.NoError(t, err)
 	upstream := httptest.NewServer(api)
-	f := &routeBoundary{driver: drivers[runtimeNames[0]], svc: svc}
+	f := &routeBoundary{driver: drivers[runtimeNames[0]], svc: svc, meta: st.Meta}
 	f.url = dropRPCResponse(t, "ws"+strings.TrimPrefix(upstream.URL, "http")+"/jsonrpc", func(method string) bool {
 		return method == "session.create" && f.dropNextCreate.CompareAndSwap(true, false)
 	}, func() { f.dropped.Add(1) })
@@ -291,6 +293,22 @@ func (f *fixture) execution(boundary *routeBoundary) {
 	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\n", boundary.url)...)
 	b = fmt.Appendf(b, fixtureSessions, f.dir)
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
+}
+
+const unavailableFixtureMassd = "ws://127.0.0.1:1/jsonrpc"
+
+func (f *fixture) executionWithUnavailableMassd() string {
+	f.t.Helper()
+	f.execution(&routeBoundary{url: unavailableFixtureMassd})
+	config, err := os.ReadFile(f.config)
+	require.NoError(f.t, err)
+	return string(config)
+}
+
+func (f *fixture) switchMassd(config, endpoint string) {
+	f.t.Helper()
+	require.Contains(f.t, config, unavailableFixtureMassd)
+	write(f.t, f.config, strings.Replace(config, unavailableFixtureMassd, endpoint, 1))
 }
 
 func bindings(t *testing.T, p *process) []core.SessionBinding {
@@ -1070,7 +1088,8 @@ func TestRoutingPreviousSchemaRefused(t *testing.T) {
 }
 
 func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
-	boundary := newRouteBoundary(t)
+	boundary := newRouteBoundaryWithRuntime(t, "fixture", "claude", "codex")
+	boundary.driver.allowResume = true
 	f := fixtureAt(t)
 	store, err := core.OpenStore(core.Config{DataDir: f.data}, core.TelemetryOptions{})
 	require.NoError(t, err)
@@ -1078,10 +1097,14 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 	origin := strings.TrimSuffix(boundary.url, "/jsonrpc")
-	f.execution(&routeBoundary{url: origin})
+	config, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	write(t, f.config, string(config)+"massd:\n  endpoint: "+origin+"\n")
 	credentials := filepath.Join(f.data, "mcp-files")
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
+	require.Equal(t, core.ExecutionProfile{RuntimeRef: "claude"}, router.ExecutionProfile)
+	require.Equal(t, filepath.Join(f.data, "router-workspace"), router.Workspace)
 	info, err := os.Stat(credentials)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())

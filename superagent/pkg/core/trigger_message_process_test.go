@@ -100,6 +100,7 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	identity := func(source string) core.Source {
 		return core.Source{Source: source, AccountID: source + "-account"}
 	}
+	config := f.executionWithUnavailableMassd()
 	p := f.start()
 	newInput := func(op, id string, blocks ...events.ContentBlock) core.SubmitTriggerMessageRequest {
 		return core.SubmitTriggerMessageRequest{OperationID: op, Message: core.TriggerMessage{
@@ -163,11 +164,11 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	require.Len(t, page(t, p, "trigger-messages").Items, 4)
 	require.Len(t, routingEvents(t, p, first.MessageID), 1)
 
-	// Reopen with execution configured so the first three committed events enter
-	// the same selection window. Keep MASS transport and Service in the test path.
+	// Restore the MASS endpoint so the first three committed events enter the
+	// same selection window through the same Router binding.
 	p.stop(t, false)
 	boundary := newRouteBoundary(t)
-	f.execution(boundary)
+	f.switchMassd(config, boundary.url)
 	p = f.start()
 	lookup := ingress + "?sourceMessageId=" + url.QueryEscape(firstInput.Message.SourceMessageID)
 	status, raw := request(t, http.MethodGet, p.endpoint, lookup, f.token, nil, identity("custom"))

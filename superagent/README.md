@@ -87,6 +87,39 @@ Core and MASS data directories, and role MCP endpoint. Stop the current Core
 and start the updated binary with the new YAML. Compare existing Session names,
 binding IDs, and Session specs with their values before the restart.
 
+#### Upgrade to named Issue templates
+
+For an existing schema 28 deployment, keep the Core and MASS data directories.
+Use the [single-service migration procedure](docs/migrate-single-service.md)
+when upgrading an older Core schema.
+
+1. Pause intake and settle in-flight writes and Session inputs. Stop Core and
+   take a consistent backup of the Core and MASS data. Keep the previous
+   binaries and configuration with the backup for rollback.
+2. Give each configured Issue template a unique `name`. Keep the saved Router
+   profile, its workspace, the Session namespace, and the role MCP address
+   when a Router binding already exists. Set a fixed Core listen port or a
+   stable `externalURL` if the previous deployment used an ephemeral listen
+   port without a role MCP address.
+3. Restart Core with the updated YAML. A directory that previously had no
+   roles gets the default Router binding and resumes queued routing. Existing
+   Issues keep their saved execution profiles, including Issues created
+   before templates had names.
+4. For each existing Topic Session that uses the old template instructions,
+   record its binding ID. Inspect the binding with
+   `superagent inspect-session-binding`. Use `superagent recover-input --mode replace`
+   after checking the original owner and reconciling its inputs. Follow the
+   [operator procedure](API.md#operator-reconciliation) if release requires
+   stopping a shared Runtime. Keep the original Session and history for readback.
+5. Confirm the replacement Topic binding is ready. Verify the Topic can read
+   the named template list and that its `create_issue` tool requires
+   `template`. Confirm queued events reached their expected bindings before
+   resuming intake.
+
+To roll back, stop the new Core and retain its data for reconciliation. Restore
+the stopped pre-upgrade data backup, previous binaries, and configuration.
+Reconcile work admitted after the backup before replaying it.
+
 ### Enable a remote computer
 
 Build `cua-mcp` with `make build-cua-mcp` and set `remoteComputer.cua.command`
