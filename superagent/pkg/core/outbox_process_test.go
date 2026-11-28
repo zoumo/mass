@@ -291,6 +291,8 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	errorCode(t, code, body, 409, "conflict")
 	require.Equal(t, sent, readOutbox(t, p, sent.ID))
 
+	p.stop(t, false)
+
 	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite"))
 	require.NoError(t, err)
 	defer db.Close()
@@ -307,7 +309,6 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 	var brokenKeys int
 	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT count(*) FROM pragma_foreign_key_check").Scan(&brokenKeys))
 	require.Zero(t, brokenKeys)
-	p.stop(t, false)
 	var settlements int
 	for _, span := range spans() {
 		if span.GetName() == "superagent.outbox.settle" {
