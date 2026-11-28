@@ -36,7 +36,7 @@ type Detail = WorkbenchRow & {
 const actors: Record<string, string> = { core: 'Core', topic: 'Topic', router: 'Router', issue: 'Issue Session' }
 const categories = { all: '全部', message: '消息', issue: 'Issue' } as const
 const recordHref = (view: string, filters: Record<string, string>) =>
-  '/superagent/?' + new URLSearchParams({ view, ...filters })
+  '/?' + new URLSearchParams({ view, ...filters })
 
 function ReadError({ message, stale }: { message: string; stale?: boolean }) {
   return <p role="alert" className="read-error">{message}{stale && ' · 快照已过时'} · 可点「刷新」重试</p>

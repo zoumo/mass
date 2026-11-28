@@ -101,7 +101,7 @@ function ObserverApp({ route }: { route: URL }) {
                 <ScanLine size={14} />
                 只读
               </span>
-              <a href="/superagent/?view=internal-events">
+              <a href="/?view=internal-events">
                 <Activity size={16} />
                 诊断
               </a>

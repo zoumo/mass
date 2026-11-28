@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
+import { routing } from './endpoints.mjs'
 
 test.use({
- baseURL: `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`,
+ baseURL: routing,
  viewport: { width: 1280, height: 1060 },
 })
 
@@ -10,7 +11,7 @@ test('Outbox detail renders Markdown and ordered options', async ({ page }) => {
  page.on('request', request => {
   if (request.url().includes('outbox-image.png')) imageRequests.push(request.url())
  })
- await page.goto('/superagent/?view=outbox')
+ await page.goto('/?view=outbox')
  const dialog = page.getByRole('dialog')
  const content = dialog.getByTestId('structured-content')
  await page.getByRole('button', { name: '**Formatted reply**', exact: true }).click()
@@ -32,7 +33,7 @@ test('Message and Thread link to read-only reply history and channel evidence', 
    expect(r.headers()['authorization']).toBeUndefined()
   }
  })
- await page.goto('/superagent/?view=messages&mode=records')
+ await page.goto('/?view=messages&mode=records')
  const dialog = page.getByRole('dialog')
  await page.getByRole('button', { name: 'Original input outbox-observer-source', exact: true }).click()
  await dialog.getByRole('button', { name: '查看消息回执' }).click()

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { routing as routingURL } from './endpoints.mjs'
 
-const routingURL = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`
 
 test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit acceptance', async ({
   page,
@@ -17,7 +17,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   const { items: topics } = await (await request.get(routingURL + '/apis/core/v1/topics')).json()
   const { id: topicID } = topics.find((record: { title: string }) => record.title === 'Observer routing Topic')
   const otherTopic = topics.find((record: { id: string }) => record.id !== topicID).id
-  const topicURL = routingURL + '/superagent/topic?id=' + topicID
+  const topicURL = routingURL + '/topic?id=' + topicID
   await page.goto(topicURL)
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
   const topic = page.getByRole('article', { name: '当前 Topic' })
@@ -49,7 +49,7 @@ test('Topic, Issue and Trigger workspaces preserve cross-view links and explicit
   await issue.getByRole('button', { name: 'Issue Session 提交报告 · Sample build verified' }).click()
   await expect(issue.getByRole('link', { name: '查看提交报告的会话' })).toHaveAttribute('href', /view=session-bindings&id=/)
   const issueID = new URL(page.url()).searchParams.get('id')
-  await page.goto(routingURL + '/superagent/issue?id=' + issueID)
+  await page.goto(routingURL + '/issue?id=' + issueID)
   await page.reload()
   await expect(nav.getByRole('link', { name: 'Issue' })).toHaveAttribute('aria-current', 'page')
   await issue.getByRole('button', { name: 'Topic 已验收' }).click()
@@ -98,7 +98,7 @@ test('Narrow Trigger view shows the original and supports pagination without pag
   const {
     items: [original],
   } = await (await request.get('/apis/core/v1/trigger-messages?limit=1')).json()
-  await page.goto(`/superagent/message?id=${original.id}`)
+  await page.goto(`/message?id=${original.id}`)
   const message = page.getByRole('article', { name: '当前消息' })
   await expect(message.getByTestId('message-body')).toContainText('Long original text '.repeat(1500))
   await message.getByText('查看全文', { exact: true }).click()

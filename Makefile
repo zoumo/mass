@@ -14,7 +14,7 @@ superagent_packages := ./superagent/... ./cmd/superagent/...
 fmt: fmt-go fmt-superagent
 lint: lint-go lint-superagent
 test: test-go test-superagent check-superagent-web
-build: build-go build-superagent build-superagent-web
+build: build-go build-superagent
 check: check-go check-superagent
 
 # MASS session service and CLI.
@@ -103,11 +103,11 @@ vet-superagent:
 build-superagent-web:
 	cd superagent/web && npm ci --offline --no-audit --no-fund
 	cd superagent/web && npm run build
-build-superagent:
+build-superagent: build-superagent-web
 	mkdir -p bin
-	GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -o bin/superagent ./cmd/superagent
+	GOWORK=off GOPROXY=off GOSUMDB=off go build -trimpath -tags superagentweb -o bin/superagent ./cmd/superagent
 check-superagent-web: build-superagent-web
-	cd superagent/web && npm run test:e2e
+	cd superagent/web && npm exec -- playwright test
 openapi-superagent:
 	@GOWORK=off GOPROXY=off GOSUMDB=off go run ./cmd/superagent openapi
 check-superagent-openapi:

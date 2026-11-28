@@ -61,6 +61,7 @@ func (s *Server) newHTTPAPI() *httpAPI {
 	s.registerTelemetryResources(api)
 	s.registerStatus(api)
 	s.registerMassd(api)
+	registerWeb(router)
 	return api
 }
 

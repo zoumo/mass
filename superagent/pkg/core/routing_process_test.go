@@ -752,7 +752,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	}
 	oldListen := strings.Split(strings.SplitN(string(data), "listen: ", 2)[1], "\n")[0]
 	write(t, f.config, strings.Replace(string(data), "listen: "+oldListen, "listen: 127.0.0.1:"+port, 1))
-	p := f.start("SUPERAGENT_TEST_EVENTS=" + testProducerToken)
+	p := f.start("SUPERAGENT_TEST_EVENTS="+testProducerToken, "SUPERAGENT_WEB_OTLP_ENDPOINT="+audit.startWebOTLPReceiver(t))
 	router := waitBinding(t, p, "router", "", "ready")
 	token := roleToken(t, f, router)
 	m := submit(t, p, f, input("observer-routing"))

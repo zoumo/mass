@@ -3,7 +3,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 const backendPaths = '^/(?:apis(?:/|\\?|$)|(?:status|livez|readyz)(?:\\?|$))'
 const backendPath = new RegExp(backendPaths)
-const operatorPath = /^\/apis\/core\/v1\/(?:session-bindings\/.*\/(?:runtime-evidence|recoveries)$|scheduled-tasks(?:\/|$))/
+const retiredPath = /^\/(?:superagent|massd|v1)(?:\/|$)/
+const coreOrigin = process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370'
 
 function sameOriginProxy(): Plugin {
   return {
@@ -20,17 +21,15 @@ function sameOriginProxy(): Plugin {
           res.writeHead(400).end()
           return
         }
+        if (retiredPath.test(path)) {
+          res.writeHead(404).end()
+          return
+        }
         if (!backendPath.test(path)) return next()
         const origin = req.headers.origin
         const site = req.headers['sec-fetch-site']
         if (origin && origin !== `http://${req.headers.host}` || site && site !== 'same-origin' && site !== 'none') {
           res.writeHead(403).end()
-          return
-        }
-        const q = new URLSearchParams(queryStart === -1 ? '' : rawTarget.slice(queryStart + 1))
-        const operatorFilter = path === '/apis/core/v1/trigger-messages' && (q.has('source') || q.has('scheduledTaskId'))
-        if (operatorPath.test(path) || operatorFilter) {
-          res.writeHead(404).end()
           return
         }
         next()
@@ -59,12 +58,11 @@ function proxy(target: string, massd = false): ProxyOptions {
 
 export default defineConfig({
   plugins: [sameOriginProxy(), tailwindcss()],
-  base: '/superagent/',
   build: { outDir: 'dist' },
   server: {
     proxy: {
-      '/apis/massd/': proxy(process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370', true),
-      [backendPaths]: proxy(process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370'),
+      '/apis/massd/': proxy(coreOrigin, true),
+      [backendPaths]: proxy(coreOrigin),
     },
   },
 })

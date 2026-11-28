@@ -104,11 +104,11 @@ and Agent subprocess measurements.
 
 ## Enable Superagent Web telemetry
 
-Build Web with `VITE_SUPERAGENT_WEB_TELEMETRY=on make build-superagent-web`.
+Build the binary with `VITE_SUPERAGENT_WEB_TELEMETRY=on make build-superagent`.
 Set `SUPERAGENT_WEB_OTLP_ENDPOINT=http://127.0.0.1:14320` when starting Core.
 Set the endpoint to the receiver's HTTP or HTTPS base URL. Include the path
-prefix if a proxy uses one. Web submits telemetry through the same-origin
-gateway and Core to the Collector's browser receiver. Use the
+prefix if a proxy uses one. The browser sends telemetry to Core at the same
+origin. Core forwards it to the Collector's browser receiver. Use the
 updated Collector configuration to set `service.name` to `superagent-web`.
 
 Open a Superagent Web view and search **Traces** for `service_name = superagent-web`.

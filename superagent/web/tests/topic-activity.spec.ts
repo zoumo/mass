@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { routing as endpoint } from './endpoints.mjs'
 
-const endpoint = `http://127.0.0.1:${process.env.SUPERAGENT_ROUTING_GATEWAY_PORT || '18894'}`
 type Event = { id: string; kind: string; issueId?: string; messageId?: string; eventId?: string; at: string; status?: string; title?: string; summary?: string; sessionBindingId?: string }
 
 test('Topic activity opens source facts, pages both categories and restores the filter', async ({ page, request }, info) => {
@@ -13,7 +13,7 @@ test('Topic activity opens source facts, pages both categories and restores the 
   const methods = new Set<string>()
   page.on('request', req => { if (req.url().includes('/v1/')) methods.add(req.method()) })
   await page.setViewportSize({width:1360,height:900})
-  await page.goto(endpoint + '/superagent/topic?id=' + topic.id)
+  await page.goto(endpoint + '/topic?id=' + topic.id)
   await page.getByRole('button', {name:'暂停自动刷新'}).click()
   const detail = page.getByRole('article', {name:'当前 Topic'})
   const feed = detail.getByRole('region', {name:'活动流',exact:true})
@@ -71,7 +71,7 @@ test('Topic activity opens source facts, pages both categories and restores the 
   await expect(filter.getByRole('link',{name:'Issue',exact:true})).toHaveAttribute('aria-current','true')
   await report.locator('summary').click()
   await report.getByRole('link',{name:'查看此 Issue'}).click()
-  await expect(page).toHaveURL(/\/superagent\/issue/)
+  await expect(page).toHaveURL(/\/issue/)
   await page.goBack()
   await expect(page).toHaveURL(filtersURL)
   await expect(filter.getByRole('link',{name:'Issue',exact:true})).toHaveAttribute('aria-current','true')
@@ -89,7 +89,7 @@ test('Topic activity opens source facts, pages both categories and restores the 
 test('Topic activity retries a failed read without reporting an empty history', async ({page,request}) => {
   const {items:[topic]} = await (await request.get(endpoint + '/apis/core/v1/topics')).json()
   await page.route('**/apis/core/v1/topics/*/activity?**', route=>route.fulfill({status:503,body:'{}'}))
-  await page.goto(endpoint + '/superagent/topic?id=' + topic.id)
+  await page.goto(endpoint + '/topic?id=' + topic.id)
   const feed = page.getByRole('region',{name:'活动流',exact:true})
   await expect(feed.getByRole('alert')).toContainText('503')
   await expect(feed.getByText('暂无活动记录')).toHaveCount(0)
@@ -123,7 +123,7 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
       }
     })
     await page.setViewportSize({width,height})
-    await page.goto(endpoint + '/superagent/')
+    await page.goto(endpoint + '/')
     await page.getByRole('navigation',{name:'观察视角'}).getByRole('link',{name:'Topic',exact:true}).click()
     const list = page.getByRole('complementary',{name:'最近的 Topic'})
     await expect(page.getByRole('region',{name:'Topic 活动流程'})).toBeVisible()
@@ -139,7 +139,7 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
     await expect(lane(returned).locator('.flow-issue')).toHaveCount(0)
     expect(observed).toEqual(new Set(['all','message','issue']))
     await graph.getByRole('button',{name:/再看/}).click()
-    await expect(lane(report).locator('.flow-session')).toHaveAttribute('href', `/superagent/?view=session-bindings&id=${report.sessionBindingId}`)
+    await expect(lane(report).locator('.flow-session')).toHaveAttribute('href', `/?view=session-bindings&id=${report.sessionBindingId}`)
     await expect(lane(report).locator('.flow-report')).toContainText(report.summary!)
     await expect(lane(report).locator('.flow-issue')).toHaveAttribute('href',new RegExp(report.issueId!))
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
@@ -155,7 +155,7 @@ for (const [screen, width, height] of [['desktop',1360,900],['narrow',390,844]] 
     await expect(lane(report).locator('.flow-report')).toBeVisible()
     await expect(graph.locator('.flow-message')).toHaveCount(0)
     await lane(report).locator('.flow-issue').click()
-    await expect(page).toHaveURL(new RegExp('/superagent/issue.*' + report.issueId))
+    await expect(page).toHaveURL(new RegExp('/issue.*' + report.issueId))
     await page.goBack()
     await expect(graph).toBeVisible()
     await expect(filters.getByRole('link',{name:'Issue',exact:true})).toHaveAttribute('aria-current','true')
@@ -167,7 +167,7 @@ test('Topic diagram retains the working category when a preview read fails', asy
   const topic = items.find((item: {title:string}) => item.title === 'Observer routing Topic')
   await page.route('**/apis/core/v1/topics/*/activity?**', route => new URL(route.request().url()).searchParams.get('filter') === 'message'
     ? route.fulfill({status:503,body:'{}'}) : route.continue())
-  await page.goto(endpoint + '/superagent/topic?id=' + topic.id)
+  await page.goto(endpoint + '/topic?id=' + topic.id)
   const graph = page.getByRole('region',{name:'Topic 活动流程'})
   await expect(graph).toContainText('消息 读取失败（HTTP 503）')
   await expect(graph.locator('.flow-issue').first()).toBeVisible()

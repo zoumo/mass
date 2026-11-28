@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zoumo/mass/massd"
+	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
 )
 
 type Server struct {
@@ -205,17 +206,17 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 			return
 		}
-		if s.massdHTTP != nil && strings.HasPrefix(r.URL.Path, MassdMountPath+"/") {
-			// MASS owns Origin and bearer checks. The Upgrade uses the original writer.
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+			s.fail(w, problem("forbidden", "cross-site requests are not allowed"))
+			return
+		}
+		if s.massdHTTP != nil && r.URL.Path == MassdMountPath+rpcwire.WebSocketPath {
+			// MASS owns WebSocket Origin and bearer checks.
 			next.ServeHTTP(w, r)
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
 			s.fail(w, problem("forbidden", "foreign Origin is not allowed"))
-			return
-		}
-		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-			s.fail(w, problem("forbidden", "cross-site requests are not allowed"))
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -83,7 +83,7 @@ function routerLanes(row: RouterMessage, limit: string): FlowLane[] {
   function evidence(id: string, reason?: string) {
     return <div className="router-flow-evidence">
       {reason && <p>{reason}</p>}
-      <a href={'/superagent/?' + new URLSearchParams({ view: 'internal-events', id })}>事件记录 · {id}<ArrowUpRight size={13}/></a>
+      <a href={'/?' + new URLSearchParams({ view: 'internal-events', id })}>事件记录 · {id}<ArrowUpRight size={13}/></a>
     </div>
   }
   function edge(action: string, reason?: string) {
