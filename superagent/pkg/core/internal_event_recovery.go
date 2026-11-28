@@ -12,6 +12,7 @@ import (
 
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
 )
 
@@ -77,7 +78,7 @@ func (s *Server) recoverBindingInput(w http.ResponseWriter, r *http.Request, id 
 }
 
 func (s *Server) applyInputRecovery(w http.ResponseWriter, r *http.Request, req RecoveryRequest) {
-	if !instanceIDFormat.MatchString(req.OperationID) ||
+	if !triggeridentity.ValidInstance(req.OperationID) ||
 		req.SessionBindingID == "" || (req.Mode != "retry" && req.Mode != "replace" && req.Mode != "settle") ||
 		req.Mode == "retry" && req.StopRuntime ||
 		strings.TrimSpace(req.Reconciliation) == "" || len(req.Reconciliation) > 4096 || !req.AcceptPossibleDuplicate {

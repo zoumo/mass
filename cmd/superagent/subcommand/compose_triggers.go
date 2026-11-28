@@ -71,7 +71,12 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		return nil, "", nil
 	}
 	coreHost, corePort, _ := net.SplitHostPort(config.Listen) // Validated by Core.
-	probe := childHTTPOrigin("http://" + net.JoinHostPort(coreHost, "1"))
+	probeHost := coreHost
+	if probeHost == "" {
+		probeHost = "::"
+	}
+	probeURL := url.URL{Scheme: "http", Host: net.JoinHostPort(probeHost, "1")}
+	probe := childHTTPOrigin(probeURL.String(), coreHost)
 	if probe == nil {
 		return nil, "", errors.New("core configuration: cannot determine the Trigger connection origin")
 	}
@@ -87,7 +92,6 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		return nil, "", err
 	}
 	statusListeners := make(map[string]string)
-	credentialOwners := make(map[string]string)
 	for _, kind := range []string{triggers.GitHub, triggers.DWS} {
 		section, enabled := sections[kind]
 		if !enabled {
@@ -99,7 +103,7 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 			return nil, "", fmt.Errorf("%s configuration (using core.listen): %w", t.name(), err)
 		}
 		t.binding = component.Describe()
-		if err := t.validateBinding(config, credentialOwners); err != nil {
+		if err := t.validateBinding(config); err != nil {
 			return nil, "", fmt.Errorf("%s preflight: %w", t.name(), err)
 		}
 		if err := t.reserveState(statePaths); err != nil {
@@ -110,31 +114,28 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		}
 		configured = append(configured, t)
 	}
+	for _, native := range configured {
+		for _, adapter := range configured {
+			if native.binding.UpstreamTokenEnv == adapter.binding.CoreTokenEnv {
+				return nil, "", fmt.Errorf("%s githubTokenEnv conflicts with %s coreTokenEnv", native.name(), adapter.name())
+			}
+		}
+	}
 	return configured, probe.String(), nil
 }
 
-func (t composeTrigger) validateBinding(config core.Config, credentialOwners map[string]string) error {
-	token := os.Getenv(t.binding.CoreTokenEnv)
-	if token == "" {
-		return errors.New("coreTokenEnv must reference a nonempty Core credential")
-	}
-	if err := config.CheckTriggerBinding(t.binding.Source, t.binding.AccountID, t.binding.InstanceID, token, t.binding.OutboxConsumer); err != nil {
+func (t composeTrigger) validateBinding(config core.Config) error {
+	if err := config.CheckTriggerBinding(t.binding.Source, t.binding.AccountID, t.binding.InstanceID, t.binding.OutboxConsumer); err != nil {
 		return err
 	}
-	for _, ref := range []string{t.binding.CoreTokenEnv, t.binding.UpstreamTokenEnv} {
-		if ref == "" {
-			continue
-		}
-		value := os.Getenv(ref)
-		if value == "" {
-			return errors.New("githubTokenEnv must reference a nonempty GitHub credential")
-		}
-		if owner, exists := credentialOwners[value]; exists {
-			return fmt.Errorf("credential references must hold distinct tokens across scopes (already used by %s)", owner)
-		}
-		credentialOwners[value] = t.name()
+	if t.binding.UpstreamTokenEnv == "" {
+		return nil
 	}
-	return nil
+	token := os.Getenv(t.binding.UpstreamTokenEnv)
+	if token == "" {
+		return errors.New("githubTokenEnv must reference a nonempty GitHub credential")
+	}
+	return config.CheckUpstreamToken(token)
 }
 
 func (t composeTrigger) reserveState(paths map[string]string) error {
@@ -194,28 +195,42 @@ func (t composeTrigger) reserveStatus(coreHost, corePort string, statusListeners
 	if number == 0 {
 		return nil
 	}
-	address := net.ParseIP(host)
-	coreAddress := net.ParseIP(coreHost)
 	coreNumber, _ := strconv.ParseUint(corePort, 10, 16)
-	if number == coreNumber && (address.Equal(coreAddress) ||
-		(coreAddress.IsUnspecified() && (coreAddress.To4() == nil || address.To4() != nil))) {
+	if number == coreNumber && overlappingListenHosts(host, coreHost) {
 		return fmt.Errorf("%s statusListen conflicts with core.listen", t.name())
 	}
-	endpoint := net.JoinHostPort(address.String(), strconv.FormatUint(number, 10))
-	if other, exists := statusListeners[endpoint]; exists {
-		return fmt.Errorf("%s statusListen conflicts with %s", t.name(), other)
+	port = strconv.FormatUint(number, 10)
+	for endpoint, other := range statusListeners {
+		otherHost, otherPort, _ := net.SplitHostPort(endpoint)
+		if port == otherPort && overlappingListenHosts(host, otherHost) {
+			return fmt.Errorf("%s statusListen conflicts with %s", t.name(), other)
+		}
 	}
-	statusListeners[endpoint] = t.name()
+	statusListeners[net.JoinHostPort(host, port)] = t.name()
 	return nil
 }
 
-func composeChildEnvironment(environment []string, configured []composeTrigger, kind string) []string {
-	filtered := make([]string, 0, len(environment))
+func overlappingListenHosts(a, b string) bool {
+	if a == "" || b == "" || strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, ".")) {
+		return true
+	}
+	first, second := net.ParseIP(a), net.ParseIP(b)
+	if first == nil || second == nil {
+		// The OS resolves DNS names when binding the listeners.
+		return false
+	}
+	return first.Equal(second) ||
+		(first.IsUnspecified() && (first.To4() == nil || second.To4() != nil)) ||
+		(second.IsUnspecified() && (second.To4() == nil || first.To4() != nil))
+}
+
+func composeChildEnvironment(environment []string, configured []composeTrigger, kind, triggerToken string) []string {
+	filtered := make([]string, 0, len(environment)+1)
 	for _, item := range environment {
 		name, _, _ := strings.Cut(item, "=")
 		scoped := false
 		for _, t := range configured {
-			if t.kind != kind && (name == t.binding.CoreTokenEnv || name == t.binding.UpstreamTokenEnv) {
+			if name == t.binding.CoreTokenEnv || (t.kind != kind && name == t.binding.UpstreamTokenEnv) {
 				scoped = true
 				break
 			}
@@ -224,10 +239,15 @@ func composeChildEnvironment(environment []string, configured []composeTrigger, 
 			filtered = append(filtered, item)
 		}
 	}
+	for _, t := range configured {
+		if t.kind == kind {
+			return append(filtered, t.binding.CoreTokenEnv+"="+triggerToken)
+		}
+	}
 	return filtered
 }
 
-func triggerStartupEndpoint(line []byte) (*url.URL, error) {
+func triggerStartupEndpoint(line []byte, listen string) (*url.URL, error) {
 	var record struct {
 		Endpoint string `json:"statusEndpoint"`
 		Status   string `json:"status"`
@@ -235,8 +255,9 @@ func triggerStartupEndpoint(line []byte) (*url.URL, error) {
 	if err := json.Unmarshal(line, &record); err != nil || record.Status != "starting" {
 		return nil, errors.New("invalid Trigger startup record")
 	}
-	endpoint := childHTTPOrigin(record.Endpoint)
-	if endpoint == nil || endpoint.String() != record.Endpoint || !net.ParseIP(endpoint.Hostname()).IsLoopback() {
+	host, _, _ := net.SplitHostPort(listen)
+	endpoint := childHTTPOrigin(record.Endpoint, host)
+	if endpoint == nil {
 		return nil, errors.New("invalid Trigger status endpoint")
 	}
 	return endpoint, nil

@@ -10,6 +10,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 	"github.com/zoumo/mass/superagent/triggers/internal/trigger"
 )
 
@@ -97,13 +98,14 @@ func matchesText(rules []matchRule, text string) bool {
 }
 
 type dwsConfig struct {
-	DWS                   string          `yaml:"dwsExecutable"`
-	Profile               string          `yaml:"profile"`
-	Source                string          `yaml:"source"`
-	AccountID             string          `yaml:"accountId"`
-	SelfID                string          `yaml:"selfOpenDingtalkId"`
-	InstanceID            string          `yaml:"instanceId"`
-	CoreEndpoint          string          `yaml:"coreEndpoint"`
+	DWS          string `yaml:"dwsExecutable"`
+	Profile      string `yaml:"profile"`
+	Source       string `yaml:"source"`
+	AccountID    string `yaml:"accountId"`
+	SelfID       string `yaml:"selfOpenDingtalkId"`
+	InstanceID   string `yaml:"instanceId"`
+	CoreEndpoint string `yaml:"coreEndpoint"`
+	// Deprecated: HTTP is accepted on any Core host.
 	AllowInsecureCoreHTTP bool            `yaml:"allowInsecureCoreHTTP,omitempty"`
 	TokenEnv              string          `yaml:"coreTokenEnv"`
 	Listen                string          `yaml:"statusListen"`
@@ -130,6 +132,7 @@ func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConf
 			c.Feedback.StatePath = trigger.ResolveSectionPath(path, c.Feedback.StatePath)
 		}
 	}
+	c.TokenEnv = trigger.CoreTokenEnv(c.TokenEnv, section != nil)
 	if c.Capacity == 0 {
 		c.Capacity = 100
 	}
@@ -146,10 +149,10 @@ func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConf
 	if len(parts) != 2 || parts[0] == "" || parts[1] != c.AccountID || strings.Contains(c.Profile, ",") {
 		return c, errors.New("profile must be explicit corpId:accountId matching accountId")
 	}
-	if c.Source == "" || strings.ContainsAny(c.Source, ":/% \t\n") || c.InstanceID == "" || c.TokenEnv == "" || c.DWS == "" {
-		return c, errors.New("source, instanceId, coreTokenEnv and dwsExecutable are required")
+	if !triggeridentity.ValidSource(c.Source) || !trigger.ValidEnvVariable(c.TokenEnv) || c.DWS == "" {
+		return c, errors.New("valid source, coreTokenEnv and dwsExecutable are required")
 	}
-	if c.AccountID == "" || !trigger.ValidIdentifier(c.InstanceID) {
+	if !triggeridentity.ValidAccount(c.AccountID) || !triggeridentity.ValidInstance(c.InstanceID) {
 		return c, errors.New("accountId is required and instanceId must use the Core identifier format")
 	}
 	if c.SelfID == "" || strings.TrimSpace(c.SelfID) != c.SelfID {
@@ -164,7 +167,7 @@ func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConf
 	if c.Capacity < 1 || c.Capacity > 10000 || c.RetryMillis < 10 || c.RetryMillis > 60000 || c.RequestMillis < 10 || c.RequestMillis > 60000 {
 		return c, errors.New("invalid buffer or timing limits")
 	}
-	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint, c.AllowInsecureCoreHTTP); err != nil {
+	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint); err != nil {
 		return c, err
 	}
 	if err := trigger.ValidateStatusListen(c.Listen); err != nil {

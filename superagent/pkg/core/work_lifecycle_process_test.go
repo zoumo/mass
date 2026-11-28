@@ -515,7 +515,7 @@ func TestClaudeRouterReplacesMissingProjectAfterOwnerRelease(t *testing.T) {
 	require.NoError(t, err)
 	fixtureWorkspace, err := filepath.EvalSymlinks(f.dir)
 	require.NoError(t, err)
-	write(t, f.config, strings.Replace(string(raw), "routerWorkspace: "+fixtureWorkspace, "routerWorkspace: "+workspace, 1))
+	write(t, f.config, strings.Replace(string(raw), fmt.Sprintf("workspace: %q", fixtureWorkspace), fmt.Sprintf("workspace: %q", workspace), 1))
 
 	p := f.start()
 	original := waitBinding(t, p, "router", "", "ready")

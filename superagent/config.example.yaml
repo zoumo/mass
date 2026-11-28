@@ -1,25 +1,27 @@
 # Use a separate, empty directory for a fresh rollout.
 # Reuse the instance's schema 28 directory on restart.
 dataDir: ./superagent-core-data
-# Optional: defaults to 127.0.0.1:24370. Wider bindings require trusted readers.
+# Optional. Use an IP address or hostname with a port. Wrap IPv6 in brackets.
 listen: 127.0.0.1:24370
-# Optional Core URL for Session clients, including through a reverse proxy.
+# Use HTTPS for role Session clients on another host.
 # externalURL: https://core.example.com
 # Optional additional HTTP Host values for direct Core resource reads.
 # Include the port when clients send it. The same-origin gateway sets the upstream Host.
 # readAllowedHosts:
 #   - core.example.com:24370
-sources:
-  - source: dws
-    accountId: example-account
-    # instanceId: collector-1  # match the Trigger for channel replies
-    # outboxConsumer: true  # select one sender when the account has multiple instances
-    tokenFile: ./source.token
-    threadIdPrefixes: ["dws:"]
+#   - 192.0.2.10:24370
+#   - '[2001:db8::10]:24370'
+triggerTokenFile: ./trigger.token
+# Optional. Add one sender for each Source and Account pair that sends replies.
+# outboxConsumers:
+#   - source: dws
+#     accountId: example-account
+#     instanceId: collector-1
 # Optional SQLite main-database page budget; zero means unlimited.
 storageMaxPages: 0
 
-# Optional OpenObserve queries for Core trace and process metric reads.
+# Optional OpenObserve queries for Core traces and process metrics.
+# Use an HTTP or HTTPS base URL. Include the proxy path prefix if present.
 # The private credential file contains a username and password on separate lines.
 # openobserve:
 #   endpoint: http://127.0.0.1:15080
@@ -36,32 +38,32 @@ storageMaxPages: 0
 # For `serve` with embedded MASS, replace the endpoint and tokenFile with:
 #   embedded:
 #     dataDir: ./massd
-#     expose:  # optional, requires a loopback Core listener
+#     expose:  # optional authenticated MASS WebSocket access
 #       tokenFile: ./embedded-massd.token  # private file and dedicated token
 #       allowedOrigins: [https://ops.example.com]  # optional, if clients send Origin
-# operatorTokenFile: ./operator.token  # optional, for loopback ScheduledTask management and input recovery
+# operatorTokenFile: ./operator.token  # optional, for ScheduledTask management and input recovery
 # Optional remote computer for Topic and Issue Sessions.
 # remoteComputer:
 #   cua:
 #     command: /opt/mass/bin/cua-mcp
 #     configFile: ./cua-mcp.yaml
 # sessions:
-#   routerWorkspace: /absolute/workspace
 #   namespace: superagent
-#   roles:
-#     router:
-#       runtimeRef: codex-fast
-#       model: gpt-6.2-sol
-#       effort: low
-#     topic:
-#       runtimeRef: codex-standard
-#       model: gpt-6.2-sol
-#       effort: medium
-#   issueTemplates:
-#     - runtimeRef: codex-deepseek
-#       model: deepseek-chat
-#       description: Implement, fix and verify code.
-#       effort: medium
-#     - runtimeRef: codex-standard
-#       model: gpt-6.2-astra
-#       description: Evaluate architecture and diagnose complex problems.
+#   router:
+#     workspace: /absolute/workspace
+#     runtimeRef: codex-fast
+#     model: gpt-6.2-sol
+#     effort: low
+#   topic:
+#     runtimeRef: codex-standard
+#     model: gpt-6.2-sol
+#     effort: medium
+#   issue:
+#     templates:
+#       - runtimeRef: codex-deepseek
+#         model: deepseek-chat
+#         description: Implement, fix and verify code.
+#         effort: medium
+#       - runtimeRef: codex-standard
+#         model: gpt-6.2-astra
+#         description: Evaluate architecture and diagnose complex problems.

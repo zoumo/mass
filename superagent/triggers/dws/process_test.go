@@ -39,7 +39,7 @@ func coreStart(t *testing.T, dir, addr string) *triggertest.Process {
 	if err := os.WriteFile(tokenPath, []byte(triggertest.Token), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\nsources:\n  - source: dws\n    accountId: account\n    instanceId: fixture-instance\n    tokenFile: %q\n    threadIdPrefixes: ['dws:']\n", filepath.Join(dir, "data"), addr, tokenPath)
+	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\ntriggerTokenFile: %q\n", filepath.Join(dir, "data"), addr, tokenPath)
 	path := filepath.Join(dir, "core.yaml")
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
@@ -451,11 +451,23 @@ databasePath: %q
 	}
 }
 
-func TestConfigRejectsAmbiguousProfileAndExposedStatus(t *testing.T) {
+func TestConfigDeploymentAddresses(t *testing.T) {
 	c := dwsConfig{DWS: fixtureBinary, Profile: "corp:account", Source: "dws", AccountID: "account", SelfID: "self", InstanceID: "i", CoreEndpoint: "http://127.0.0.1:9999", TokenEnv: "TOKEN", DatabasePath: filepath.Join(t.TempDir(), "dws.sqlite"), Direct: directConfig{Enabled: true, Match: allTextRules()}}
-	for _, mutate := range []func(*dwsConfig){func(v *dwsConfig) { v.Profile = "corp:wrong" }, func(v *dwsConfig) { v.InstanceID = "invalid id" }, func(v *dwsConfig) { v.Listen = "0.0.0.0:1" }, func(v *dwsConfig) { v.DatabasePath = "relative.sqlite" }, func(v *dwsConfig) {
+	for _, addresses := range []struct{ listen, endpoint string }{
+		{"0.0.0.0:0", "http://core.example.com:24370"},
+		{"localhost:0", "https://core.example.com"},
+		{"[::]:0", "http://[2001:db8::10]:24370"},
+	} {
+		v := c
+		v.Listen, v.CoreEndpoint = addresses.listen, addresses.endpoint
+		cfg, err := loadDWSConfig(configFile(t, v), nil, "")
+		if err != nil || cfg.Listen != v.Listen || cfg.CoreEndpoint != v.CoreEndpoint {
+			t.Fatalf("deployment addresses %v: listen %q, endpoint %q, error %v", addresses, cfg.Listen, cfg.CoreEndpoint, err)
+		}
+	}
+	for _, mutate := range []func(*dwsConfig){func(v *dwsConfig) { v.Profile = "corp:wrong" }, func(v *dwsConfig) { v.InstanceID = "invalid id" }, func(v *dwsConfig) { v.Listen = "[localhost]:1" }, func(v *dwsConfig) { v.DatabasePath = "relative.sqlite" }, func(v *dwsConfig) {
 		v.Groups = []groupConfig{{ConversationID: "group", Match: allTextRules()}, {ConversationID: "group", Match: allTextRules()}}
-	}, func(v *dwsConfig) { v.CoreEndpoint = "http://example.com:1" }} {
+	}, func(v *dwsConfig) { v.CoreEndpoint = "http://example.com:65536" }} {
 		v := c
 		mutate(&v)
 		if _, err := loadDWSConfig(configFile(t, v), nil, ""); err == nil {

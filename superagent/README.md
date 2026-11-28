@@ -6,9 +6,9 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
 ## Start Core
 
 1. Copy [the Core example](config.example.yaml) to a private run directory.
-   Configure a source and its token file. Use a private regular file with a
-   token of at least 32 non-whitespace bytes. Relative paths start at the YAML
-   file's directory.
+   Set `triggerTokenFile` to a private regular file containing the shared
+   Trigger token. Use at least 32 bytes without whitespace or control
+   characters. Resolve relative paths from the YAML file's directory.
 2. Build and start Core from the repository root.
 
    ```sh
@@ -30,7 +30,8 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
    `bin/superagent observe --help` for Core record queries.
 
 Omit `sessions` to collect Messages without starting Agents. To enable execution,
-configure role Sessions and at least one Issue template in the example YAML.
+set `sessions.router`, `sessions.topic`, and at least one template in
+`sessions.issue.templates`.
 Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
 Use the same host and OS account for Core and standalone `massd` so native
 Sessions can read their credential files. See the [Session preparation contract](API.md#session-configuration-and-preparation).
@@ -47,18 +48,53 @@ creates `core.sqlite` with schema 28 and rejects databases with earlier schema
 versions.
 
 To restart the new instance, stop its current owner and start Core with the
-same `dataDir` and source and account configuration. After `/readyz` succeeds,
-read a previously accepted receipt by `sourceMessageId` using its source
-credential. If two Core installations share `massd`, give them distinct
-`sessions.namespace` values.
+same `dataDir`. After `/readyz` succeeds, read a previously accepted receipt
+by `sourceMessageId` with the original Source and Account ID. If two Core
+installations share `massd`, give them distinct `sessions.namespace` values.
 
-Configure each Trigger to use the new Core and set its allowed `threadIds`
-or `threadIdPrefixes` in Core's source configuration. For a fresh Trigger
-database or a restart, follow the [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
+For a fresh Trigger database or a restart, follow the
+[Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
+
+### Migrate to the shared Trigger token
+
+1. Stop the existing Core and Trigger owners. Preserve the Core data directory
+   and each adapter's database, send evidence, and feedback state.
+2. Create a private file for one shared Trigger token. Set `triggerTokenFile`
+   for standalone Core or `core.triggerTokenFile` for Compose. Remove
+   `sources` and its per-source token files and Thread filters from the
+   configuration.
+3. If a Source and Account pair sends replies, copy the existing sender's
+   `source`, `accountId`, and `instanceId` to `outboxConsumers`. Also copy
+   the sender if Core previously selected the sole instance automatically.
+4. Upgrade Core and all Triggers together. Set the standalone adapters'
+   configured token environment variables to the shared value. Compose
+   supplies the value from `core.triggerTokenFile`. Keep the original
+   account IDs, instance IDs, and database paths so each adapter can resume
+   its queue.
+5. Check Core readiness, the adapter status, and a stored Source receipt.
+   For reply-enabled adapters, check that the configured sender can read
+   eligible Outbox items. Start Outbox pagination again after upgrading.
 
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
 `unavailable` without an acceptance receipt.
+
+### Migrate Session configuration
+
+For `superagent serve`, edit the root `sessions` section. For
+`superagent compose`, edit `core.sessions`.
+
+| Previous field | New field |
+| --- | --- |
+| `sessions.roles.router` | `sessions.router` |
+| `sessions.routerWorkspace` | `sessions.router.workspace` |
+| `sessions.roles.topic` | `sessions.topic` |
+| `sessions.issueTemplates` | `sessions.issue.templates` |
+
+Copy the existing values to the new fields. Use the same `sessions.namespace`,
+Core and MASS data directories, and role MCP endpoint. Stop the current Core
+and start the updated binary with the new YAML. Compare existing Session names,
+binding IDs, and Session specs with their values before the restart.
 
 ### Enable a remote computer
 
@@ -79,14 +115,14 @@ Restart Core after changing `remoteComputer`. The MCP subprocess reads its
 own YAML file at startup. If a binding already has a Session with different
 remote computer options, Core blocks new input with
 `remote_computer_configuration_changed`. Use
-[operator reconciliation in replace mode](API.md#local-operator-reconciliation)
+[operator reconciliation in replace mode](API.md#operator-reconciliation)
 to release its current Session and prepare a new one with the updated options.
 
 ## Scheduled tasks
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent
 tasks and triggering from a local script or CLI, configure `operatorTokenFile`
-and use a direct loopback connection to Core. Independent schedules also run
+and connect directly to Core. Independent schedules also run
 in standalone Core without Session execution. Their Router events remain
 pending until a Router can handle them.
 
@@ -123,14 +159,14 @@ To switch between embedded and standalone MASS:
    `massd` with the same directory and set `massd.endpoint` in Core.
 4. Restart Core. Compare the Session IDs, resource UIDs, and specs of existing
    bindings with the pre-cutover records. Reconcile uncertain input before
-   manually resubmitting it. See [operator reconciliation](API.md#local-operator-reconciliation).
+   manually resubmitting it. See [operator reconciliation](API.md#operator-reconciliation).
 
 ### Accessing embedded MASS with massctl
 
-Keep the Core listener on loopback. Set `massd.embedded.expose.tokenFile` to a
-private file with a dedicated MASS token. Use at least 32 bytes without
-whitespace or control characters. Use a different credential for each of Core
-Source, Operator, and role MCP access. Reserve the `cap_` prefix for role MCP.
+Set `massd.embedded.expose.tokenFile` to a private file with a dedicated MASS
+token of at least 32 bytes. The token can't contain whitespace or control
+characters. Use separate credentials for Core Source, Operator, and role MCP
+access. Reserve the `cap_` prefix for role MCP.
 The MASS token grants access to all Runtime and Session operations, including
 Sessions managed by Core.
 
@@ -191,9 +227,10 @@ after Watchdog exits and starts with an empty snapshot after restart.
 1. Copy [the Compose example](compose.example.yaml) to a private run directory.
    Keep `core` and the Trigger sections you want to run. Compose starts
    embedded MASS. Keep Core, MASS, and Trigger data in separate paths.
-2. Match each Trigger's source, account, and instance to a `core.sources`
-   entry. Keep the file at `tokenFile` and the variable named by `coreTokenEnv`
-   in sync. Supply GitHub and DWS access as described in the
+2. Set `core.triggerTokenFile`. For each reply-enabled Trigger, match its
+   Source, Account ID, and instance ID to an entry in `core.outboxConsumers`.
+   Compose supplies the shared token to the Trigger subprocesses. Supply
+   native GitHub and DWS credentials as described in the
    [Trigger guide](triggers/README.md).
 3. Start Compose from the repository root.
 
@@ -205,7 +242,8 @@ after Watchdog exits and starts with an empty snapshot after restart.
    The response lists Core, massd, GitHub, and DWS. Scheduled task counts appear under
    `core.scheduledTaskStates`. A Trigger failure can make `/status` report `degraded`
    while `/readyz` continues to report Core admission. For adapter details,
-   use the corresponding loopback address in `triggerEndpoints`.
+   use the corresponding address in `triggerEndpoints`. Compose reports the
+   actual bound port and uses a loopback address for a wildcard listener.
 5. If you enabled embedded MASS exposure, use `massdEndpoint` with its
    dedicated token. Use `/massd/livez` and `/massd/readyz` at the Core origin
    to check the exposed instance.
@@ -251,7 +289,7 @@ The gateway checks the browser Origin against the incoming scheme and host. It
 checks Fetch Metadata and normalizes `Host` before forwarding to Core. Keep
 backend listeners private. Configure `externalURL` with the origin that role
 Sessions use for MCP, including the gateway origin if they connect there.
-Use a direct loopback Core endpoint for Operator commands.
+Connect directly to Core for Operator commands.
 
 If you used `observerAllowedHosts`, use `readAllowedHosts` for additional
 direct Core read hosts. The gateway already sends the Core authority as `Host`.
@@ -306,7 +344,7 @@ See [the Core API](API.md) for the resource contract.
 
 - Use `inspect-session-binding` before `recover-input` to reconcile an uncertain
   dispatch, settle a retired binding, or replace a Session.
-  See [operator reconciliation](API.md#local-operator-reconciliation).
+  See [operator reconciliation](API.md#operator-reconciliation).
 - To trace a record across Core and MASS, see [local telemetry](telemetry/README.md).
 
 ## Checks

@@ -11,9 +11,12 @@ and the Triggers together.
 For standalone Triggers, use an absolute `databasePath` on local persistent
 storage for each instance. In Compose, resolve paths relative to the stack
 YAML file. Preserve the database, source, account, and instance ID across
-restarts. The Core `sources` entry must match all three identities. Supply the
-same token from its `tokenFile` through the environment variable named by
-`coreTokenEnv`. Assign a separate token to each instance.
+restarts. For a standalone adapter, supply the shared Core Trigger token
+through the environment variable named by `coreTokenEnv`. Compose reads
+the token from `core.triggerTokenFile`. By default, Compose injects
+`SUPERAGENT_TRIGGER_TOKEN` into each adapter. An adapter can set
+`coreTokenEnv` to choose a different variable name. Keep native service
+credentials separate from the shared Trigger token.
 
 Use one DWS adapter per Core source and account. The same adapter collects all
 configured conversations and consumes their Outbox. Keep the adapter's database
@@ -22,19 +25,19 @@ storage. The local owner lock rejects another process under the same OS user
 with the same Core origin, source, and account, even when the profile or state
 path differs. Deploy one owner across hosts, OS users, and Core endpoint aliases.
 The lock operates on one host under one OS user and compares the configured
-origins. If the account has additional Core credentials, configure the adapter's
-credential as `outboxConsumer: true`.
+origins. For replies, add the adapter's `source`, `accountId`, and
+`instanceId` to Core's `outboxConsumers`.
 
 ### Connect to Core on another host
 
-Use an HTTPS origin in `coreEndpoint`. For explicit HTTP on a trusted network,
-set `allowInsecureCoreHTTP: true`. That connection carries the Core token and
-Message contents in clear text.
+Set `coreEndpoint` to an HTTP or HTTPS origin. HTTP carries the Core token
+and Message contents in clear text.
 
-For direct access, use the numeric address and port that receive the request.
-For HTTPS through a reverse proxy, set upstream `Host` to that Core address
-and port. Trigger requests ignore redirect responses and proxy environment
-settings.
+For direct access, use the address and port that receive the request or the
+hostname configured in Core's `listen`. For HTTPS through a reverse proxy, set
+the upstream `Host` to that Core address and port. Trigger requests ignore redirect responses and proxy environment
+settings. Set `statusListen` to a hostname or IP address with a port. Use
+`:0` to bind to a wildcard address and let the OS choose the port.
 
 ## Configure the DWS Trigger
 
@@ -60,7 +63,6 @@ settings.
    ```
 
 The DWS adapter derives `threadId` from the source and native conversation ID.
-Grant that prefix in the Core source's `threadIdPrefixes`, for example `dws:`.
 The adapter includes the native sender and available source time in the text
 content block. The adapter saves native reply and quote identities, then sends
 Core an opaque reply target and any confirmed Outbox reference.
@@ -134,9 +136,7 @@ submit that same URL without a query, fragment, or trailing slash. A PR message
 starts with a text block for the body and source facts. It then includes the PR
 URL and any distinct observation URL, such as a comment permalink or Actions
 run page, in that order as `resource_link` blocks with no `mimeType`. GitHub
-Issue messages retain their existing `github:` IDs. Configure the Core source's
-`threadIds` or `threadIdPrefixes` to grant only the GitHub resources it should
-write.
+Issue messages retain their existing `github:` IDs.
 
 A qualifying notification for
 an open PR starts Actions tracking. The first Actions read establishes a

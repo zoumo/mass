@@ -77,9 +77,10 @@ Tool attempt metrics are independent of trace sampling.
 To query OpenObserve from Superagent Web, set `openobserve` in the
 [Core configuration](../config.example.yaml) or `core.openobserve` in the
 [Compose configuration](../compose.example.yaml). Set `endpoint` to the
-OpenObserve HTTP or HTTPS origin. In **Metrics**, filter process charts by
-service and instance. For MCP failure rate, group or filter by role, tool, or
-action. The denominator includes all outcomes.
+OpenObserve HTTP or HTTPS base URL. Include the path prefix if a proxy uses one.
+In **Metrics**, filter process charts by service and instance. For MCP
+failure rate, group or filter by role, tool, or action. The denominator
+includes all outcomes.
 
 Metrics are sampled with `OTEL_METRICS_EXPORTER=otlp` even when the service is
 idle. Embedded MASS shares the `superagent-core` process and its process
@@ -105,8 +106,9 @@ and Agent subprocess measurements.
 
 Build Web with `VITE_SUPERAGENT_WEB_TELEMETRY=on make build-superagent-web`.
 Set `SUPERAGENT_WEB_OTLP_ENDPOINT=http://127.0.0.1:14320` when starting Core.
-Use a loopback HTTP origin with an explicit port. Web submits telemetry through
-the same-origin gateway and Core to the Collector's browser receiver. Use the
+Set the endpoint to the receiver's HTTP or HTTPS base URL. Include the path
+prefix if a proxy uses one. Web submits telemetry through the same-origin
+gateway and Core to the Collector's browser receiver. Use the
 updated Collector configuration to set `service.name` to `superagent-web`.
 
 Open a Superagent Web view and search **Traces** for `service_name = superagent-web`.

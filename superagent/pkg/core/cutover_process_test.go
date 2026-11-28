@@ -64,11 +64,11 @@ func TestCutoverInstallsStartupQueryIndexes(t *testing.T) {
 
 	// The first empty index fits on one additional page. The second runs out
 	// of pages and startup must roll back both statements.
-	f.configure(pages+1, "account-1")
+	f.configure(pages + 1)
 	f.fails("unavailable")
 	assertStartupQueryIndexes(t, db, 0)
 
-	f.configure(0, "account-1")
+	f.configure(0)
 	for range 2 {
 		p = f.start()
 		assertStartupQueryIndexes(t, db, 5)
@@ -232,8 +232,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	massd, _ := startEventTestMassd(t, peer)
 	f := fixtureAt(t)
 	f.executable = coreExe
-	f.configure(0, "account")
-	configureOutboxSource(t, f)
+	configureOutboxSources(t, f, core.Source{Source: "dws", AccountID: "account", InstanceID: "collector-1"})
 	f.execution(&routeBoundary{url: massd})
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")

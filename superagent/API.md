@@ -15,9 +15,17 @@ See [data directory requirements](README.md#reuse-an-existing-core-data-director
 
 ## Submit Message
 
-`POST /v1/core/trigger-messages` with `Content-Type: application/json` and
-`Authorization: Bearer TOKEN`. The token identifies exactly one configured
-source/account; body fields cannot select another identity.
+Send `POST /v1/core/trigger-messages` with these headers.
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | `application/json` |
+| `Authorization` | `Bearer TOKEN`, using the shared Trigger token |
+| `X-Superagent-Source` | The external Source declared by the Trigger |
+| `X-Superagent-Account-Id` | The Account ID declared by the Trigger |
+
+The shared token authenticates the caller as a Trigger. The headers declare
+the Message identity. The JSON body retains the same wire format.
 
 ```json
 {
@@ -39,10 +47,13 @@ source/account; body fields cannot select another identity.
 `operationId` and `sourceMessageId` are required. The adapter supplies the
 final `threadId`. Core stores it and matches subscriptions by exact string.
 A Thread ID is at most 2048 UTF-8 bytes and has no control characters or leading
-or trailing whitespace. A `sources` entry authorizes writes with `threadIds`
-for exact matches and `threadIdPrefixes` for literal prefixes. List the same
-range in multiple entries to let their accounts write to the same Threads.
-A structured request needs a match in at least one of the configured lists.
+or trailing whitespace. Triggers can use any valid external Source, Account
+ID, and Thread ID. Core reserves the `core:` Source namespace and Thread IDs
+that start with `core%3Ascheduled-task:` for Core-generated scheduled Messages.
+
+Source and Account IDs are nonempty strings of at most 2048 UTF-8 bytes.
+Both exclude control characters, commas, and leading or trailing whitespace.
+Source IDs also exclude whitespace and the characters `:`, `/`, and `%`.
 
 `content` is a nonempty ordered array using the same content union as Prompt.
 The supported types are `text`, `image`, `audio`, `resource`, and `resource_link`.
@@ -74,7 +85,7 @@ Exactly one queues a `routed_message` to that Topic. Both reference the
 stored original Message. Initial event status is `pending`. The event
 becomes `sent` after massd accepts the Session input.
 
-Admission deduplicates by the authenticated source, account, and
+Admission deduplicates by the declared Source, Account ID, and
 `sourceMessageId`. Duplicate intake returns the original Message ID, Thread
 ID, acceptance time, and initial event ID with `duplicate=true`. Changing
 the Thread ID, ordered content, reply target or Outbox reference under that
@@ -83,11 +94,11 @@ Object field order is immaterial. Changing `_meta` alone returns the original
 receipt and preserves the first metadata. `operationId` correlates a caller's
 request and does not participate in Message deduplication.
 
-`GET /v1/core/trigger-messages?sourceMessageId={encoded-native-id}` uses the same
-source credential and returns the stored acceptance receipt with `duplicate=false`.
-The lookup scopes the native ID to the authenticated source and account and
-returns `not_found` when the scoped Message is absent. It returns no Message
-body.
+`GET /v1/core/trigger-messages?sourceMessageId={encoded-native-id}` requires the
+shared Trigger token, `X-Superagent-Source`, and `X-Superagent-Account-Id`.
+Use the same identity as the submission. The lookup returns the stored
+acceptance receipt with `duplicate=false`. An absent Message in that Source
+and Account returns `not_found`.
 
 ## Errors and uncertain responses
 
@@ -97,10 +108,11 @@ not_found=404, conflict/failed_precondition/unsupported/stale_binding=409,
 and unavailable=503.
 All error bodies omit credentials and raw storage/upstream errors.
 
-Missing native identity fails invalid_argument. Wrong authenticated source or
-account fails forbidden. Storage errors never return accepted. After an
-unavailable storage result or lost connection, retry with the same `operationId`
-and native identity. The retry can recover an acceptance after restart.
+Missing or invalid identity fields return `invalid_argument`. A missing or
+incorrect shared Trigger token returns `unauthorized`. Claiming a reserved
+Core Source or Thread returns `forbidden`. After an unavailable storage
+result or lost connection, retry with the same `operationId` and native
+identity. The retry can recover an acceptance after restart.
 
 ## Trusted resource reads
 
@@ -290,18 +302,19 @@ supported collections for descending time and ID order. Follow a continuation
 cursor with the same order.
 
 Run `superagent observe --help` for CLI collections, and request the chosen
-collection's `--help` for filters. The CLI accepts a numeric HTTP origin and
-uses the same read API without loading the Trigger configuration or tokens.
+collection's `--help` for filters. The CLI accepts an HTTP or HTTPS origin
+and uses the same read API without loading the Trigger configuration or tokens.
 
-By default, `Host` must match the connection's numeric local endpoint.
-`readAllowedHosts` adds exact `Host` values for `GET` and `HEAD` resource
-reads. Each entry is a DNS name with a port when clients include one.
+`Host` must match the connection's local endpoint or the hostname configured in
+`listen` with the listener's actual port. `readAllowedHosts` adds exact `Host`
+values for `GET` and `HEAD` resource reads. Use DNS names, IPv4 addresses, or
+bracketed IPv6 addresses. Include the port when clients send one.
 `externalURL` sets the address that role Sessions use for MCP.
 
 Core rejects foreign Origins and cross-site Fetch Metadata. Limit access to
 trusted readers at the network boundary. Core sends `Cache-Control: no-store` for reads and preserves business state. Source receipt lookups and the
-Outbox delivery view require their configured Source credentials even on
-`GET` and `HEAD`.
+Outbox delivery view require the shared Trigger token and their identity
+headers on `GET` and `HEAD`.
 
 Session preview resolves a recorded SessionBinding, then verifies the Session
 identity through massd. The history endpoint reads up to 50 durable events and
@@ -323,8 +336,10 @@ See the [Core configuration example](config.example.yaml) for Session profiles
 and Issue templates, the [embedded deployment guide](README.md#running-mass-inside-core)
 for data ownership, and the [WebSocket binding](../harness/bindings/websocket.md)
 for the optional host mount and token boundary. Core validates Runtime availability
-when it prepares a Session. Issue templates identify an allowed Runtime and model
-pair. Core sends the literal configured values and the optional effort to MASS.
+when it prepares a Session. Set the Router workspace and profile in
+`sessions.router` and the Topic profile in `sessions.topic`. Topic selects
+an allowed Runtime and model pair from `sessions.issue.templates`. Core sends
+the literal configured values and the optional effort to MASS.
 
 New Router Sessions, Topic Sessions and Issue Sessions use `config.permissionPreset: fullAccess`
 and `features.agentQuestions: false`. This applies to replacement Sessions and
@@ -392,7 +407,8 @@ cannot select permissions.
 
 MASS-managed role Sessions connect directly to Core `/v1/mcp` over HTTP.
 `externalURL` optionally sets the base URL for native Session clients. Core
-appends `/v1/mcp`. If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
+appends `/v1/mcp`. MASS requires HTTPS for a role MCP endpoint on another host.
+If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
 upstream `Host` to the local address that receives the request.
 Core writes a private file containing the scoped bearer under `dataDir/mcp-files`
 and passes its absolute path in `headers[].valueFrom.fileKeyRef`. Run Core and
@@ -669,15 +685,15 @@ acceptance, and may redeliver an unsettled event with the original ID. Core
 records input acceptance separately from work completion. See
 [ADR 0002](docs/adr/0002-settle-session-input-with-evidence.md).
 
-### Local operator reconciliation
+### Operator reconciliation
 
 Set `operatorTokenFile` to a distinct private credential with at
-least 32 non-whitespace bytes and bind Core to loopback. Inspection uses
+least 32 non-whitespace bytes. Inspection uses
 `GET /v1/core/session-bindings/{bindingId}/runtime-evidence` to read the saved
 binding, its stop evidence, and a live identity-checked massd snapshot. Submit
 recovery with `POST /v1/core/session-bindings/{bindingId}/recoveries`. The path
-selects the binding. Both require the local Operator credential and a direct
-loopback Core connection.
+selects the binding. Both require the Operator credential and a direct Core
+connection from a non-browser client.
 
 ```sh
 superagent inspect-session-binding SESSION_BINDING_ID --endpoint http://127.0.0.1:24370 \
@@ -790,9 +806,9 @@ StartOrSteer. When the event carries a reference, use the existing
 `get_message` tool for the content blocks. Closing the Topic settles its
 tasks and supersedes unconfirmed delivery events for that lifecycle.
 
-### Local Operator HTTP and CLI
+### Operator HTTP and CLI
 
-Connect directly to loopback Core and send the configured Operator Bearer.
+Connect directly to Core and send the configured Operator Bearer.
 An Operator can create and manage tasks with an omitted `owner`, read all
 task definitions and histories, and trigger an active task immediately.
 Independent task messages route to a sole active subscriber or to the Router.
@@ -897,14 +913,19 @@ Issue Session after resolving the last blocker, set `blockers.unblockedStatus` t
 
 ## Trigger Outbox
 
-Core resolves the account and reply target from the original Message. For each
-account, run a single active sender and stop it before starting a replacement.
-Configure the Core source with the sender's `instanceId` and Bearer token. If
-there is more than one instance-bound credential for an account, set
-`outboxConsumer: true` on exactly one. The sole instance-bound credential is
-selected by default. Ingress credentials for the same account can share
-Message intake. Only the selected one can pull or update Outbox. A different
-account's item IDs return `not_found`.
+Core resolves the Source, Account ID, and reply target from the original
+Message. Run one active sender for each Source and Account pair. Stop the
+sender before starting a replacement. Set the sender's `source`, `accountId`,
+and `instanceId` in `outboxConsumers`.
+
+Delivery reads and result writes require the shared Trigger token,
+`X-Superagent-Source`, `X-Superagent-Account-Id`, and
+`X-Superagent-Instance-Id`. The instance ID must start with an ASCII letter or
+digit. It can include up to 128 ASCII letters, digits, or `_.:-` characters in
+total. An identity outside the configured consumer mapping returns
+`forbidden`. An item ID outside the declared Source and Account returns
+`not_found`. The mapping coordinates delivery among callers that share the
+same credential.
 
 | Method and path | Result |
 | --- | --- |

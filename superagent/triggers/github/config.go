@@ -13,10 +13,11 @@ import (
 const githubSource = "github"
 
 type githubConfig struct {
-	GitHubTokenEnv        string             `yaml:"githubTokenEnv"`
-	AccountID             string             `yaml:"accountId"`
-	InstanceID            string             `yaml:"instanceId"`
-	CoreEndpoint          string             `yaml:"coreEndpoint"`
+	GitHubTokenEnv string `yaml:"githubTokenEnv"`
+	AccountID      string `yaml:"accountId"`
+	InstanceID     string `yaml:"instanceId"`
+	CoreEndpoint   string `yaml:"coreEndpoint"`
+	// Deprecated: HTTP is accepted on any Core host.
 	AllowInsecureCoreHTTP bool               `yaml:"allowInsecureCoreHTTP,omitempty"`
 	TokenEnv              string             `yaml:"coreTokenEnv"`
 	Listen                string             `yaml:"statusListen"`
@@ -31,10 +32,7 @@ type githubRepository struct {
 	Prompt     string `yaml:"prompt,omitempty"`
 }
 
-var (
-	githubRepositoryPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$`)
-	envVariablePattern      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-)
+var githubRepositoryPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$`)
 
 func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (githubConfig, error) {
 	var c githubConfig
@@ -45,6 +43,7 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 		c.CoreEndpoint = coreEndpoint
 		c.DatabasePath = trigger.ResolveSectionPath(path, c.DatabasePath)
 	}
+	c.TokenEnv = trigger.CoreTokenEnv(c.TokenEnv, section != nil)
 	if c.PollSeconds == 0 {
 		c.PollSeconds = 60
 	}
@@ -54,7 +53,7 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:0"
 	}
-	if !filepath.IsAbs(c.DatabasePath) || !trigger.ValidIdentifier(c.AccountID) || !trigger.ValidIdentifier(c.InstanceID) || !envVariablePattern.MatchString(c.TokenEnv) || !envVariablePattern.MatchString(c.GitHubTokenEnv) {
+	if !filepath.IsAbs(c.DatabasePath) || !trigger.ValidIdentifier(c.AccountID) || !trigger.ValidIdentifier(c.InstanceID) || !trigger.ValidEnvVariable(c.TokenEnv) || !trigger.ValidEnvVariable(c.GitHubTokenEnv) {
 		return c, errors.New("GitHub Trigger requires an absolute databasePath, stable accountId and instanceId, coreTokenEnv and githubTokenEnv")
 	}
 	if c.TokenEnv == c.GitHubTokenEnv {
@@ -63,7 +62,7 @@ func loadGitHubConfig(path string, section io.Reader, coreEndpoint string) (gith
 	if c.PollSeconds < 1 || c.PollSeconds > 86400 || c.RequestMillis < 10 || c.RequestMillis > 60000 {
 		return c, errors.New("invalid GitHub timing limits")
 	}
-	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint, c.AllowInsecureCoreHTTP); err != nil {
+	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint); err != nil {
 		return c, err
 	}
 	if err := trigger.ValidateStatusListen(c.Listen); err != nil {

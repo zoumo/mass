@@ -205,8 +205,7 @@ func readGitHubStatus(t *testing.T, endpoint string) githubStatus {
 
 func newGitHubCoreFixture(t *testing.T) *triggertest.CoreFixture {
 	t.Helper()
-	return triggertest.NewCoreFixture(t, false, githubSource, "https://github.com/demo/", "github:https%3A%2F%2Fgithub.com%2Fdemo%2F",
-		"github:https%3A%2F%2Fgithub.com%2Felsewhere%2Fmass%2Fissues%2F")
+	return triggertest.NewCoreFixture(t, false, githubSource)
 }
 
 func githubMessageMeta(msg map[string]any) map[string]any {

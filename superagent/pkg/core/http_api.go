@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	sourceBearer   = "sourceBearer"
+	triggerBearer  = "triggerBearer"
 	operatorBearer = "operatorBearer"
 	roleBearer     = "roleBearer"
 	massdBearer    = "massdBearer"
@@ -47,7 +47,7 @@ func (s *Server) newHTTPAPI() *httpAPI {
 	})
 	config.Components.Schemas.RegisterTypeAlias(reflect.TypeFor[json.RawMessage](), reflect.TypeFor[any]())
 	config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-		sourceBearer:   {Type: "http", Scheme: "bearer", Description: "Source account credential"},
+		triggerBearer:  {Type: "http", Scheme: "bearer", Description: "Shared Trigger credential"},
 		operatorBearer: {Type: "http", Scheme: "bearer", Description: "Core operator credential"},
 		roleBearer:     {Type: "http", Scheme: "bearer", Description: "MCP role capability"},
 		massdBearer:    {Type: "http", Scheme: "bearer", Description: "massd instance credential"},

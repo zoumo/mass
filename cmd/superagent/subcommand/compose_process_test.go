@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,9 +32,8 @@ const (
 	composeGitHubCoreEnv = "TEST_COMPOSE_GITHUB_CORE"
 	composeGitHubEnv     = "TEST_COMPOSE_GITHUB_UPSTREAM"
 	composeDWSCoreEnv    = "TEST_COMPOSE_DWS_CORE"
-	composeGitHubCore    = "fixture-github-core-credential-unused-by-anyone-else"
+	composeTriggerToken  = "fixture-trigger-credential-shared-across-adapters"
 	composeGitHubToken   = "fixture-github-graphql-credential"
-	composeDWSToken      = "fixture-dws-core-credential-unused-by-anyone-else"
 )
 
 func TestMain(m *testing.M) {
@@ -47,11 +47,12 @@ func TestMain(m *testing.M) {
 }
 
 type composeFixtureEvent struct {
-	Name   string
-	PID    int
-	Parent int
-	Args   []string
-	Env    [3]bool
+	Name         string
+	PID          int
+	Parent       int
+	Args         []string
+	Env          [3]bool
+	TriggerToken bool
 }
 
 func recordComposeEvent(dir, name string) {
@@ -62,7 +63,8 @@ func recordComposeEvent(dir, name string) {
 	defer f.Close()
 	err = json.NewEncoder(f).Encode(composeFixtureEvent{
 		Name: name, PID: os.Getpid(), Parent: os.Getppid(), Args: os.Args[1:],
-		Env: [3]bool{os.Getenv(composeGitHubCoreEnv) != "", os.Getenv(composeGitHubEnv) != "", os.Getenv(composeDWSCoreEnv) != ""},
+		Env:          [3]bool{os.Getenv(composeGitHubCoreEnv) != "", os.Getenv(composeGitHubEnv) != "", os.Getenv(composeDWSCoreEnv) != ""},
+		TriggerToken: os.Getenv(composeGitHubCoreEnv) == composeTriggerToken || os.Getenv(composeDWSCoreEnv) == composeTriggerToken,
 	})
 	if err != nil {
 		panic(err)
@@ -233,7 +235,8 @@ func runComposeHTTPFixture(dir, name string) int {
 }
 
 func composeFixtureAdmission(dir string, w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer "+composeDWSToken || r.Method != http.MethodPost {
+	if r.Header.Get("Authorization") != "Bearer "+composeTriggerToken || r.Method != http.MethodPost ||
+		r.Header.Get("X-Superagent-Source") != "dws" || r.Header.Get("X-Superagent-Account-Id") != "fixture-dws" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -270,9 +273,9 @@ func startComposeFixture(t *testing.T, dir, yaml string, environment ...string) 
 	require.NoError(t, err)
 	return startComposeProcess(t, self, dir, yaml, append([]string{
 		composeFixtureDir + "=" + dir,
-		composeGitHubCoreEnv + "=" + composeGitHubCore,
+		composeGitHubCoreEnv + "=ignored-inherited-github-value",
 		composeGitHubEnv + "=" + composeGitHubToken,
-		composeDWSCoreEnv + "=" + composeDWSToken,
+		composeDWSCoreEnv + "=ignored-inherited-dws-value",
 	}, environment...)...)
 }
 
@@ -310,7 +313,7 @@ func startComposeProcess(t *testing.T, binary, dir, yaml string, environment ...
 			}
 		}
 		logs := readComposeFile(t, p.logs)
-		for _, value := range []string{composeGitHubCore, composeGitHubToken, composeDWSToken, "DATA RACE"} {
+		for _, value := range []string{composeTriggerToken, composeGitHubToken, "DATA RACE"} {
 			require.NotContains(t, logs, value)
 			require.NotContains(t, readComposeFile(t, p.stdout), value)
 		}
@@ -386,14 +389,13 @@ func assertComposeOrder(t *testing.T, dir string, names ...string) {
 
 func composeFixtureConfig(t *testing.T, dir, coreListen string, github, dws bool) string {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "github-token"), []byte(composeGitHubCore), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dws-token"), []byte(composeDWSToken), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "trigger-token"), []byte(composeTriggerToken), 0o600))
 	config := fmt.Sprintf(`core:
   listen: %q
   dataDir: ./core-state
-  sources:
-    - {source: github, accountId: fixture-github, instanceId: github-adapter, tokenFile: github-token, threadIdPrefixes: ["https://github.com/"]}
-    - {source: dws, accountId: fixture-dws, instanceId: dws-adapter, tokenFile: dws-token, outboxConsumer: true, threadIdPrefixes: ["dws:"]}
+  triggerTokenFile: ./trigger-token
+  outboxConsumers:
+    - {source: dws, accountId: fixture-dws, instanceId: dws-adapter}
 `, coreListen)
 	if !github && !dws {
 		return config
@@ -447,7 +449,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		dir := t.TempDir()
 		const traceID = "db64663e60fb444b8a93ea9c06c24413"
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost || r.URL.String() != "/api/fixture_org/_search?type=traces" {
+			if r.Method != http.MethodPost || r.URL.String() != "/observability/api/fixture_org/_search?type=traces" {
 				http.Error(w, "unexpected OpenObserve request", http.StatusBadRequest)
 				return
 			}
@@ -457,7 +459,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + fmt.Sprintf(`  openobserve:
     endpoint: %q
     organization: fixture_org
-`, upstream.URL)
+`, upstream.URL+"/observability/")
 		first := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := first.startup(t)
 		trace := composeHTTPBody(t, startup.Endpoint+"/v1/telemetry/traces/"+traceID)
@@ -511,12 +513,11 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
   remoteComputer:
     cua: {command: ./cua-mcp, configFile: ./cua.yaml}
   sessions:
-    routerWorkspace: .
-    roles:
-      router: {runtimeRef: codex, model: fixture-model}
-      topic: {runtimeRef: codex, model: fixture-model}
-    issueTemplates:
-      - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
+    router: {workspace: ., runtimeRef: codex, model: fixture-router, effort: low}
+    topic: {runtimeRef: codex, model: fixture-topic}
+    issue:
+      templates:
+        - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
 `
 		p := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := p.startup(t)
@@ -526,7 +527,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/massd/jsonrpc", startup.MassdEndpoint)
 		require.JSONEq(t, `{"status":"ready"}`, composeHTTPBody(t, startup.Endpoint+"/massd/readyz"))
 		dial := &websocket.Dialer{HandshakeTimeout: time.Second}
-		for _, credential := range []string{"", composeGitHubCore} {
+		for _, credential := range []string{"", composeTriggerToken} {
 			header := make(http.Header)
 			if credential != "" {
 				header.Set("Authorization", "Bearer "+credential)
@@ -560,6 +561,7 @@ func TestComposeProcessCombinations(t *testing.T) {
 		{"without triggers", "127.0.0.1:0", "http://127.0.0.1:", false, false, syscall.SIGTERM},
 		{"github only", "0.0.0.0:0", "http://127.0.0.1:", true, false, syscall.SIGINT},
 		{"dws only", "127.0.0.1:0", "http://127.0.0.1:", false, true, syscall.SIGTERM},
+		{"hostname and wildcard Trigger", "localhost:0", "http://127.0.0.1:", false, true, syscall.SIGTERM},
 		{"both on IPv6 wildcard", "[::]:0", "http://[::1]:", true, true, syscall.SIGTERM},
 		{"both on IPv6 loopback", "[::1]:0", "http://[::1]:", true, true, syscall.SIGINT},
 	} {
@@ -571,20 +573,33 @@ func TestComposeProcessCombinations(t *testing.T) {
 				_ = unrelated.Process.Kill()
 				_ = unrelated.Wait()
 			})
-			p := startComposeFixture(t, dir, composeFixtureConfig(t, dir, tc.listen, tc.github, tc.dws), "TEST_COMPOSE_FEED_DWS=1")
+			config := composeFixtureConfig(t, dir, tc.listen, tc.github, tc.dws)
+			if tc.listen == "localhost:0" {
+				config += "    statusListen: '0.0.0.0:0'\n"
+			}
+			p := startComposeFixture(t, dir, config, "TEST_COMPOSE_FEED_DWS=1")
 			startup := p.startup(t)
-			require.True(t, strings.HasPrefix(startup.Endpoint, tc.origin), startup.Endpoint)
+			if tc.listen == "localhost:0" {
+				parsed, err := url.Parse(startup.Endpoint)
+				require.NoError(t, err)
+				parsed.Host = net.JoinHostPort("localhost", parsed.Port())
+				composeHTTPBody(t, parsed.String()+"/status")
+			} else {
+				require.True(t, strings.HasPrefix(startup.Endpoint, tc.origin), startup.Endpoint)
+			}
 			require.False(t, strings.HasSuffix(startup.Endpoint, ":0"), startup.Endpoint)
 			require.Empty(t, startup.MassdEndpoint)
 			require.DirExists(t, filepath.Join(dir, "massd-data"))
 			server := awaitComposeEvent(t, dir, "core:start")
 			require.Equal(t, p.cmd.Process.Pid, server.Parent)
 			require.Equal(t, [3]bool{!tc.github, !tc.github, !tc.dws}, server.Env)
+			require.False(t, server.TriggerToken)
 			if tc.github {
 				check := awaitComposeEvent(t, dir, "github:check")
 				collector := awaitComposeEvent(t, dir, "github:start")
 				for _, child := range []composeFixtureEvent{check, collector} {
 					require.Equal(t, p.cmd.Process.Pid, child.Parent)
+					require.True(t, child.TriggerToken)
 					require.Equal(t, [3]bool{true, true, !tc.dws}, child.Env)
 				}
 				require.Contains(t, collector.Args, startup.Endpoint)
@@ -598,14 +613,17 @@ func TestComposeProcessCombinations(t *testing.T) {
 				collector := awaitComposeEvent(t, dir, "dws:serve")
 				for _, child := range []composeFixtureEvent{check, collector} {
 					require.Equal(t, p.cmd.Process.Pid, child.Parent)
+					require.True(t, child.TriggerToken)
 					require.Equal(t, [3]bool{!tc.github, !tc.github, true}, child.Env)
 				}
 				require.Contains(t, collector.Args, startup.Endpoint)
 				preflight := awaitComposeEvent(t, dir, "dws-cli:preflight")
 				require.Equal(t, check.PID, preflight.Parent)
+				require.False(t, preflight.TriggerToken)
 				require.Equal(t, [3]bool{!tc.github, !tc.github, false}, preflight.Env)
 				consumer := awaitComposeEvent(t, dir, "consumer:start")
 				require.Equal(t, collector.PID, consumer.Parent)
+				require.False(t, consumer.TriggerToken)
 				require.Equal(t, [3]bool{!tc.github, !tc.github, false}, consumer.Env)
 				endpoint := startup.TriggerEndpoints["dws"]
 				require.True(t, strings.HasPrefix(endpoint, tc.origin), endpoint)
@@ -668,23 +686,22 @@ func TestComposeProcessPreflight(t *testing.T) {
 		environment               []string
 	}{
 		{"unknown Trigger field", "    repositories:", "    unused: PRIVATE-FIXTURE\n    repositories:", "triggers.github configuration", nil},
-		{"missing Core credential", "", "", "triggers.github preflight: coreTokenEnv", []string{composeGitHubCoreEnv + "="}},
-		{"wrong Core credential", "", "", "triggers.dws preflight: configured Core token does not match", []string{composeDWSCoreEnv + "=" + composeGitHubCore}},
-		{"unbound source credential", "    instanceId: dws-adapter", "    instanceId: unregistered", "triggers.dws preflight: source, accountId and instanceId", nil},
-		{"DWS Outbox role", "outboxConsumer: true, threadIdPrefixes: [\"dws:\"]}", "outboxConsumer: false}\n    - {source: dws, accountId: fixture-dws, instanceId: another-adapter, tokenFile: another-token, outboxConsumer: true}", "triggers.dws preflight: the reply-enabled Trigger", nil},
-		{"credential shared across scopes", "", "", "triggers.dws preflight: credential references must hold distinct tokens", []string{composeGitHubEnv + "=" + composeDWSToken}},
-		{"remote plaintext", "127.0.0.1:0", "192.0.2.1:0", "remote coreEndpoint requires HTTPS", nil},
+		{"missing Trigger credential file", "./trigger-token", "./missing-token", "triggerTokenFile must be a readable private regular file", nil},
+		{"DWS Outbox role", "    instanceId: dws-adapter", "    instanceId: another-adapter", "triggers.dws preflight: the reply-enabled Trigger", nil},
+		{"credential shared across scopes", "", "", "triggers.github preflight: native service credentials must be distinct", []string{composeGitHubEnv + "=" + composeTriggerToken}},
+		{"credential environment shared across scopes", "coreTokenEnv: " + composeDWSCoreEnv, "coreTokenEnv: " + composeGitHubEnv, "triggers.github githubTokenEnv conflicts with triggers.dws coreTokenEnv", nil},
 		{"state under MASS", "./dws.sqlite", "./massd-data/dws.sqlite", "triggers.dws databasePath conflicts with core.massd.embedded dataDir", nil},
 		{"state under Core", "./dws.sqlite", "./core-state/dws.sqlite", "triggers.dws databasePath conflicts with core dataDir", nil},
 		{"shared state", "./dws.sqlite", "./github.sqlite-wal", "triggers.dws databasePath conflicts with triggers.github databasePath", nil},
-		{"invalid status port", "    databasePath: ./dws.sqlite", "    statusListen: 127.0.0.1:invalid\n    databasePath: ./dws.sqlite", "triggers.dws statusListen requires a numeric port", nil},
+		{"invalid status port", "    databasePath: ./dws.sqlite", "    statusListen: 127.0.0.1:invalid\n    databasePath: ./dws.sqlite", "statusListen must use host:port with a numeric port", nil},
+		{"invalid Core address", "127.0.0.1:0", "'bad/name:0'", "listen must use host:port with a numeric port", nil},
 		{"shared status port", "    databasePath:", "    statusListen: 127.0.0.1:15443\n    databasePath:", "triggers.dws statusListen conflicts with triggers.github", nil},
+		{"wildcard status port", "    databasePath:", "    statusListen: 0.0.0.0:15443\n    databasePath:", "triggers.dws statusListen conflicts with triggers.github", nil},
 		{"DWS CLI local contract", "", "", "triggers.dws preflight: DWS executable/version check failed", []string{"TEST_COMPOSE_DWS_BAD_CLI=1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			config := composeFixtureConfig(t, dir, "127.0.0.1:0", true, true)
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "another-token"), []byte(strings.Repeat("x", 40)), 0o600))
 			if tc.old != "" {
 				require.Contains(t, config, tc.old)
 				config = strings.ReplaceAll(config, tc.old, tc.new)

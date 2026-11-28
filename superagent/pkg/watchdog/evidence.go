@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -15,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zoumo/mass/internal/httpaddress"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -78,9 +78,9 @@ type reader struct {
 }
 
 func newReader(endpoint string) (reader, error) {
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" || net.ParseIP(u.Hostname()) == nil {
-		return reader{}, errors.New("endpoint must be a plain HTTP origin with a numeric IP address")
+	u, err := httpaddress.ParseOrigin(endpoint)
+	if err != nil {
+		return reader{}, fmt.Errorf("endpoint %w", err)
 	}
 	return reader{endpoint: u, client: &http.Client{
 		Transport: &http.Transport{},

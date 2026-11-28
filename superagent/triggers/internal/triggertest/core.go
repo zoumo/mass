@@ -30,7 +30,7 @@ type CoreFixture struct {
 	Core              *Process
 }
 
-func NewCoreFixture(t *testing.T, clock bool, source string, threadIDPrefixes ...string) *CoreFixture {
+func NewCoreFixture(t *testing.T, clock bool, source string) *CoreFixture {
 	t.Helper()
 	f := &CoreFixture{t: t, Dir: t.TempDir(), Binary: CorePath(t), started: time.Now().UTC()}
 	if clock {
@@ -44,45 +44,38 @@ func NewCoreFixture(t *testing.T, clock bool, source string, threadIDPrefixes ..
 	// and no massd outcome is needed to enqueue a role-authored reply.
 	unavailable := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(unavailable.Close)
-	sourceTokenFile := filepath.Join(f.Dir, "test-source")
+	triggerTokenFile := filepath.Join(f.Dir, "test-source")
 	f.OperatorTokenFile = filepath.Join(f.Dir, "test-operator")
 	massdTokenFile := filepath.Join(f.Dir, "test-massd")
-	Write(t, sourceTokenFile, []byte(Token))
+	Write(t, triggerTokenFile, []byte(Token))
 	Write(t, f.OperatorTokenFile, []byte(OperatorToken))
 	Write(t, massdTokenFile, []byte("test-only-massd-token"))
 	f.config = filepath.Join(f.Dir, "core.yaml")
 	f.mcpFiles = filepath.Join(f.Dir, "data", "mcp-files")
-	prefixes, err := json.Marshal(append([]string{}, threadIDPrefixes...))
-	if err != nil {
-		t.Fatal(err)
-	}
 	Write(t, f.config, fmt.Appendf(nil, `dataDir: %q
 listen: %q
-sources:
-  - source: %s
-    accountId: account
-    instanceId: fixture-instance
-    tokenFile: %q
-    threadIdPrefixes: %s
+triggerTokenFile: %q
+outboxConsumers:
+  - {source: %s, accountId: account, instanceId: fixture-instance}
 massd:
   endpoint: %q
   tokenFile: %q
 operatorTokenFile: %q
 sessions:
   namespace: trigger-fixture
-  routerWorkspace: %q
-  roles:
-    router:
-      runtimeRef: test-runtime
-      model: test-model
-    topic:
-      runtimeRef: test-runtime
-      model: test-model
-  issueTemplates:
-    - runtimeRef: test-runtime
-      model: test-model
-      description: Fixture Issue template
-`, filepath.Join(f.Dir, "data"), FreeAddress(t), source, sourceTokenFile, prefixes,
+  router:
+    workspace: %q
+    runtimeRef: test-runtime
+    model: test-model
+  topic:
+    runtimeRef: test-runtime
+    model: test-model
+  issue:
+    templates:
+      - runtimeRef: test-runtime
+        model: test-model
+        description: Fixture Issue template
+`, filepath.Join(f.Dir, "data"), FreeAddress(t), triggerTokenFile, source,
 		"ws"+strings.TrimPrefix(unavailable.URL, "http")+"/jsonrpc", massdTokenFile, f.OperatorTokenFile, f.Dir))
 	f.StartCore(clock)
 	f.RoleToken = f.WaitRoleToken("router", "")

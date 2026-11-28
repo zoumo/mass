@@ -28,7 +28,7 @@ func checkStackStatus(t *testing.T, endpoint, overall, massd, github, dws string
 	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
-	for _, private := range []string{"fixture-private-github-status", "fixture/example", endpoint, composeGitHubCore, composeGitHubToken, composeDWSToken} {
+	for _, private := range []string{"fixture-private-github-status", "fixture/example", endpoint, composeTriggerToken, composeGitHubToken} {
 		require.NotContains(t, string(body), private)
 	}
 	var got struct {

@@ -247,30 +247,32 @@ func proxyRPC(t *testing.T, upstream string, intercept func(string, func()) bool
 	return "ws" + strings.TrimPrefix(proxy.URL, "http") + "/jsonrpc"
 }
 
-const fixtureExecutionProfiles = `  roles:
-    router:
-      runtimeRef: agent
-      model: router-model
-      effort: low
-    topic:
-      runtimeRef: agent
-      model: topic-model
-  issueTemplates:
-    - runtimeRef: agent
-      model: issue-model
-      effort: medium
-      description: Implement changes
-    - runtimeRef: agent
-      model: review-model
-      description: Review results
+const fixtureSessions = `sessions:
+  router:
+    workspace: %q
+    runtimeRef: agent
+    model: router-model
+    effort: low
+  topic:
+    runtimeRef: agent
+    model: topic-model
+  issue:
+    templates:
+      - runtimeRef: agent
+        model: issue-model
+        effort: medium
+        description: Implement changes
+      - runtimeRef: agent
+        model: review-model
+        description: Review results
 `
 
 func (f *fixture) execution(boundary *routeBoundary) {
 	f.t.Helper()
 	b, err := os.ReadFile(f.config)
 	require.NoError(f.t, err)
-	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\nsessions:\n  routerWorkspace: %s\n  namespace: superagent\n", boundary.url, f.dir)...)
-	b = append(b, fixtureExecutionProfiles...)
+	b = append(b, fmt.Appendf(nil, "massd:\n  endpoint: %s\n", boundary.url)...)
+	b = fmt.Appendf(b, fixtureSessions, f.dir)
 	require.NoError(f.t, os.WriteFile(f.config, []byte(fixedListen(f.t, string(b))), 0o600))
 }
 
@@ -741,7 +743,6 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	boundary.url = proxyRPC(t, boundary.url, audit.recordRPC, func() {})
 	f := fixtureAt(t)
 	configureOutboxSource(t, f)
-	prToken := addPRSource(t, f, "github")
 	f.execution(boundary)
 	data, err := os.ReadFile(f.config)
 	require.NoError(t, err)
@@ -808,7 +809,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	roleWork[core.Topic](t, p, topicToken, "update_topic", prUpdate("observer-pr-without-input", 1, internalPR))
 	work.Issue = roleWork[core.WorkReceipt](t, p, roleToken(t, f, issue), "update_issue",
 		prUpdate("observer-pr-with-input", work.Issue.Revision, firstPR)).Issue
-	acceptPRMessage(t, p, prToken, prMessage("observer-pr", firstPR, "Synthetic PR review arrived."))
+	acceptPRMessage(t, p, f.token, "github", prMessage("observer-pr", firstPR, "Synthetic PR review arrived."))
 	report := roleWork[core.Report](t, p, roleToken(t, f, issue), "submit_report",
 		core.ReportRequest{
 			OperationID: "observer-report", Kind: "ready", Summary: "Sample build verified",

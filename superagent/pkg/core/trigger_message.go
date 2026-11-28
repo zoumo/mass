@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -32,12 +31,6 @@ type SubmitTriggerMessageRequest struct {
 func validTriggerThreadID(id string) bool {
 	return id != "" && len(id) <= 2048 && strings.TrimSpace(id) == id && utf8.ValidString(id) &&
 		!strings.ContainsFunc(id, unicode.IsControl)
-}
-
-func (s Source) allowsThreadID(id string) bool {
-	return slices.Contains(s.ThreadIDs, id) || slices.ContainsFunc(s.ThreadIDPrefixes, func(prefix string) bool {
-		return prefix != "" && strings.HasPrefix(id, prefix)
-	})
 }
 
 func (r SubmitTriggerMessageRequest) prepare(source Source) (Message, []byte, error) {
@@ -110,8 +103,8 @@ func (s *Store) SubmitTriggerMessage(ctx context.Context, source Source, request
 	if err != nil {
 		return Receipt{}, err
 	}
-	if !source.allowsThreadID(message.ThreadID) {
-		return Receipt{}, problem("forbidden", "threadId is outside the authenticated write scope")
+	if strings.HasPrefix(message.ThreadID, scheduledTaskThreadPrefix) {
+		return Receipt{}, problem("forbidden", "threadId uses the Core scheduled task namespace")
 	}
 	return s.submitMessage(ctx, source, message, canonical)
 }

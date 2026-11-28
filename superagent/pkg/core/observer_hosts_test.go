@@ -16,10 +16,10 @@ func TestReadAllowedHostsConfig(t *testing.T) {
 	f := fixtureAt(t)
 	base, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(base)+"readAllowedHosts: [observer.example.com:5970, other.example.com]\n")
+	write(t, f.config, string(base)+"readAllowedHosts: [observer.example.com:5970, other.example.com, 192.0.2.10:5970, '[2001:db8::10]:5970', '[::1]']\n")
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	require.Equal(t, []string{"observer.example.com:5970", "other.example.com"}, config.ReadAllowedHosts)
+	require.Equal(t, []string{"observer.example.com:5970", "other.example.com", "192.0.2.10:5970", "[2001:db8::10]:5970", "[::1]"}, config.ReadAllowedHosts)
 
 	for _, invalid := range []string{
 		"observer.example.com",
@@ -32,12 +32,15 @@ func TestReadAllowedHostsConfig(t *testing.T) {
 		"[user@observer.example.com]",
 		"[observer.example.com:]",
 		"[observer.example.com:0]",
+		"[observer.example.com:080]",
 		"[observer.example.com:65536]",
 		"[observer.example.com:abc]",
 		"[observer..example.com]",
 		"[-observer.example.com]",
 		"[observer_example.com]",
-		"[127.0.0.1:5970]",
+		"['[bad::host]:5970']",
+		"['[observer.example.com]:5970']",
+		"['2001:db8::10']",
 	} {
 		t.Run(invalid, func(t *testing.T) {
 			write(t, f.config, string(base)+"readAllowedHosts: "+invalid+"\n")
@@ -49,6 +52,8 @@ func TestReadAllowedHostsConfig(t *testing.T) {
 
 func TestReadAllowedHostsHTTP(t *testing.T) {
 	const allowed = "observer.example.com:5970"
+	const allowedIPv4 = "192.0.2.10:5970"
+	const allowedIPv6 = "[2001:db8::10]:5970"
 	const readPath = "/v1/core/threads"
 	f := fixtureAt(t)
 	base, err := os.ReadFile(f.config)
@@ -76,13 +81,15 @@ func TestReadAllowedHostsHTTP(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, requestStatus(t, defaultServer, http.MethodGet, readPath, allowed, "", ""))
 	defaultServer.stop(t, false)
 
-	write(t, f.config, string(base)+"readAllowedHosts: ["+allowed+"]\n")
+	write(t, f.config, string(base)+"readAllowedHosts: ["+allowed+", "+allowedIPv4+", '"+allowedIPv6+"']\n")
 	p := f.start()
 	for _, tc := range []struct {
 		name, method, path, host, origin, fetchSite string
 		want                                        int
 	}{
 		{name: "allowed GET", method: http.MethodGet, path: readPath, host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
+		{name: "allowed IPv4 GET", method: http.MethodGet, path: readPath, host: allowedIPv4, want: http.StatusOK},
+		{name: "allowed IPv6 GET", method: http.MethodGet, path: readPath, host: allowedIPv6, want: http.StatusOK},
 		{name: "allowed HEAD", method: http.MethodHead, path: readPath, host: allowed, want: http.StatusOK},
 		{name: "allowed Core read", method: http.MethodGet, path: "/v1/core/topics", host: allowed, origin: "http://" + allowed, fetchSite: "same-origin", want: http.StatusOK},
 		{name: "operator evidence requires the direct Core host", method: http.MethodGet, path: "/v1/core/session-bindings/example/runtime-evidence", host: allowed, want: http.StatusForbidden},

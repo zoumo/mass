@@ -12,7 +12,7 @@ import (
 	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 )
 
-const outboxPath = "/v1/core/outbox-messages"
+const outboxPath = coreclient.OutboxMessagesPath
 
 func outboxDeliveryPath(id string) string {
 	return outboxPath + "/" + url.PathEscape(id) + "?view=delivery"

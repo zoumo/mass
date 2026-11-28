@@ -2,14 +2,14 @@ package core
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +39,7 @@ type Server struct {
 	config                       Config
 	http                         *http.Server
 	listener                     net.Listener
+	listenAuthority              string
 }
 
 // MassdMountPath is the Core HTTP prefix for an explicitly exposed MASS instance.
@@ -108,7 +109,12 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 			result = errors.Join(result, l.Close())
 		}
 	}()
+	host, _, _ := net.SplitHostPort(c.Listen)
+	_, port, _ := net.SplitHostPort(l.Addr().String())
 	s := &Server{store: store, config: c, listener: l, embeddedMassd: instance, observerTelemetry: gateway, observerTraces: traces}
+	if host != "" && net.ParseIP(host) == nil {
+		s.listenAuthority = net.JoinHostPort(host, port)
+	}
 	if exposureToken != "" {
 		s.massdHTTP = http.StripPrefix(MassdMountPath, instance.Handler())
 		s.massdHTTPToken = exposureToken
@@ -135,7 +141,12 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	s.admitting.Store(true)
 	return s, nil
 }
-func (s *Server) Endpoint() string { return "http://" + s.listener.Addr().String() }
+
+func (s *Server) Endpoint() string {
+	endpoint := url.URL{Scheme: "http", Host: s.listener.Addr().String()}
+	return endpoint.String()
+}
+
 func (s *Server) Serve() error {
 	err := s.http.Serve(s.listener)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -192,12 +203,13 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		expectedHost := s.listener.Addr().String()
-		if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
-			expectedHost = local.String()
+		if local, ok := r.Context().Value(http.LocalAddrContextKey).(*net.TCPAddr); ok {
+			expectedHost = net.JoinHostPort(local.IP.String(), strconv.Itoa(local.Port))
 		}
 		allowedReadHost := isTrustedResourceRead(r.URL.Path) && isReadMethod(r.Method) && slices.Contains(s.config.ReadAllowedHosts, r.Host)
 		operatorMessageList := r.URL.Path == triggerMessagesPath && hasOperatorMessageFilter(r.URL.Query())
-		if r.Host != expectedHost && (!allowedReadHost || operatorMessageList) {
+		directHost := matchesCoreHost(r.Host, expectedHost) || matchesCoreHost(r.Host, s.listenAuthority)
+		if !directHost && (!allowedReadHost || operatorMessageList) {
 			s.fail(w, problem("forbidden", "Host must match the Core endpoint"))
 			return
 		}
@@ -218,22 +230,12 @@ func (s *Server) guardHTTP(next http.Handler) http.Handler {
 	})
 }
 
-func isReadMethod(method string) bool {
-	return method == http.MethodGet || method == http.MethodHead
+func matchesCoreHost(host, authority string) bool {
+	return authority != "" && (strings.EqualFold(host, authority) || strings.EqualFold(host+":80", authority))
 }
 
-func (s *Server) authenticate(r *http.Request) (Source, bool) {
-	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
-		return Source{}, false
-	}
-	hash := sha256.Sum256([]byte(strings.TrimPrefix(header, "Bearer ")))
-	for _, source := range s.config.Sources {
-		if subtle.ConstantTimeCompare(hash[:], source.tokenHash[:]) == 1 {
-			return source, true
-		}
-	}
-	return Source{}, false
+func isReadMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
 }
 
 func (s *Server) coreRecord(ctx context.Context, kind, id string, trace, observe bool) (json.RawMessage, error) {
@@ -288,14 +290,10 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	}
 	// Never return a reusable credential, even if untrusted text contains it.
 	body := string(b)
-	var configured []string
-	for _, source := range s.config.Sources {
-		configured = append(configured, source.token)
-	}
+	configured := []string{s.config.triggerToken, s.config.operatorToken, s.massdHTTPToken}
 	if s.config.Massd != nil {
 		configured = append(configured, s.config.Massd.token)
 	}
-	configured = append(configured, s.config.operatorToken, s.massdHTTPToken)
 	for _, token := range configured {
 		if token == "" {
 			continue

@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,10 +85,6 @@ func (c Config) massdExposureToken() (string, error) {
 	if c.Massd == nil || c.Massd.Embedded == nil || c.Massd.Embedded.Expose == nil {
 		return "", nil
 	}
-	host, _, err := net.SplitHostPort(c.Listen)
-	if err != nil || !net.ParseIP(host).IsLoopback() {
-		return "", problem("invalid_argument", "massd.embedded.expose requires a loopback Core listener")
-	}
 	path := c.Massd.Embedded.Expose.TokenFile
 	if path == "" {
 		return "", problem("invalid_argument", "massd.embedded.expose.tokenFile is required")
@@ -103,13 +98,8 @@ func (c Config) massdExposureToken() (string, error) {
 		return "", problem("invalid_argument", "embedded MASS token must have at least 32 bytes without whitespace or control characters")
 	}
 	// Core assigns this prefix to both new and persisted role MCP credentials.
-	if token == c.operatorToken || strings.HasPrefix(token, roleTokenPrefix+"_") {
+	if token == c.operatorToken || token == c.triggerToken || strings.HasPrefix(token, roleTokenPrefix+"_") {
 		return "", problem("invalid_argument", "embedded MASS token must be distinct from Core credentials")
-	}
-	for _, source := range c.Sources {
-		if token == source.token {
-			return "", problem("invalid_argument", "embedded MASS token must be distinct from Core credentials")
-		}
 	}
 	return token, nil
 }

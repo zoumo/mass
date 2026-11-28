@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/internal/httpaddress"
 	"github.com/zoumo/mass/massd"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
@@ -100,12 +100,9 @@ func New() *cobra.Command {
 	observe.PersistentFlags().BoolVar(&newest, "newest", false, "List newest records first")
 	for _, kind := range []string{"trigger-messages", "threads", "internal-events", "topics", "issues", "reports", "router-messages", "topic-activity", "session-bindings", "status", "outbox-messages"} {
 		cmd := &cobra.Command{Use: kind + " [id]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-			u, err := url.Parse(endpoint)
-			if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Scheme != "http" {
-				return &core.Error{Code: "invalid_argument", Message: "endpoint must be a plain HTTP origin"}
-			}
-			if net.ParseIP(u.Hostname()) == nil {
-				return &core.Error{Code: "invalid_argument", Message: "endpoint must use a numeric IP address"}
+			u, err := httpaddress.ParseOrigin(endpoint)
+			if err != nil {
+				return &core.Error{Code: "invalid_argument", Message: "endpoint " + err.Error()}
 			}
 
 			path := "/v1/core/" + kind
@@ -147,7 +144,7 @@ func New() *cobra.Command {
 			if issue != "" {
 				q.Set("issueId", issue)
 			}
-			target := endpoint + path
+			target := u.String() + path
 			if len(q) != 0 {
 				target += "?" + q.Encode()
 			}

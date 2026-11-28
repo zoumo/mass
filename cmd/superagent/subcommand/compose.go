@@ -16,7 +16,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/internal/httpaddress"
 	"github.com/zoumo/mass/massd"
 	rpcwire "github.com/zoumo/mass/massd/pkg/jsonrpc"
 	"github.com/zoumo/mass/superagent/pkg/core"
@@ -75,7 +75,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	}
 	environment := os.Environ()
 	for _, trigger := range triggers {
-		err := trigger.check(ctx, superagent, path, probeEndpoint, composeChildEnvironment(environment, triggers, trigger.kind))
+		err := trigger.check(ctx, superagent, path, probeEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, coreConfig.TriggerToken()))
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -86,7 +86,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	if ctx.Err() != nil {
 		return nil
 	}
-	sharedEnvironment := composeChildEnvironment(environment, triggers, "")
+	sharedEnvironment := composeChildEnvironment(environment, triggers, "", coreConfig.TriggerToken())
 	diagnostics := cmd.ErrOrStderr()
 	if _, ok := diagnostics.(*os.File); !ok {
 		diagnostics = &composeDiagnostics{output: diagnostics}
@@ -148,7 +148,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		if err := runningComposeChildren(children); err != nil {
 			return err
 		}
-		triggerCommand := trigger.command(context.Background(), superagent, "serve", path, coreEndpoint, composeChildEnvironment(environment, triggers, trigger.kind))
+		triggerCommand := trigger.command(context.Background(), superagent, "serve", path, coreEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, coreConfig.TriggerToken()))
 		triggerCommand.Stderr = diagnostics
 		child, err := startChild(trigger.name(), triggerCommand)
 		if err != nil {
@@ -158,7 +158,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		statusServer.register(trigger.kind, "", child)
 		triggerChildren = append(triggerChildren, child)
 		endpoint, err := awaitStartup(ctx, child, func(line []byte) (*url.URL, error) {
-			endpoint, err := triggerStartupEndpoint(line)
+			endpoint, err := triggerStartupEndpoint(line, trigger.binding.StatusListen)
 			if err == nil {
 				statusServer.register(trigger.kind, endpoint.String(), child)
 			}
@@ -446,34 +446,25 @@ func coreStartupEndpoint(line []byte, listen string) (*url.URL, error) {
 	if err := json.Unmarshal(line, &record); err != nil || record.Status != "ready" {
 		return nil, errors.New("invalid core startup record")
 	}
-	endpoint := childHTTPOrigin(record.Endpoint)
+	host, _, _ := net.SplitHostPort(listen)
+	endpoint := childHTTPOrigin(record.Endpoint, host)
 	if endpoint == nil {
 		return nil, errors.New("invalid core startup HTTP endpoint")
-	}
-	host, _, _ := net.SplitHostPort(listen)
-	// Go can bind an IPv4 wildcard as an IPv6 dual-stack socket. Preserve
-	// the configured address family while connecting to the actual port.
-	if net.ParseIP(host).Equal(net.IPv4zero) && record.Endpoint == "http://[::]:"+endpoint.Port() {
-		endpoint.Host = net.JoinHostPort("127.0.0.1", endpoint.Port())
 	}
 	return endpoint, nil
 }
 
-func childHTTPOrigin(raw string) *url.URL {
-	endpoint, err := url.Parse(raw)
-	if err != nil || endpoint.Scheme != "http" || endpoint.User != nil ||
-		endpoint.Path != "" || endpoint.RawPath != "" || endpoint.ForceQuery || endpoint.RawQuery != "" || strings.Contains(raw, "#") {
+func childHTTPOrigin(raw, listenHost string) *url.URL {
+	endpoint, err := httpaddress.ParseOrigin(raw)
+	if err != nil || endpoint.Scheme != "http" || endpoint.Port() == "" {
 		return nil
 	}
 	address := net.ParseIP(endpoint.Hostname())
-	port, err := strconv.ParseUint(endpoint.Port(), 10, 16)
-	if address == nil || err != nil || port == 0 {
-		return nil
-	}
 	// Connect to the matching loopback address when the listener is a wildcard.
 	if address.IsUnspecified() {
 		host := "::1"
-		if address.To4() != nil {
+		// Go can bind an IPv4 wildcard using a dual-stack socket.
+		if address.To4() != nil || net.ParseIP(listenHost).Equal(net.IPv4zero) {
 			host = "127.0.0.1"
 		}
 		endpoint.Host = net.JoinHostPort(host, endpoint.Port())

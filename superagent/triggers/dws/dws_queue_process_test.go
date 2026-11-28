@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zoumo/mass/superagent/triggers/internal/coreclient"
 	"github.com/zoumo/mass/superagent/triggers/internal/triggerdb"
@@ -165,6 +166,58 @@ func TestDWSQueueRestartsAfterOutageInOrder(t *testing.T) {
 	if rows := triggertest.ReadMessages(t, "http://"+addr); len(rows) != 3 {
 		t.Fatalf("Core admissions: %v", rows)
 	}
+	triggertest.Terminate(t, core)
+}
+
+func TestDWSDrainsExistingWirePayload(t *testing.T) {
+	addr := triggertest.FreeAddress(t)
+	core := coreStart(t, t.TempDir(), addr)
+	c := dwsConfig{
+		Source: "dws", AccountID: "account", InstanceID: "fixture-instance",
+		DatabasePath: filepath.Join(t.TempDir(), "dws.sqlite"),
+	}
+	queue, closeQueue, err := openDWSQueue(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This is the persisted v3 row shape, including the adapter-only conversationId.
+	const message = `{"operationId":"dws-message:pre-upgrade","message":{"sourceMessageId":"pre-upgrade","threadId":"dws:old","content":[{"type":"text","text":"Queued before upgrade"}]}}`
+	payload := []byte(strings.TrimSuffix(message, "}") + `,"conversationId":"old"}`)
+	_, err = queue.db.ExecContext(t.Context(), `INSERT INTO dws_submissions (account_id,native_message_id,observed_at,payload) VALUES (?,?,?,?)`,
+		c.AccountID, "pre-upgrade", time.Now().UTC().Format(time.RFC3339Nano), payload)
+	closeQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == coreclient.TriggerMessagesPath {
+			body, err := io.ReadAll(r.Body)
+			if err != nil || string(body) != message ||
+				r.Header.Get("X-Superagent-Source") != c.Source ||
+				r.Header.Get("X-Superagent-Account-Id") != c.AccountID {
+				t.Error("queued request body or declared Trigger identity changed")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		forwardDWSRequest(t, w, r, "http://"+addr, false)
+	}))
+	defer proxy.Close()
+	adapter, status := triggerStart(t, proxy.URL, events(t), "", 100, func(config *dwsConfig) {
+		config.DatabasePath = c.DatabasePath
+	})
+	triggertest.Wait(t, "existing queue submitted", func() bool {
+		s := snapshot(t, status)
+		return s.Accepted == 1 && s.Backlog == 0
+	})
+	rows := triggertest.ReadMessages(t, "http://"+addr)
+	if len(rows) != 1 || rows[0]["source"] != c.Source || rows[0]["accountId"] != c.AccountID ||
+		rows[0]["sourceMessageId"] != "pre-upgrade" || messageText(rows[0]) != "Queued before upgrade" {
+		t.Fatalf("existing queued message was not admitted: %v", rows)
+	}
+	triggertest.Terminate(t, adapter)
 	triggertest.Terminate(t, core)
 }
 

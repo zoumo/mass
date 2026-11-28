@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -121,7 +122,8 @@ func run(ctx context.Context, c dwsConfig, core *coreclient.Client, log io.Write
 		return err
 	}
 	defer closeFeedback()
-	if err := enc.Encode(map[string]string{"status": "starting", "statusEndpoint": "http://" + listener.Addr().String(), "consumerState": st.get().Connection}); err != nil {
+	statusEndpoint := url.URL{Scheme: "http", Host: listener.Addr().String()}
+	if err := enc.Encode(map[string]string{"status": "starting", "statusEndpoint": statusEndpoint.String(), "consumerState": st.get().Connection}); err != nil {
 		return err
 	}
 	if feedback != nil {

@@ -3,6 +3,7 @@ package core_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,26 +27,21 @@ func markdownReply(text string) core.StructuredContent {
 	return core.StructuredContent{Type: "markdown", Data: data}
 }
 
-func configureOutboxSource(t *testing.T, f *fixture) {
+func configureOutboxSources(t *testing.T, f *fixture, consumers ...core.Source) {
 	t.Helper()
-	cfg, err := os.ReadFile(f.config)
+	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, strings.Replace(string(cfg), "    tokenFile:", "    instanceId: collector-1\n    outboxConsumer: true\n    tokenFile:", 1))
+	var outbox strings.Builder
+	outbox.WriteString("outboxConsumers:\n")
+	for _, consumer := range consumers {
+		fmt.Fprintf(&outbox, "  - {source: %q, accountId: %q, instanceId: %q}\n", consumer.Source, consumer.AccountID, consumer.InstanceID)
+	}
+	write(t, f.config, string(config)+outbox.String())
 }
 
-func addOutboxPeerSources(t *testing.T, f *fixture) (sameSource, otherSource, ingressOnly string) {
+func configureOutboxSource(t *testing.T, f *fixture) {
 	t.Helper()
-	cfg, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	sameSource, otherSource, ingressOnly = strings.Repeat("b", 48), strings.Repeat("c", 48), strings.Repeat("d", 48)
-	for name, token := range map[string]string{"same": sameSource, "other": otherSource, "ingress": ingressOnly} {
-		write(t, filepath.Join(f.dir, name+".token"), token)
-	}
-	write(t, f.config, string(cfg)+
-		"  - source: dws\n    accountId: account-1\n    instanceId: collector-2\n    tokenFile: ./same.token\n    threadIdPrefixes: ['dws:']\n"+
-		"  - source: other\n    accountId: account-2\n    instanceId: collector-1\n    tokenFile: ./other.token\n    threadIdPrefixes: ['dws:']\n"+
-		"  - source: dws\n    accountId: account-1\n    tokenFile: ./ingress.token\n    threadIdPrefixes: ['dws:']\n")
-	return sameSource, otherSource, ingressOnly
+	configureOutboxSources(t, f, fixtureTriggerSource)
 }
 
 func readOutbox(t *testing.T, p *process, id string) core.OutboxItem {
@@ -58,18 +54,18 @@ func readOutbox(t *testing.T, p *process, id string) core.OutboxItem {
 	return detail
 }
 
-func listOutbox(t *testing.T, endpoint, token, query string) core.Page {
+func listOutbox(t *testing.T, endpoint, token, query string, sources ...core.Source) core.Page {
 	t.Helper()
-	code, data := request(t, "GET", endpoint, channelOutbox+"?view=delivery&"+strings.TrimPrefix(query, "?"), token, nil)
+	code, data := request(t, "GET", endpoint, channelOutbox+"?view=delivery&"+strings.TrimPrefix(query, "?"), token, nil, sources...)
 	require.Equal(t, 200, code, "%s", data)
 	var result core.Page
 	require.NoError(t, json.Unmarshal(data, &result))
 	return result
 }
 
-func resultOutbox(t *testing.T, p *process, token string, req core.OutboxCommand) core.OutboxItem {
+func resultOutbox(t *testing.T, p *process, token string, req core.OutboxCommand, sources ...core.Source) core.OutboxItem {
 	t.Helper()
-	code, data := patchOutbox(t, p, token, req)
+	code, data := patchOutbox(t, p, token, req, sources...)
 	require.Equal(t, 200, code, "%s", data)
 	var result core.OutboxItem
 	require.NoError(t, json.Unmarshal(data, &result))
@@ -79,7 +75,7 @@ func resultOutbox(t *testing.T, p *process, token string, req core.OutboxCommand
 	return stored
 }
 
-func patchOutbox(t *testing.T, p *process, token string, req core.OutboxCommand) (int, []byte) {
+func patchOutbox(t *testing.T, p *process, token string, req core.OutboxCommand, sources ...core.Source) (int, []byte) {
 	t.Helper()
 	body := struct {
 		Expected  core.OutboxState `json:"expected"`
@@ -87,7 +83,7 @@ func patchOutbox(t *testing.T, p *process, token string, req core.OutboxCommand)
 		TaskID    string           `json:"taskId,omitempty"`
 		ErrorCode string           `json:"errorCode,omitempty"`
 	}{Expected: req.Expected, Outcome: req.Outcome, TaskID: req.TaskID, ErrorCode: req.ErrorCode}
-	return request(t, http.MethodPatch, p.endpoint, channelOutbox+"/"+req.OutboxID, token, body)
+	return request(t, http.MethodPatch, p.endpoint, channelOutbox+"/"+req.OutboxID, token, body, sources...)
 }
 
 func outboxResult(item core.OutboxItem, outcome, code string) core.OutboxCommand {
@@ -121,8 +117,9 @@ func processClock(t *testing.T, f *fixture, env string) (string, func(time.Durat
 func TestOutboxRoleTargetAndScope(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
-	configureOutboxSource(t, f)
-	peer, other, intake := addOutboxPeerSources(t, f)
+	peer := core.Source{Source: "dws", AccountID: "account-1", InstanceID: "collector-2"}
+	other := core.Source{Source: "dws", AccountID: "account-2", InstanceID: "collector-1"}
+	configureOutboxSources(t, f, fixtureTriggerSource, other)
 	f.execution(boundary)
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
@@ -137,7 +134,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	addressed := input("verified-instance")
 	addressed.Message.Meta = json.RawMessage(`{"sourceTime":"2000-01-01T12:00:00Z","collectorInstance":"collector-2"}`)
 	second := submit(t, p, f, addressed)
-	code, raw := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", peer, addressed)
+	code, raw := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, addressed, peer)
 	require.Equal(t, 200, code, "%s", raw)
 	route := decide(t, p, routerToken, newRoute("outbox-scope", []string{second.MessageID, first.MessageID}, f.dir))
 	topic := waitBinding(t, p, "topic", route.Targets[0].TopicID, "ready")
@@ -206,7 +203,9 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	require.Len(t, firstPage.Items, 1)
 	require.NotEmpty(t, firstPage.NextCursor)
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "?cursor="+firstPage.NextCursor).Items, 2)
-	require.Empty(t, listOutbox(t, p.endpoint, other, "").Items)
+	require.Empty(t, listOutbox(t, p.endpoint, f.token, "", other).Items)
+	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery&cursor="+firstPage.NextCursor, f.token, nil, other)
+	errorCode(t, code, raw, http.StatusBadRequest, "invalid_argument")
 	var address struct {
 		AccountID, Source string
 		ReplyTarget       json.RawMessage
@@ -220,18 +219,18 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 
 	result := outboxResult(reply, "sent", "")
 	for _, tc := range []struct {
-		token   string
+		source  core.Source
 		code    int
 		problem string
-	}{{peer, 403, "forbidden"}, {other, 404, "not_found"}, {intake, 403, "forbidden"}} {
-		code, raw = request(t, "GET", p.endpoint, channelOutbox+"/"+reply.ID+"?view=delivery", tc.token, nil)
+	}{{peer, 403, "forbidden"}, {other, 404, "not_found"}, {core.Source{Source: "dws", AccountID: "account-1"}, 400, "invalid_argument"}} {
+		code, raw = request(t, "GET", p.endpoint, channelOutbox+"/"+reply.ID+"?view=delivery", f.token, nil, tc.source)
 		errorCode(t, code, raw, tc.code, tc.problem)
-		code, raw = patchOutbox(t, p, tc.token, result)
+		code, raw = patchOutbox(t, p, f.token, result, tc.source)
 		errorCode(t, code, raw, tc.code, tc.problem)
 	}
-	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", peer, nil)
+	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", f.token, nil, peer)
 	errorCode(t, code, raw, 403, "forbidden")
-	code, raw = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", peer, input("passive-collector"))
+	code, raw = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, input("passive-collector"), peer)
 	require.Equal(t, 200, code, "%s", raw)
 	var passive core.Receipt
 	require.NoError(t, json.Unmarshal(raw, &passive))
