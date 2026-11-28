@@ -35,10 +35,9 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 	f, _ := eventFixture(t, "ws://127.0.0.1:1")
 	saved, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	const external = "massd:\n  endpoint: ws://127.0.0.1:1"
-	const embedded = "massd:\n  embedded:\n    dataDir: ./massd\n    sessionIdleTimeout: 0s\n    writeTimeout: 2s"
-	data := filepath.Join(f.dir, "massd")
-	write(t, f.config, strings.Replace(string(saved), external, embedded, 1))
+	const external = "massd:\n  endpoint: ws://127.0.0.1:1\n"
+	data := filepath.Join(f.data, "massd")
+	write(t, f.config, strings.Replace(string(saved), external, "", 1))
 	seedEmbeddedRuntime(t, data, relay, peer.listener.Addr().String())
 
 	gate := t.TempDir()
@@ -92,13 +91,14 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 	write(t, filepath.Join(gate, "release"), "released")
 	p.waitStopped(t, false)
 	waitInternalEvent(t, f, receipt.EventID, "sent")
-	endpoint, c := startHandoffMassd(t, massdBin, data)
+	endpoint, c, externalToken := startHandoffMassd(t, massdBin, data)
 	ref := resource.SessionRef{SessionID: router.SessionID}
 	var found resource.Session
 	require.NoError(t, c.GetSession(t.Context(), ref, &found))
 	require.Equal(t, router.SessionID, found.Status.SessionID)
 	require.Equal(t, router.SessionUID, found.Metadata.UID)
-	write(t, f.config, strings.Replace(string(saved), external, "massd:\n  endpoint: "+endpoint, 1))
+	write(t, filepath.Join(f.dir, "external.token"), externalToken)
+	write(t, f.config, strings.Replace(string(saved), external, "massd:\n  endpoint: "+endpoint+"\n  tokenFile: ./external.token\n", 1))
 	p = f.start()
 	rebound := waitBinding(t, p, "router", "", "ready")
 	require.Equal(t, router.ID, rebound.ID)
@@ -137,10 +137,10 @@ func TestEmbeddedMASSProcessAndStandaloneHandoff(t *testing.T) {
 
 func TestEmbeddedMASSDispatchDuringShutdown(t *testing.T) {
 	peer := newNativeSubmitPeer(t)
-	f, config, _ := embeddedProcessFixture(t, peer)
-	token := strings.Repeat("M", 48)
-	write(t, filepath.Join(f.dir, "embedded-massd.token"), token)
-	write(t, f.config, strings.Replace(config, mountedMASSConfig, mountedMASSConfig+mountedMASSExpose, 1))
+	f, config, adminFile := embeddedProcessFixture(t, peer)
+	token, err := core.ReadOperatorToken(adminFile)
+	require.NoError(t, err)
+	write(t, f.config, config)
 	gate := t.TempDir()
 	const stage = "after_session_input_admission"
 	p := f.start("SUPERAGENT_TEST_GATE_STAGE="+stage, "SUPERAGENT_TEST_GATE_DIR="+gate)
@@ -253,8 +253,8 @@ func embeddedProcessFixture(t *testing.T, peer *nativeSubmitPeer) (*fixture, str
 	f, operatorFile := eventFixture(t, "ws://127.0.0.1:1")
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	seedEmbeddedRuntime(t, filepath.Join(f.dir, "massd"), relay, peer.listener.Addr().String())
-	return f, strings.Replace(string(config), "massd:\n  endpoint: ws://127.0.0.1:1", mountedMASSConfig, 1), operatorFile
+	seedEmbeddedRuntime(t, filepath.Join(f.data, "massd"), relay, peer.listener.Addr().String())
+	return f, strings.Replace(string(config), "massd:\n  endpoint: ws://127.0.0.1:1\n", "", 1), operatorFile
 }
 
 func requireEmbeddedHistory(t *testing.T, p *process, bindingID string, messages ...string) {
@@ -303,12 +303,15 @@ func seedEmbeddedRuntime(t *testing.T, data, relay, addr string) {
 	require.NoError(t, instance.Shutdown(t.Context()))
 }
 
-func startHandoffMassd(t *testing.T, binary, data string) (string, *client.Client) {
+func startHandoffMassd(t *testing.T, binary, data string) (string, *client.Client, string) {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "massd.yaml")
+	token := strings.Repeat("E", 48)
+	tokenFile := filepath.Join(dir, "massd.token")
+	write(t, tokenFile, token)
 	write(t, cfg, "{}")
-	command := exec.CommandContext(context.Background(), binary, "--config", cfg, "--data", data, "--listen", "127.0.0.1:0")
+	command := exec.CommandContext(context.Background(), binary, "--config", cfg, "--data", data, "--listen", "127.0.0.1:0", "--token-file", tokenFile)
 	command.Env = []string{"HOME=" + dir, "PATH=" + dir}
 	stdout, err := command.StdoutPipe()
 	require.NoError(t, err)
@@ -341,37 +344,27 @@ func startHandoffMassd(t *testing.T, binary, data string) (string, *client.Clien
 	case <-time.After(10 * time.Second):
 		t.Fatal("standalone MASS did not report readiness")
 	}
-	c, err := client.New(endpoint, "", client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
+	c, err := client.New(endpoint, token, client.Options{WriteTimeout: time.Second, SubscriptionQueueCapacity: 8})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	return endpoint, c
+	return endpoint, c, token
 }
 
 func TestEmbeddedMASSConfigAndStartupFailure(t *testing.T) {
 	f, _ := eventFixture(t, "ws://127.0.0.1:1")
 	saved, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	const external = "massd:\n  endpoint: ws://127.0.0.1:1"
-	const embedded = "massd:\n  embedded:\n    dataDir: ./massd\n    sessionIdleTimeout: 0s"
-	for _, extra := range []string{"\n  endpoint: ws://127.0.0.1:1", "\n  tokenFile: ./source.token", "\n    writeTimeout: 0s", "\n    writeTimeout: 2", "\n    unknown: value"} {
-		write(t, f.config, strings.Replace(string(saved), external, embedded+extra, 1))
+	const external = "massd:\n  endpoint: ws://127.0.0.1:1\n"
+	embedded := strings.Replace(string(saved), external, "", 1)
+	for _, config := range []string{"null", "{}", "{tokenFile: ./external.token}", "{endpoint: http://127.0.0.1}", "{embedded: {dataDir: ./other}}"} {
+		write(t, f.config, embedded+"massd: "+config+"\n")
 		_, err := core.LoadConfig(f.config)
-		require.Error(t, err, "%q", extra)
+		require.Error(t, err, "%q", config)
 	}
-	write(t, f.config, strings.Replace(string(saved), external, embedded, 1))
+	write(t, f.config, embedded)
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	require.NotNil(t, cfg.Massd.Embedded.SessionIdleTimeout)
-	require.Zero(t, *cfg.Massd.Embedded.SessionIdleTimeout)
-
-	original := cfg.Massd.Embedded.DataDir
-	require.NoError(t, os.MkdirAll(cfg.DataDir, 0o700))
-	alias := filepath.Join(f.dir, "core-alias")
-	require.NoError(t, os.Symlink(cfg.DataDir, alias))
-	cfg.Massd.Embedded.DataDir = alias
-	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
-	require.ErrorContains(t, err, "separate data directories")
-	cfg.Massd.Embedded.DataDir = original
+	require.Nil(t, cfg.Massd)
 
 	// Fail after MASS prepared but before Core became ready, then reuse both stores.
 	occupied, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
@@ -391,43 +384,24 @@ func TestEmbeddedMASSConfigAndStartupFailure(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
-func TestEmbeddedMASSRejectsFilesystemAliases(t *testing.T) {
-	for _, test := range []struct {
-		name, corePath, massPath string
-	}{
-		{"same directory", "CoreData", "coredata"},
-		{"MASS nested under Core", "CoreData", "coredata/missing/child"},
-		{"Core nested under MASS", "coredata/missing/child", "CoreData"},
-		{"missing shared target", "CoreData/missing", "coredata/missing"},
-		{"missing case alias", "CoreData/Missing", "coredata/missing"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			f, _ := eventFixture(t, "ws://127.0.0.1:1")
-			upper := filepath.Join(f.dir, "CoreData")
-			require.NoError(t, os.Mkdir(upper, 0o700))
-			if _, err := os.Stat(filepath.Join(f.dir, "coredata")); os.IsNotExist(err) {
-				t.Skip("fixture filesystem is case sensitive")
-			} else {
-				require.NoError(t, err)
+func TestCoreRejectsDirectoryAliases(t *testing.T) {
+	for _, name := range []string{"dataDir", "massd", "credentials"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			data := filepath.Join(dir, "data")
+			alias := data
+			if name != "dataDir" {
+				require.NoError(t, os.Mkdir(data, 0o700))
+				alias = filepath.Join(data, name)
 			}
-			config, err := os.ReadFile(f.config)
+			target := t.TempDir()
+			require.NoError(t, os.Symlink(target, alias))
+			cfg := core.Config{DataDir: data, Listen: "127.0.0.1:0"}
+			_, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
+			require.ErrorContains(t, err, name)
+			entries, err := os.ReadDir(target)
 			require.NoError(t, err)
-			configText := strings.Replace(string(config), "massd:\n  endpoint: ws://127.0.0.1:1", "massd:\n  embedded:\n    dataDir: ./"+test.massPath, 1)
-			write(t, f.config, strings.Replace(configText, "dataDir: "+f.data, "dataDir: ./"+test.corePath, 1))
-			cfg, err := core.LoadConfig(f.config)
-			require.NoError(t, err)
-			s, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
-			if s != nil {
-				done := make(chan error, 1)
-				go func() { done <- s.Serve() }()
-				t.Cleanup(func() {
-					require.NoError(t, s.Shutdown(context.Background()))
-					require.NoError(t, <-done)
-				})
-			}
-			require.ErrorContains(t, err, "separate data directories")
-			require.NoFileExists(t, filepath.Join(f.dir, test.corePath, "core.sqlite"))
-			require.NoFileExists(t, filepath.Join(f.dir, test.massPath, "metadata-authority.sqlite"))
+			require.Empty(t, entries)
 		})
 	}
 }

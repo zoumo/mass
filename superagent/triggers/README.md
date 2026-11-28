@@ -13,7 +13,7 @@ storage for each instance. In Compose, resolve paths relative to the stack
 YAML file. Preserve the database, source, account, and instance ID across
 restarts. For a standalone adapter, supply the shared Core Trigger token
 through the environment variable named by `coreTokenEnv`. Compose reads
-the token from `core.accessToken.triggers`. By default, Compose injects
+`<core.dataDir>/credentials/triggers.token`. By default, Compose injects
 `SUPERAGENT_TRIGGER_TOKEN` into each adapter. An adapter can set
 `coreTokenEnv` to choose a different variable name. Keep native service
 credentials separate from the shared Trigger token.

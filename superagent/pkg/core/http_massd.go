@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Server) registerMassd(api *httpAPI) {
-	const exposure = "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix."
+	const exposure = "Available when Core runs embedded MASS."
 	api.router.HandleFunc(MassdMountPath+"/*", s.serveMassd)
 	errorSchema := api.schema(reflect.TypeFor[transport.Error]())
 	for _, probe := range []struct{ path, id, summary string }{
@@ -21,7 +21,7 @@ func (s *Server) registerMassd(api *httpAPI) {
 		responses := map[string]*huma.Response{
 			"200": jsonResponse("Successful probe", api.schema(reflect.TypeFor[probeState]())),
 			"403": api.coreError("Core request host not allowed"),
-			"404": api.coreError("massd exposure disabled"),
+			"404": api.coreError("Core is configured for external MASS"),
 		}
 		if probe.path == "/readyz" {
 			responses["503"] = jsonResponse("massd admission closed", errorSchema)
@@ -38,11 +38,11 @@ func (s *Server) registerMassd(api *httpAPI) {
 		Responses: map[string]*huma.Response{
 			"101": {Description: "WebSocket handshake accepted"},
 			"400": {Description: "Invalid WebSocket handshake"},
-			"401": jsonResponse("massd instance credential required", errorSchema),
+			"401": jsonResponse("Core admin token required", errorSchema),
 			"403": jsonResponse("Core request host or WebSocket Origin not allowed", &huma.Schema{
 				OneOf: []*huma.Schema{api.schema(reflect.TypeFor[coreHTTPError]()), errorSchema},
 			}),
-			"404": api.coreError("massd exposure disabled"),
+			"404": api.coreError("Core is configured for external MASS"),
 			"503": jsonResponse("massd admission closed", errorSchema),
 		},
 	}, s.serveMassd)

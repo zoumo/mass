@@ -119,9 +119,6 @@ func (s *Server) stackStatus(ctx context.Context) stackStatus {
 }
 
 func (s *Server) massdStatus(ctx context.Context) ComponentStatus {
-	if s.config.Massd == nil {
-		return ComponentStatus{Status: "disabled"}
-	}
 	observedAt := time.Now().UTC()
 	if s.embeddedMassd != nil {
 		if s.embeddedMassd.Handler().Ready() {

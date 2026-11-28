@@ -2,8 +2,6 @@ package core
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"io"
 	"os"
@@ -16,18 +14,12 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/zoumo/mass/internal/httpaddress"
-	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
 // Source identifies a Trigger account.
 type Source struct {
 	Source    string
 	AccountID string
-}
-
-type AccessTokenConfig struct {
-	Admin    string `mapstructure:"admin"`
-	Triggers string `mapstructure:"triggers"`
 }
 
 type Config struct {
@@ -37,11 +29,7 @@ type Config struct {
 	DataDir          string                `mapstructure:"dataDir"`
 	Listen           string                `mapstructure:"listen"`
 	ExternalURL      string                `mapstructure:"externalURL"`
-	AccessToken      AccessTokenConfig     `mapstructure:"accessToken"`
-	adminToken       string
-	triggerToken     string
-	triggerTokenHash [32]byte
-	ReadAllowedHosts []string `mapstructure:"readAllowedHosts"`
+	ReadAllowedHosts []string              `mapstructure:"readAllowedHosts"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
 	// WebOTLPEndpoint is the runtime-only base URL of the Web OTLP receiver.
@@ -56,20 +44,19 @@ func LoadConfig(path string) (Config, error) {
 	return loadConfig(path, nil)
 }
 
-// LoadComposeConfig reads a Core section from Compose and defaults to embedded MASS.
+// LoadComposeConfig reads a Core section from Compose.
 func LoadComposeConfig(path string, section io.Reader) (Config, error) {
 	return loadConfig(path, section)
 }
 
 func loadConfig(path string, section io.Reader) (Config, error) {
 	var c Config
-	composed := section != nil
 	v := viper.New()
 	v.SetConfigFile(path)
 	v.SetConfigType("yaml")
 	v.SetDefault("dataDir", "./superagent-core-data")
 	v.SetDefault("listen", "127.0.0.1:24370")
-	if !composed {
+	if section == nil {
 		file, err := os.Open(path)
 		if err != nil {
 			return c, problem("invalid_argument", "cannot read YAML configuration")
@@ -91,31 +78,26 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	if err != nil {
 		return c, err
 	}
+	massd, err := takeMassdConfig(fields)
+	if err != nil {
+		return c, err
+	}
 	if err := v.MergeConfigMap(fields); err != nil {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
 	}
-	if composed {
-		// Viper omits null and empty mappings from AllSettings. Decode the
-		// original mapping so an unknown field cannot hide behind either value.
-		c.DataDir = v.GetString("dataDir")
-		c.Listen = v.GetString("listen")
-		decoder, decodeErr := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-			ErrorUnused:      true,
-			WeaklyTypedInput: true,
-			DecodeHook: mapstructure.ComposeDecodeHookFunc(
-				mapstructure.StringToTimeDurationHookFunc(),
-				mapstructure.StringToWeakSliceHookFunc(","),
-			),
-			Result: &c,
-		})
-		if decodeErr != nil {
-			return c, decodeErr
-		}
-		err = decoder.Decode(fields)
-	} else {
-		err = v.UnmarshalExact(&c)
-	}
+	// Decode the original mapping so unknown empty and null fields are rejected.
+	c.DataDir = v.GetString("dataDir")
+	c.Listen = v.GetString("listen")
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		ErrorUnused:      true,
+		WeaklyTypedInput: true,
+		DecodeHook:       mapstructure.StringToWeakSliceHookFunc(","),
+		Result:           &c,
+	})
 	if err != nil {
+		return c, err
+	}
+	if err := decoder.Decode(fields); err != nil {
 		return c, problem("invalid_argument", "configuration contains unknown or invalid fields")
 	}
 	base, err := filepath.Abs(filepath.Dir(path))
@@ -161,54 +143,16 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if err := c.Sessions.validate(resolve); err != nil {
 			return c, err
 		}
-		if c.Massd == nil && !composed {
-			return c, problem("invalid_argument", "sessions require massd configuration")
-		}
-	} else if !composed && c.Massd != nil {
-		return c, problem("invalid_argument", "massd requires sessions configuration")
 	}
-	if c.Massd != nil && v.IsSet("massd") {
-		var massd MassdConfig
-		decodeMassd := func(d *mapstructure.DecoderConfig) {
-			strict(d)
-			d.DecodeHook = mapstructure.StringToTimeDurationHookFunc()
-		}
-		if err := v.UnmarshalKey("massd", &massd, decodeMassd); err != nil {
-			return c, problem("invalid_argument", "massd configuration contains unknown or invalid fields")
-		}
-		for _, field := range []string{"sessionIdleTimeout", "writeTimeout"} {
-			if value := v.Get("massd.embedded." + field); value != nil {
-				if _, ok := value.(string); !ok {
-					return c, problem("invalid_argument", "massd.embedded durations must be strings")
-				}
-			}
-		}
-		c.Massd = &massd
-	}
-	if composed {
-		if c.Massd != nil && (c.Massd.Endpoint != "" || c.Massd.TokenFile != "") {
-			return c, problem("invalid_argument", "Compose uses core.massd.embedded for MASS settings")
-		}
-		if c.Massd == nil {
-			c.Massd = &MassdConfig{}
-		}
-		if c.Massd.Embedded == nil {
-			c.Massd.Embedded = &EmbeddedMassdConfig{}
-		}
-		if c.Massd.Embedded.DataDir == "" {
-			c.Massd.Embedded.DataDir = "./massd-data"
-		}
-	}
+	c.Massd = massd
 	if c.Massd != nil {
-		if err := c.Massd.validate(resolve); err != nil {
+		if err := c.Massd.validateEndpoint(); err != nil {
 			return c, err
 		}
+		c.Massd.TokenFile = resolve(c.Massd.TokenFile)
 	}
-	if err := v.UnmarshalKey("accessToken", &c.AccessToken, strict); err != nil {
-		return c, problem("invalid_argument", "accessToken must contain admin and triggers file paths")
-	}
-	if c.DataDir == "" || c.AccessToken.Triggers == "" || c.StorageMaxPages < 0 {
-		return c, problem("invalid_argument", "dataDir and accessToken.triggers are required; storageMaxPages must be nonnegative")
+	if c.DataDir == "" || c.StorageMaxPages < 0 {
+		return c, problem("invalid_argument", "dataDir is required and storageMaxPages must be nonnegative")
 	}
 	_, portNumber, err := httpaddress.SplitListen(c.Listen)
 	if err != nil {
@@ -221,12 +165,6 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if _, err := c.roleMCPEndpoint(); err != nil {
 			return c, err
 		}
-	}
-	if err := loadAccessTokens(&c, resolve); err != nil {
-		return c, err
-	}
-	if _, err := c.massdExposureToken(); err != nil {
-		return c, err
 	}
 	return c, nil
 }
@@ -294,70 +232,6 @@ func (c Config) prepareMCPFiles() error {
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return problem("failed_precondition", "MCP credentials directory must be private")
-	}
-	return nil
-}
-
-func loadAccessTokens(c *Config, resolve func(string) string) error {
-	var err error
-	c.AccessToken.Triggers = resolve(c.AccessToken.Triggers)
-	c.triggerToken, err = readAccessToken(c.AccessToken.Triggers, "accessToken.triggers")
-	if err != nil {
-		return err
-	}
-	c.AccessToken.Admin = resolve(c.AccessToken.Admin)
-	if c.AccessToken.Admin != "" {
-		c.adminToken, err = ReadOperatorToken(c.AccessToken.Admin)
-		if err != nil {
-			return err
-		}
-		if c.adminToken == c.triggerToken {
-			return problem("invalid_argument", "accessToken.admin and accessToken.triggers must contain distinct tokens")
-		}
-	}
-	for _, token := range []string{c.triggerToken, c.adminToken} {
-		if token != "" && ((c.Massd != nil && token == c.Massd.token) || strings.HasPrefix(token, roleTokenPrefix+"_")) {
-			return problem("invalid_argument", "Core access tokens must be distinct from role MCP and MASS credentials")
-		}
-	}
-	c.triggerTokenHash = sha256.Sum256([]byte(c.triggerToken))
-	return nil
-}
-
-func readAccessToken(path, field string) (string, error) {
-	data, err := readPrivate(path)
-	if err != nil {
-		return "", problem("invalid_argument", field+" must be a readable private regular file")
-	}
-	token := strings.TrimSpace(string(data))
-	if !triggeridentity.ValidToken(token) {
-		return "", problem("invalid_argument", field+" requires at least 32 bytes without whitespace or control characters")
-	}
-	return token, nil
-}
-
-// ReadOperatorToken reads the admin token used by Operator CLI commands.
-func ReadOperatorToken(path string) (string, error) {
-	return readAccessToken(path, "accessToken.admin")
-}
-
-// TriggerToken returns the credential for supervised Trigger processes.
-func (c Config) TriggerToken() string { return c.triggerToken }
-
-func (c Config) acceptsTriggerToken(token string) bool {
-	hash := sha256.Sum256([]byte(token))
-	return c.triggerToken != "" && subtle.ConstantTimeCompare(hash[:], c.triggerTokenHash[:]) == 1
-}
-
-// CheckUpstreamToken keeps a supervised adapter's native credential separate from Core credentials.
-func (c Config) CheckUpstreamToken(token string) error {
-	massdToken, err := c.massdExposureToken()
-	if err != nil {
-		return err
-	}
-	if token == c.triggerToken || token == c.adminToken || token == massdToken ||
-		(c.Massd != nil && token == c.Massd.token) || strings.HasPrefix(token, roleTokenPrefix+"_") {
-		return errors.New("native service credentials must be distinct from Core credentials")
 	}
 	return nil
 }

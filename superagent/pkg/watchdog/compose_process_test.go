@@ -154,11 +154,9 @@ func seedComposeReports(t *testing.T, coreDir string) {
 func writeWatchdogCompose(t *testing.T, dir string, interval time.Duration) (string, string) {
 	t.Helper()
 	path := filepath.Join(dir, "stack.yaml")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "source-token"), []byte(strings.Repeat("x", 40)), 0o600))
 	config := fmt.Sprintf(`core:
   listen: 127.0.0.1:0
   dataDir: core-state
-  accessToken: {triggers: ./source-token}
 watchdog: {interval: %s}
 `, interval)
 	require.NoError(t, os.WriteFile(path, []byte(config), 0o600))

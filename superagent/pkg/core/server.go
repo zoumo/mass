@@ -34,7 +34,7 @@ type Server struct {
 	observerTraces               *observerTraceReader
 	embeddedMassd                *massd.Instance
 	massdHTTP                    http.Handler
-	massdHTTPToken               string
+	credentials                  instanceCredentials
 	store                        *Store
 	config                       Config
 	http                         *http.Server
@@ -42,26 +42,20 @@ type Server struct {
 	listenAuthority              string
 }
 
-// MassdMountPath is the Core HTTP prefix for an explicitly exposed MASS instance.
+// MassdMountPath is the Core HTTP prefix for the embedded MASS instance.
 const MassdMountPath = "/massd"
 
 // StartWithContext starts Core and uses ctx for startup operations.
 func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (_ *Server, result error) {
-	var embedded *EmbeddedMassdConfig
 	if c.Massd != nil {
-		embedded = c.Massd.Embedded
-	}
-	if embedded != nil {
-		if c.Massd.Endpoint != "" || c.Massd.TokenFile != "" {
-			return nil, problem("invalid_argument", "embedded MASS requires exclusive MASS configuration")
-		}
-		if err := embedded.validate(); err != nil {
+		external := *c.Massd
+		if err := external.validateEndpoint(); err != nil {
 			return nil, err
 		}
-	}
-	exposureToken, err := c.massdExposureToken()
-	if err != nil {
-		return nil, err
+		if err := external.loadToken(); err != nil {
+			return nil, err
+		}
+		c.Massd = &external
 	}
 	gateway, err := newObserverTelemetryGateway(c.WebOTLPEndpoint)
 	if err != nil {
@@ -70,11 +64,6 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	traces, err := newObserverTraceReader(c.OpenObserve)
 	if err != nil {
 		return nil, err
-	}
-	if embedded != nil {
-		if err := validateMassdDirectories(c.DataDir, embedded.DataDir); err != nil {
-			return nil, err
-		}
 	}
 	store, err := OpenStore(c, options)
 	if err != nil {
@@ -85,9 +74,13 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 			result = errors.Join(result, store.Close())
 		}
 	}()
+	credentials, err := c.loadCredentials(true)
+	if err != nil {
+		return nil, err
+	}
 	var instance *massd.Instance
-	if embedded != nil {
-		instance, err = embedded.start(ctx, options, exposureToken)
+	if c.Massd == nil {
+		instance, err = startEmbeddedMassd(ctx, c.DataDir, options, credentials.adminToken)
 		if err != nil {
 			return nil, err
 		}
@@ -111,13 +104,12 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	}()
 	host, _, _ := net.SplitHostPort(c.Listen)
 	_, port, _ := net.SplitHostPort(l.Addr().String())
-	s := &Server{store: store, config: c, listener: l, embeddedMassd: instance, observerTelemetry: gateway, observerTraces: traces}
+	s := &Server{store: store, config: c, listener: l, embeddedMassd: instance, credentials: credentials, observerTelemetry: gateway, observerTraces: traces}
 	if host != "" && net.ParseIP(host) == nil {
 		s.listenAuthority = net.JoinHostPort(host, port)
 	}
-	if exposureToken != "" {
+	if instance != nil {
 		s.massdHTTP = http.StripPrefix(MassdMountPath, instance.Handler())
-		s.massdHTTPToken = exposureToken
 	}
 	if c.Sessions != nil {
 		if err := store.resetReadyBindings(ctx); err != nil {
@@ -290,7 +282,7 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	}
 	// Never return a reusable credential, even if untrusted text contains it.
 	body := string(b)
-	configured := []string{s.config.triggerToken, s.config.adminToken, s.massdHTTPToken}
+	configured := []string{s.credentials.triggerToken, s.credentials.adminToken}
 	if s.config.Massd != nil {
 		configured = append(configured, s.config.Massd.token)
 	}
