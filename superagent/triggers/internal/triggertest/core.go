@@ -70,18 +70,18 @@ massd:
 operatorTokenFile: %q
 sessions:
   namespace: trigger-fixture
-  routerWorkspace: %q
-  roles:
-    router:
-      runtimeRef: test-runtime
-      model: test-model
-    topic:
-      runtimeRef: test-runtime
-      model: test-model
-  issueTemplates:
-    - runtimeRef: test-runtime
-      model: test-model
-      description: Fixture Issue template
+  router:
+    workspace: %q
+    runtimeRef: test-runtime
+    model: test-model
+  topic:
+    runtimeRef: test-runtime
+    model: test-model
+  issue:
+    templates:
+      - runtimeRef: test-runtime
+        model: test-model
+        description: Fixture Issue template
 `, filepath.Join(f.Dir, "data"), FreeAddress(t), source, sourceTokenFile, prefixes,
 		"ws"+strings.TrimPrefix(unavailable.URL, "http")+"/jsonrpc", massdTokenFile, f.OperatorTokenFile, f.Dir))
 	f.StartCore(clock)

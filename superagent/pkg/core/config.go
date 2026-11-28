@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -90,11 +91,12 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	if err != nil {
 		return c, err
 	}
+	sessions, err := takeSessionsConfig(fields)
+	if err != nil {
+		return c, err
+	}
 	if err := v.MergeConfigMap(fields); err != nil {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
-	}
-	if hasRemovedPermissionPreset(v) {
-		return c, problem("invalid_argument", "remove permissionPreset from Superagent session roles and Issue templates; new Sessions use fullAccess")
 	}
 	if composed {
 		// Viper omits null and empty mappings from AllSettings. Decode the
@@ -158,12 +160,8 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 			}
 		}
 	}
+	c.Sessions = sessions
 	if c.Sessions != nil {
-		var sessions SessionsConfig
-		if err := v.UnmarshalKey("sessions", &sessions, strict); err != nil {
-			return c, problem("invalid_argument", "sessions configuration contains unknown or invalid fields")
-		}
-		c.Sessions = &sessions
 		if err := c.Sessions.validate(resolve); err != nil {
 			return c, err
 		}
@@ -324,20 +322,52 @@ func validObserverAuthority(authority string) bool {
 	return true
 }
 
-func hasRemovedPermissionPreset(v *viper.Viper) bool {
-	for _, role := range []string{"router", "topic"} {
-		if _, present := v.GetStringMap("sessions.roles." + role)["permissionpreset"]; present {
-			return true
+var errRemovedPermissionPreset = errors.New("remove permissionPreset")
+
+// takeSessionsConfig decodes sessions before Viper normalizes the rest of the
+// configuration. Both entry points use the same strict role field types.
+func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
+	var sessions *SessionsConfig
+	for name, raw := range fields {
+		if !strings.EqualFold(name, "sessions") {
+			continue
 		}
-	}
-	templates, _ := v.Get("sessions.issueTemplates").([]any)
-	for _, template := range templates {
-		fields, _ := template.(map[string]any)
-		if _, present := fields["permissionpreset"]; present {
-			return true
+		if sessions != nil {
+			return nil, problem("invalid_argument", "configuration contains duplicate sessions fields")
 		}
+		if _, ok := raw.(map[string]any); !ok {
+			return nil, problem("invalid_argument", "sessions must be a mapping")
+		}
+		sessions = &SessionsConfig{}
+		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+			ErrorUnused: true,
+			Result:      sessions,
+			RootName:    "sessions",
+			DecodeHook: mapstructure.DecodeHookFuncType(func(_, _ reflect.Type, data any) (any, error) {
+				mapping, _ := data.(map[string]any)
+				for field := range mapping {
+					if strings.EqualFold(field, "permissionPreset") {
+						return nil, errRemovedPermissionPreset
+					}
+				}
+				return data, nil
+			}),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := decoder.Decode(raw); err != nil {
+			if field, ok := errors.AsType[*mapstructure.DecodeError](err); ok {
+				if errors.Is(field, errRemovedPermissionPreset) {
+					return nil, problem("invalid_argument", "remove permissionPreset from "+field.Name()+". New Sessions use fullAccess")
+				}
+				return nil, problem("invalid_argument", field.Name()+" contains an unknown field or invalid value")
+			}
+			return nil, problem("invalid_argument", "sessions contains unknown or invalid fields")
+		}
+		delete(fields, name)
 	}
-	return false
+	return sessions, nil
 }
 
 func (c Config) String() string {

@@ -46,22 +46,22 @@ storageMaxPages: 0
 #     command: /opt/mass/bin/cua-mcp
 #     configFile: ./cua-mcp.yaml
 # sessions:
-#   routerWorkspace: /absolute/workspace
 #   namespace: superagent
-#   roles:
-#     router:
-#       runtimeRef: codex-fast
-#       model: gpt-6.2-sol
-#       effort: low
-#     topic:
-#       runtimeRef: codex-standard
-#       model: gpt-6.2-sol
-#       effort: medium
-#   issueTemplates:
-#     - runtimeRef: codex-deepseek
-#       model: deepseek-chat
-#       description: Implement, fix and verify code.
-#       effort: medium
-#     - runtimeRef: codex-standard
-#       model: gpt-6.2-astra
-#       description: Evaluate architecture and diagnose complex problems.
+#   router:
+#     workspace: /absolute/workspace
+#     runtimeRef: codex-fast
+#     model: gpt-6.2-sol
+#     effort: low
+#   topic:
+#     runtimeRef: codex-standard
+#     model: gpt-6.2-sol
+#     effort: medium
+#   issue:
+#     templates:
+#       - runtimeRef: codex-deepseek
+#         model: deepseek-chat
+#         description: Implement, fix and verify code.
+#         effort: medium
+#       - runtimeRef: codex-standard
+#         model: gpt-6.2-astra
+#         description: Evaluate architecture and diagnose complex problems.

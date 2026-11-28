@@ -323,8 +323,10 @@ See the [Core configuration example](config.example.yaml) for Session profiles
 and Issue templates, the [embedded deployment guide](README.md#running-mass-inside-core)
 for data ownership, and the [WebSocket binding](../harness/bindings/websocket.md)
 for the optional host mount and token boundary. Core validates Runtime availability
-when it prepares a Session. Issue templates identify an allowed Runtime and model
-pair. Core sends the literal configured values and the optional effort to MASS.
+when it prepares a Session. Set the Router workspace and profile in
+`sessions.router` and the Topic profile in `sessions.topic`. Topic selects
+an allowed Runtime and model pair from `sessions.issue.templates`. Core sends
+the literal configured values and the optional effort to MASS.
 
 New Router Sessions, Topic Sessions and Issue Sessions use `config.permissionPreset: fullAccess`
 and `features.agentQuestions: false`. This applies to replacement Sessions and
