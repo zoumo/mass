@@ -180,18 +180,6 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	if err := recoverIssueObservations(ctx, tx); err != nil {
 		return nil, err
 	}
-	for _, source := range c.Sources {
-		var mismatch bool
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM trigger_messages
- WHERE (source=?1 AND account_id<>?2) OR (account_id=?2 AND source<>?1))`, source.Source, source.AccountID).Scan(&mismatch)
-		if err != nil {
-			return nil, storageError()
-		}
-		if mismatch {
-			return nil, problem("failed_precondition", "configured source/account differs from admitted messages; use a new dataDir")
-		}
-	}
-
 	if ctx.Err() != nil {
 		return nil, storageError()
 	}
@@ -462,7 +450,11 @@ func (s *Store) listScoped(ctx context.Context, q QueryRequest, binding *Session
 		scopeID = binding.ID
 	}
 	if source != nil {
-		scopeID = strings.ReplaceAll(url.PathEscape(source.Source), ":", "%3A") + ":" + strings.ReplaceAll(url.PathEscape(source.InstanceID), ":", "%3A")
+		scopeID = strings.Join([]string{
+			strings.ReplaceAll(url.PathEscape(source.Source), ":", "%3A"),
+			strings.ReplaceAll(url.PathEscape(source.AccountID), ":", "%3A"),
+			strings.ReplaceAll(url.PathEscape(source.InstanceID), ":", "%3A"),
+		}, ":")
 	}
 	var parentColumn, parent string
 	var relatedFilter string

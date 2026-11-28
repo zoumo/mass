@@ -20,7 +20,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *t
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
 	configureOutboxSource(t, f)
-	_, otherSource, _ := addOutboxPeerSources(t, f)
+	otherSource := core.Source{Source: "other", AccountID: "account-2"}
 	f.execution(boundary)
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
@@ -94,7 +94,7 @@ func TestOutboxQuotedRepliesAddressOneBlockerAndResumeCurrentSessionBinding(t *t
 	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, wrongThread)
 	errorCode(t, code, raw, http.StatusConflict, "failed_precondition")
 	foreign := quote("foreign-account", date.ID, "Date")
-	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", otherSource, foreign)
+	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, foreign, otherSource)
 	errorCode(t, code, raw, http.StatusConflict, "failed_precondition")
 	require.Equal(t, a, readRecord[core.Issue](t, p, "issues/"+a.ID))
 	require.Equal(t, b, readRecord[core.Issue](t, p, "issues/"+b.ID))

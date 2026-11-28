@@ -5419,8 +5419,8 @@
         "scheme": "bearer",
         "type": "http"
       },
-      "sourceBearer": {
-        "description": "Source account credential",
+      "triggerBearer": {
+        "description": "Shared Trigger credential",
         "scheme": "bearer",
         "type": "http"
       }
@@ -6537,7 +6537,7 @@
     },
     "/v1/core/outbox-messages": {
       "get": {
-        "description": "The history view uses the trusted-read boundary. The delivery view requires the configured Account consumer and returns pending or retry-eligible records using limit and cursor.",
+        "description": "The history view uses the trusted-read boundary. The delivery view requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. It returns pending or retry-eligible records using limit and cursor.",
         "operationId": "listOutboxMessages",
         "parameters": [
           {
@@ -6619,6 +6619,31 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Configured Outbox consumer instance ID",
+            "in": "header",
+            "name": "X-Superagent-Instance-Id",
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6657,7 +6682,7 @@
                 }
               }
             },
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "content": {
@@ -6692,7 +6717,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           },
           {}
         ],
@@ -6700,16 +6725,23 @@
         "tags": [
           "Core"
         ],
+        "x-conditional-headers": {
+          "view=delivery": [
+            "X-Superagent-Source",
+            "X-Superagent-Account-Id",
+            "X-Superagent-Instance-Id"
+          ]
+        },
         "x-conditional-security": {
           "view=delivery": [
             {
-              "sourceBearer": []
+              "triggerBearer": []
             }
           ]
         }
       },
       "head": {
-        "description": "The history view uses the trusted-read boundary. The delivery view requires the configured Account consumer and returns pending or retry-eligible records using limit and cursor.",
+        "description": "The history view uses the trusted-read boundary. The delivery view requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. It returns pending or retry-eligible records using limit and cursor.",
         "operationId": "listOutboxMessagesHead",
         "parameters": [
           {
@@ -6791,6 +6823,31 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Configured Outbox consumer instance ID",
+            "in": "header",
+            "name": "X-Superagent-Instance-Id",
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6801,7 +6858,7 @@
             "description": "Invalid request"
           },
           "401": {
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "description": "Request outside its authorized scope"
@@ -6815,7 +6872,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           },
           {}
         ],
@@ -6823,10 +6880,17 @@
         "tags": [
           "Core"
         ],
+        "x-conditional-headers": {
+          "view=delivery": [
+            "X-Superagent-Source",
+            "X-Superagent-Account-Id",
+            "X-Superagent-Instance-Id"
+          ]
+        },
         "x-conditional-security": {
           "view=delivery": [
             {
-              "sourceBearer": []
+              "triggerBearer": []
             }
           ]
         }
@@ -6834,7 +6898,7 @@
     },
     "/v1/core/outbox-messages/{outboxId}": {
       "get": {
-        "description": "History uses the trusted-read boundary. Delivery requires the configured Account consumer and includes the reply target when present. Terminal states are readable.",
+        "description": "History uses the trusted-read boundary. Delivery requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. The delivery view includes the reply target when present. Terminal states are readable.",
         "operationId": "getOutboxMessage",
         "parameters": [
           {
@@ -6862,6 +6926,31 @@
             "name": "trace",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Configured Outbox consumer instance ID",
+            "in": "header",
+            "name": "X-Superagent-Instance-Id",
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
             }
           }
         ],
@@ -6901,7 +6990,7 @@
                 }
               }
             },
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "content": {
@@ -6936,7 +7025,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           },
           {}
         ],
@@ -6944,16 +7033,23 @@
         "tags": [
           "Core"
         ],
+        "x-conditional-headers": {
+          "view=delivery": [
+            "X-Superagent-Source",
+            "X-Superagent-Account-Id",
+            "X-Superagent-Instance-Id"
+          ]
+        },
         "x-conditional-security": {
           "view=delivery": [
             {
-              "sourceBearer": []
+              "triggerBearer": []
             }
           ]
         }
       },
       "head": {
-        "description": "History uses the trusted-read boundary. Delivery requires the configured Account consumer and includes the reply target when present. Terminal states are readable.",
+        "description": "History uses the trusted-read boundary. Delivery requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. The delivery view includes the reply target when present. Terminal states are readable.",
         "operationId": "getOutboxMessageHead",
         "parameters": [
           {
@@ -6982,6 +7078,31 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Configured Outbox consumer instance ID",
+            "in": "header",
+            "name": "X-Superagent-Instance-Id",
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6992,7 +7113,7 @@
             "description": "Invalid request"
           },
           "401": {
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "description": "Request outside its authorized scope"
@@ -7006,7 +7127,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           },
           {}
         ],
@@ -7014,10 +7135,17 @@
         "tags": [
           "Core"
         ],
+        "x-conditional-headers": {
+          "view=delivery": [
+            "X-Superagent-Source",
+            "X-Superagent-Account-Id",
+            "X-Superagent-Instance-Id"
+          ]
+        },
         "x-conditional-security": {
           "view=delivery": [
             {
-              "sourceBearer": []
+              "triggerBearer": []
             }
           ]
         }
@@ -7030,6 +7158,34 @@
             "name": "outboxId",
             "required": true,
             "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Configured Outbox consumer instance ID",
+            "in": "header",
+            "name": "X-Superagent-Instance-Id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
               "type": "string"
             }
           }
@@ -7073,7 +7229,7 @@
                 }
               }
             },
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "content": {
@@ -7118,7 +7274,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           }
         ],
         "summary": "Record an Outbox delivery outcome using the expected state",
@@ -10263,7 +10419,7 @@
     },
     "/v1/core/trigger-messages": {
       "get": {
-        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the shared Trigger bearer and both Source and Account headers. It returns the acceptance receipt.",
         "operationId": "listTriggerMessages",
         "parameters": [
           {
@@ -10323,7 +10479,7 @@
             }
           },
           {
-            "description": "Return the receipt in the authenticated Source and Account. Supply this parameter alone",
+            "description": "Return the receipt in the declared Source and Account. Supply this query parameter alone",
             "in": "query",
             "name": "sourceMessageId",
             "schema": {
@@ -10358,6 +10514,22 @@
             "description": "Exact scheduled task ID in the default view. Requires Operator access",
             "in": "query",
             "name": "scheduledTaskId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
             "schema": {
               "type": "string"
             }
@@ -10402,7 +10574,7 @@
                 }
               }
             },
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "content": {
@@ -10437,7 +10609,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           },
           {
             "operatorBearer": []
@@ -10448,6 +10620,12 @@
         "tags": [
           "Core"
         ],
+        "x-conditional-headers": {
+          "sourceMessageId": [
+            "X-Superagent-Source",
+            "X-Superagent-Account-Id"
+          ]
+        },
         "x-conditional-security": {
           "scheduledTaskId": [
             {
@@ -10461,13 +10639,13 @@
           ],
           "sourceMessageId": [
             {
-              "sourceBearer": []
+              "triggerBearer": []
             }
           ]
         }
       },
       "head": {
-        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the shared Trigger bearer and both Source and Account headers. It returns the acceptance receipt.",
         "operationId": "listTriggerMessagesHead",
         "parameters": [
           {
@@ -10527,7 +10705,7 @@
             }
           },
           {
-            "description": "Return the receipt in the authenticated Source and Account. Supply this parameter alone",
+            "description": "Return the receipt in the declared Source and Account. Supply this query parameter alone",
             "in": "query",
             "name": "sourceMessageId",
             "schema": {
@@ -10565,6 +10743,22 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10575,7 +10769,7 @@
             "description": "Invalid request"
           },
           "401": {
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "description": "Request outside its authorized scope"
@@ -10589,7 +10783,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           },
           {
             "operatorBearer": []
@@ -10600,6 +10794,12 @@
         "tags": [
           "Core"
         ],
+        "x-conditional-headers": {
+          "sourceMessageId": [
+            "X-Superagent-Source",
+            "X-Superagent-Account-Id"
+          ]
+        },
         "x-conditional-security": {
           "scheduledTaskId": [
             {
@@ -10613,13 +10813,33 @@
           ],
           "sourceMessageId": [
             {
-              "sourceBearer": []
+              "triggerBearer": []
             }
           ]
         }
       },
       "post": {
         "operationId": "submitTriggerMessage",
+        "parameters": [
+          {
+            "description": "External Source declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Source",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account ID declared by the Trigger",
+            "in": "header",
+            "name": "X-Superagent-Account-Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -10659,7 +10879,7 @@
                 }
               }
             },
-            "description": "Source credential required"
+            "description": "Shared Trigger credential required"
           },
           "403": {
             "content": {
@@ -10704,7 +10924,7 @@
         },
         "security": [
           {
-            "sourceBearer": []
+            "triggerBearer": []
           }
         ],
         "summary": "Submit a Trigger Message and return the durable receipt",

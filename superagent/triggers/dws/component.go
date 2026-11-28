@@ -67,7 +67,7 @@ func (c Component) Serve(ctx context.Context, out io.Writer) error {
 
 func (c Component) preflight(ctx context.Context) (*coreclient.Client, string, error) {
 	d := c.config
-	core, err := coreclient.New(d.CoreEndpoint, time.Duration(d.RequestMillis)*time.Millisecond, os.Getenv(d.TokenEnv))
+	core, err := coreclient.New(d.CoreEndpoint, time.Duration(d.RequestMillis)*time.Millisecond, os.Getenv(d.TokenEnv), d.Source, d.AccountID, d.InstanceID)
 	if err != nil {
 		return nil, "", err
 	}

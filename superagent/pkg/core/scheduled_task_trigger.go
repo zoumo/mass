@@ -15,8 +15,10 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/scheduledtask"
 )
 
-// Configured external Sources cannot use the Core namespace.
-const scheduledTaskSource = "core:scheduled-task"
+const (
+	scheduledTaskSource       = "core:scheduled-task"
+	scheduledTaskThreadPrefix = "core%3Ascheduled-task:"
+)
 
 type dueScheduledTask struct {
 	id       string
@@ -217,7 +219,7 @@ func admitScheduledTaskMessage(ctx context.Context, tx *sql.Tx, task scheduledTa
 	source := Source{Source: scheduledTaskSource}
 	request := SubmitTriggerMessageRequest{Message: TriggerMessage{
 		SourceMessageID: sourceMessageID,
-		ThreadID:        "core%3Ascheduled-task:" + task.ID,
+		ThreadID:        scheduledTaskThreadPrefix + task.ID,
 		Content:         task.Content,
 	}}
 	message, canonical, err := request.prepare(source)

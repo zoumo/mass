@@ -743,7 +743,6 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	boundary.url = proxyRPC(t, boundary.url, audit.recordRPC, func() {})
 	f := fixtureAt(t)
 	configureOutboxSource(t, f)
-	prToken := addPRSource(t, f, "github")
 	f.execution(boundary)
 	data, err := os.ReadFile(f.config)
 	require.NoError(t, err)
@@ -810,7 +809,7 @@ func TestRoutingObserverBrowserFixture(t *testing.T) {
 	roleWork[core.Topic](t, p, topicToken, "update_topic", prUpdate("observer-pr-without-input", 1, internalPR))
 	work.Issue = roleWork[core.WorkReceipt](t, p, roleToken(t, f, issue), "update_issue",
 		prUpdate("observer-pr-with-input", work.Issue.Revision, firstPR)).Issue
-	acceptPRMessage(t, p, prToken, prMessage("observer-pr", firstPR, "Synthetic PR review arrived."))
+	acceptPRMessage(t, p, f.token, "github", prMessage("observer-pr", firstPR, "Synthetic PR review arrived."))
 	report := roleWork[core.Report](t, p, roleToken(t, f, issue), "submit_report",
 		core.ReportRequest{
 			OperationID: "observer-report", Kind: "ready", Summary: "Sample build verified",

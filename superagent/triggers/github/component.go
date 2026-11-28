@@ -60,7 +60,7 @@ func (c Component) clients() (*githubAPI, *coreclient.Client, error) {
 		return nil, nil, errors.New("GitHub credential reference must resolve to a non-whitespace token distinct from the Core token")
 	}
 	timeout := time.Duration(g.RequestMillis) * time.Millisecond
-	core, err := coreclient.New(g.CoreEndpoint, timeout, coreToken)
+	core, err := coreclient.New(g.CoreEndpoint, timeout, coreToken, githubSource, g.AccountID, g.InstanceID)
 	if err != nil {
 		return nil, nil, err
 	}

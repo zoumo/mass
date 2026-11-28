@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/massd/pkg/events"
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -118,13 +119,13 @@ func fixtureAt(t *testing.T) *fixture {
 	dir := t.TempDir()
 	f := &fixture{t: t, dir: dir, config: filepath.Join(dir, "config.yaml"), data: filepath.Join(dir, "data"), token: strings.Repeat("a", 48)}
 	write(t, filepath.Join(dir, "source.token"), f.token)
-	f.configure(0, "account-1")
+	f.configure(0)
 	return f
 }
 
-func (f *fixture) configure(pages int, account string) {
+func (f *fixture) configure(pages int) {
 	f.t.Helper()
-	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\nsources:\n  - source: dws\n    accountId: %s\n    tokenFile: %s\n    threadIdPrefixes: ['dws:']\n", f.data, pages, account, filepath.Join(f.dir, "source.token")))
+	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\ntriggerTokenFile: %s\n", f.data, pages, filepath.Join(f.dir, "source.token")))
 }
 
 func write(t *testing.T, p, s string) {
@@ -253,7 +254,21 @@ func input(id string) core.SubmitTriggerMessageRequest {
 	return req
 }
 
-func request(t *testing.T, method, endpoint, path, token string, body any) (int, []byte) {
+var fixtureTriggerSource = core.Source{Source: "dws", AccountID: "account-1", InstanceID: "collector-1"}
+
+func setTriggerHeaders(req *http.Request, source core.Source) {
+	if source.Source != "" {
+		req.Header.Set(triggeridentity.SourceHeader, source.Source)
+	}
+	if source.AccountID != "" {
+		req.Header.Set(triggeridentity.AccountHeader, source.AccountID)
+	}
+	if source.InstanceID != "" {
+		req.Header.Set(triggeridentity.InstanceHeader, source.InstanceID)
+	}
+}
+
+func request(t *testing.T, method, endpoint, path, token string, body any, sources ...core.Source) (int, []byte) {
 	t.Helper()
 	var b []byte
 	if body != nil {
@@ -272,6 +287,11 @@ func request(t *testing.T, method, endpoint, path, token string, body any) (int,
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if len(sources) != 0 {
+		setTriggerHeaders(req, sources[0])
+	} else if token != "" && (req.URL.Path == "/v1/core/trigger-messages" || strings.HasPrefix(req.URL.Path, channelOutbox)) {
+		setTriggerHeaders(req, fixtureTriggerSource)
 	}
 	c := http.Client{Timeout: 10 * time.Second}
 	r, err := c.Do(req)
@@ -450,9 +470,9 @@ func TestPublicAuthenticationAndReadOnly(t *testing.T) {
 			errorCode(t, gotStatus, gotBody, 400, "invalid_argument")
 		})
 	}
-	unauthorizedThread := r
-	unauthorizedThread.Message.ThreadID = "other:opaque"
-	status, b = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, unauthorizedThread)
+	reservedThread := r
+	reservedThread.Message.ThreadID = "core%3Ascheduled-task:mass-st1"
+	status, b = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, reservedThread)
 	errorCode(t, status, b, 403, "forbidden")
 	for _, path := range []string{"/v1/core/threads", "/v1/core/internal-events", "/status"} {
 		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
@@ -571,6 +591,7 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 					return
 				}
 				req.Header.Set("Authorization", "Bearer "+f.token)
+				setTriggerHeaders(req, fixtureTriggerSource)
 				req.Header.Set("Content-Type", "application/json")
 				c := http.Client{Timeout: 15 * time.Second}
 				resp, err := c.Do(req)
@@ -627,19 +648,20 @@ func TestPublicCrashCommitBoundary(t *testing.T) {
 }
 
 func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
-	t.Run("exclusive_and_account", func(t *testing.T) {
+	t.Run("exclusive_and_reconfigured_consumer", func(t *testing.T) {
 		f := fixtureAt(t)
 		p := f.start()
 		f.fails("conflict")
-		submit(t, p, f, input("retained"))
+		accepted := submit(t, p, f, input("retained"))
 		p.stop(t, false)
-		f.configure(0, "another-account")
-		f.fails("failed_precondition")
-		f.configure(0, "account-1")
+		config, err := os.ReadFile(f.config)
+		require.NoError(t, err)
+		write(t, f.config, string(config)+"outboxConsumers: [{source: dws, accountId: another-account, instanceId: collector-1}]\n")
 		p = f.start()
-		if len(page(t, p, "trigger-messages").Items) != 1 {
-			t.Fatal("account failure damaged data")
-		}
+		require.Len(t, page(t, p, "trigger-messages").Items, 1)
+		replay := submit(t, p, f, input("retained"))
+		require.True(t, replay.Duplicate)
+		require.Equal(t, accepted.MessageID, replay.MessageID)
 	})
 	t.Run("legacy_untouched", func(t *testing.T) {
 		f := fixtureAt(t)
@@ -663,7 +685,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 		f := fixtureAt(t)
 		// Leave room for the nine-table schema. The 512 KiB body
 		// alone still exceeds the entire 448 KiB database budget.
-		f.configure(112, "account-1")
+		f.configure(112)
 		p := f.start()
 		r := input("oversize")
 		r.Message.Content[0].Text.Text = strings.Repeat("x", 512*1024)
@@ -675,7 +697,7 @@ func TestPublicOwnershipLegacyAndStorage(t *testing.T) {
 			}
 		}
 		p.stop(t, true)
-		f.configure(0, "account-1")
+		f.configure(0)
 		p = f.start()
 		if len(page(t, p, "trigger-messages").Items) != 0 {
 			t.Fatal("storage failure was committed")
@@ -844,7 +866,7 @@ func assertUnsupportedSchemaPreserved(t *testing.T, version int) {
 func TestPublicSpecialDataPathAndCLIError(t *testing.T) {
 	f := fixtureAt(t)
 	f.data = filepath.Join(f.dir, "data?#%原文")
-	f.configure(0, "account-1")
+	f.configure(0)
 	p := f.start()
 	submit(t, p, f, input("special-path"))
 	cmd := exec.CommandContext(context.Background(), build(t), "observe", "trigger-messages", "--endpoint", p.endpoint, "--limit", "201")

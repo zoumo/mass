@@ -2,8 +2,6 @@ package core
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -240,20 +238,6 @@ func isReadMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
 
-func (s *Server) authenticate(r *http.Request) (Source, bool) {
-	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
-		return Source{}, false
-	}
-	hash := sha256.Sum256([]byte(strings.TrimPrefix(header, "Bearer ")))
-	for _, source := range s.config.Sources {
-		if subtle.ConstantTimeCompare(hash[:], source.tokenHash[:]) == 1 {
-			return source, true
-		}
-	}
-	return Source{}, false
-}
-
 func (s *Server) coreRecord(ctx context.Context, kind, id string, trace, observe bool) (json.RawMessage, error) {
 	raw, err := s.store.getRecord(ctx, kind, id, nil, nil, trace)
 	if err == nil && kind == "issues" && observe {
@@ -306,14 +290,10 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	}
 	// Never return a reusable credential, even if untrusted text contains it.
 	body := string(b)
-	var configured []string
-	for _, source := range s.config.Sources {
-		configured = append(configured, source.token)
-	}
+	configured := []string{s.config.triggerToken, s.config.operatorToken, s.massdHTTPToken}
 	if s.config.Massd != nil {
 		configured = append(configured, s.config.Massd.token)
 	}
-	configured = append(configured, s.config.operatorToken, s.massdHTTPToken)
 	for _, token := range configured {
 		if token == "" {
 			continue

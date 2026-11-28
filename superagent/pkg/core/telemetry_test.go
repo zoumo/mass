@@ -55,6 +55,7 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 		req, err := http.NewRequestWithContext(t.Context(), method, server.Endpoint()+path, bytes.NewReader(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+f.token)
+		setTriggerHeaders(req, fixtureTriggerSource)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", origin)
 		req.Header.Set("Traceparent", traceparent)

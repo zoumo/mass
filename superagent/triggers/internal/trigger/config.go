@@ -9,11 +9,23 @@ import (
 	"time"
 
 	"github.com/zoumo/mass/internal/httpaddress"
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
-var instanceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+const defaultComposeTokenEnv = "SUPERAGENT_TRIGGER_TOKEN"
 
-func ValidIdentifier(value string) bool { return instanceIDPattern.MatchString(value) }
+var envVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func CoreTokenEnv(value string, composed bool) string {
+	if composed && value == "" {
+		return defaultComposeTokenEnv
+	}
+	return value
+}
+
+func ValidEnvVariable(value string) bool { return envVariablePattern.MatchString(value) }
+
+func ValidIdentifier(value string) bool { return triggeridentity.ValidInstance(value) }
 
 func ValidateCoreEndpoint(s string) error {
 	return validateHTTPEndpoint(s, "coreEndpoint")

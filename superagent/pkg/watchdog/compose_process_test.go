@@ -158,8 +158,7 @@ func writeWatchdogCompose(t *testing.T, dir string, interval time.Duration) (str
 	config := fmt.Sprintf(`core:
   listen: 127.0.0.1:0
   dataDir: core-state
-  sources:
-    - {source: fixture, accountId: fixture, tokenFile: source-token}
+  triggerTokenFile: ./source-token
 watchdog: {interval: %s}
 `, interval)
 	require.NoError(t, os.WriteFile(path, []byte(config), 0o600))
