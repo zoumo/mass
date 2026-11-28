@@ -6,9 +6,10 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
 ## Start Core
 
 1. Copy [the Core example](config.example.yaml) to a private run directory.
-   Set `triggerTokenFile` to a private regular file containing the shared
-   Trigger token. Use at least 32 bytes without whitespace or control
-   characters. Resolve relative paths from the YAML file's directory.
+   Set `accessToken.triggers` to a private file containing the shared Trigger
+   token. Set `accessToken.admin` to a separate private file to enable
+   Operator commands. Use at least 32 bytes per token without whitespace or
+   control characters. Relative paths start at the YAML file's directory.
 2. Build and start Core from the repository root.
 
    ```sh
@@ -55,25 +56,22 @@ installations share `massd`, give them distinct `sessions.namespace` values.
 For a fresh Trigger database or a restart, follow the
 [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
 
-### Migrate to the shared Trigger token
+### Migrate Core access tokens
 
 1. Stop the existing Core and Trigger owners. Preserve the Core data directory
    and each adapter's database, send evidence, and feedback state.
-2. Create a private file for one shared Trigger token. Set `triggerTokenFile`
-   for standalone Core or `core.triggerTokenFile` for Compose. Remove
-   `sources` and its per-source token files and Thread filters from the
-   configuration.
-3. If a Source and Account pair sends replies, copy the existing sender's
-   `source`, `accountId`, and `instanceId` to `outboxConsumers`. Also copy
-   the sender if Core previously selected the sole instance automatically.
-4. Upgrade Core and all Triggers together. Set the standalone adapters'
+2. Set `accessToken.triggers` to the shared Trigger token file. Move the
+   former `operatorTokenFile` value to `accessToken.admin`. In Compose,
+   place `accessToken` under `core`. Remove the old `triggerTokenFile`,
+   `operatorTokenFile`, `sources`, and `outboxConsumers` settings.
+3. Upgrade Core and all Triggers together. Set the standalone adapters'
    configured token environment variables to the shared value. Compose
-   supplies the value from `core.triggerTokenFile`. Keep the original
+   supplies the value from `core.accessToken.triggers`. Keep the original
    account IDs, instance IDs, and database paths so each adapter can resume
    its queue.
-5. Check Core readiness, the adapter status, and a stored Source receipt.
-   For reply-enabled adapters, check that the configured sender can read
-   eligible Outbox items. Start Outbox pagination again after upgrading.
+4. Check Core readiness, the adapter status, and a stored Source receipt.
+   For reply-enabled adapters, check that the shared token and the adapter's
+   Source and Account reach its Outbox. Start Outbox pagination again.
 
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
@@ -121,7 +119,7 @@ to release its current Session and prepare a new one with the updated options.
 ## Scheduled tasks
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent
-tasks and triggering from a local script or CLI, configure `operatorTokenFile`
+tasks and triggering from a local script or CLI, configure `accessToken.admin`
 and connect directly to Core. Independent schedules also run
 in standalone Core without Session execution. Their Router events remain
 pending until a Router can handle them.
@@ -227,9 +225,9 @@ after Watchdog exits and starts with an empty snapshot after restart.
 1. Copy [the Compose example](compose.example.yaml) to a private run directory.
    Keep `core` and the Trigger sections you want to run. Compose starts
    embedded MASS. Keep Core, MASS, and Trigger data in separate paths.
-2. Set `core.triggerTokenFile`. For each reply-enabled Trigger, match its
-   Source, Account ID, and instance ID to an entry in `core.outboxConsumers`.
-   Compose supplies the shared token to the Trigger subprocesses. Supply
+2. Set `core.accessToken.triggers`. Compose supplies the shared token to the
+   Trigger subprocesses. Reply-enabled Triggers use the token and their
+   Source and Account to read and update the Outbox. Supply
    native GitHub and DWS credentials as described in the
    [Trigger guide](triggers/README.md).
 3. Start Compose from the repository root.

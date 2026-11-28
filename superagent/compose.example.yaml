@@ -18,7 +18,7 @@ core:
   #   credentialFile: ./secrets/openobserve-login.txt
   # Optional role settings for Core Agent execution.
   # sessions:
-  #   namespace: superagent
+  #   namespace: superagent  # shared namespace prefix
   #   router:
   #     workspace: /absolute/workspace
   #     runtimeRef: codex
@@ -38,11 +38,9 @@ core:
   #   cua:
   #     command: /opt/mass/bin/cua-mcp
   #     configFile: ./cua-mcp.yaml
-  triggerTokenFile: ./secrets/trigger.token
-  outboxConsumers:
-    - source: dws
-      accountId: ACCOUNT_ID
-      instanceId: dws-trigger-1
+  accessToken:
+    # admin: ./secrets/operator.token
+    triggers: ./secrets/trigger.token
 
 # Optional business checks alongside Core.
 # watchdog:

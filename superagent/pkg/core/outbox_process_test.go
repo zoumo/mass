@@ -3,7 +3,6 @@ package core_test
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,23 +24,6 @@ func markdownReply(text string) core.StructuredContent {
 		panic(err)
 	}
 	return core.StructuredContent{Type: "markdown", Data: data}
-}
-
-func configureOutboxSources(t *testing.T, f *fixture, consumers ...core.Source) {
-	t.Helper()
-	config, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	var outbox strings.Builder
-	outbox.WriteString("outboxConsumers:\n")
-	for _, consumer := range consumers {
-		fmt.Fprintf(&outbox, "  - {source: %q, accountId: %q, instanceId: %q}\n", consumer.Source, consumer.AccountID, consumer.InstanceID)
-	}
-	write(t, f.config, string(config)+outbox.String())
-}
-
-func configureOutboxSource(t *testing.T, f *fixture) {
-	t.Helper()
-	configureOutboxSources(t, f, fixtureTriggerSource)
 }
 
 func readOutbox(t *testing.T, p *process, id string) core.OutboxItem {
@@ -117,9 +99,8 @@ func processClock(t *testing.T, f *fixture, env string) (string, func(time.Durat
 func TestOutboxRoleTargetAndScope(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
-	peer := core.Source{Source: "dws", AccountID: "account-1", InstanceID: "collector-2"}
-	other := core.Source{Source: "dws", AccountID: "account-2", InstanceID: "collector-1"}
-	configureOutboxSources(t, f, fixtureTriggerSource, other)
+	other := core.Source{Source: "dws", AccountID: "account-2"}
+
 	f.execution(boundary)
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
@@ -134,8 +115,8 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 	addressed := input("verified-instance")
 	addressed.Message.Meta = json.RawMessage(`{"sourceTime":"2000-01-01T12:00:00Z","collectorInstance":"collector-2"}`)
 	second := submit(t, p, f, addressed)
-	code, raw := request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, addressed, peer)
-	require.Equal(t, 200, code, "%s", raw)
+	var code int
+	var raw []byte
 	route := decide(t, p, routerToken, newRoute("outbox-scope", []string{second.MessageID, first.MessageID}, f.dir))
 	topic := waitBinding(t, p, "topic", route.Targets[0].TopicID, "ready")
 	topicToken := roleToken(t, f, topic)
@@ -222,23 +203,33 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 		source  core.Source
 		code    int
 		problem string
-	}{{peer, 403, "forbidden"}, {other, 404, "not_found"}, {core.Source{Source: "dws", AccountID: "account-1"}, 400, "invalid_argument"}} {
+	}{
+		{other, http.StatusNotFound, "not_found"},
+		{core.Source{Source: "another", AccountID: fixtureTriggerSource.AccountID}, http.StatusNotFound, "not_found"},
+		{core.Source{Source: "dws"}, http.StatusBadRequest, "invalid_argument"},
+	} {
 		code, raw = request(t, "GET", p.endpoint, channelOutbox+"/"+reply.ID+"?view=delivery", f.token, nil, tc.source)
 		errorCode(t, code, raw, tc.code, tc.problem)
 		code, raw = patchOutbox(t, p, f.token, result, tc.source)
 		errorCode(t, code, raw, tc.code, tc.problem)
 	}
-	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", f.token, nil, peer)
-	errorCode(t, code, raw, 403, "forbidden")
-	code, raw = request(t, "POST", p.endpoint, "/v1/core/trigger-messages", f.token, input("passive-collector"), peer)
-	require.Equal(t, 200, code, "%s", raw)
-	var passive core.Receipt
-	require.NoError(t, json.Unmarshal(raw, &passive))
-	roleWork[core.OutboxItem](t, p, routerToken, "send_reply",
-		core.ReplyRequest{OperationID: "reply-on-account", Content: markdownReply("Send via configured consumer"), MessageID: passive.MessageID})
-	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 4)
-	code, raw = request(t, "GET", p.endpoint, channelOutbox+"?view=delivery", "", nil)
-	errorCode(t, code, raw, 401, "unauthorized")
+	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, input("new-account"), other)
+	require.Equal(t, http.StatusOK, code, "%s", raw)
+	var accepted core.Receipt
+	require.NoError(t, json.Unmarshal(raw, &accepted))
+	newReply := roleWork[core.OutboxItem](t, p, routerToken, "send_reply",
+		core.ReplyRequest{OperationID: "reply-on-account", Content: markdownReply("Reply to a new account"), MessageID: accepted.MessageID})
+	require.Len(t, listOutbox(t, p.endpoint, f.token, "").Items, 3)
+	require.Len(t, listOutbox(t, p.endpoint, f.token, "", other).Items, 1)
+	require.Equal(t, "sent", resultOutbox(t, p, f.token, outboxResult(newReply, "sent", ""), other).Status)
+	for _, token := range []string{"", "wrong-token"} {
+		for _, path := range []string{channelOutbox, channelOutbox + "/" + reply.ID} {
+			code, raw = request(t, http.MethodGet, p.endpoint, path+"?view=delivery", token, nil)
+			errorCode(t, code, raw, http.StatusUnauthorized, "unauthorized")
+		}
+		code, raw = patchOutbox(t, p, token, result)
+		errorCode(t, code, raw, http.StatusUnauthorized, "unauthorized")
+	}
 	code, _ = request(t, "POST", p.endpoint, "/v1/core/outbox-messages/"+reply.ID, "", struct{}{})
 	require.Equal(t, 405, code)
 	require.Equal(t, "pending", readOutbox(t, p, reply.ID).Status)
@@ -249,7 +240,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 func TestOutboxDurableResultAndRetry(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
-	configureOutboxSource(t, f)
+
 	f.execution(boundary)
 	env, advance := outboxClock(t, f)
 	receiver, spans := coreOTLPReceiver(t, "")
@@ -330,7 +321,7 @@ func TestOutboxDurableResultAndRetry(t *testing.T) {
 func TestOutboxStructuredContentDiscoveryAndValidation(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
-	configureOutboxSource(t, f)
+
 	f.execution(boundary)
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
@@ -405,7 +396,7 @@ func TestOutboxStructuredContentDiscoveryAndValidation(t *testing.T) {
 func TestOutboxPermanentFailureEvent(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
-	configureOutboxSource(t, f)
+
 	f.execution(boundary)
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")

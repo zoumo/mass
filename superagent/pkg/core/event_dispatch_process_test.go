@@ -24,7 +24,7 @@ func eventFixture(t *testing.T, endpoint string) (*fixture, string) {
 	write(t, token, strings.Repeat("O", 48))
 	cwd, err := filepath.EvalSymlinks(f.dir)
 	require.NoError(t, err)
-	write(t, f.config, fixedListen(t, string(saved))+"massd:\n  endpoint: "+endpoint+"\noperatorTokenFile: "+token+"\n"+fmt.Sprintf(fixtureSessions, cwd))
+	write(t, f.config, fixedListen(t, string(saved))+"  admin: "+token+"\nmassd:\n  endpoint: "+endpoint+"\n"+fmt.Sprintf(fixtureSessions, cwd))
 	return f, token
 }
 

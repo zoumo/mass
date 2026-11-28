@@ -66,7 +66,7 @@ Core generates `receivedAt`. Unknown fields and trailing JSON values fail.
 
 The request can include `replyTarget` and `inReplyToOutboxId` beside `message`.
 `replyTarget` is an opaque JSON object of at most 16 KiB. It enables replies
-and is visible to the account's configured Outbox consumer. To link an answer
+and is visible in that Source and Account's Outbox. To link an answer
 to a prior reply, supply the `inReplyToOutboxId` of a sent item whose original
 Message has the same source, account and Thread.
 
@@ -687,12 +687,12 @@ records input acceptance separately from work completion. See
 
 ### Operator reconciliation
 
-Set `operatorTokenFile` to a distinct private credential with at
-least 32 non-whitespace bytes. Inspection uses
+Set `accessToken.admin` to a private file with an admin token distinct from
+the Trigger token. Inspection uses
 `GET /v1/core/session-bindings/{bindingId}/runtime-evidence` to read the saved
 binding, its stop evidence, and a live identity-checked massd snapshot. Submit
 recovery with `POST /v1/core/session-bindings/{bindingId}/recoveries`. The path
-selects the binding. Both require the Operator credential and a direct Core
+selects the binding. Both require the admin token and a direct Core
 connection from a non-browser client.
 
 ```sh
@@ -831,7 +831,7 @@ content and task ID captured at acceptance. Use `eventId` to inspect the
 Internal Event. The Web shows normal messages and delivery records, with task
 counts by state in its status summary.
 
-With `--operator-token-file`, use `superagent scheduled-tasks list`,
+Pass the admin token file as `--operator-token-file` to `superagent scheduled-tasks list`,
 `superagent scheduled-tasks get TASK_ID`, `superagent scheduled-tasks
 trigger-messages TASK_ID`, or `superagent scheduled-tasks trigger TASK_ID
 --operation-id OPERATION_ID`.
@@ -914,18 +914,13 @@ Issue Session after resolving the last blocker, set `blockers.unblockedStatus` t
 ## Trigger Outbox
 
 Core resolves the Source, Account ID, and reply target from the original
-Message. Run one active sender for each Source and Account pair. Stop the
-sender before starting a replacement. Set the sender's `source`, `accountId`,
-and `instanceId` in `outboxConsumers`.
+Message and queues the reply. Run one active sender for each Source and
+Account pair. Stop the sender before starting a replacement.
 
 Delivery reads and result writes require the shared Trigger token,
-`X-Superagent-Source`, `X-Superagent-Account-Id`, and
-`X-Superagent-Instance-Id`. The instance ID must start with an ASCII letter or
-digit. It can include up to 128 ASCII letters, digits, or `_.:-` characters in
-total. An identity outside the configured consumer mapping returns
-`forbidden`. An item ID outside the declared Source and Account returns
-`not_found`. The mapping coordinates delivery among callers that share the
-same credential.
+`X-Superagent-Source`, and `X-Superagent-Account-Id`. The token authenticates
+the Trigger and the two headers select the queue. An item ID outside the
+declared Source and Account returns `not_found`.
 
 | Method and path | Result |
 | --- | --- |

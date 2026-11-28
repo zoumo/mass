@@ -5410,7 +5410,7 @@
         "type": "http"
       },
       "operatorBearer": {
-        "description": "Core operator credential",
+        "description": "Core accessToken.admin credential for Operators",
         "scheme": "bearer",
         "type": "http"
       },
@@ -5420,7 +5420,7 @@
         "type": "http"
       },
       "triggerBearer": {
-        "description": "Shared Trigger credential",
+        "description": "Core accessToken.triggers credential",
         "scheme": "bearer",
         "type": "http"
       }
@@ -6537,7 +6537,7 @@
     },
     "/v1/core/outbox-messages": {
       "get": {
-        "description": "The history view uses the trusted-read boundary. The delivery view requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. It returns pending or retry-eligible records using limit and cursor.",
+        "description": "The history view uses the trusted-read boundary. The delivery view requires the Trigger token and the Source and Account headers. It returns pending or retry-eligible records using limit and cursor.",
         "operationId": "listOutboxMessages",
         "parameters": [
           {
@@ -6586,7 +6586,7 @@
             }
           },
           {
-            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "description": "Select delivery fields for the declared Source and Account",
             "in": "query",
             "name": "view",
             "schema": {
@@ -6633,15 +6633,6 @@
             "in": "header",
             "name": "X-Superagent-Account-Id",
             "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Configured Outbox consumer instance ID",
-            "in": "header",
-            "name": "X-Superagent-Instance-Id",
-            "schema": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
               "type": "string"
             }
           }
@@ -6728,8 +6719,7 @@
         "x-conditional-headers": {
           "view=delivery": [
             "X-Superagent-Source",
-            "X-Superagent-Account-Id",
-            "X-Superagent-Instance-Id"
+            "X-Superagent-Account-Id"
           ]
         },
         "x-conditional-security": {
@@ -6741,7 +6731,7 @@
         }
       },
       "head": {
-        "description": "The history view uses the trusted-read boundary. The delivery view requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. It returns pending or retry-eligible records using limit and cursor.",
+        "description": "The history view uses the trusted-read boundary. The delivery view requires the Trigger token and the Source and Account headers. It returns pending or retry-eligible records using limit and cursor.",
         "operationId": "listOutboxMessagesHead",
         "parameters": [
           {
@@ -6790,7 +6780,7 @@
             }
           },
           {
-            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "description": "Select delivery fields for the declared Source and Account",
             "in": "query",
             "name": "view",
             "schema": {
@@ -6839,15 +6829,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "description": "Configured Outbox consumer instance ID",
-            "in": "header",
-            "name": "X-Superagent-Instance-Id",
-            "schema": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
-              "type": "string"
-            }
           }
         ],
         "responses": {
@@ -6883,8 +6864,7 @@
         "x-conditional-headers": {
           "view=delivery": [
             "X-Superagent-Source",
-            "X-Superagent-Account-Id",
-            "X-Superagent-Instance-Id"
+            "X-Superagent-Account-Id"
           ]
         },
         "x-conditional-security": {
@@ -6898,7 +6878,7 @@
     },
     "/v1/core/outbox-messages/{outboxId}": {
       "get": {
-        "description": "History uses the trusted-read boundary. Delivery requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. The delivery view includes the reply target when present. Terminal states are readable.",
+        "description": "History uses the trusted-read boundary. Delivery requires the Trigger token and the Source and Account headers. The delivery view includes the reply target when present. Terminal states are readable.",
         "operationId": "getOutboxMessage",
         "parameters": [
           {
@@ -6910,7 +6890,7 @@
             }
           },
           {
-            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "description": "Select delivery fields for the declared Source and Account",
             "in": "query",
             "name": "view",
             "schema": {
@@ -6941,15 +6921,6 @@
             "in": "header",
             "name": "X-Superagent-Account-Id",
             "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Configured Outbox consumer instance ID",
-            "in": "header",
-            "name": "X-Superagent-Instance-Id",
-            "schema": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
               "type": "string"
             }
           }
@@ -7036,8 +7007,7 @@
         "x-conditional-headers": {
           "view=delivery": [
             "X-Superagent-Source",
-            "X-Superagent-Account-Id",
-            "X-Superagent-Instance-Id"
+            "X-Superagent-Account-Id"
           ]
         },
         "x-conditional-security": {
@@ -7049,7 +7019,7 @@
         }
       },
       "head": {
-        "description": "History uses the trusted-read boundary. Delivery requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. The delivery view includes the reply target when present. Terminal states are readable.",
+        "description": "History uses the trusted-read boundary. Delivery requires the Trigger token and the Source and Account headers. The delivery view includes the reply target when present. Terminal states are readable.",
         "operationId": "getOutboxMessageHead",
         "parameters": [
           {
@@ -7061,7 +7031,7 @@
             }
           },
           {
-            "description": "Select Account-scoped delivery fields for the configured consumer",
+            "description": "Select delivery fields for the declared Source and Account",
             "in": "query",
             "name": "view",
             "schema": {
@@ -7092,15 +7062,6 @@
             "in": "header",
             "name": "X-Superagent-Account-Id",
             "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Configured Outbox consumer instance ID",
-            "in": "header",
-            "name": "X-Superagent-Instance-Id",
-            "schema": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
               "type": "string"
             }
           }
@@ -7138,8 +7099,7 @@
         "x-conditional-headers": {
           "view=delivery": [
             "X-Superagent-Source",
-            "X-Superagent-Account-Id",
-            "X-Superagent-Instance-Id"
+            "X-Superagent-Account-Id"
           ]
         },
         "x-conditional-security": {
@@ -7176,16 +7136,6 @@
             "name": "X-Superagent-Account-Id",
             "required": true,
             "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Configured Outbox consumer instance ID",
-            "in": "header",
-            "name": "X-Superagent-Instance-Id",
-            "required": true,
-            "schema": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
               "type": "string"
             }
           }
@@ -10419,7 +10369,7 @@
     },
     "/v1/core/trigger-messages": {
       "get": {
-        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the shared Trigger bearer and both Source and Account headers. It returns the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the Core access token and both Source and Account headers. It returns the acceptance receipt.",
         "operationId": "listTriggerMessages",
         "parameters": [
           {
@@ -10645,7 +10595,7 @@
         }
       },
       "head": {
-        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the shared Trigger bearer and both Source and Account headers. It returns the acceptance receipt.",
+        "description": "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the Core access token and both Source and Account headers. It returns the acceptance receipt.",
         "operationId": "listTriggerMessagesHead",
         "parameters": [
           {

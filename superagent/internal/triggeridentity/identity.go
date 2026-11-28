@@ -10,7 +10,6 @@ import (
 const (
 	SourceHeader    = "X-Superagent-Source"
 	AccountHeader   = "X-Superagent-Account-Id"
-	InstanceHeader  = "X-Superagent-Instance-Id"
 	InstancePattern = `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`
 )
 

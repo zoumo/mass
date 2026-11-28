@@ -393,9 +393,7 @@ func composeFixtureConfig(t *testing.T, dir, coreListen string, github, dws bool
 	config := fmt.Sprintf(`core:
   listen: %q
   dataDir: ./core-state
-  triggerTokenFile: ./trigger-token
-  outboxConsumers:
-    - {source: dws, accountId: fixture-dws, instanceId: dws-adapter}
+  accessToken: {triggers: ./trigger-token}
 `, coreListen)
 	if !github && !dws {
 		return config
@@ -686,8 +684,7 @@ func TestComposeProcessPreflight(t *testing.T) {
 		environment               []string
 	}{
 		{"unknown Trigger field", "    repositories:", "    unused: PRIVATE-FIXTURE\n    repositories:", "triggers.github configuration", nil},
-		{"missing Trigger credential file", "./trigger-token", "./missing-token", "triggerTokenFile must be a readable private regular file", nil},
-		{"DWS Outbox role", "    instanceId: dws-adapter", "    instanceId: another-adapter", "triggers.dws preflight: the reply-enabled Trigger", nil},
+		{"missing Trigger credential file", "./trigger-token", "./missing-token", "accessToken.triggers must be a readable private regular file", nil},
 		{"credential shared across scopes", "", "", "triggers.github preflight: native service credentials must be distinct", []string{composeGitHubEnv + "=" + composeTriggerToken}},
 		{"credential environment shared across scopes", "coreTokenEnv: " + composeDWSCoreEnv, "coreTokenEnv: " + composeGitHubEnv, "triggers.github githubTokenEnv conflicts with triggers.dws coreTokenEnv", nil},
 		{"state under MASS", "./dws.sqlite", "./massd-data/dws.sqlite", "triggers.dws databasePath conflicts with core.massd.embedded dataDir", nil},

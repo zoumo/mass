@@ -205,7 +205,7 @@ func readGitHubStatus(t *testing.T, endpoint string) githubStatus {
 
 func newGitHubCoreFixture(t *testing.T) *triggertest.CoreFixture {
 	t.Helper()
-	return triggertest.NewCoreFixture(t, false, githubSource)
+	return triggertest.NewCoreFixture(t, false)
 }
 
 func githubMessageMeta(msg map[string]any) map[string]any {

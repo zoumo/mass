@@ -161,7 +161,7 @@ func (s *Server) registerMessageResources(api *httpAPI) {
 	receipt := api.schema(reflect.TypeFor[Receipt]())
 	triggerPost := api.messageOperation(http.MethodPost, triggerMessagesPath, "submitTriggerMessage", "Submit a Trigger Message and return the durable receipt", receipt)
 	triggerPost.RequestBody = &huma.RequestBody{Required: true, Content: jsonContent(api.schema(reflect.TypeFor[SubmitTriggerMessageRequest]()))}
-	triggerPost.Parameters = triggerIdentityHeaders(true, false)
+	triggerPost.Parameters = triggerIdentityHeaders(true)
 	triggerPost.Security = bearerSecurity(triggerBearer)
 	triggerPost.Responses["409"] = api.coreError("Message identity or quoted reply conflicts with persisted state")
 	api.registerRaw(triggerPost, s.observeMessageHTTP(s.postTriggerMessage))
@@ -178,8 +178,8 @@ func (s *Server) registerMessageResources(api *httpAPI) {
 		messageQueryParam("source", "Exact Source in the default view. Requires Operator access", &huma.Schema{Type: huma.TypeString}),
 		messageQueryParam("scheduledTaskId", "Exact scheduled task ID in the default view. Requires Operator access", &huma.Schema{Type: huma.TypeString}),
 	)
-	triggerList.Description = "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the shared Trigger bearer and both Source and Account headers. It returns the acceptance receipt."
-	triggerList.Parameters = append(triggerList.Parameters, triggerIdentityHeaders(false, false)...)
+	triggerList.Description = "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires the Core access token and both Source and Account headers. It returns the acceptance receipt."
+	triggerList.Parameters = append(triggerList.Parameters, triggerIdentityHeaders(false)...)
 	triggerList.Security = append(bearerSecurity(triggerBearer), bearerSecurity(operatorBearer)[0], map[string][]string{})
 	triggerList.Extensions = map[string]any{
 		"x-conditional-security": map[string]any{
@@ -198,7 +198,7 @@ func (s *Server) registerMessageResources(api *httpAPI) {
 }
 
 func (s *Server) registerOutboxMessages(api *httpAPI) {
-	delivery := messageQueryParam("view", "Select Account-scoped delivery fields for the configured consumer", &huma.Schema{Type: huma.TypeString, Enum: []any{"delivery"}})
+	delivery := messageQueryParam("view", "Select delivery fields for the declared Source and Account", &huma.Schema{Type: huma.TypeString, Enum: []any{"delivery"}})
 	list := api.messageOperation(http.MethodGet, outboxMessagesPath, "listOutboxMessages", "List Outbox Message history or eligible deliveries", &huma.Schema{AnyOf: []*huma.Schema{
 		api.schema(reflect.TypeFor[messagePage[outboxHistoryRecord]]()),
 		api.schema(reflect.TypeFor[messagePage[outboxDeliveryRecord]]()),
@@ -208,12 +208,12 @@ func (s *Server) registerOutboxMessages(api *httpAPI) {
 		messageQueryParam("topicId", "Topic routing history filter in the history view", &huma.Schema{Type: huma.TypeString}),
 		messageQueryParam("threadId", "Exact Thread ID in the history view", &huma.Schema{Type: huma.TypeString}),
 	)
-	list.Description = "The history view uses the trusted-read boundary. The delivery view requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. It returns pending or retry-eligible records using limit and cursor."
-	list.Parameters = append(list.Parameters, triggerIdentityHeaders(false, true)...)
+	list.Description = "The history view uses the trusted-read boundary. The delivery view requires the Trigger token and the Source and Account headers. It returns pending or retry-eligible records using limit and cursor."
+	list.Parameters = append(list.Parameters, triggerIdentityHeaders(false)...)
 	list.Security = append(bearerSecurity(triggerBearer), map[string][]string{})
 	list.Extensions = map[string]any{
 		"x-conditional-security": map[string]any{"view=delivery": bearerSecurity(triggerBearer)},
-		"x-conditional-headers":  map[string][]string{"view=delivery": {triggeridentity.SourceHeader, triggeridentity.AccountHeader, triggeridentity.InstanceHeader}},
+		"x-conditional-headers":  map[string][]string{"view=delivery": {triggeridentity.SourceHeader, triggeridentity.AccountHeader}},
 	}
 	api.registerMessageRead(list, s.observeMessageHTTP(s.readOutboxMessages))
 
@@ -221,33 +221,26 @@ func (s *Server) registerOutboxMessages(api *httpAPI) {
 	read := api.messageOperation(http.MethodGet, path, "getOutboxMessage", "Read an Outbox Message in history or delivery view", &huma.Schema{AnyOf: []*huma.Schema{
 		api.schema(reflect.TypeFor[outboxHistoryRecord]()), api.schema(reflect.TypeFor[outboxDeliveryRecord]()),
 	}})
-	read.Description = "History uses the trusted-read boundary. Delivery requires the shared Trigger bearer and the Source, Account and Instance headers of the configured consumer. The delivery view includes the reply target when present. Terminal states are readable."
+	read.Description = "History uses the trusted-read boundary. Delivery requires the Trigger token and the Source and Account headers. The delivery view includes the reply target when present. Terminal states are readable."
 	read.Parameters = []*huma.Param{messagePathParam("outboxId"), delivery, messageTraceParam()}
-	read.Parameters = append(read.Parameters, triggerIdentityHeaders(false, true)...)
+	read.Parameters = append(read.Parameters, triggerIdentityHeaders(false)...)
 	read.Security = list.Security
 	read.Extensions = list.Extensions
 	api.registerMessageRead(read, s.observeMessageHTTP(s.readOutboxMessages))
 
 	patch := api.messageOperation(http.MethodPatch, path, "patchOutboxMessage", "Record an Outbox delivery outcome using the expected state", api.schema(reflect.TypeFor[outboxWriteReceipt]()))
-	patch.Parameters = append([]*huma.Param{messagePathParam("outboxId")}, triggerIdentityHeaders(true, true)...)
+	patch.Parameters = append([]*huma.Param{messagePathParam("outboxId")}, triggerIdentityHeaders(true)...)
 	patch.Security = bearerSecurity(triggerBearer)
 	patch.RequestBody = &huma.RequestBody{Required: true, Content: jsonContent(api.schema(reflect.TypeFor[outboxPatch]()))}
 	patch.Responses["409"] = api.coreError("Expected state conflicts or record is ineligible for the requested update")
 	api.registerRaw(patch, s.observeMessageHTTP(s.patchOutboxMessage))
 }
 
-func triggerIdentityHeaders(required, withInstance bool) []*huma.Param {
-	headers := []*huma.Param{
+func triggerIdentityHeaders(required bool) []*huma.Param {
+	return []*huma.Param{
 		{Name: triggeridentity.SourceHeader, In: "header", Required: required, Description: "External Source declared by the Trigger", Schema: &huma.Schema{Type: huma.TypeString}},
 		{Name: triggeridentity.AccountHeader, In: "header", Required: required, Description: "Account ID declared by the Trigger", Schema: &huma.Schema{Type: huma.TypeString}},
 	}
-	if withInstance {
-		headers = append(headers, &huma.Param{
-			Name: triggeridentity.InstanceHeader, In: "header", Required: required, Description: "Configured Outbox consumer instance ID",
-			Schema: &huma.Schema{Type: huma.TypeString, Pattern: triggeridentity.InstancePattern},
-		})
-	}
-	return headers
 }
 
 func messagePathParam(name string) *huma.Param {

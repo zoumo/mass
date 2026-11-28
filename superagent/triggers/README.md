@@ -13,7 +13,7 @@ storage for each instance. In Compose, resolve paths relative to the stack
 YAML file. Preserve the database, source, account, and instance ID across
 restarts. For a standalone adapter, supply the shared Core Trigger token
 through the environment variable named by `coreTokenEnv`. Compose reads
-the token from `core.triggerTokenFile`. By default, Compose injects
+the token from `core.accessToken.triggers`. By default, Compose injects
 `SUPERAGENT_TRIGGER_TOKEN` into each adapter. An adapter can set
 `coreTokenEnv` to choose a different variable name. Keep native service
 credentials separate from the shared Trigger token.
@@ -25,8 +25,8 @@ storage. The local owner lock rejects another process under the same OS user
 with the same Core origin, source, and account, even when the profile or state
 path differs. Deploy one owner across hosts, OS users, and Core endpoint aliases.
 The lock operates on one host under one OS user and compares the configured
-origins. For replies, add the adapter's `source`, `accountId`, and
-`instanceId` to Core's `outboxConsumers`.
+origins. For replies, the adapter uses the shared Trigger token and declares
+its `source` and `accountId`.
 
 ### Connect to Core on another host
 

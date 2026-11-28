@@ -16,10 +16,9 @@ import (
 func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	t.Parallel()
 	boundary, f := newRouteBoundary(t), fixtureAt(t)
-	consumer := core.Source{Source: "synthetic", AccountID: "account-test", InstanceID: "sender"}
-	peer := core.Source{Source: "synthetic", AccountID: "account-test", InstanceID: "ingress"}
-	other := core.Source{Source: "another", AccountID: "account-other", InstanceID: "sender"}
-	configureOutboxSources(t, f, consumer, other)
+	consumer := core.Source{Source: "synthetic", AccountID: "account-test"}
+	other := core.Source{Source: "another", AccountID: "account-other"}
+
 	f.execution(boundary)
 	clock, advance := outboxClock(t, f)
 	p := f.start(clock)
@@ -34,7 +33,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	const ingress = "/v1/core/trigger-messages"
 	submit := func(input core.SubmitTriggerMessageRequest) core.Receipt {
 		t.Helper()
-		status, raw := request(t, http.MethodPost, p.endpoint, ingress, f.token, input, peer)
+		status, raw := request(t, http.MethodPost, p.endpoint, ingress, f.token, input, consumer)
 		require.Equal(t, http.StatusOK, status, string(raw))
 		var receipt core.Receipt
 		require.NoError(t, json.Unmarshal(raw, &receipt))
@@ -65,11 +64,11 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	replay.Duplicate = false
 	require.Equal(t, message, replay)
 	changed.ReplyTarget = json.RawMessage(`{"offset":18446744073709551614,"route":{"pointer":null,"path":["queue",42,null]}}`)
-	rejectSubmit(peer, changed, http.StatusConflict, "conflict")
+	rejectSubmit(consumer, changed, http.StatusConflict, "conflict")
 	for _, raw := range []string{`null`, `[]`, `"route"`, `{"route":"` + strings.Repeat("x", 16<<10) + `"}`} {
 		invalid := newInput("bad-target", "Invalid target")
 		invalid.ReplyTarget = json.RawMessage(raw)
-		rejectSubmit(peer, invalid, http.StatusBadRequest, "invalid_argument")
+		rejectSubmit(consumer, invalid, http.StatusBadRequest, "invalid_argument")
 	}
 
 	noTarget := submit(newInput("no-target", "Informational only"))
@@ -117,7 +116,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 		source core.Source
 		status int
 		code   string
-	}{{peer, http.StatusForbidden, "forbidden"}, {other, http.StatusNotFound, "not_found"}} {
+	}{{other, http.StatusNotFound, "not_found"}} {
 		gotStatus, response := request(t, http.MethodGet, p.endpoint, detail, f.token, nil, test.source)
 		errorCode(t, gotStatus, response, test.status, test.code)
 		gotStatus, response = patchOutbox(t, p, f.token, record, test.source)
@@ -139,7 +138,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 
 	answer := newInput("answer", "Use the east region.")
 	answer.InReplyToOutboxID = item.ID
-	rejectSubmit(peer, answer, http.StatusConflict, "failed_precondition")
+	rejectSubmit(consumer, answer, http.StatusConflict, "failed_precondition")
 	task := resultOutbox(t, p, f.token, record, consumer)
 	require.Equal(t, record.TaskID, task.Receipt.TaskID)
 	require.Equal(t, task, resultOutbox(t, p, f.token, record, consumer))
@@ -151,7 +150,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	require.True(t, failed.Receipt.Uncertain)
 	require.NotEmpty(t, failed.Receipt.RetryAt)
 	require.Empty(t, listOutbox(t, p.endpoint, f.token, "", consumer).Items)
-	rejectSubmit(peer, answer, http.StatusConflict, "failed_precondition")
+	rejectSubmit(consumer, answer, http.StatusConflict, "failed_precondition")
 	advance(61 * time.Second)
 	require.Equal(t, failed, resultOutbox(t, p, f.token, uncertain, consumer))
 	require.Len(t, listOutbox(t, p.endpoint, f.token, "", consumer).Items, 1)
@@ -172,7 +171,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	rejectSubmit(other, answer, http.StatusConflict, "failed_precondition")
 	wrong := answer
 	wrong.Message.ThreadID = "opaque/Other"
-	rejectSubmit(peer, wrong, http.StatusConflict, "failed_precondition")
+	rejectSubmit(consumer, wrong, http.StatusConflict, "failed_precondition")
 	accepted := submit(answer)
 	replay = submit(answer)
 	require.True(t, replay.Duplicate)
@@ -180,7 +179,7 @@ func TestStructuredTriggerOutboxProcess(t *testing.T) {
 	require.Equal(t, accepted, replay)
 	wrong = answer
 	wrong.InReplyToOutboxID = ""
-	rejectSubmit(peer, wrong, http.StatusConflict, "conflict")
+	rejectSubmit(consumer, wrong, http.StatusConflict, "conflict")
 	association := roleWork[quotedReplyRecord](t, p, role, "get_message", map[string]string{"messageId": accepted.MessageID})
 	require.NotNil(t, association.QuotedReply)
 	require.Equal(t, item.ID, association.QuotedReply.OutboxID)

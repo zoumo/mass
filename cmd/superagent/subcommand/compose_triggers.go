@@ -103,7 +103,7 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 			return nil, "", fmt.Errorf("%s configuration (using core.listen): %w", t.name(), err)
 		}
 		t.binding = component.Describe()
-		if err := t.validateBinding(config); err != nil {
+		if err := t.validateUpstreamToken(config); err != nil {
 			return nil, "", fmt.Errorf("%s preflight: %w", t.name(), err)
 		}
 		if err := t.reserveState(statePaths); err != nil {
@@ -124,10 +124,7 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 	return configured, probe.String(), nil
 }
 
-func (t composeTrigger) validateBinding(config core.Config) error {
-	if err := config.CheckTriggerBinding(t.binding.Source, t.binding.AccountID, t.binding.InstanceID, t.binding.OutboxConsumer); err != nil {
-		return err
-	}
+func (t composeTrigger) validateUpstreamToken(config core.Config) error {
 	if t.binding.UpstreamTokenEnv == "" {
 		return nil
 	}

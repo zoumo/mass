@@ -47,8 +47,8 @@ func (s *Server) newHTTPAPI() *httpAPI {
 	})
 	config.Components.Schemas.RegisterTypeAlias(reflect.TypeFor[json.RawMessage](), reflect.TypeFor[any]())
 	config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-		triggerBearer:  {Type: "http", Scheme: "bearer", Description: "Shared Trigger credential"},
-		operatorBearer: {Type: "http", Scheme: "bearer", Description: "Core operator credential"},
+		triggerBearer:  {Type: "http", Scheme: "bearer", Description: "Core accessToken.triggers credential"},
+		operatorBearer: {Type: "http", Scheme: "bearer", Description: "Core accessToken.admin credential for Operators"},
 		roleBearer:     {Type: "http", Scheme: "bearer", Description: "MCP role capability"},
 		massdBearer:    {Type: "http", Scheme: "bearer", Description: "massd instance credential"},
 	}

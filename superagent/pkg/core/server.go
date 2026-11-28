@@ -290,7 +290,7 @@ func (s *Server) responseJSON(ctx context.Context, v any) (string, error) {
 	}
 	// Never return a reusable credential, even if untrusted text contains it.
 	body := string(b)
-	configured := []string{s.config.triggerToken, s.config.operatorToken, s.massdHTTPToken}
+	configured := []string{s.config.triggerToken, s.config.adminToken, s.massdHTTPToken}
 	if s.config.Massd != nil {
 		configured = append(configured, s.config.Massd.token)
 	}

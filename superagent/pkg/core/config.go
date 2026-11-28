@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,27 +19,29 @@ import (
 	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
-// Source identifies a Trigger account and, for an Outbox consumer, its instance.
+// Source identifies a Trigger account.
 type Source struct {
-	Source     string `mapstructure:"source"`
-	AccountID  string `mapstructure:"accountId"`
-	InstanceID string `mapstructure:"instanceId"`
+	Source    string
+	AccountID string
+}
+
+type AccessTokenConfig struct {
+	Admin    string `mapstructure:"admin"`
+	Triggers string `mapstructure:"triggers"`
 }
 
 type Config struct {
-	Massd             *MassdConfig          `mapstructure:"massd"`
-	Sessions          *SessionsConfig       `mapstructure:"sessions"`
-	RemoteComputer    *RemoteComputerConfig `mapstructure:"remoteComputer"`
-	OperatorTokenFile string                `mapstructure:"operatorTokenFile"`
-	operatorToken     string
-	DataDir           string `mapstructure:"dataDir"`
-	Listen            string `mapstructure:"listen"`
-	ExternalURL       string `mapstructure:"externalURL"`
-	TriggerTokenFile  string `mapstructure:"triggerTokenFile"`
-	triggerToken      string
-	triggerTokenHash  [32]byte
-	OutboxConsumers   []Source `mapstructure:"outboxConsumers"`
-	ReadAllowedHosts  []string `mapstructure:"readAllowedHosts"`
+	Massd            *MassdConfig          `mapstructure:"massd"`
+	Sessions         *SessionsConfig       `mapstructure:"sessions"`
+	RemoteComputer   *RemoteComputerConfig `mapstructure:"remoteComputer"`
+	DataDir          string                `mapstructure:"dataDir"`
+	Listen           string                `mapstructure:"listen"`
+	ExternalURL      string                `mapstructure:"externalURL"`
+	AccessToken      AccessTokenConfig     `mapstructure:"accessToken"`
+	adminToken       string
+	triggerToken     string
+	triggerTokenHash [32]byte
+	ReadAllowedHosts []string `mapstructure:"readAllowedHosts"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
 	// WebOTLPEndpoint is the runtime-only base URL of the Web OTLP receiver.
@@ -203,18 +204,11 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 			return c, err
 		}
 	}
-	if c.OperatorTokenFile != "" {
-		c.OperatorTokenFile = resolve(c.OperatorTokenFile)
-		c.operatorToken, err = ReadOperatorToken(c.OperatorTokenFile)
-		if err != nil {
-			return c, err
-		}
-		if c.Massd != nil && c.operatorToken == c.Massd.token {
-			return c, problem("invalid_argument", "operator token must be distinct from the massd token")
-		}
+	if err := v.UnmarshalKey("accessToken", &c.AccessToken, strict); err != nil {
+		return c, problem("invalid_argument", "accessToken must contain admin and triggers file paths")
 	}
-	if c.DataDir == "" || c.TriggerTokenFile == "" || c.StorageMaxPages < 0 {
-		return c, problem("invalid_argument", "dataDir and triggerTokenFile are required; storageMaxPages must be nonnegative")
+	if c.DataDir == "" || c.AccessToken.Triggers == "" || c.StorageMaxPages < 0 {
+		return c, problem("invalid_argument", "dataDir and accessToken.triggers are required; storageMaxPages must be nonnegative")
 	}
 	_, portNumber, err := httpaddress.SplitListen(c.Listen)
 	if err != nil {
@@ -228,37 +222,8 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 			return c, err
 		}
 	}
-	c.TriggerTokenFile = resolve(c.TriggerTokenFile)
-	tokenBytes, err := readPrivate(c.TriggerTokenFile)
-	if err != nil {
-		return c, problem("invalid_argument", "triggerTokenFile must be a readable private regular file")
-	}
-	c.triggerToken = strings.TrimSpace(string(tokenBytes))
-	if !triggeridentity.ValidToken(c.triggerToken) {
-		return c, problem("invalid_argument", "Trigger token requires at least 32 bytes without whitespace or control characters")
-	}
-	if c.triggerToken == c.operatorToken || (c.Massd != nil && c.triggerToken == c.Massd.token) ||
-		strings.HasPrefix(c.triggerToken, roleTokenPrefix+"_") {
-		return c, problem("invalid_argument", "Trigger token must be distinct from Operator, role MCP and MASS credentials")
-	}
-	c.triggerTokenHash = sha256.Sum256([]byte(c.triggerToken))
-	if v.IsSet("outboxConsumers") {
-		if err := v.UnmarshalKey("outboxConsumers", &c.OutboxConsumers, strict); err != nil {
-			return c, problem("invalid_argument", "outboxConsumers must be a list of source, accountId and instanceId bindings")
-		}
-	}
-	seenConsumers := make(map[[2]string]bool, len(c.OutboxConsumers))
-	for _, consumer := range c.OutboxConsumers {
-		if !triggeridentity.ValidSource(consumer.Source) ||
-			!triggeridentity.ValidAccount(consumer.AccountID) ||
-			!triggeridentity.ValidInstance(consumer.InstanceID) {
-			return c, problem("invalid_argument", "outboxConsumers requires a valid external source, accountId and instanceId")
-		}
-		key := [2]string{consumer.Source, consumer.AccountID}
-		if seenConsumers[key] {
-			return c, problem("invalid_argument", "outboxConsumers allows one instance per source and account")
-		}
-		seenConsumers[key] = true
+	if err := loadAccessTokens(&c, resolve); err != nil {
+		return c, err
 	}
 	if _, err := c.massdExposureToken(); err != nil {
 		return c, err
@@ -314,9 +279,7 @@ func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
 	return sessions, nil
 }
 
-func (c Config) String() string {
-	return fmt.Sprintf("superagent configuration (%d Outbox consumers)", len(c.OutboxConsumers))
-}
+func (c Config) String() string { return "superagent configuration" }
 
 const mcpCredentialsDir = "mcp-files"
 
@@ -335,23 +298,55 @@ func (c Config) prepareMCPFiles() error {
 	return nil
 }
 
-// TriggerToken returns the shared credential for supervised Trigger processes.
+func loadAccessTokens(c *Config, resolve func(string) string) error {
+	var err error
+	c.AccessToken.Triggers = resolve(c.AccessToken.Triggers)
+	c.triggerToken, err = readAccessToken(c.AccessToken.Triggers, "accessToken.triggers")
+	if err != nil {
+		return err
+	}
+	c.AccessToken.Admin = resolve(c.AccessToken.Admin)
+	if c.AccessToken.Admin != "" {
+		c.adminToken, err = ReadOperatorToken(c.AccessToken.Admin)
+		if err != nil {
+			return err
+		}
+		if c.adminToken == c.triggerToken {
+			return problem("invalid_argument", "accessToken.admin and accessToken.triggers must contain distinct tokens")
+		}
+	}
+	for _, token := range []string{c.triggerToken, c.adminToken} {
+		if token != "" && ((c.Massd != nil && token == c.Massd.token) || strings.HasPrefix(token, roleTokenPrefix+"_")) {
+			return problem("invalid_argument", "Core access tokens must be distinct from role MCP and MASS credentials")
+		}
+	}
+	c.triggerTokenHash = sha256.Sum256([]byte(c.triggerToken))
+	return nil
+}
+
+func readAccessToken(path, field string) (string, error) {
+	data, err := readPrivate(path)
+	if err != nil {
+		return "", problem("invalid_argument", field+" must be a readable private regular file")
+	}
+	token := strings.TrimSpace(string(data))
+	if !triggeridentity.ValidToken(token) {
+		return "", problem("invalid_argument", field+" requires at least 32 bytes without whitespace or control characters")
+	}
+	return token, nil
+}
+
+// ReadOperatorToken reads the admin token used by Operator CLI commands.
+func ReadOperatorToken(path string) (string, error) {
+	return readAccessToken(path, "accessToken.admin")
+}
+
+// TriggerToken returns the credential for supervised Trigger processes.
 func (c Config) TriggerToken() string { return c.triggerToken }
 
 func (c Config) acceptsTriggerToken(token string) bool {
 	hash := sha256.Sum256([]byte(token))
 	return c.triggerToken != "" && subtle.ConstantTimeCompare(hash[:], c.triggerTokenHash[:]) == 1
-}
-
-// CheckTriggerBinding verifies the identity and any Outbox role of a supervised Trigger.
-func (c Config) CheckTriggerBinding(source, account, instance string, requiresOutbox bool) error {
-	if !triggeridentity.ValidSource(source) || !triggeridentity.ValidAccount(account) || !triggeridentity.ValidInstance(instance) {
-		return errors.New("source, accountId and instanceId must identify an external Trigger")
-	}
-	if requiresOutbox && c.outboxConsumer(source, account) != instance {
-		return errors.New("the reply-enabled Trigger must be the Outbox consumer for its Source and Account")
-	}
-	return nil
 }
 
 // CheckUpstreamToken keeps a supervised adapter's native credential separate from Core credentials.
@@ -360,22 +355,9 @@ func (c Config) CheckUpstreamToken(token string) error {
 	if err != nil {
 		return err
 	}
-	if token == c.triggerToken || token == c.operatorToken || token == massdToken ||
+	if token == c.triggerToken || token == c.adminToken || token == massdToken ||
 		(c.Massd != nil && token == c.Massd.token) || strings.HasPrefix(token, roleTokenPrefix+"_") {
 		return errors.New("native service credentials must be distinct from Core credentials")
 	}
 	return nil
-}
-
-func (c Config) outboxConsumer(source, account string) string {
-	for _, binding := range c.OutboxConsumers {
-		if binding.Source == source && binding.AccountID == account {
-			return binding.InstanceID
-		}
-	}
-	return ""
-}
-
-func (c Config) hasOutboxConsumer(source, account string) bool {
-	return c.outboxConsumer(source, account) != ""
 }

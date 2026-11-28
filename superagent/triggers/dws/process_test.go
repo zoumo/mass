@@ -39,7 +39,7 @@ func coreStart(t *testing.T, dir, addr string) *triggertest.Process {
 	if err := os.WriteFile(tokenPath, []byte(triggertest.Token), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\ntriggerTokenFile: %q\n", filepath.Join(dir, "data"), addr, tokenPath)
+	cfg := fmt.Sprintf("dataDir: %q\nlisten: %q\naccessToken: {triggers: %q}\n", filepath.Join(dir, "data"), addr, tokenPath)
 	path := filepath.Join(dir, "core.yaml")
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)

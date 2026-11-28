@@ -232,7 +232,7 @@ func TestCutoverTriggerIssueAcrossRestart(t *testing.T) {
 	massd, _ := startEventTestMassd(t, peer)
 	f := fixtureAt(t)
 	f.executable = coreExe
-	configureOutboxSources(t, f, core.Source{Source: "dws", AccountID: "account", InstanceID: "collector-1"})
+
 	f.execution(&routeBoundary{url: massd})
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
