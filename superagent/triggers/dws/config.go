@@ -10,6 +10,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 	"github.com/zoumo/mass/superagent/triggers/internal/trigger"
 )
 
@@ -130,6 +131,7 @@ func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConf
 			c.Feedback.StatePath = trigger.ResolveSectionPath(path, c.Feedback.StatePath)
 		}
 	}
+	c.TokenEnv = trigger.CoreTokenEnv(c.TokenEnv, section != nil)
 	if c.Capacity == 0 {
 		c.Capacity = 100
 	}
@@ -146,10 +148,10 @@ func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConf
 	if len(parts) != 2 || parts[0] == "" || parts[1] != c.AccountID || strings.Contains(c.Profile, ",") {
 		return c, errors.New("profile must be explicit corpId:accountId matching accountId")
 	}
-	if c.Source == "" || strings.ContainsAny(c.Source, ":/% \t\n") || c.InstanceID == "" || c.TokenEnv == "" || c.DWS == "" {
-		return c, errors.New("source, instanceId, coreTokenEnv and dwsExecutable are required")
+	if !triggeridentity.ValidSource(c.Source) || !trigger.ValidEnvVariable(c.TokenEnv) || c.DWS == "" {
+		return c, errors.New("valid source, coreTokenEnv and dwsExecutable are required")
 	}
-	if c.AccountID == "" || !trigger.ValidIdentifier(c.InstanceID) {
+	if !triggeridentity.ValidAccount(c.AccountID) || !triggeridentity.ValidInstance(c.InstanceID) {
 		return c, errors.New("accountId is required and instanceId must use the Core identifier format")
 	}
 	if c.SelfID == "" || strings.TrimSpace(c.SelfID) != c.SelfID {

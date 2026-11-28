@@ -11,28 +11,22 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
+
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
+// Source identifies a Trigger account and, for an Outbox consumer, its instance.
 type Source struct {
-	Source           string   `mapstructure:"source"`
-	AccountID        string   `mapstructure:"accountId"`
-	InstanceID       string   `mapstructure:"instanceId"`
-	OutboxConsumer   bool     `mapstructure:"outboxConsumer"`
-	TokenFile        string   `mapstructure:"tokenFile"`
-	ThreadIDs        []string `mapstructure:"threadIds"`
-	ThreadIDPrefixes []string `mapstructure:"threadIdPrefixes"`
-	tokenHash        [32]byte
-	token            string
+	Source     string `mapstructure:"source"`
+	AccountID  string `mapstructure:"accountId"`
+	InstanceID string `mapstructure:"instanceId"`
 }
-
-var instanceIDFormat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
 type Config struct {
 	Massd             *MassdConfig          `mapstructure:"massd"`
@@ -40,10 +34,13 @@ type Config struct {
 	RemoteComputer    *RemoteComputerConfig `mapstructure:"remoteComputer"`
 	OperatorTokenFile string                `mapstructure:"operatorTokenFile"`
 	operatorToken     string
-	DataDir           string   `mapstructure:"dataDir"`
-	Listen            string   `mapstructure:"listen"`
-	ExternalURL       string   `mapstructure:"externalURL"`
-	Sources           []Source `mapstructure:"sources"`
+	DataDir           string `mapstructure:"dataDir"`
+	Listen            string `mapstructure:"listen"`
+	ExternalURL       string `mapstructure:"externalURL"`
+	TriggerTokenFile  string `mapstructure:"triggerTokenFile"`
+	triggerToken      string
+	triggerTokenHash  [32]byte
+	OutboxConsumers   []Source `mapstructure:"outboxConsumers"`
 	ReadAllowedHosts  []string `mapstructure:"readAllowedHosts"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
@@ -220,8 +217,8 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 			return c, problem("invalid_argument", "operator token must be distinct from the massd token")
 		}
 	}
-	if c.DataDir == "" || len(c.Sources) == 0 || c.StorageMaxPages < 0 {
-		return c, problem("invalid_argument", "dataDir and at least one source are required; storageMaxPages must be nonnegative")
+	if c.DataDir == "" || c.TriggerTokenFile == "" || c.StorageMaxPages < 0 {
+		return c, problem("invalid_argument", "dataDir and triggerTokenFile are required; storageMaxPages must be nonnegative")
 	}
 	host, port, err := net.SplitHostPort(c.Listen)
 	portNumber, portErr := strconv.ParseUint(port, 10, 16)
@@ -239,62 +236,37 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	if c.operatorToken != "" && !net.ParseIP(host).IsLoopback() {
 		return c, problem("invalid_argument", "operator access requires a loopback Core listener")
 	}
-	seenSource := map[string]string{}
-	seenAccount := map[string]string{}
-	seenInstance := map[[2]string]bool{}
-	seenOutboxConsumer := map[string]bool{}
-	seenToken := map[[32]byte]bool{}
-	for i := range c.Sources {
-		s := &c.Sources[i]
-		if s.Source == "" || strings.ContainsAny(s.Source, ":/% \t\n") || s.AccountID == "" || s.TokenFile == "" {
-			return c, problem("invalid_argument", "source, accountId and tokenFile are required")
+	c.TriggerTokenFile = resolve(c.TriggerTokenFile)
+	tokenBytes, err := readPrivate(c.TriggerTokenFile)
+	if err != nil {
+		return c, problem("invalid_argument", "triggerTokenFile must be a readable private regular file")
+	}
+	c.triggerToken = strings.TrimSpace(string(tokenBytes))
+	if !triggeridentity.ValidToken(c.triggerToken) {
+		return c, problem("invalid_argument", "Trigger token requires at least 32 bytes without whitespace or control characters")
+	}
+	if c.triggerToken == c.operatorToken || (c.Massd != nil && c.triggerToken == c.Massd.token) ||
+		strings.HasPrefix(c.triggerToken, roleTokenPrefix+"_") {
+		return c, problem("invalid_argument", "Trigger token must be distinct from Operator, role MCP and MASS credentials")
+	}
+	c.triggerTokenHash = sha256.Sum256([]byte(c.triggerToken))
+	if v.IsSet("outboxConsumers") {
+		if err := v.UnmarshalKey("outboxConsumers", &c.OutboxConsumers, strict); err != nil {
+			return c, problem("invalid_argument", "outboxConsumers must be a list of source, accountId and instanceId bindings")
 		}
-		for _, id := range append(slices.Clone(s.ThreadIDs), s.ThreadIDPrefixes...) {
-			if !validTriggerThreadID(id) {
-				return c, problem("invalid_argument", "threadIds and threadIdPrefixes must contain valid IDs or prefixes")
-			}
+	}
+	seenConsumers := make(map[[2]string]bool, len(c.OutboxConsumers))
+	for _, consumer := range c.OutboxConsumers {
+		if !triggeridentity.ValidSource(consumer.Source) ||
+			!triggeridentity.ValidAccount(consumer.AccountID) ||
+			!triggeridentity.ValidInstance(consumer.InstanceID) {
+			return c, problem("invalid_argument", "outboxConsumers requires a valid external source, accountId and instanceId")
 		}
-		if account, ok := seenSource[s.Source]; ok && account != s.AccountID {
-			return c, problem("invalid_argument", "one source cannot bind multiple accounts")
+		key := [2]string{consumer.Source, consumer.AccountID}
+		if seenConsumers[key] {
+			return c, problem("invalid_argument", "outboxConsumers allows one instance per source and account")
 		}
-		if source, ok := seenAccount[s.AccountID]; ok && source != s.Source {
-			return c, problem("invalid_argument", "one account cannot bind multiple sources")
-		}
-		binding := [2]string{s.Source, s.InstanceID}
-		if seenInstance[binding] || (s.InstanceID != "" && !instanceIDFormat.MatchString(s.InstanceID)) {
-			return c, problem("invalid_argument", "instanceId must be valid and unique within its source")
-		}
-		if s.OutboxConsumer {
-			if s.InstanceID == "" || seenOutboxConsumer[s.AccountID] {
-				return c, problem("invalid_argument", "one instance-bound credential per account may set outboxConsumer")
-			}
-			seenOutboxConsumer[s.AccountID] = true
-		}
-		seenSource[s.Source] = s.AccountID
-		seenAccount[s.AccountID] = s.Source
-		seenInstance[binding] = true
-		s.TokenFile = resolve(s.TokenFile)
-		info, err := os.Lstat(s.TokenFile)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-			return c, problem("invalid_argument", "source tokenFile must be a private regular file")
-		}
-		b, err := os.ReadFile(s.TokenFile)
-		if err != nil {
-			return c, problem("invalid_argument", "cannot read source tokenFile")
-		}
-		token := strings.TrimSpace(string(b))
-		if len(token) < 32 || strings.ContainsAny(token, " \r\n\t") {
-			return c, problem("invalid_argument", "source token must have at least 32 non-whitespace bytes")
-		}
-		s.token = token
-		if token == c.operatorToken {
-			return c, problem("invalid_argument", "operator token must be distinct from source credentials")
-		}
-		s.tokenHash = sha256.Sum256([]byte(token))
-		if seenToken[s.tokenHash] {
-			return c, problem("invalid_argument", "each source credential requires a distinct token")
-		}
-		seenToken[s.tokenHash] = true
+		seenConsumers[key] = true
 	}
 	if _, err := c.massdExposureToken(); err != nil {
 		return c, err
@@ -341,7 +313,7 @@ func hasRemovedPermissionPreset(v *viper.Viper) bool {
 }
 
 func (c Config) String() string {
-	return fmt.Sprintf("superagent configuration (%d sources)", len(c.Sources))
+	return fmt.Sprintf("superagent configuration (%d Outbox consumers)", len(c.OutboxConsumers))
 }
 
 const mcpCredentialsDir = "mcp-files"
@@ -361,41 +333,43 @@ func (c Config) prepareMCPFiles() error {
 	return nil
 }
 
-// CheckTriggerBinding verifies the credentials and role a supervised Trigger will use.
-func (c Config) CheckTriggerBinding(source, account, instance, token string, requiresOutbox bool) error {
+// TriggerToken returns the shared credential for supervised Trigger processes.
+func (c Config) TriggerToken() string { return c.triggerToken }
+
+func (c Config) acceptsTriggerToken(token string) bool {
 	hash := sha256.Sum256([]byte(token))
-	for _, binding := range c.Sources {
-		if binding.Source != source || binding.AccountID != account || binding.InstanceID != instance {
-			continue
-		}
-		if subtle.ConstantTimeCompare(hash[:], binding.tokenHash[:]) != 1 {
-			return errors.New("configured Core token does not match the source credential")
-		}
-		if requiresOutbox && c.outboxConsumer(source, account) != instance {
-			return errors.New("the reply-enabled Trigger must be the Outbox consumer for its Core source")
-		}
-		return nil
-	}
-	return errors.New("source, accountId and instanceId must match a Core source")
+	return c.triggerToken != "" && subtle.ConstantTimeCompare(hash[:], c.triggerTokenHash[:]) == 1
 }
 
-// outboxConsumer returns the explicitly selected sender, or the sole
-// instance-bound credential when no sender has been selected.
-func (c Config) outboxConsumer(source, account string) string {
-	var instance string
-	var candidates int
-	for _, s := range c.Sources {
-		if s.Source != source || s.AccountID != account || s.InstanceID == "" {
-			continue
-		}
-		if s.OutboxConsumer {
-			return s.InstanceID
-		}
-		instance = s.InstanceID
-		candidates++
+// CheckTriggerBinding verifies the identity and any Outbox role of a supervised Trigger.
+func (c Config) CheckTriggerBinding(source, account, instance string, requiresOutbox bool) error {
+	if !triggeridentity.ValidSource(source) || !triggeridentity.ValidAccount(account) || !triggeridentity.ValidInstance(instance) {
+		return errors.New("source, accountId and instanceId must identify an external Trigger")
 	}
-	if candidates == 1 {
-		return instance
+	if requiresOutbox && c.outboxConsumer(source, account) != instance {
+		return errors.New("the reply-enabled Trigger must be the Outbox consumer for its Source and Account")
+	}
+	return nil
+}
+
+// CheckUpstreamToken keeps a supervised adapter's native credential separate from Core credentials.
+func (c Config) CheckUpstreamToken(token string) error {
+	massdToken, err := c.massdExposureToken()
+	if err != nil {
+		return err
+	}
+	if token == c.triggerToken || token == c.operatorToken || token == massdToken ||
+		(c.Massd != nil && token == c.Massd.token) || strings.HasPrefix(token, roleTokenPrefix+"_") {
+		return errors.New("native service credentials must be distinct from Core credentials")
+	}
+	return nil
+}
+
+func (c Config) outboxConsumer(source, account string) string {
+	for _, binding := range c.OutboxConsumers {
+		if binding.Source == source && binding.AccountID == account {
+			return binding.InstanceID
+		}
 	}
 	return ""
 }

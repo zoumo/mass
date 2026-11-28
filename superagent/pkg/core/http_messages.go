@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
 const (
@@ -26,10 +28,40 @@ func (s *Server) observeMessageHTTP(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (s *Server) authenticateTrigger(r *http.Request, requiresInstance bool) (Source, error) {
+	bearer := r.Header.Values("Authorization")
+	if len(bearer) != 1 {
+		return Source{}, problem("unauthorized", "valid shared Trigger credential is required")
+	}
+	token, ok := strings.CutPrefix(bearer[0], "Bearer ")
+	if !ok || !s.config.acceptsTriggerToken(token) {
+		return Source{}, problem("unauthorized", "valid shared Trigger credential is required")
+	}
+	source, account := r.Header.Values(triggeridentity.SourceHeader), r.Header.Values(triggeridentity.AccountHeader)
+	if len(source) != 1 || len(account) != 1 {
+		return Source{}, problem("invalid_argument", "one X-Superagent-Source and X-Superagent-Account-Id header each is required")
+	}
+	if triggeridentity.ReservedSource(source[0]) {
+		return Source{}, problem("forbidden", "Source is reserved by Core")
+	}
+	if !triggeridentity.ValidSource(source[0]) || !triggeridentity.ValidAccount(account[0]) {
+		return Source{}, problem("invalid_argument", "X-Superagent-Source and X-Superagent-Account-Id must be valid identifiers")
+	}
+	identity := Source{Source: source[0], AccountID: account[0]}
+	if requiresInstance {
+		instance := r.Header.Values(triggeridentity.InstanceHeader)
+		if len(instance) != 1 || !triggeridentity.ValidInstance(instance[0]) {
+			return Source{}, problem("invalid_argument", "one valid X-Superagent-Instance-Id header is required")
+		}
+		identity.InstanceID = instance[0]
+	}
+	return identity, nil
+}
+
 func (s *Server) postTriggerMessage(w http.ResponseWriter, r *http.Request) {
-	source, ok := s.authenticate(r)
-	if !ok {
-		s.fail(w, problem("unauthorized", "valid source credential is required"))
+	source, err := s.authenticateTrigger(r, false)
+	if err != nil {
+		s.fail(w, err)
 		return
 	}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
@@ -45,9 +77,9 @@ func (s *Server) postTriggerMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) readTriggerReceipt(w http.ResponseWriter, r *http.Request) {
-	source, ok := s.authenticate(r)
-	if !ok {
-		s.fail(w, problem("unauthorized", "valid source credential is required"))
+	source, err := s.authenticateTrigger(r, false)
+	if err != nil {
+		s.fail(w, err)
 		return
 	}
 	ids := r.URL.Query()["sourceMessageId"]

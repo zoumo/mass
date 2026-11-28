@@ -30,7 +30,7 @@ type egressFixture struct {
 
 func newEgressFixture(t *testing.T, clock bool) *egressFixture {
 	t.Helper()
-	return &egressFixture{CoreFixture: triggertest.NewCoreFixture(t, clock, "dws", "dws:"), t: t}
+	return &egressFixture{CoreFixture: triggertest.NewCoreFixture(t, clock, "dws"), t: t}
 }
 
 func (f *egressFixture) trigger(endpoint string, options ...func(*dwsConfig)) *triggertest.Process {

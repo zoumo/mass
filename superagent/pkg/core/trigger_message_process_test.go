@@ -16,21 +16,122 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
+func TestSharedTriggerCredentialConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	token := strings.Repeat("t", 48)
+	write(t, filepath.Join(dir, "trigger.token"), token)
+	write(t, filepath.Join(dir, "role.token"), "cap_"+token)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "public.token"), []byte(token), 0o644))
+	require.NoError(t, os.Symlink("trigger.token", filepath.Join(dir, "link.token")))
+	configFile := filepath.Join(dir, "core.yaml")
+	for _, tc := range []struct{ name, yaml, errorText string }{
+		{"missing token", "listen: 127.0.0.1:0\n", "triggerTokenFile are required"},
+		{"public token", "triggerTokenFile: ./public.token\n", "private regular file"},
+		{"symlink token", "triggerTokenFile: ./link.token\n", "private regular file"},
+		{"role token", "triggerTokenFile: ./role.token\n", "must be distinct"},
+		{"Operator token", "triggerTokenFile: ./trigger.token\noperatorTokenFile: ./trigger.token\n", "must be distinct"},
+		{"embedded MASS token", "triggerTokenFile: ./trigger.token\nmassd: {embedded: {dataDir: ./massd, expose: {tokenFile: ./trigger.token}}}\n", "must be distinct"},
+		{"removed sources", "triggerTokenFile: ./trigger.token\nsources: [{source: old}]\n", "unknown or invalid fields"},
+		{"duplicate Outbox consumer", `triggerTokenFile: ./trigger.token
+outboxConsumers:
+  - {source: example, accountId: account, instanceId: sender-a}
+  - {source: example, accountId: account, instanceId: sender-b}
+`, "one instance per source and account"},
+		{"reserved Outbox source", "triggerTokenFile: ./trigger.token\noutboxConsumers: [{source: 'core:scheduled-task', accountId: account, instanceId: sender}]\n", "valid external source"},
+		{"valid configuration", `triggerTokenFile: ./trigger.token
+outboxConsumers:
+  - {source: example, accountId: account-a, instanceId: sender}
+  - {source: example, accountId: account-b, instanceId: sender}
+  - {source: another, accountId: account-a, instanceId: sender}
+`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			execution := "sessions:\n  routerWorkspace: .\n  roles:\n    router: {runtimeRef: test, model: test}\n    topic: {runtimeRef: test, model: test}\n  issueTemplates: [{runtimeRef: test, model: test, description: Test}]\n"
+			standaloneYAML := tc.yaml
+			if tc.name == "embedded MASS token" {
+				standaloneYAML += execution
+			}
+			write(t, configFile, standaloneYAML)
+			_, standaloneErr := core.LoadConfig(configFile)
+			_, composeErr := core.LoadComposeConfig(configFile, strings.NewReader(tc.yaml))
+			for _, err := range []error{standaloneErr, composeErr} {
+				if tc.errorText == "" {
+					require.NoError(t, err)
+				} else {
+					require.ErrorContains(t, err, tc.errorText)
+					require.NotContains(t, err.Error(), token)
+				}
+			}
+		})
+	}
+}
+
+func TestSharedTriggerIdentityContract(t *testing.T) {
+	f := fixtureAt(t)
+	p := f.start()
+	const path = "/v1/core/trigger-messages"
+	message := input("native-id")
+	message.Message.ThreadID = "unregistered/Thread%2F入口"
+	identity := core.Source{Source: "unregistered", AccountID: "account-a"}
+
+	for _, tc := range []struct {
+		name, token, code string
+		identity          core.Source
+		status            int
+	}{
+		{"missing token", "", "unauthorized", identity, http.StatusUnauthorized},
+		{"wrong token", strings.Repeat("w", 48), "unauthorized", identity, http.StatusUnauthorized},
+		{"missing headers", f.token, "invalid_argument", core.Source{}, http.StatusBadRequest},
+		{"missing account", f.token, "invalid_argument", core.Source{Source: identity.Source}, http.StatusBadRequest},
+		{"missing source", f.token, "invalid_argument", core.Source{AccountID: identity.AccountID}, http.StatusBadRequest},
+		{"invalid source", f.token, "invalid_argument", core.Source{Source: "bad/source", AccountID: identity.AccountID}, http.StatusBadRequest},
+		{"invalid account", f.token, "invalid_argument", core.Source{Source: identity.Source, AccountID: "bad,account"}, http.StatusBadRequest},
+		{"reserved source", f.token, "forbidden", core.Source{Source: "core:scheduled-task", AccountID: identity.AccountID}, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, raw := request(t, http.MethodPost, p.endpoint, path, tc.token, message, tc.identity)
+			errorCode(t, status, raw, tc.status, tc.code)
+			status, raw = request(t, http.MethodGet, p.endpoint, path+"?sourceMessageId=native-id", tc.token, nil, tc.identity)
+			errorCode(t, status, raw, tc.status, tc.code)
+		})
+	}
+
+	receipts := make(map[core.Source]core.Receipt)
+	for _, source := range []string{"unregistered", "another-source"} {
+		for _, account := range []string{"account-a", "account-b"} {
+			identity := core.Source{Source: source, AccountID: account}
+			status, raw := request(t, http.MethodPost, p.endpoint, path, f.token, message, identity)
+			require.Equal(t, http.StatusOK, status, string(raw))
+			var receipt core.Receipt
+			require.NoError(t, json.Unmarshal(raw, &receipt))
+			require.False(t, receipt.Duplicate)
+			require.Equal(t, message.Message.ThreadID, receipt.ThreadID)
+			for _, earlier := range receipts {
+				require.NotEqual(t, earlier.MessageID, receipt.MessageID)
+			}
+			receipts[identity] = receipt
+		}
+	}
+	p.stop(t, false)
+	p = f.start()
+	for identity, original := range receipts {
+		status, raw := request(t, http.MethodGet, p.endpoint, path+"?sourceMessageId=native-id", f.token, nil, identity)
+		require.Equal(t, http.StatusOK, status, string(raw))
+		var receipt core.Receipt
+		require.NoError(t, json.Unmarshal(raw, &receipt))
+		require.Equal(t, original, receipt)
+	}
+	require.Len(t, page(t, p, "threads").Items, 1)
+	require.Len(t, page(t, p, "trigger-messages").Items, 4)
+}
+
 func TestStructuredTriggerMessageProcess(t *testing.T) {
 	f := fixtureAt(t)
 	const thread = "opaque/Case%2f:入口"
 	const ingress = "/v1/core/trigger-messages"
-	config, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	config = []byte(strings.Replace(string(config), "['dws:']", "['opaque/']", 1))
-	tokens := map[string]string{"dws": f.token}
-	for _, source := range []string{"custom", "github", "antcode"} {
-		tokens[source] = strings.Repeat(source, 16)
-		file := filepath.Join(f.dir, source+".token")
-		write(t, file, tokens[source])
-		config = append(config, []byte("  - source: "+source+"\n    accountId: "+source+"-account\n    tokenFile: "+file+"\n    threadIds: ['"+thread+"']\n")...)
+	identity := func(source string) core.Source {
+		return core.Source{Source: source, AccountID: source + "-account"}
 	}
-	write(t, f.config, string(config))
 	p := f.start()
 	newInput := func(op, id string, blocks ...events.ContentBlock) core.SubmitTriggerMessageRequest {
 		return core.SubmitTriggerMessageRequest{OperationID: op, Message: core.TriggerMessage{
@@ -39,15 +140,15 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	}
 	submit := func(source string, input core.SubmitTriggerMessageRequest) core.Receipt {
 		t.Helper()
-		status, data := request(t, http.MethodPost, p.endpoint, ingress, tokens[source], input)
+		status, data := request(t, http.MethodPost, p.endpoint, ingress, f.token, input, identity(source))
 		require.Equal(t, http.StatusOK, status, string(data))
 		var receipt core.Receipt
 		require.NoError(t, json.Unmarshal(data, &receipt))
 		return receipt
 	}
-	reject := func(token string, input any, status int, code string) {
+	reject := func(source string, input any, status int, code string) {
 		t.Helper()
-		got, data := request(t, http.MethodPost, p.endpoint, ingress, token, input)
+		got, data := request(t, http.MethodPost, p.endpoint, ingress, f.token, input, identity(source))
 		errorCode(t, got, data, status, code)
 	}
 	attachment := events.ContentBlock{ResourceLink: &events.ContentBlockResourceLink{URI: "file:///logs/checks.log", Name: "checks.log"}}
@@ -72,13 +173,11 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	replayed.Duplicate = false
 	require.Equal(t, first, replayed)
 	replay.Message.Content = []events.ContentBlock{attachment, firstInput.Message.Content[0]}
-	reject(tokens["custom"], replay, http.StatusConflict, "conflict")
+	reject("custom", replay, http.StatusConflict, "conflict")
 	changedThread := newInput("second", "repeat-dws-id", events.Text("test"))
 	submit("dws", changedThread)
 	changedThread.Message.ThreadID = "opaque/another"
-	reject(tokens["dws"], changedThread, http.StatusConflict, "conflict")
-	changedThread.Message.ThreadID = strings.ToLower(thread)
-	reject(tokens["custom"], changedThread, http.StatusForbidden, "forbidden")
+	reject("dws", changedThread, http.StatusConflict, "conflict")
 	for _, invalid := range []string{
 		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[]}}`,
 		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[{"type":"resource_link","uri":"file:///log"}]}}`,
@@ -86,9 +185,8 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[{"type":"text","text":"ok"}],"_meta":null}}`,
 		`{"operationId":"o","message":{"sourceMessageId":"m","threadId":"x","content":[{"type":"text","text":"ok"}],"source":"spoofed"}}`,
 	} {
-		reject(tokens["custom"], json.RawMessage(invalid), http.StatusBadRequest, "invalid_argument")
+		reject("custom", json.RawMessage(invalid), http.StatusBadRequest, "invalid_argument")
 	}
-	reject("", firstInput, http.StatusUnauthorized, "unauthorized")
 	stored := readRecord[core.Message](t, p, "trigger-messages/"+first.MessageID)
 	require.Equal(t, "custom", stored.Source)
 	require.Equal(t, "custom-account", stored.AccountID)
@@ -104,21 +202,21 @@ func TestStructuredTriggerMessageProcess(t *testing.T) {
 	f.execution(boundary)
 	p = f.start()
 	lookup := ingress + "?sourceMessageId=" + url.QueryEscape(firstInput.Message.SourceMessageID)
-	status, raw := request(t, http.MethodGet, p.endpoint, lookup, tokens["custom"], nil)
+	status, raw := request(t, http.MethodGet, p.endpoint, lookup, f.token, nil, identity("custom"))
 	require.Equal(t, http.StatusOK, status, string(raw))
 	var readback core.Receipt
 	require.NoError(t, json.Unmarshal(raw, &readback))
 	require.Equal(t, first, readback)
 	require.NotContains(t, string(raw), `"content"`)
-	status, raw = request(t, http.MethodGet, p.endpoint, lookup, tokens["github"], nil)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, f.token, nil, identity("github"))
 	require.Equal(t, http.StatusOK, status, string(raw))
 	require.NoError(t, json.Unmarshal(raw, &readback))
 	require.Equal(t, second, readback)
-	status, raw = request(t, http.MethodGet, p.endpoint, lookup, tokens["dws"], nil)
+	status, raw = request(t, http.MethodGet, p.endpoint, lookup, f.token, nil, identity("dws"))
 	errorCode(t, status, raw, http.StatusNotFound, "not_found")
 	status, raw = request(t, http.MethodGet, p.endpoint, lookup, "", nil)
 	errorCode(t, status, raw, http.StatusUnauthorized, "unauthorized")
-	status, raw = request(t, http.MethodHead, p.endpoint, lookup, tokens["custom"], nil)
+	status, raw = request(t, http.MethodHead, p.endpoint, lookup, f.token, nil, identity("custom"))
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, raw)
 	status, raw = request(t, http.MethodGet, p.endpoint, lookup+"&view=router", "", nil)

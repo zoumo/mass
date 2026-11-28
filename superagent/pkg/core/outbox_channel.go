@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/outbox"
 )
 
@@ -29,11 +30,11 @@ func decodeOutboxResult(w http.ResponseWriter, r *http.Request, request any) err
 }
 
 func (s *Server) authenticateOutboxConsumer(r *http.Request) (Source, error) {
-	source, ok := s.authenticate(r)
-	if !ok {
-		return Source{}, problem("unauthorized", "valid source credential is required")
+	source, err := s.authenticateTrigger(r, true)
+	if err != nil {
+		return Source{}, err
 	}
-	if source.InstanceID == "" || s.store.config.outboxConsumer(source.Source, source.AccountID) != source.InstanceID {
+	if s.store.config.outboxConsumer(source.Source, source.AccountID) != source.InstanceID {
 		return Source{}, problem("forbidden", "Outbox requires the configured account consumer")
 	}
 	return source, nil
@@ -110,7 +111,7 @@ func (r OutboxCommand) validate() error {
 			return problem("invalid_argument", "sent omits errorCode")
 		}
 	case "retryable_failure", "permanent_failure", "unknown":
-		if !instanceIDFormat.MatchString(r.ErrorCode) {
+		if !triggeridentity.ValidInstance(r.ErrorCode) {
 			return problem("invalid_argument", "unsuccessful outcomes require a safe errorCode")
 		}
 	default:

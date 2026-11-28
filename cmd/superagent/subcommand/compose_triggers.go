@@ -87,7 +87,6 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		return nil, "", err
 	}
 	statusListeners := make(map[string]string)
-	credentialOwners := make(map[string]string)
 	for _, kind := range []string{triggers.GitHub, triggers.DWS} {
 		section, enabled := sections[kind]
 		if !enabled {
@@ -99,7 +98,7 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 			return nil, "", fmt.Errorf("%s configuration (using core.listen): %w", t.name(), err)
 		}
 		t.binding = component.Describe()
-		if err := t.validateBinding(config, credentialOwners); err != nil {
+		if err := t.validateBinding(config); err != nil {
 			return nil, "", fmt.Errorf("%s preflight: %w", t.name(), err)
 		}
 		if err := t.reserveState(statePaths); err != nil {
@@ -110,31 +109,28 @@ func prepareComposeTriggers(path string, sections map[string][]byte, config core
 		}
 		configured = append(configured, t)
 	}
+	for _, native := range configured {
+		for _, adapter := range configured {
+			if native.binding.UpstreamTokenEnv == adapter.binding.CoreTokenEnv {
+				return nil, "", fmt.Errorf("%s githubTokenEnv conflicts with %s coreTokenEnv", native.name(), adapter.name())
+			}
+		}
+	}
 	return configured, probe.String(), nil
 }
 
-func (t composeTrigger) validateBinding(config core.Config, credentialOwners map[string]string) error {
-	token := os.Getenv(t.binding.CoreTokenEnv)
-	if token == "" {
-		return errors.New("coreTokenEnv must reference a nonempty Core credential")
-	}
-	if err := config.CheckTriggerBinding(t.binding.Source, t.binding.AccountID, t.binding.InstanceID, token, t.binding.OutboxConsumer); err != nil {
+func (t composeTrigger) validateBinding(config core.Config) error {
+	if err := config.CheckTriggerBinding(t.binding.Source, t.binding.AccountID, t.binding.InstanceID, t.binding.OutboxConsumer); err != nil {
 		return err
 	}
-	for _, ref := range []string{t.binding.CoreTokenEnv, t.binding.UpstreamTokenEnv} {
-		if ref == "" {
-			continue
-		}
-		value := os.Getenv(ref)
-		if value == "" {
-			return errors.New("githubTokenEnv must reference a nonempty GitHub credential")
-		}
-		if owner, exists := credentialOwners[value]; exists {
-			return fmt.Errorf("credential references must hold distinct tokens across scopes (already used by %s)", owner)
-		}
-		credentialOwners[value] = t.name()
+	if t.binding.UpstreamTokenEnv == "" {
+		return nil
 	}
-	return nil
+	token := os.Getenv(t.binding.UpstreamTokenEnv)
+	if token == "" {
+		return errors.New("githubTokenEnv must reference a nonempty GitHub credential")
+	}
+	return config.CheckUpstreamToken(token)
 }
 
 func (t composeTrigger) reserveState(paths map[string]string) error {
@@ -209,19 +205,24 @@ func (t composeTrigger) reserveStatus(coreHost, corePort string, statusListeners
 	return nil
 }
 
-func composeChildEnvironment(environment []string, configured []composeTrigger, kind string) []string {
-	filtered := make([]string, 0, len(environment))
+func composeChildEnvironment(environment []string, configured []composeTrigger, kind, triggerToken string) []string {
+	filtered := make([]string, 0, len(environment)+1)
 	for _, item := range environment {
 		name, _, _ := strings.Cut(item, "=")
 		scoped := false
 		for _, t := range configured {
-			if t.kind != kind && (name == t.binding.CoreTokenEnv || name == t.binding.UpstreamTokenEnv) {
+			if name == t.binding.CoreTokenEnv || (t.kind != kind && name == t.binding.UpstreamTokenEnv) {
 				scoped = true
 				break
 			}
 		}
 		if !scoped {
 			filtered = append(filtered, item)
+		}
+	}
+	for _, t := range configured {
+		if t.kind == kind {
+			return append(filtered, t.binding.CoreTokenEnv+"="+triggerToken)
 		}
 	}
 	return filtered

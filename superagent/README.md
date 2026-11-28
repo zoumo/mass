@@ -6,9 +6,9 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
 ## Start Core
 
 1. Copy [the Core example](config.example.yaml) to a private run directory.
-   Configure a source and its token file. Use a private regular file with a
-   token of at least 32 non-whitespace bytes. Relative paths start at the YAML
-   file's directory.
+   Set `triggerTokenFile` to a private regular file containing the shared
+   Trigger token. Use at least 32 bytes without whitespace or control
+   characters. Resolve relative paths from the YAML file's directory.
 2. Build and start Core from the repository root.
 
    ```sh
@@ -47,14 +47,32 @@ creates `core.sqlite` with schema 28 and rejects databases with earlier schema
 versions.
 
 To restart the new instance, stop its current owner and start Core with the
-same `dataDir` and source and account configuration. After `/readyz` succeeds,
-read a previously accepted receipt by `sourceMessageId` using its source
-credential. If two Core installations share `massd`, give them distinct
-`sessions.namespace` values.
+same `dataDir`. After `/readyz` succeeds, read a previously accepted receipt
+by `sourceMessageId` with the original Source and Account ID. If two Core
+installations share `massd`, give them distinct `sessions.namespace` values.
 
-Configure each Trigger to use the new Core and set its allowed `threadIds`
-or `threadIdPrefixes` in Core's source configuration. For a fresh Trigger
-database or a restart, follow the [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
+For a fresh Trigger database or a restart, follow the
+[Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
+
+### Migrate to the shared Trigger token
+
+1. Stop the existing Core and Trigger owners. Preserve the Core data directory
+   and each adapter's database, send evidence, and feedback state.
+2. Create a private file for one shared Trigger token. Set `triggerTokenFile`
+   for standalone Core or `core.triggerTokenFile` for Compose. Remove
+   `sources` and its per-source token files and Thread filters from the
+   configuration.
+3. If a Source and Account pair sends replies, copy the existing sender's
+   `source`, `accountId`, and `instanceId` to `outboxConsumers`. Also copy
+   the sender if Core previously selected the sole instance automatically.
+4. Upgrade Core and all Triggers together. Set the standalone adapters'
+   configured token environment variables to the shared value. Compose
+   supplies the value from `core.triggerTokenFile`. Keep the original
+   account IDs, instance IDs, and database paths so each adapter can resume
+   its queue.
+5. Check Core readiness, the adapter status, and a stored Source receipt.
+   For reply-enabled adapters, check that the configured sender can read
+   eligible Outbox items. Start Outbox pagination again after upgrading.
 
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
@@ -191,9 +209,10 @@ after Watchdog exits and starts with an empty snapshot after restart.
 1. Copy [the Compose example](compose.example.yaml) to a private run directory.
    Keep `core` and the Trigger sections you want to run. Compose starts
    embedded MASS. Keep Core, MASS, and Trigger data in separate paths.
-2. Match each Trigger's source, account, and instance to a `core.sources`
-   entry. Keep the file at `tokenFile` and the variable named by `coreTokenEnv`
-   in sync. Supply GitHub and DWS access as described in the
+2. Set `core.triggerTokenFile`. For each reply-enabled Trigger, match its
+   Source, Account ID, and instance ID to an entry in `core.outboxConsumers`.
+   Compose supplies the shared token to the Trigger subprocesses. Supply
+   native GitHub and DWS credentials as described in the
    [Trigger guide](triggers/README.md).
 3. Start Compose from the repository root.
 

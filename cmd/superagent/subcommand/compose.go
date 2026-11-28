@@ -75,7 +75,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	}
 	environment := os.Environ()
 	for _, trigger := range triggers {
-		err := trigger.check(ctx, superagent, path, probeEndpoint, composeChildEnvironment(environment, triggers, trigger.kind))
+		err := trigger.check(ctx, superagent, path, probeEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, coreConfig.TriggerToken()))
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -86,7 +86,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 	if ctx.Err() != nil {
 		return nil
 	}
-	sharedEnvironment := composeChildEnvironment(environment, triggers, "")
+	sharedEnvironment := composeChildEnvironment(environment, triggers, "", coreConfig.TriggerToken())
 	diagnostics := cmd.ErrOrStderr()
 	if _, ok := diagnostics.(*os.File); !ok {
 		diagnostics = &composeDiagnostics{output: diagnostics}
@@ -148,7 +148,7 @@ func runCompose(cmd *cobra.Command, path string) (result error) {
 		if err := runningComposeChildren(children); err != nil {
 			return err
 		}
-		triggerCommand := trigger.command(context.Background(), superagent, "serve", path, coreEndpoint, composeChildEnvironment(environment, triggers, trigger.kind))
+		triggerCommand := trigger.command(context.Background(), superagent, "serve", path, coreEndpoint, composeChildEnvironment(environment, triggers, trigger.kind, coreConfig.TriggerToken()))
 		triggerCommand.Stderr = diagnostics
 		child, err := startChild(trigger.name(), triggerCommand)
 		if err != nil {

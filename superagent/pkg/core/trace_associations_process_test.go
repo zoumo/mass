@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -76,16 +75,6 @@ func TestTraceAssociationsOnCurrentSchema(t *testing.T) {
 	}
 	checkSchema(8)
 
-	// A configuration refusal after DDL should roll the new table back.
-	f.configure(0, "different-account")
-	cmd := exec.CommandContext(t.Context(), f.coreExecutable(), "serve", "--config", f.config)
-	cmd.Env = []string{"HOME=" + f.dir, "PATH=" + f.dir, "OTEL_TRACES_EXPORTER=otlp", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:0"}
-	raw, err := cmd.CombinedOutput()
-	require.Error(t, err)
-	require.Contains(t, string(raw), "configured source/account differs")
-	checkSchema(8)
-
-	f.configure(0, "account-1")
 	p = f.start("OTEL_TRACES_EXPORTER=otlp", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:0")
 	require.Empty(t, observedTraces(t, p, "trigger-messages", historical.MessageID))
 	saved := submit(t, p, f, input("after-tracing"))

@@ -1,5 +1,5 @@
 # Replace the example account, profile, repository, and executable path.
-# Supply private Core token files and inject the matching environment variables.
+# Set the shared Trigger token file and supply credentials for the native services.
 core:
   dataDir: ./superagent-core-data
   listen: 127.0.0.1:24370
@@ -21,18 +21,11 @@ core:
   #   cua:
   #     command: /opt/mass/bin/cua-mcp
   #     configFile: ./cua-mcp.yaml
-  sources:
-    - source: github
-      accountId: github-local
-      instanceId: github-trigger-1
-      tokenFile: ./secrets/github-core.token
-      threadIdPrefixes: ["github:", "https://github.com/"]
+  triggerTokenFile: ./secrets/trigger.token
+  outboxConsumers:
     - source: dws
       accountId: ACCOUNT_ID
       instanceId: dws-trigger-1
-      tokenFile: ./secrets/dws-core.token
-      threadIdPrefixes: ["dws:"]
-      outboxConsumer: true
 
 # Optional business checks alongside Core.
 # watchdog:
@@ -42,7 +35,6 @@ triggers:
   github:
     accountId: github-local
     instanceId: github-trigger-1
-    coreTokenEnv: SUPERAGENT_GITHUB_CORE_TOKEN
     githubTokenEnv: SUPERAGENT_GITHUB_TOKEN
     statusListen: 127.0.0.1:24372
     databasePath: ./trigger-state/github.sqlite
@@ -57,7 +49,6 @@ triggers:
     accountId: ACCOUNT_ID
     selfOpenDingtalkId: ACCOUNT_OPEN_DINGTALK_ID
     instanceId: dws-trigger-1
-    coreTokenEnv: SUPERAGENT_DWS_CORE_TOKEN
     statusListen: 127.0.0.1:24371
     databasePath: ./trigger-state/dws.sqlite
     direct:
