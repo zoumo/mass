@@ -197,13 +197,90 @@ func TestEmbeddedMASSExposureConfig(t *testing.T) {
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
 	require.Equal(t, path, cfg.Massd.Embedded.Expose.TokenFile)
-	cfg.Listen = "0.0.0.0:0"
-	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
-	require.ErrorContains(t, err, "loopback Core listener")
-	cfg.Listen = "127.0.0.1:0"
+	write(t, f.config, strings.Replace(config, "listen: 127.0.0.1:", "listen: 0.0.0.0:", 1))
+	cfg, err = core.LoadConfig(f.config)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(cfg.Listen, "0.0.0.0:"))
 	cfg.Massd.Embedded.Expose.TokenFile = ""
 	_, err = core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 	require.ErrorContains(t, err, "expose.tokenFile is required")
+}
+
+func TestOperatorAndEmbeddedMASSViaDeploymentAddress(t *testing.T) {
+	addresses, err := net.InterfaceAddrs()
+	require.NoError(t, err)
+	var host string
+	for _, address := range addresses {
+		ip, _, err := net.ParseCIDR(address.String())
+		if err == nil && ip.To4() != nil && !ip.IsLoopback() && ip.IsGlobalUnicast() {
+			host = ip.String()
+			break
+		}
+	}
+	if host == "" {
+		t.Skip("no non-loopback IPv4 interface available")
+	}
+	f, operatorFile := eventFixture(t, "ws://127.0.0.1:1")
+	config, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	operatorToken, err := core.ReadOperatorToken(operatorFile)
+	require.NoError(t, err)
+	massdToken := strings.Repeat("M", 48)
+	write(t, filepath.Join(f.dir, "embedded-massd.token"), massdToken)
+	beforeListen, listenAndRest, _ := strings.Cut(string(config), "listen: ")
+	_, afterListen, _ := strings.Cut(listenAndRest, "\n")
+	deploymentConfig := beforeListen + "listen: " + net.JoinHostPort(host, "0") + "\nexternalURL: https://core.example.test\n" + afterListen
+	write(t, f.config, strings.Replace(deploymentConfig, "massd:\n  endpoint: ws://127.0.0.1:1", mountedMASSConfig+mountedMASSExpose, 1))
+	p := f.start()
+	endpoint, err := url.Parse(p.endpoint)
+	require.NoError(t, err)
+	require.Equal(t, host, endpoint.Hostname())
+
+	directTransport := &http.Transport{}
+	t.Cleanup(directTransport.CloseIdleConnections)
+	httpClient := &http.Client{Transport: directTransport, Timeout: 3 * time.Second}
+	for _, tc := range []struct {
+		token, host, origin, fetchSite string
+		status                         int
+	}{
+		{token: operatorToken, status: http.StatusOK},
+		{status: http.StatusUnauthorized},
+		{token: f.token, status: http.StatusUnauthorized},
+		{token: massdToken, status: http.StatusUnauthorized},
+		{token: operatorToken, host: "foreign.example.test", status: http.StatusForbidden},
+		{token: operatorToken, origin: p.endpoint, status: http.StatusForbidden},
+		{token: operatorToken, fetchSite: "same-origin", status: http.StatusForbidden},
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, p.endpoint+"/v1/core/scheduled-tasks", http.NoBody)
+		require.NoError(t, err)
+		req.Host = tc.host
+		if tc.token != "" {
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+		}
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		if tc.fetchSite != "" {
+			req.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+		}
+		res, err := httpClient.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, res.Body.Close())
+		require.Equal(t, tc.status, res.StatusCode)
+	}
+	command := exec.CommandContext(t.Context(), build(t), "scheduled-tasks", "--endpoint", p.endpoint, "--operator-token-file", operatorFile, "list")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	require.JSONEq(t, `{"items":[]}`, string(output))
+
+	mount := "ws" + strings.TrimPrefix(p.endpoint, "http") + "/massd"
+	dial := &websocket.Dialer{HandshakeTimeout: time.Second}
+	for _, token := range []string{"", operatorToken, f.token} {
+		checkMassdUpgrade(t, dial, mount, token, "", "", http.StatusUnauthorized)
+	}
+	checkMassdUpgrade(t, dial, mount, massdToken, "", "", http.StatusSwitchingProtocols)
+	checkMassdUpgrade(t, dial, mount, massdToken, "", "foreign.example.test", http.StatusForbidden)
+	checkMassdUpgrade(t, dial, mount, massdToken, "https://foreign.example.test", "", http.StatusForbidden)
 }
 
 func checkMassctlMountedSession(t *testing.T, mount, token string, binding core.SessionBinding) {

@@ -7,17 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
+	"reflect"
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
 
+	"github.com/zoumo/mass/internal/httpaddress"
 	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
@@ -44,7 +43,7 @@ type Config struct {
 	ReadAllowedHosts  []string `mapstructure:"readAllowedHosts"`
 	// StorageMaxPages optionally bounds SQLite main database growth (4096-byte pages).
 	StorageMaxPages int `mapstructure:"storageMaxPages"`
-	// WebOTLPEndpoint is the runtime-only origin of a loopback OTLP receiver.
+	// WebOTLPEndpoint is the runtime-only base URL of the Web OTLP receiver.
 	WebOTLPEndpoint string             `mapstructure:"-"`
 	OpenObserve     *OpenObserveConfig `mapstructure:"openobserve"`
 	// ComposeTriggerStatus reads Trigger observations from the local supervisor.
@@ -87,11 +86,12 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	if err != nil {
 		return c, err
 	}
+	sessions, err := takeSessionsConfig(fields)
+	if err != nil {
+		return c, err
+	}
 	if err := v.MergeConfigMap(fields); err != nil {
 		return c, problem("invalid_argument", "cannot read YAML configuration")
-	}
-	if hasRemovedPermissionPreset(v) {
-		return c, problem("invalid_argument", "remove permissionPreset from Superagent session roles and Issue templates; new Sessions use fullAccess")
 	}
 	if composed {
 		// Viper omits null and empty mappings from AllSettings. Decode the
@@ -150,17 +150,13 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 			return c, problem("invalid_argument", "readAllowedHosts must be a list of strings")
 		}
 		for _, authority := range c.ReadAllowedHosts {
-			if !validObserverAuthority(authority) {
-				return c, problem("invalid_argument", "readAllowedHosts entries must be DNS names with an optional port")
+			if !httpaddress.ValidAuthority(authority) {
+				return c, problem("invalid_argument", "readAllowedHosts entries must be DNS names or IP addresses with an optional port")
 			}
 		}
 	}
+	c.Sessions = sessions
 	if c.Sessions != nil {
-		var sessions SessionsConfig
-		if err := v.UnmarshalKey("sessions", &sessions, strict); err != nil {
-			return c, problem("invalid_argument", "sessions configuration contains unknown or invalid fields")
-		}
-		c.Sessions = &sessions
 		if err := c.Sessions.validate(resolve); err != nil {
 			return c, err
 		}
@@ -220,10 +216,9 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	if c.DataDir == "" || c.TriggerTokenFile == "" || c.StorageMaxPages < 0 {
 		return c, problem("invalid_argument", "dataDir and triggerTokenFile are required; storageMaxPages must be nonnegative")
 	}
-	host, port, err := net.SplitHostPort(c.Listen)
-	portNumber, portErr := strconv.ParseUint(port, 10, 16)
-	if err != nil || net.ParseIP(host) == nil || portErr != nil {
-		return c, problem("invalid_argument", "listen must use a numeric IP and port")
+	_, portNumber, err := httpaddress.SplitListen(c.Listen)
+	if err != nil {
+		return c, problem("invalid_argument", "listen "+err.Error())
 	}
 	if c.ExternalURL != "" || c.Sessions != nil {
 		if portNumber == 0 && c.ExternalURL == "" {
@@ -232,9 +227,6 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		if _, err := c.roleMCPEndpoint(); err != nil {
 			return c, err
 		}
-	}
-	if c.operatorToken != "" && !net.ParseIP(host).IsLoopback() {
-		return c, problem("invalid_argument", "operator access requires a loopback Core listener")
 	}
 	c.TriggerTokenFile = resolve(c.TriggerTokenFile)
 	tokenBytes, err := readPrivate(c.TriggerTokenFile)
@@ -274,42 +266,52 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	return c, nil
 }
 
-var dnsLabelPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
+var errRemovedPermissionPreset = errors.New("remove permissionPreset")
 
-func validObserverAuthority(authority string) bool {
-	host, port, hasPort := strings.Cut(authority, ":")
-	if hasPort {
-		portNumber, err := strconv.ParseUint(port, 10, 16)
-		if err != nil || portNumber == 0 || port != strconv.FormatUint(portNumber, 10) {
-			return false
+// takeSessionsConfig decodes sessions before Viper normalizes the rest of the
+// configuration. Both entry points use the same strict role field types.
+func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
+	var sessions *SessionsConfig
+	for name, raw := range fields {
+		if !strings.EqualFold(name, "sessions") {
+			continue
 		}
-	}
-	host = strings.TrimSuffix(host, ".")
-	if len(host) > 253 || net.ParseIP(host) != nil {
-		return false
-	}
-	for label := range strings.SplitSeq(host, ".") {
-		if !dnsLabelPattern.MatchString(label) {
-			return false
+		if sessions != nil {
+			return nil, problem("invalid_argument", "configuration contains duplicate sessions fields")
 		}
-	}
-	return true
-}
-
-func hasRemovedPermissionPreset(v *viper.Viper) bool {
-	for _, role := range []string{"router", "topic"} {
-		if _, present := v.GetStringMap("sessions.roles." + role)["permissionpreset"]; present {
-			return true
+		if _, ok := raw.(map[string]any); !ok {
+			return nil, problem("invalid_argument", "sessions must be a mapping")
 		}
-	}
-	templates, _ := v.Get("sessions.issueTemplates").([]any)
-	for _, template := range templates {
-		fields, _ := template.(map[string]any)
-		if _, present := fields["permissionpreset"]; present {
-			return true
+		sessions = &SessionsConfig{}
+		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+			ErrorUnused: true,
+			Result:      sessions,
+			RootName:    "sessions",
+			DecodeHook: mapstructure.DecodeHookFuncType(func(_, _ reflect.Type, data any) (any, error) {
+				mapping, _ := data.(map[string]any)
+				for field := range mapping {
+					if strings.EqualFold(field, "permissionPreset") {
+						return nil, errRemovedPermissionPreset
+					}
+				}
+				return data, nil
+			}),
+		})
+		if err != nil {
+			return nil, err
 		}
+		if err := decoder.Decode(raw); err != nil {
+			if field, ok := errors.AsType[*mapstructure.DecodeError](err); ok {
+				if errors.Is(field, errRemovedPermissionPreset) {
+					return nil, problem("invalid_argument", "remove permissionPreset from "+field.Name()+". New Sessions use fullAccess")
+				}
+				return nil, problem("invalid_argument", field.Name()+" contains an unknown field or invalid value")
+			}
+			return nil, problem("invalid_argument", "sessions contains unknown or invalid fields")
+		}
+		delete(fields, name)
 	}
-	return false
+	return sessions, nil
 }
 
 func (c Config) String() string {

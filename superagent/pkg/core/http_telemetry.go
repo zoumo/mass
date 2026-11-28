@@ -67,7 +67,7 @@ func (s *Server) registerTelemetryResources(api *httpAPI) {
 		wire := map[string]*huma.MediaType{observerOTLPContentType: {Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"}}}
 		api.registerRaw(huma.Operation{
 			Method: http.MethodPost, Path: signal.path, OperationID: signal.operation, Summary: signal.summary, Tags: []string{"Telemetry"},
-			Description: "Available when the loopback OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
+			Description: "Available when the Web OTLP gateway is configured. Accepts uncompressed Protobuf up to 1 MiB with a three-second deadline and request rate limits.",
 			RequestBody: &huma.RequestBody{Required: true, Content: wire},
 			Responses: map[string]*huma.Response{
 				"200": {Description: "OTLP export response", Content: wire},

@@ -43,7 +43,7 @@ func (s *Server) registerSessionBindingOperations(api *httpAPI) {
 	}
 	s.registerSessionChatOperations(api, bindingParam)
 
-	access := "Requires a Core operator Bearer credential and a direct loopback CLI connection."
+	access := "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client."
 	api.registerRaw(huma.Operation{
 		Method: http.MethodGet, Path: sessionBindingPath + "/runtime-evidence", OperationID: "getSessionBindingRuntimeEvidence",
 		Summary: "Read Session Binding runtime evidence", Description: access, Tags: []string{"Operator"},

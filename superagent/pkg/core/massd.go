@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,10 +84,6 @@ func (c *EmbeddedMassdConfig) validate() error {
 func (c Config) massdExposureToken() (string, error) {
 	if c.Massd == nil || c.Massd.Embedded == nil || c.Massd.Embedded.Expose == nil {
 		return "", nil
-	}
-	host, _, err := net.SplitHostPort(c.Listen)
-	if err != nil || !net.ParseIP(host).IsLoopback() {
-		return "", problem("invalid_argument", "massd.embedded.expose requires a loopback Core listener")
 	}
 	path := c.Massd.Embedded.Expose.TokenFile
 	if path == "" {

@@ -98,13 +98,14 @@ func matchesText(rules []matchRule, text string) bool {
 }
 
 type dwsConfig struct {
-	DWS                   string          `yaml:"dwsExecutable"`
-	Profile               string          `yaml:"profile"`
-	Source                string          `yaml:"source"`
-	AccountID             string          `yaml:"accountId"`
-	SelfID                string          `yaml:"selfOpenDingtalkId"`
-	InstanceID            string          `yaml:"instanceId"`
-	CoreEndpoint          string          `yaml:"coreEndpoint"`
+	DWS          string `yaml:"dwsExecutable"`
+	Profile      string `yaml:"profile"`
+	Source       string `yaml:"source"`
+	AccountID    string `yaml:"accountId"`
+	SelfID       string `yaml:"selfOpenDingtalkId"`
+	InstanceID   string `yaml:"instanceId"`
+	CoreEndpoint string `yaml:"coreEndpoint"`
+	// Deprecated: HTTP is accepted on any Core host.
 	AllowInsecureCoreHTTP bool            `yaml:"allowInsecureCoreHTTP,omitempty"`
 	TokenEnv              string          `yaml:"coreTokenEnv"`
 	Listen                string          `yaml:"statusListen"`
@@ -166,7 +167,7 @@ func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConf
 	if c.Capacity < 1 || c.Capacity > 10000 || c.RetryMillis < 10 || c.RetryMillis > 60000 || c.RequestMillis < 10 || c.RequestMillis > 60000 {
 		return c, errors.New("invalid buffer or timing limits")
 	}
-	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint, c.AllowInsecureCoreHTTP); err != nil {
+	if err := trigger.ValidateCoreEndpoint(c.CoreEndpoint); err != nil {
 		return c, err
 	}
 	if err := trigger.ValidateStatusListen(c.Listen); err != nil {

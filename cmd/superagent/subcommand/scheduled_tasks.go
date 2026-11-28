@@ -15,7 +15,7 @@ func newScheduledTasks() *cobra.Command {
 	var cursor string
 	var newest bool
 	cmd := &cobra.Command{Use: "scheduled-tasks", Short: "Read and trigger Core scheduled tasks"}
-	cmd.PersistentFlags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Local Core HTTP endpoint")
+	cmd.PersistentFlags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Core HTTP endpoint")
 	cmd.PersistentFlags().StringVar(&tokenFile, "operator-token-file", "", "Private Core operator token file")
 	_ = cmd.MarkPersistentFlagRequired("operator-token-file")
 	list := &cobra.Command{

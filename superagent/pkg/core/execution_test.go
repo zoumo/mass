@@ -131,7 +131,7 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 		Close:            &BindingClose{Reusable: true},
 	}
 	config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", Sessions: &SessionsConfig{
-		Roles: ExecutionRoles{Router: previous.ExecutionProfile}, RouterWorkspace: "/project", Namespace: "routing",
+		Router: RouterSessionConfig{ExecutionProfile: previous.ExecutionProfile, Workspace: "/project"}, Namespace: "routing",
 	}}
 	store, err := OpenStore(config, TelemetryOptions{})
 	require.NoError(t, err)
@@ -201,8 +201,8 @@ func TestRoleMCPEndpointDefaultsToLoopback(t *testing.T) {
 
 func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", ExternalURL: "https://core.example.com", Sessions: &SessionsConfig{
-		Roles:           ExecutionRoles{Router: ExecutionProfile{RuntimeRef: "agent", Model: "model"}},
-		RouterWorkspace: "/project", Namespace: "routing",
+		Router:    RouterSessionConfig{ExecutionProfile: ExecutionProfile{RuntimeRef: "agent", Model: "model"}, Workspace: "/project"},
+		Namespace: "routing",
 	}}
 	store, err := OpenStore(config, TelemetryOptions{})
 	require.NoError(t, err)
@@ -272,8 +272,8 @@ func TestClaudeRouterReplacementRespectsInputAndOwnership(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", Sessions: &SessionsConfig{
-				Roles:           ExecutionRoles{Router: ExecutionProfile{RuntimeRef: "agent", Model: "model"}},
-				RouterWorkspace: "/project", Namespace: "routing",
+				Router:    RouterSessionConfig{ExecutionProfile: ExecutionProfile{RuntimeRef: "agent", Model: "model"}, Workspace: "/project"},
+				Namespace: "routing",
 			}}
 			store, err := OpenStore(config, TelemetryOptions{})
 			require.NoError(t, err)

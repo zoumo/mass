@@ -46,7 +46,7 @@ outboxConsumers:
 `, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			execution := "sessions:\n  routerWorkspace: .\n  roles:\n    router: {runtimeRef: test, model: test}\n    topic: {runtimeRef: test, model: test}\n  issueTemplates: [{runtimeRef: test, model: test, description: Test}]\n"
+			execution := "sessions:\n  router: {workspace: ., runtimeRef: test, model: test}\n  topic: {runtimeRef: test, model: test}\n  issue:\n    templates: [{runtimeRef: test, model: test, description: Test}]\n"
 			standaloneYAML := tc.yaml
 			if tc.name == "embedded MASS token" {
 				standaloneYAML += execution

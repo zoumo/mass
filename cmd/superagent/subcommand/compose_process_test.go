@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -448,7 +449,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		dir := t.TempDir()
 		const traceID = "db64663e60fb444b8a93ea9c06c24413"
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost || r.URL.String() != "/api/fixture_org/_search?type=traces" {
+			if r.Method != http.MethodPost || r.URL.String() != "/observability/api/fixture_org/_search?type=traces" {
 				http.Error(w, "unexpected OpenObserve request", http.StatusBadRequest)
 				return
 			}
@@ -458,7 +459,7 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + fmt.Sprintf(`  openobserve:
     endpoint: %q
     organization: fixture_org
-`, upstream.URL)
+`, upstream.URL+"/observability/")
 		first := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := first.startup(t)
 		trace := composeHTTPBody(t, startup.Endpoint+"/v1/telemetry/traces/"+traceID)
@@ -512,12 +513,11 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
   remoteComputer:
     cua: {command: ./cua-mcp, configFile: ./cua.yaml}
   sessions:
-    routerWorkspace: .
-    roles:
-      router: {runtimeRef: codex, model: fixture-model}
-      topic: {runtimeRef: codex, model: fixture-model}
-    issueTemplates:
-      - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
+    router: {workspace: ., runtimeRef: codex, model: fixture-router, effort: low}
+    topic: {runtimeRef: codex, model: fixture-topic}
+    issue:
+      templates:
+        - {runtimeRef: codex, model: fixture-model, description: Fixture Issue}
 `
 		p := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := p.startup(t)
@@ -561,6 +561,7 @@ func TestComposeProcessCombinations(t *testing.T) {
 		{"without triggers", "127.0.0.1:0", "http://127.0.0.1:", false, false, syscall.SIGTERM},
 		{"github only", "0.0.0.0:0", "http://127.0.0.1:", true, false, syscall.SIGINT},
 		{"dws only", "127.0.0.1:0", "http://127.0.0.1:", false, true, syscall.SIGTERM},
+		{"hostname and wildcard Trigger", "localhost:0", "http://127.0.0.1:", false, true, syscall.SIGTERM},
 		{"both on IPv6 wildcard", "[::]:0", "http://[::1]:", true, true, syscall.SIGTERM},
 		{"both on IPv6 loopback", "[::1]:0", "http://[::1]:", true, true, syscall.SIGINT},
 	} {
@@ -572,9 +573,20 @@ func TestComposeProcessCombinations(t *testing.T) {
 				_ = unrelated.Process.Kill()
 				_ = unrelated.Wait()
 			})
-			p := startComposeFixture(t, dir, composeFixtureConfig(t, dir, tc.listen, tc.github, tc.dws), "TEST_COMPOSE_FEED_DWS=1")
+			config := composeFixtureConfig(t, dir, tc.listen, tc.github, tc.dws)
+			if tc.listen == "localhost:0" {
+				config += "    statusListen: '0.0.0.0:0'\n"
+			}
+			p := startComposeFixture(t, dir, config, "TEST_COMPOSE_FEED_DWS=1")
 			startup := p.startup(t)
-			require.True(t, strings.HasPrefix(startup.Endpoint, tc.origin), startup.Endpoint)
+			if tc.listen == "localhost:0" {
+				parsed, err := url.Parse(startup.Endpoint)
+				require.NoError(t, err)
+				parsed.Host = net.JoinHostPort("localhost", parsed.Port())
+				composeHTTPBody(t, parsed.String()+"/status")
+			} else {
+				require.True(t, strings.HasPrefix(startup.Endpoint, tc.origin), startup.Endpoint)
+			}
 			require.False(t, strings.HasSuffix(startup.Endpoint, ":0"), startup.Endpoint)
 			require.Empty(t, startup.MassdEndpoint)
 			require.DirExists(t, filepath.Join(dir, "massd-data"))
@@ -678,12 +690,13 @@ func TestComposeProcessPreflight(t *testing.T) {
 		{"DWS Outbox role", "    instanceId: dws-adapter", "    instanceId: another-adapter", "triggers.dws preflight: the reply-enabled Trigger", nil},
 		{"credential shared across scopes", "", "", "triggers.github preflight: native service credentials must be distinct", []string{composeGitHubEnv + "=" + composeTriggerToken}},
 		{"credential environment shared across scopes", "coreTokenEnv: " + composeDWSCoreEnv, "coreTokenEnv: " + composeGitHubEnv, "triggers.github githubTokenEnv conflicts with triggers.dws coreTokenEnv", nil},
-		{"remote plaintext", "127.0.0.1:0", "192.0.2.1:0", "remote coreEndpoint requires HTTPS", nil},
 		{"state under MASS", "./dws.sqlite", "./massd-data/dws.sqlite", "triggers.dws databasePath conflicts with core.massd.embedded dataDir", nil},
 		{"state under Core", "./dws.sqlite", "./core-state/dws.sqlite", "triggers.dws databasePath conflicts with core dataDir", nil},
 		{"shared state", "./dws.sqlite", "./github.sqlite-wal", "triggers.dws databasePath conflicts with triggers.github databasePath", nil},
-		{"invalid status port", "    databasePath: ./dws.sqlite", "    statusListen: 127.0.0.1:invalid\n    databasePath: ./dws.sqlite", "triggers.dws statusListen requires a numeric port", nil},
+		{"invalid status port", "    databasePath: ./dws.sqlite", "    statusListen: 127.0.0.1:invalid\n    databasePath: ./dws.sqlite", "statusListen must use host:port with a numeric port", nil},
+		{"invalid Core address", "127.0.0.1:0", "'bad/name:0'", "listen must use host:port with a numeric port", nil},
 		{"shared status port", "    databasePath:", "    statusListen: 127.0.0.1:15443\n    databasePath:", "triggers.dws statusListen conflicts with triggers.github", nil},
+		{"wildcard status port", "    databasePath:", "    statusListen: 0.0.0.0:15443\n    databasePath:", "triggers.dws statusListen conflicts with triggers.github", nil},
 		{"DWS CLI local contract", "", "", "triggers.dws preflight: DWS executable/version check failed", []string{"TEST_COMPOSE_DWS_BAD_CLI=1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

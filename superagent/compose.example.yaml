@@ -2,6 +2,7 @@
 # Set the shared Trigger token file and supply credentials for the native services.
 core:
   dataDir: ./superagent-core-data
+  # Use an IP address or hostname with a port. Use :24370 for a wildcard.
   listen: 127.0.0.1:24370
   # Optional MASS settings. The default data directory is ./massd-data.
   # massd:
@@ -9,13 +10,29 @@ core:
   #     dataDir: ./massd-data
   #     expose:
   #       tokenFile: ./secrets/massd.token
-  # Optional. Query traces and metrics from OpenObserve.
+  # Optional. Set the OpenObserve HTTP or HTTPS base URL with any proxy path prefix.
   # openobserve:
   #   endpoint: http://127.0.0.1:15080
   #   organization: default
   #   stream: default
   #   credentialFile: ./secrets/openobserve-login.txt
-  # Add sessions from config.example.yaml to enable Core Agent execution.
+  # Optional role settings for Core Agent execution.
+  # sessions:
+  #   namespace: superagent
+  #   router:
+  #     workspace: /absolute/workspace
+  #     runtimeRef: codex
+  #     model: gpt-6.2-sol
+  #     effort: low
+  #   topic:
+  #     runtimeRef: codex
+  #     model: gpt-6.2-sol
+  #     effort: medium
+  #   issue:
+  #     templates:
+  #       - runtimeRef: codex
+  #         model: gpt-6.2-sol
+  #         description: Implement and verify code changes.
   # Optional remote computer for Topic and Issue Sessions.
   # remoteComputer:
   #   cua:
@@ -36,6 +53,7 @@ triggers:
     accountId: github-local
     instanceId: github-trigger-1
     githubTokenEnv: SUPERAGENT_GITHUB_TOKEN
+    # Use port 0 to let the OS choose a port.
     statusListen: 127.0.0.1:24372
     databasePath: ./trigger-state/github.sqlite
     # Optional. Omit to accept notifications from every repository accessible
