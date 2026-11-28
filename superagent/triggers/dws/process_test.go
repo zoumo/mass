@@ -42,7 +42,7 @@ func coreStart(t *testing.T, dir, addr string) *triggertest.Process {
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p := triggertest.Start(t, triggertest.CorePath(t), []string{"serve", "--config", path}, nil)
+	p := triggertest.Start(t, triggertest.CorePath(t), []string{"serve", "--config", path}, []string{"PATH=" + dir, "HOME=" + dir})
 	p.Endpoint(t, "endpoint")
 	return p
 }

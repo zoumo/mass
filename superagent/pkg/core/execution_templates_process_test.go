@@ -58,15 +58,11 @@ func TestExecutionTemplateConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name, from, to, field string
 	}{
-		{"empty sessions", fmt.Sprintf(fixtureSessions, f.dir), "sessions: {}\n", "sessions.router"},
-		{"missing router", router, "", "sessions.router"},
-		{"missing router workspace", fmt.Sprintf("    workspace: %q\n", f.dir), "", "sessions.router.workspace"},
-		{"missing workspace directory", fmt.Sprintf("    workspace: %q", f.dir), "    workspace: missing", "sessions.router.workspace"},
+		{"null workspace", fmt.Sprintf("    workspace: %q", f.dir), "    workspace: null", "sessions.router"},
 		{"invalid router mapping", router, "  router: false\n", "sessions.router"},
-		{"missing topic", "  topic:\n    runtimeRef: agent\n    model: topic-model\n", "", "sessions.topic"},
-		{"missing topic model", "    model: topic-model\n", "", "sessions.topic.model"},
 		{"bad runtime name", "  topic:\n    runtimeRef: agent", "  topic:\n    runtimeRef: Invalid/Runtime", "sessions.topic.runtimeRef"},
-		{"missing issue section", "  issue:\n    templates:\n" + templates, "", "sessions.issue"},
+		{"explicit empty runtime", "  topic:\n    runtimeRef: agent", "  topic:\n    runtimeRef: ''", "sessions.topic.runtimeRef"},
+		{"null issue list", "    templates:\n" + templates, "    templates: null\n", "sessions.issue"},
 		{"empty issue list", "    templates:\n" + templates, "    templates: []\n", "sessions.issue.templates"},
 		{"missing template name", "      - name: review\n        runtimeRef: agent", "      - runtimeRef: agent", "sessions.issue.templates[1].name"},
 		{"blank template name", "name: review", "name: '   '", "sessions.issue.templates[1].name"},

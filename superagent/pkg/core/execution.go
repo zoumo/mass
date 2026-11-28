@@ -80,11 +80,11 @@ func (p ExecutionProfile) sameModel(other ExecutionProfile) bool {
 	return p.RuntimeRef == other.RuntimeRef && p.Model == other.Model && p.Effort == other.Effort
 }
 
-func (p ExecutionProfile) validate(field string, requireModel bool) error {
+func (p ExecutionProfile) validate(field string) error {
 	if len(p.RuntimeRef) > 253 || !runtimeNamePattern.MatchString(p.RuntimeRef) {
 		return problem("invalid_argument", field+".runtimeRef must be a valid Runtime name")
 	}
-	if (requireModel || p.Model != "") && (strings.TrimSpace(p.Model) == "" || (agent.SessionConfig{Model: p.Model}).Validate() != nil) {
+	if p.Model != "" && (strings.TrimSpace(p.Model) == "" || (agent.SessionConfig{Model: p.Model}).Validate() != nil) {
 		return problem("invalid_argument", field+".model must be a nonblank model name")
 	}
 	if (agent.SessionConfig{Effort: p.Effort}).Validate() != nil {
@@ -107,7 +107,7 @@ func (c *SessionsConfig) issueProfile(name string) (ExecutionProfile, error) {
 	return ExecutionProfile{}, problem("invalid_argument", "template must name a configured Issue template")
 }
 
-func (c *SessionsConfig) validate(resolve func(string) string) error {
+func (c *SessionsConfig) validate() error {
 	if c.Namespace == "" {
 		c.Namespace = "superagent"
 	}
@@ -115,17 +115,10 @@ func (c *SessionsConfig) validate(resolve func(string) string) error {
 	if len(c.Namespace) > 24 || !namespacePattern.MatchString(c.Namespace) {
 		return problem("invalid_argument", "sessions.namespace must be a DNS label of at most 24 bytes")
 	}
-	if err := c.Router.validate("sessions.router", true); err != nil {
+	if err := c.Router.validate("sessions.router"); err != nil {
 		return err
 	}
-	c.Router.Workspace = resolve(c.Router.Workspace)
-	if !filepath.IsAbs(c.Router.Workspace) {
-		return problem("invalid_argument", "sessions.router.workspace must specify a directory")
-	}
-	if info, statErr := os.Stat(c.Router.Workspace); statErr != nil || !info.IsDir() {
-		return problem("invalid_argument", "sessions.router.workspace must be an existing directory")
-	}
-	if err := c.Topic.validate("sessions.topic", true); err != nil {
+	if err := c.Topic.validate("sessions.topic"); err != nil {
 		return err
 	}
 	if len(c.Issue.Templates) == 0 {
@@ -134,7 +127,7 @@ func (c *SessionsConfig) validate(resolve func(string) string) error {
 	seen := make(map[string]bool, len(c.Issue.Templates))
 	for i, template := range c.Issue.Templates {
 		field := fmt.Sprintf("sessions.issue.templates[%d]", i)
-		if err := template.validate(field, false); err != nil {
+		if err := template.validate(field); err != nil {
 			return err
 		}
 		if strings.TrimSpace(template.Name) == "" {

@@ -30,9 +30,12 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
    Core lists the built-in Triggers as `not_managed`. Run
    `bin/superagent observe --help` for Core record queries.
 
-Omit `sessions` to collect Messages without starting Agents. To enable execution,
-set `sessions.router`, `sessions.topic`, and at least one template in
-`sessions.issue.templates`.
+Omit `sessions` to use Claude for the Router Session, Codex for Topic Sessions,
+and a Codex Issue template named `default`. Each Agent chooses its configured
+model and effort when those fields are omitted. Core creates the Router
+workspace at `<dataDir>/router-workspace` unless you specify a different path.
+Specify fields under `sessions` to override individual role settings.
+A custom template list supplies the complete set of Issue templates.
 Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
 When MASS runs on another host, set an HTTPS `externalURL` that the MASS host
 can reach. The MASS host must be able to read the Session workspaces and
@@ -110,9 +113,8 @@ to release its current Session and prepare a new one with the updated options.
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent
 tasks and triggering from a local script or CLI, use the Core admin token
-and connect directly to Core. Independent schedules also run
-in standalone Core without Session execution. Their Router events remain
-pending until a Router can handle them.
+and connect directly to Core. Independent schedules produce Router events.
+Events remain pending while the Router is unavailable.
 
 See the [scheduled task API](API.md#scheduled-tasks) for schedule modes,
 Operator commands and history queries.
