@@ -21,6 +21,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/mcp"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/zoumo/mass/internal/httpaddress"
 	"github.com/zoumo/mass/massd/pkg/resource"
 	"github.com/zoumo/mass/massd/pkg/runtime"
 	"github.com/zoumo/mass/superagent/pkg/core/internal/ent/sessionbinding"
@@ -413,31 +414,34 @@ func sameBinding(a, b SessionBinding) bool {
 }
 
 func (c Config) roleMCPEndpoint() (string, error) {
+	var u *url.URL
 	if c.ExternalURL != "" {
-		u, err := url.Parse(c.ExternalURL)
-		if err != nil || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
-			return "", problem("invalid_argument", "externalURL must be a URL with scheme and host")
+		var err error
+		u, err = httpaddress.ParseOrigin(c.ExternalURL)
+		if err != nil {
+			return "", problem("invalid_argument", "externalURL "+err.Error())
 		}
-		u.Path = mcpPath
-		endpoint := u.String()
-		servers := []runtime.MCPServer{{Name: "superagent", Type: runtime.MCPTransportHTTP, URL: endpoint}}
-		if err := runtime.ValidateMCPServers(servers); err != nil {
-			return "", problem("invalid_argument", "externalURL must use HTTPS or loopback HTTP")
+	} else {
+		host, port, err := net.SplitHostPort(c.Listen)
+		if err != nil {
+			return "", problem("invalid_argument", "listen must use host:port with a numeric port")
 		}
-		return endpoint, nil
-	}
-	host, port, err := net.SplitHostPort(c.Listen)
-	ip := net.ParseIP(host)
-	if err != nil || (!ip.IsLoopback() && !ip.IsUnspecified()) {
-		return "", problem("invalid_argument", "set externalURL for a non-loopback Core listener")
-	}
-	if ip.IsUnspecified() {
-		host = "127.0.0.1"
-		if ip.To4() == nil {
-			host = "::1"
+		ip := net.ParseIP(host)
+		if host == "" || ip.IsUnspecified() {
+			host = "127.0.0.1"
+			if ip != nil && ip.To4() == nil {
+				host = "::1"
+			}
 		}
+		u = &url.URL{Scheme: "http", Host: net.JoinHostPort(host, port)}
 	}
-	return "http://" + net.JoinHostPort(host, port) + mcpPath, nil
+	u.Path = mcpPath
+	endpoint := u.String()
+	servers := []runtime.MCPServer{{Name: "superagent", Type: runtime.MCPTransportHTTP, URL: endpoint}}
+	if err := runtime.ValidateMCPServers(servers); err != nil {
+		return "", problem("invalid_argument", "set an HTTPS externalURL for role MCP when listen is not loopback or wildcard")
+	}
+	return endpoint, nil
 }
 
 func (s *Server) capabilityFile(b SessionBinding, token string) error {

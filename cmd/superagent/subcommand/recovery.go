@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/internal/httpaddress"
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
@@ -32,7 +32,7 @@ func newRecoverInput() *cobra.Command {
 			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodPost, path, req)
 		},
 	}
-	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Local Core HTTP endpoint")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Core HTTP endpoint")
 	cmd.Flags().StringVar(&tokenFile, "operator-token-file", "", "Private Core operator token file")
 	cmd.Flags().StringVar(&req.Mode, "mode", "", "retry (same authority), settle (retired binding), or replace")
 	cmd.Flags().BoolVar(&req.StopRuntime, "stop-runtime", false, "Settle the shared local Runtime, interrupting its other Sessions")
@@ -54,16 +54,16 @@ func newInspectBinding() *cobra.Command {
 			return operatorRequest(cmd.Context(), cmd.OutOrStdout(), endpoint, tokenFile, http.MethodGet, "/v1/core/session-bindings/"+url.PathEscape(args[0])+"/runtime-evidence", nil)
 		},
 	}
-	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Local Core HTTP endpoint")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "http://127.0.0.1:24370", "Core HTTP endpoint")
 	cmd.Flags().StringVar(&tokenFile, "operator-token-file", "", "Private Core operator token file")
 	_ = cmd.MarkFlagRequired("operator-token-file")
 	return cmd
 }
 
 func operatorRequest(ctx context.Context, out io.Writer, endpoint, tokenFile, method, path string, input any) error {
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "http" || !net.ParseIP(u.Hostname()).IsLoopback() || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return &core.Error{Code: "invalid_argument", Message: "operator endpoint must be a plain loopback HTTP origin"}
+	u, err := httpaddress.ParseOrigin(endpoint)
+	if err != nil {
+		return &core.Error{Code: "invalid_argument", Message: "operator endpoint " + err.Error()}
 	}
 	token, err := core.ReadOperatorToken(tokenFile)
 	if err != nil {
@@ -77,13 +77,13 @@ func operatorRequest(ctx context.Context, out io.Writer, endpoint, tokenFile, me
 		}
 		body = bytes.NewReader(raw)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint+path, body)
+	request, err := http.NewRequestWithContext(ctx, method, u.String()+path, body)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)
-	c := &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	c := &http.Client{Timeout: 12 * time.Second, Transport: &http.Transport{}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := c.Do(request)
 	if err != nil {
 		return &core.Error{Code: "unavailable", Message: "operator response unavailable", Retryable: true}

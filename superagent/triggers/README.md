@@ -27,14 +27,14 @@ credential as `outboxConsumer: true`.
 
 ### Connect to Core on another host
 
-Use an HTTPS origin in `coreEndpoint`. For explicit HTTP on a trusted network,
-set `allowInsecureCoreHTTP: true`. That connection carries the Core token and
-Message contents in clear text.
+Set `coreEndpoint` to an HTTP or HTTPS origin. HTTP carries the Core token
+and Message contents in clear text.
 
-For direct access, use the numeric address and port that receive the request.
-For HTTPS through a reverse proxy, set upstream `Host` to that Core address
-and port. Trigger requests ignore redirect responses and proxy environment
-settings.
+For direct access, use the address and port that receive the request or the
+hostname configured in Core's `listen`. For HTTPS through a reverse proxy, set
+the upstream `Host` to that Core address and port. Trigger requests ignore redirect responses and proxy environment
+settings. Set `statusListen` to a hostname or IP address with a port. Use
+`:0` to bind to a wildcard address and let the OS choose the port.
 
 ## Configure the DWS Trigger
 

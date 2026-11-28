@@ -290,12 +290,13 @@ supported collections for descending time and ID order. Follow a continuation
 cursor with the same order.
 
 Run `superagent observe --help` for CLI collections, and request the chosen
-collection's `--help` for filters. The CLI accepts a numeric HTTP origin and
-uses the same read API without loading the Trigger configuration or tokens.
+collection's `--help` for filters. The CLI accepts an HTTP or HTTPS origin
+and uses the same read API without loading the Trigger configuration or tokens.
 
-By default, `Host` must match the connection's numeric local endpoint.
-`readAllowedHosts` adds exact `Host` values for `GET` and `HEAD` resource
-reads. Each entry is a DNS name with a port when clients include one.
+`Host` must match the connection's local endpoint or the hostname configured in
+`listen` with the listener's actual port. `readAllowedHosts` adds exact `Host`
+values for `GET` and `HEAD` resource reads. Use DNS names, IPv4 addresses, or
+bracketed IPv6 addresses. Include the port when clients send one.
 `externalURL` sets the address that role Sessions use for MCP.
 
 Core rejects foreign Origins and cross-site Fetch Metadata. Limit access to
@@ -392,7 +393,8 @@ cannot select permissions.
 
 MASS-managed role Sessions connect directly to Core `/v1/mcp` over HTTP.
 `externalURL` optionally sets the base URL for native Session clients. Core
-appends `/v1/mcp`. If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
+appends `/v1/mcp`. MASS requires HTTPS for a role MCP endpoint on another host.
+If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
 upstream `Host` to the local address that receives the request.
 Core writes a private file containing the scoped bearer under `dataDir/mcp-files`
 and passes its absolute path in `headers[].valueFrom.fileKeyRef`. Run Core and
@@ -669,15 +671,15 @@ acceptance, and may redeliver an unsettled event with the original ID. Core
 records input acceptance separately from work completion. See
 [ADR 0002](docs/adr/0002-settle-session-input-with-evidence.md).
 
-### Local operator reconciliation
+### Operator reconciliation
 
 Set `operatorTokenFile` to a distinct private credential with at
-least 32 non-whitespace bytes and bind Core to loopback. Inspection uses
+least 32 non-whitespace bytes. Inspection uses
 `GET /v1/core/session-bindings/{bindingId}/runtime-evidence` to read the saved
 binding, its stop evidence, and a live identity-checked massd snapshot. Submit
 recovery with `POST /v1/core/session-bindings/{bindingId}/recoveries`. The path
-selects the binding. Both require the local Operator credential and a direct
-loopback Core connection.
+selects the binding. Both require the Operator credential and a direct Core
+connection from a non-browser client.
 
 ```sh
 superagent inspect-session-binding SESSION_BINDING_ID --endpoint http://127.0.0.1:24370 \
@@ -790,9 +792,9 @@ StartOrSteer. When the event carries a reference, use the existing
 `get_message` tool for the content blocks. Closing the Topic settles its
 tasks and supersedes unconfirmed delivery events for that lifecycle.
 
-### Local Operator HTTP and CLI
+### Operator HTTP and CLI
 
-Connect directly to loopback Core and send the configured Operator Bearer.
+Connect directly to Core and send the configured Operator Bearer.
 An Operator can create and manage tasks with an omitted `owner`, read all
 task definitions and histories, and trigger an active task immediately.
 Independent task messages route to a sole active subscriber or to the Router.

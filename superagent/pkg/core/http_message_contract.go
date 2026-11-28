@@ -176,7 +176,7 @@ func (s *Server) registerMessageResources(api *httpAPI) {
 		messageQueryParam("source", "Exact Source in the default view. Requires Operator access", &huma.Schema{Type: huma.TypeString}),
 		messageQueryParam("scheduledTaskId", "Exact scheduled task ID in the default view. Requires Operator access", &huma.Schema{Type: huma.TypeString}),
 	)
-	triggerList.Description = "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access over direct loopback. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt."
+	triggerList.Description = "The default view and Router view use trusted reads. The source and scheduledTaskId filters require Operator access through a direct Core connection. A sourceMessageId lookup requires a Source bearer and returns the acceptance receipt."
 	triggerList.Security = append(bearerSecurity(sourceBearer), bearerSecurity(operatorBearer)[0], map[string][]string{})
 	triggerList.Extensions = map[string]any{"x-conditional-security": map[string]any{
 		"sourceMessageId": bearerSecurity(sourceBearer), "source": bearerSecurity(operatorBearer), "scheduledTaskId": bearerSecurity(operatorBearer),

@@ -36,7 +36,7 @@ func (s *Server) registerScheduledTaskResources(api *httpAPI) {
 		op := api.messageOperation(method, path, id, description, response)
 		op.Tags = []string{"Operator"}
 		op.Security = bearerSecurity(operatorBearer)
-		op.Description = "Requires a Core operator Bearer credential and a direct loopback CLI connection."
+		op.Description = "Requires a Core operator Bearer credential and a direct Core connection from a non-browser client."
 		op.Responses["401"] = api.coreError("Operator credential required")
 		return op
 	}

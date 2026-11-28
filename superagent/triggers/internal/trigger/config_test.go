@@ -1,43 +1,44 @@
 package trigger
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestCoreEndpoint(t *testing.T) {
-	tests := []struct {
-		name              string
-		endpoint          string
-		allowInsecureHTTP bool
-		valid             bool
-	}{
-		{name: "IPv4 loopback", endpoint: "http://127.0.0.1:24370", valid: true},
-		{name: "IPv6 loopback", endpoint: "http://[::1]:24370/", valid: true},
-		{name: "loopback without port", endpoint: "http://127.0.0.1"},
-		{name: "remote HTTPS", endpoint: "https://core.example.com", valid: true},
-		{name: "remote HTTP", endpoint: "http://192.0.2.10:5970"},
-		{name: "remote HTTP opt-in", endpoint: "http://192.0.2.10:5970", allowInsecureHTTP: true, valid: true},
-		{name: "credentials", endpoint: "https://user:secret@core.example.com"},
-		{name: "path", endpoint: "https://core.example.com/v1/channel"},
-		{name: "empty query", endpoint: "https://core.example.com?"},
-		{name: "empty fragment", endpoint: "https://core.example.com#"},
-		{name: "unsupported scheme", endpoint: "file://core.example.com", allowInsecureHTTP: true},
+	for _, endpoint := range []string{
+		"http://127.0.0.1",
+		"http://[::1]:24370/",
+		"https://core.example.com",
+		"http://192.0.2.10:5970",
+		"http://core.example.com",
+	} {
+		require.NoError(t, ValidateCoreEndpoint(endpoint), endpoint)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateCoreEndpoint(tt.endpoint, tt.allowInsecureHTTP)
-			if (err == nil) != tt.valid {
-				t.Fatalf("ValidateCoreEndpoint(%q, %t) = %v, want valid=%t", tt.endpoint, tt.allowInsecureHTTP, err, tt.valid)
-			}
-		})
+	for _, endpoint := range []string{
+		"https://user@core.example.com",
+		"https://core.example.com/v1/channel",
+		"https://core.example.com?",
+		"https://core.example.com#",
+		"https://core.example.com:0",
+		"https://[core.example.com]",
+		"http://2001:db8::10",
+		"file://core.example.com",
+	} {
+		require.Error(t, ValidateCoreEndpoint(endpoint), endpoint)
 	}
 }
 
-func TestStatusEndpointStaysOnLoopback(t *testing.T) {
-	if err := ValidateStatusEndpoint("http://127.0.0.1:24371"); err != nil {
-		t.Fatal(err)
-	}
-	for _, endpoint := range []string{"http://192.0.2.10:24371", "https://core.example.com"} {
-		if err := ValidateStatusEndpoint(endpoint); err == nil {
-			t.Fatalf("accepted remote status endpoint %q", endpoint)
-		}
-	}
+func TestStatusAddress(t *testing.T) {
+	require.NoError(t, ValidateStatusEndpoint("http://192.0.2.10:24371"))
+	require.NoError(t, ValidateStatusEndpoint("https://trigger.example.com"))
+	require.Error(t, ValidateStatusEndpoint("https://trigger.example.com/status"))
+	require.NoError(t, ValidateStatusListen("localhost:0"))
+	require.NoError(t, ValidateStatusListen("0.0.0.0:24371"))
+	require.NoError(t, ValidateStatusListen(":24371"))
+	require.Error(t, ValidateStatusListen("localhost"))
+	require.Error(t, ValidateStatusListen("localhost:65536"))
+	require.Error(t, ValidateStatusListen("[localhost]:24371"))
+	require.Error(t, ValidateStatusListen("bad/name:24371"))
 }

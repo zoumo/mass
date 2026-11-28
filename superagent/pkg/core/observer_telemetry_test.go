@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,7 +66,9 @@ func TestObserverTelemetryGateway(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	t.Cleanup(func() { require.NoError(t, traces.Shutdown(context.Background())) })
-	endpoint := startObserverTelemetryCore(t, receiver.URL, core.TelemetryOptions{Traces: traces})
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(receiver.URL, "http://"))
+	require.NoError(t, err)
+	endpoint := startObserverTelemetryCore(t, "http://localhost:"+port+"/collector/", core.TelemetryOptions{Traces: traces})
 	client := &http.Client{Timeout: 2 * time.Second}
 	type response struct {
 		status int
@@ -117,7 +120,7 @@ func TestObserverTelemetryGateway(t *testing.T) {
 		require.Equal(t, "receiver-response", res.body)
 		got := <-forwarded
 		require.Equal(t, http.MethodPost, got.method)
-		require.Equal(t, "/v1/"+signal, got.path)
+		require.Equal(t, "/collector/v1/"+signal, got.path)
 		require.Equal(t, signal, got.body)
 		require.Empty(t, got.query)
 		require.Equal(t, contentType, got.header.Get("Content-Type"))
@@ -136,18 +139,19 @@ func TestObserverTelemetryGateway(t *testing.T) {
 	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodPost, "/status", contentType, nil).status)
 }
 
-func TestObserverTelemetryRequiresLoopbackOrigin(t *testing.T) {
+func TestObserverTelemetryRequiresHTTPBaseURL(t *testing.T) {
 	f := fixtureAt(t)
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
 	for _, endpoint := range []string{
-		"http://example.com:4320", "http://127.0.0.1", "https://127.0.0.1:4320",
-		"http://user:secret@127.0.0.1:4320", "http://127.0.0.1:4320/prefix", "http://127.0.0.1:4320?secret",
+		"http:///collector", "ftp://collector.example.com", "https://collector.example.com#fragment",
+		"http://user@collector.example.com", "http://collector.example.com?secret",
+		"http://collector.example.com:65536/otlp", "https://[not-an-ip]/otlp",
 	} {
 		cfg.WebOTLPEndpoint = endpoint
 		server, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{})
 		require.Nil(t, server)
-		require.EqualError(t, err, "invalid_argument: Web OTLP endpoint must be an HTTP loopback origin with a port")
+		require.EqualError(t, err, "invalid_argument: Web OTLP endpoint must be an HTTP or HTTPS base URL without credentials, a query, or a fragment")
 	}
 }
 

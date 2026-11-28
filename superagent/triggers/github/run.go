@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -42,7 +43,8 @@ func runGitHub(ctx context.Context, c githubConfig, api *githubAPI, core *corecl
 	server := &http.Server{ReadHeaderTimeout: 3 * time.Second, Handler: http.HandlerFunc(t.serveStatus)}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
-	if err := t.log.Encode(map[string]string{"status": "starting", "statusEndpoint": "http://" + listener.Addr().String(), "source": githubSource}); err != nil {
+	statusEndpoint := url.URL{Scheme: "http", Host: listener.Addr().String()}
+	if err := t.log.Encode(map[string]string{"status": "starting", "statusEndpoint": statusEndpoint.String(), "source": githubSource}); err != nil {
 		return err
 	}
 	for ctx.Err() == nil {

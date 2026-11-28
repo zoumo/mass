@@ -79,14 +79,14 @@ Restart Core after changing `remoteComputer`. The MCP subprocess reads its
 own YAML file at startup. If a binding already has a Session with different
 remote computer options, Core blocks new input with
 `remote_computer_configuration_changed`. Use
-[operator reconciliation in replace mode](API.md#local-operator-reconciliation)
+[operator reconciliation in replace mode](API.md#operator-reconciliation)
 to release its current Session and prepare a new one with the updated options.
 
 ## Scheduled tasks
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent
 tasks and triggering from a local script or CLI, configure `operatorTokenFile`
-and use a direct loopback connection to Core. Independent schedules also run
+and connect directly to Core. Independent schedules also run
 in standalone Core without Session execution. Their Router events remain
 pending until a Router can handle them.
 
@@ -123,14 +123,14 @@ To switch between embedded and standalone MASS:
    `massd` with the same directory and set `massd.endpoint` in Core.
 4. Restart Core. Compare the Session IDs, resource UIDs, and specs of existing
    bindings with the pre-cutover records. Reconcile uncertain input before
-   manually resubmitting it. See [operator reconciliation](API.md#local-operator-reconciliation).
+   manually resubmitting it. See [operator reconciliation](API.md#operator-reconciliation).
 
 ### Accessing embedded MASS with massctl
 
-Keep the Core listener on loopback. Set `massd.embedded.expose.tokenFile` to a
-private file with a dedicated MASS token. Use at least 32 bytes without
-whitespace or control characters. Use a different credential for each of Core
-Source, Operator, and role MCP access. Reserve the `cap_` prefix for role MCP.
+Set `massd.embedded.expose.tokenFile` to a private file with a dedicated MASS
+token of at least 32 bytes. The token can't contain whitespace or control
+characters. Use separate credentials for Core Source, Operator, and role MCP
+access. Reserve the `cap_` prefix for role MCP.
 The MASS token grants access to all Runtime and Session operations, including
 Sessions managed by Core.
 
@@ -205,7 +205,8 @@ after Watchdog exits and starts with an empty snapshot after restart.
    The response lists Core, massd, GitHub, and DWS. Scheduled task counts appear under
    `core.scheduledTaskStates`. A Trigger failure can make `/status` report `degraded`
    while `/readyz` continues to report Core admission. For adapter details,
-   use the corresponding loopback address in `triggerEndpoints`.
+   use the corresponding address in `triggerEndpoints`. Compose reports the
+   actual bound port and uses a loopback address for a wildcard listener.
 5. If you enabled embedded MASS exposure, use `massdEndpoint` with its
    dedicated token. Use `/massd/livez` and `/massd/readyz` at the Core origin
    to check the exposed instance.
@@ -251,7 +252,7 @@ The gateway checks the browser Origin against the incoming scheme and host. It
 checks Fetch Metadata and normalizes `Host` before forwarding to Core. Keep
 backend listeners private. Configure `externalURL` with the origin that role
 Sessions use for MCP, including the gateway origin if they connect there.
-Use a direct loopback Core endpoint for Operator commands.
+Connect directly to Core for Operator commands.
 
 If you used `observerAllowedHosts`, use `readAllowedHosts` for additional
 direct Core read hosts. The gateway already sends the Core authority as `Host`.
@@ -306,7 +307,7 @@ See [the Core API](API.md) for the resource contract.
 
 - Use `inspect-session-binding` before `recover-input` to reconcile an uncertain
   dispatch, settle a retired binding, or replace a Session.
-  See [operator reconciliation](API.md#local-operator-reconciliation).
+  See [operator reconciliation](API.md#operator-reconciliation).
 - To trace a record across Core and MASS, see [local telemetry](telemetry/README.md).
 
 ## Checks
