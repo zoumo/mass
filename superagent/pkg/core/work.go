@@ -37,7 +37,7 @@ type Issue struct {
 	Reports                   []Report          `json:"reports,omitempty"`
 	PullRequests              []pullRequestLink `json:"pullRequests,omitempty"`
 	Workspace                 string            `json:"workspace"`
-	Template                  string            `json:"template,omitempty"`
+	Template                  string            `json:"template"`
 	ExecutionProfile          ExecutionProfile  `json:"executionProfile"`
 	Materials                 []Material        `json:"materials,omitempty"`
 	Status                    string            `json:"status"`
@@ -344,7 +344,7 @@ func (s *Store) createIssue(r CreateIssueRequest) workMutation {
 		if !filepath.IsAbs(workspace) {
 			return nil, problem("invalid_argument", "workspace must be an absolute path")
 		}
-		profile, err := s.config.Sessions.issueProfile(r.Template)
+		profile, err := s.config.Sessions.Issue.issueProfile(r.Template)
 		if err != nil {
 			return nil, err
 		}
@@ -406,7 +406,7 @@ func (s *Store) startIssue(r StartIssueRequest) workMutation {
 			return nil, problem("conflict", "Issue already has a current SessionBinding")
 		}
 		if r.Template != nil {
-			issue.ExecutionProfile, err = s.config.Sessions.issueProfile(*r.Template)
+			issue.ExecutionProfile, err = s.config.Sessions.Issue.issueProfile(*r.Template)
 			if err != nil {
 				return nil, err
 			}

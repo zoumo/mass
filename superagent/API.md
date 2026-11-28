@@ -352,9 +352,8 @@ model or effort leaves that setting to the Agent.
 
 New Router Sessions, Topic Sessions and Issue Sessions use `config.permissionPreset: fullAccess`
 and `features.agentQuestions: false`. This applies to replacement Sessions and
-overrides the Runtime default for native questions. Remove `permissionPreset`
-from Superagent role profiles and Issue templates when upgrading. An existing
-Session keeps its saved spec when resumed or reused.
+overrides the Runtime default for native questions. An existing Session keeps
+its saved spec when resumed or reused.
 
 Router and Topic use the Outbox to request clarification and receive answers
 through incoming Messages. Issue Sessions submit a `blocked` Report when they need
@@ -372,7 +371,6 @@ Core reads custom templates and their descriptions from the startup YAML. On res
 configuration preserves binding identities. A changed Router profile fails
 startup with `failed_precondition`. Existing Topic generation specs stay
 fixed. A newly created Topic binding uses the current Topic profile.
-An upgraded intake-only data directory processes its pending Router events.
 
 Core prepares a binding before submitting business input. It queries MASS by
 fixed namespace and name, then creates the Session without initial business
@@ -520,7 +518,7 @@ Core saves the template name and its execution profile in the Issue.
 `start_issue` can select a different template by name before it creates a new
 SessionBinding. Omitting `template` reuses the saved profile, even if the
 template changed or was removed. Issue reads include the saved `template`
-when present and `executionProfile: {runtimeRef, model, effort?}`. An
+and `executionProfile: {runtimeRef, model, effort?}`. An
 identical create retry returns the original Issue identity and, for
 `start: true`, its initial SessionBinding.
 

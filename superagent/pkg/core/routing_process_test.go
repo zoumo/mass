@@ -1087,22 +1087,27 @@ func TestRoutingPreviousSchemaRefused(t *testing.T) {
 	}
 }
 
-func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
+func TestRoutingRestartWithPendingEvents(t *testing.T) {
 	boundary := newRouteBoundaryWithRuntime(t, "fixture", "claude", "codex")
 	boundary.driver.allowResume = true
 	f := fixtureAt(t)
-	store, err := core.OpenStore(core.Config{DataDir: f.data}, core.TelemetryOptions{})
-	require.NoError(t, err)
-	m, err := store.SubmitTriggerMessage(t.Context(), fixtureTriggerSource, input("intake-before-execution"))
-	require.NoError(t, err)
-	require.NoError(t, store.Close())
 	origin := strings.TrimSuffix(boundary.url, "/jsonrpc")
 	config, err := os.ReadFile(f.config)
 	require.NoError(t, err)
-	write(t, f.config, string(config)+"massd:\n  endpoint: "+origin+"\n")
-	credentials := filepath.Join(f.data, "mcp-files")
+	const externalMassd = "massd:\n  endpoint: "
+	write(t, f.config, string(config)+externalMassd+unavailableFixtureMassd+"\n")
 	p := f.start()
+	pending := waitBinding(t, p, "router", "", "pending")
+	m := submit(t, p, f, input("queued-before-restart"))
+	waitWorkEvent(t, p, m.EventID, "pending")
+	p.stop(t, false)
+
+	configured := string(config) + externalMassd + origin + "\n"
+	write(t, f.config, configured)
+	credentials := filepath.Join(f.data, "mcp-files")
+	p = f.start()
 	router := waitBinding(t, p, "router", "", "ready")
+	require.Equal(t, pending.ID, router.ID)
 	require.Equal(t, core.ExecutionProfile{RuntimeRef: "claude"}, router.ExecutionProfile)
 	require.Equal(t, filepath.Join(f.data, "router-workspace"), router.Workspace)
 	info, err := os.Stat(credentials)
@@ -1110,22 +1115,17 @@ func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 	waitDelivered(t, p, m.MessageID, "router", "")
 	p.stop(t, false)
-	original, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	write(t, f.config, strings.Replace(string(original), origin, "ws://127.0.0.1:1/jsonrpc", 1))
-	p = f.start()
-	waitBinding(t, p, "router", "", "pending")
-	require.Len(t, bindings(t, p), 1)
-	p.stop(t, false)
-	write(t, f.config, strings.Replace(string(original), origin, "ws://", 1))
+	write(t, f.config, strings.Replace(configured, origin, "ws://", 1))
 	_, err = core.LoadConfig(f.config)
 	require.Error(t, err)
-	write(t, f.config, string(original))
+	write(t, f.config, configured)
 	p = f.start()
-	require.Equal(t, router.ID, waitBinding(t, p, "router", "", "ready").ID)
+	restarted := waitBinding(t, p, "router", "", "ready")
+	require.Equal(t, router.ID, restarted.ID)
+	require.Equal(t, router.SessionUID, restarted.SessionUID)
+	require.Len(t, bindings(t, p), 1)
 	require.Len(t, page(t, p, "trigger-messages").Items, 1)
 	require.Len(t, routingEvents(t, p, m.MessageID), 1)
-	t.Log("intake delivery resumed with its original ID; massd endpoint came from startup configuration and the existing binding identity was retained")
 }
 
 func TestRoutedMessageAgentPromptView(t *testing.T) {

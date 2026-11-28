@@ -45,7 +45,7 @@ type Store struct {
 	hasTraceAssociations bool
 }
 
-// OpenStore opens the configured Core database and registers its telemetry.
+// OpenStore opens the Core database using the resolved configuration.
 func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	ctx, cancel := context.WithTimeout(context.Background(), storeStartupTimeout)
 	defer cancel()
@@ -68,7 +68,7 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, problem("invalid_argument", "sessions.router.workspace overlaps a Core state path")
 	}
 	for _, e := range entries {
-		if c.Sessions != nil && (e.Name() == routerWorkspaceDir || e.Name() == workspaceEntry) {
+		if e.Name() == routerWorkspaceDir || e.Name() == workspaceEntry {
 			if err := checkCoreSubdirectory(filepath.Join(c.DataDir, e.Name()), "sessions.router.workspace"); err != nil {
 				return nil, err
 			}
@@ -80,7 +80,7 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 			}
 			continue
 		}
-		if c.Sessions != nil && e.Name() == mcpCredentialsDir {
+		if e.Name() == mcpCredentialsDir {
 			info, err := e.Info()
 			if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 				return nil, problem("failed_precondition", "Core subdirectory "+e.Name()+" must be private")
@@ -189,10 +189,8 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	if err := initializeRouter(ctx, tx, c); err != nil {
 		return nil, err
 	}
-	if workspace != "" {
-		if err := prepareRouterWorkspace(c.DataDir, workspace, relativeWorkspace); err != nil {
-			return nil, err
-		}
+	if err := prepareRouterWorkspace(c.DataDir, workspace, relativeWorkspace); err != nil {
+		return nil, err
 	}
 	if err := recoverInternalEvents(ctx, tx); err != nil {
 		return nil, err
@@ -235,9 +233,6 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 // routerWorkspace identifies the configured directory and any path Core must own
 // inside dataDir.
 func (c Config) routerWorkspace() (workspace, relative string) {
-	if c.Sessions == nil {
-		return "", ""
-	}
 	workspace = c.Sessions.Router.Workspace
 	if rel, err := filepath.Rel(c.DataDir, workspace); err == nil && rel != "." && filepath.IsLocal(rel) {
 		return workspace, rel

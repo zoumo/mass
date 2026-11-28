@@ -112,22 +112,13 @@ func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (
 	if instance != nil {
 		s.massdHTTP = http.StripPrefix(MassdMountPath, instance.Handler())
 	}
-	if c.Sessions != nil {
-		if err := store.resetReadyBindings(ctx); err != nil {
-			return nil, err
-		}
+	if err := store.resetReadyBindings(ctx); err != nil {
+		return nil, err
 	}
 	life, cancel := context.WithCancel(context.Background())
 	s.executionCancel = cancel
 	s.executionDone = make(chan struct{})
-	if c.Sessions != nil {
-		go s.coordinate(life)
-	} else {
-		go func() {
-			defer close(s.executionDone)
-			store.scanScheduledTasks(life)
-		}()
-	}
+	go s.coordinate(life)
 	s.observerLife, s.observerCancel = context.WithCancel(context.Background())
 	routes := s.newHTTPAPI()
 	s.http = &http.Server{Handler: s.guardHTTP(routes.router), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}

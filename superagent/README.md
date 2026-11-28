@@ -46,7 +46,7 @@ Core resource reads need no login. Keep the Core listener within a network
 boundary for trusted readers. When `listen` uses a wildcard, use a
 concrete numeric address to reach Core.
 
-### Reuse an existing Core data directory
+### Restart Core
 
 For a fresh rollout, point `dataDir` at a separate, empty directory. Keep the
 previous directory and its binary together to access the prior state. Core
@@ -61,64 +61,9 @@ installations share `massd`, give them distinct `sessions.namespace` values.
 For a fresh Trigger database or a restart, follow the
 [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
 
-### Upgrade deployed Core data and credentials
-
-Follow the [single-service migration procedure](docs/migrate-single-service.md)
-to keep data, credentials, and Session history across the upgrade and rollback.
-
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
 `unavailable` without an acceptance receipt.
-
-### Migrate Session configuration
-
-For `superagent serve`, edit the root `sessions` section. For
-`superagent compose`, edit `core.sessions`.
-
-| Previous field | New field |
-| --- | --- |
-| `sessions.roles.router` | `sessions.router` |
-| `sessions.routerWorkspace` | `sessions.router.workspace` |
-| `sessions.roles.topic` | `sessions.topic` |
-| `sessions.issueTemplates` | `sessions.issue.templates` |
-
-Copy the existing values to the new fields. Use the same `sessions.namespace`,
-Core and MASS data directories, and role MCP endpoint. Stop the current Core
-and start the updated binary with the new YAML. Compare existing Session names,
-binding IDs, and Session specs with their values before the restart.
-
-#### Upgrade to named Issue templates
-
-For an existing schema 28 deployment, keep the Core and MASS data directories.
-Use the [single-service migration procedure](docs/migrate-single-service.md)
-when upgrading an older Core schema.
-
-1. Pause intake and settle in-flight writes and Session inputs. Stop Core and
-   take a consistent backup of the Core and MASS data. Keep the previous
-   binaries and configuration with the backup for rollback.
-2. Give each configured Issue template a unique `name`. Keep the saved Router
-   profile, its workspace, the Session namespace, and the role MCP address
-   when a Router binding already exists. Set a fixed Core listen port or a
-   stable `externalURL` if the previous deployment used an ephemeral listen
-   port without a role MCP address.
-3. Restart Core with the updated YAML. A directory that previously had no
-   roles gets the default Router binding and resumes queued routing. Existing
-   Issues keep their saved execution profiles, including Issues created
-   before templates had names.
-4. For each existing Topic Session that uses the old template instructions,
-   record its binding ID. Inspect the binding with
-   `superagent inspect-session-binding`. Use `superagent recover-input --mode replace`
-   after checking the original owner and reconciling its inputs. Follow the
-   [operator procedure](API.md#operator-reconciliation) if release requires
-   stopping a shared Runtime. Keep the original Session and history for readback.
-5. Confirm the replacement Topic binding is ready. Verify the Topic can read
-   the named template list and that its `create_issue` tool requires
-   `template`. Confirm queued events reached their expected bindings before
-   resuming intake.
-
-To roll back, stop the new Core and retain its data for reconciliation. Restore
-the stopped pre-upgrade data backup, previous binaries, and configuration.
-Reconcile work admitted after the backup before replaying it.
 
 ### Enable a remote computer
 
