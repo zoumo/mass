@@ -293,7 +293,10 @@ func superagentBinary(t *testing.T) string {
 func runCore(t *testing.T) (string, *sql.DB) {
 	t.Helper()
 	dir := t.TempDir()
-	server, err := core.StartWithContext(t.Context(), core.Config{DataDir: dir, Listen: "127.0.0.1:0"}, core.TelemetryOptions{})
+	config, err := core.LoadComposeConfig(filepath.Join(dir, "stack.yaml"), strings.NewReader(
+		"dataDir: .\nlisten: 127.0.0.1:0\nexternalURL: http://127.0.0.1:24370\nmassd: {endpoint: 'ws://127.0.0.1:1/jsonrpc'}\n"))
+	require.NoError(t, err)
+	server, err := core.StartWithContext(t.Context(), config, core.TelemetryOptions{})
 	require.NoError(t, err)
 	served := make(chan error, 1)
 	go func() { served <- server.Serve() }()
@@ -323,7 +326,7 @@ func seedReports(t *testing.T, db *sql.DB) {
 		id := fmt.Sprintf("mass-t1-i%d", n)
 		binding, event := "binding-"+id, fmt.Sprintf("evt-%d", n)
 		issue := core.Issue{
-			ID: id, TopicID: "mass-t1", Status: "active", CurrentSessionBindingID: binding,
+			ID: id, TopicID: "mass-t1", Status: "active", Template: "default", CurrentSessionBindingID: binding,
 			Requirements: "Confirm the fixture output is healthy.", RequirementsRevision: 1,
 			CreatedAt: at.Format(time.RFC3339Nano), UpdatedAt: at.Format(time.RFC3339Nano),
 			Reports: []core.Report{{

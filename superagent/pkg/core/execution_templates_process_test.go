@@ -1,7 +1,6 @@
 package core_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -73,15 +72,6 @@ func TestExecutionTemplateConfig(t *testing.T) {
 		{"unknown template field", "description: Review results", "description: Review results\n        other: value", "sessions.issue.templates[1]"},
 		{"numeric model", "model: router-model", "model: 123", "sessions.router.model"},
 		{"numeric effort", "effort: medium", "effort: 2", "sessions.issue.templates[0].effort"},
-		{"numeric permission preset", "model: router-model", "model: router-model\n    permissionPreset: 2", "remove permissionPreset from sessions.router"},
-		{"boolean permission preset", "model: topic-model", "model: topic-model\n    permissionPreset: true", "remove permissionPreset from sessions.topic"},
-		{"invalid permission preset", "model: issue-model", "model: issue-model\n        permissionPreset: fullaccess", "remove permissionPreset from sessions.issue.templates[0]"},
-		{"null permission preset", "model: review-model", "model: review-model\n        permissionPreset: null", "remove permissionPreset from sessions.issue.templates[1]"},
-		{"legacy workspace field", "sessions:", "sessions:\n  routerWorkspace: .", "sessions"},
-		{"legacy roles field", "sessions:", "sessions:\n  roles: {}", "sessions"},
-		{"legacy templates field", "sessions:", "sessions:\n  issueTemplates: []", "sessions"},
-		{"removed execution block", "sessions:", "execution:", "configuration"},
-		{"removed MCP command", "sessions:", "sessions:\n  mcpCommand: superagent", "sessions"},
 		{"remote cleartext", "sessions:", "externalURL: http://core.example.com\nsessions:", "externalURL"},
 		{"embedded credentials", "sessions:", "externalURL: https://user:pass@core.example.com\nsessions:", "externalURL"},
 		{"endpoint query", "sessions:", "externalURL: https://core.example.com?token=value\nsessions:", "externalURL"},
@@ -186,55 +176,6 @@ func assertTemplateInputs(t *testing.T, topic *roleMCPClient) {
 		}
 	}
 	require.Equal(t, 2, checked)
-}
-
-func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
-	peer := newNativeSubmitPeer(t)
-	endpoint, massd := startEventTestMassd(t, peer)
-	f, _ := eventFixture(t, endpoint)
-	config, err := core.LoadConfig(f.config)
-	require.NoError(t, err)
-	store, err := core.OpenStore(config, core.TelemetryOptions{})
-	require.NoError(t, err)
-	require.NoError(t, store.Close())
-
-	db, err := sql.Open("sqlite", filepath.Join(f.data, "core.sqlite"))
-	require.NoError(t, err)
-	defer db.Close()
-	var body, saved []byte
-	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT body,spec FROM session_bindings WHERE role='router'").Scan(&body, &saved))
-	var binding core.SessionBinding
-	require.NoError(t, json.Unmarshal(body, &binding))
-	var spec resource.SessionSpec
-	require.NoError(t, json.Unmarshal(saved, &spec))
-	spec.Config.PermissionPreset = agent.PermissionPresetManualReview
-	spec.Features = nil
-	saved, err = json.Marshal(spec)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), "UPDATE session_bindings SET spec=? WHERE id=?", saved, binding.ID)
-	require.NoError(t, err)
-
-	credential := testCapabilityPath(f, binding)
-	require.NoError(t, os.MkdirAll(filepath.Dir(credential), 0o700))
-	write(t, credential, "AUTHORIZATION='Bearer synthetic-initial-token'\n")
-	var original resource.Session
-	require.NoError(t, massd.CreateSession(t.Context(), resource.Session{
-		Metadata: resource.Metadata{Namespace: binding.Namespace, Name: binding.Name}, Spec: spec,
-	}, &original))
-	ref := resource.SessionRef{SessionID: original.Status.SessionID}
-	require.NoError(t, massd.CloseSession(t.Context(), ref, nil))
-
-	p := f.start()
-	ready := waitBinding(t, p, "router", "", "ready")
-	require.Equal(t, original.Status.SessionID, ready.SessionID)
-	require.Equal(t, original.Metadata.UID, ready.SessionUID)
-	var resumed resource.Session
-	require.NoError(t, massd.GetSession(t.Context(), ref, &resumed))
-	require.Equal(t, spec, resumed.Spec)
-	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(true), RestrictLocalTools: new(false)}, resumed.Status.EffectiveFeatures)
-	native, ok := peer.resumeConfigs.Load(ready.SessionID)
-	require.True(t, ok)
-	require.Equal(t, *spec.Config, native)
 }
 
 func TestSingleIssueTemplateRequiresName(t *testing.T) {

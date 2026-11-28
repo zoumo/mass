@@ -62,7 +62,7 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(reader.client.CloseIdleConnections)
 
-	store, err := OpenStore(Config{DataDir: t.TempDir()}, TelemetryOptions{})
+	store, err := OpenStore(testStoreConfig(t), TelemetryOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	server := &Server{observerTraces: reader, store: store}
@@ -95,7 +95,7 @@ func TestObserverPerformanceProjectsRangeSamples(t *testing.T) {
 }
 
 func TestObserverPerformanceScopesOpenTelemetryQueries(t *testing.T) {
-	store, err := OpenStore(Config{DataDir: t.TempDir()}, TelemetryOptions{})
+	store, err := OpenStore(testStoreConfig(t), TelemetryOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 

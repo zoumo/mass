@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,12 +15,21 @@ import (
 	"github.com/zoumo/mass/massd/pkg/runtime"
 )
 
+func testStoreConfig(t *testing.T) Config {
+	t.Helper()
+	config, err := LoadComposeConfig(filepath.Join(t.TempDir(), "core.yaml"), strings.NewReader("{}"))
+	require.NoError(t, err)
+	return config
+}
+
 func TestEventCandidates(t *testing.T) {
 	ctx := t.Context()
-	store, err := OpenStore(Config{DataDir: t.TempDir()}, TelemetryOptions{})
+	store, err := OpenStore(testStoreConfig(t), TelemetryOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.Empty(t, store.eventCandidates(ctx))
+	var routerBindingID string
+	require.NoError(t, store.db.QueryRowContext(ctx, "SELECT id FROM session_bindings WHERE role='router'").Scan(&routerBindingID))
+	require.Equal(t, []eventCandidate{{id: routerBindingID, role: "router"}}, store.eventCandidates(ctx))
 
 	for _, binding := range []struct {
 		id, role, owner, state, due, body string
@@ -33,7 +43,6 @@ func TestEventCandidates(t *testing.T) {
 		{"current-issue", "issue", "issue-3", "ready", "", `{}`, 2},
 		{"ready-issue", "issue", "issue-4", "ready", "", `{"stop":{"status":"requested"}}`, 1},
 		{"issue-with-input", "issue", "issue-5", "ready", "", `{}`, 1},
-		{"router", "router", "", "ready", "", `{}`, 1},
 		{"sent-topic", "topic", "topic-2", "ready", "", `{}`, 1},
 		{"due", "topic", "topic-3", "pending", after(-time.Hour), `{}`, 1},
 		{"first-attempt", "topic", "topic-4", "pending", "", `{}`, 1},
@@ -44,6 +53,8 @@ func TestEventCandidates(t *testing.T) {
 			binding.id, binding.role, binding.owner, binding.state, binding.due, binding.body, binding.generation, now(), binding.id)
 		require.NoError(t, err)
 	}
+	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET state='ready' WHERE id=?", routerBindingID)
+	require.NoError(t, err)
 	for _, event := range []struct {
 		id, status string
 		recipient  eventIdentity
@@ -70,23 +81,23 @@ func TestEventCandidates(t *testing.T) {
 	}
 
 	require.Equal(t, []eventCandidate{
+		{id: routerBindingID, role: "router"},
 		{id: "current-topic", role: "topic"},
 		{id: "stop-only", role: "issue", stop: true},
 		{id: "ready-issue", role: "issue", stop: true},
 		{id: "issue-with-input", role: "issue"},
-		{id: "router", role: "router"},
 		{id: "due", role: "topic"},
 		{id: "first-attempt", role: "topic"},
 	}, store.eventCandidates(ctx))
 
-	router := eventCandidate{id: "router", role: "router"}
-	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET state='pending',next_attempt_at=? WHERE id='router'", after(time.Hour))
+	router := eventCandidate{id: routerBindingID, role: "router"}
+	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET state='pending',next_attempt_at=? WHERE id=?", after(time.Hour), routerBindingID)
 	require.NoError(t, err)
 	require.NotContains(t, store.eventCandidates(ctx), router)
-	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET state='ready',owner_id='other' WHERE id='router'")
+	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET state='ready',owner_id='other' WHERE id=?", routerBindingID)
 	require.NoError(t, err)
 	require.NotContains(t, store.eventCandidates(ctx), router)
-	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET owner_id='',next_attempt_at='' WHERE id='router'")
+	_, err = store.db.ExecContext(ctx, "UPDATE session_bindings SET owner_id='',next_attempt_at='' WHERE id=?", routerBindingID)
 	require.NoError(t, err)
 
 	_, err = store.db.ExecContext(ctx, "UPDATE internal_events SET status='sent' WHERE status IN ('pending','dispatching')")
@@ -130,9 +141,9 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 		ExecutionProfile: ExecutionProfile{RuntimeRef: "agent", Model: "model", Effort: "medium"},
 		Close:            &BindingClose{Reusable: true},
 	}
-	config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", Sessions: &SessionsConfig{
-		Router: RouterSessionConfig{ExecutionProfile: previous.ExecutionProfile, Workspace: t.TempDir()}, Namespace: "routing",
-	}}
+	config := testStoreConfig(t)
+	config.Sessions.Router.ExecutionProfile = previous.ExecutionProfile
+	config.Sessions.Namespace = "routing"
 	store, err := OpenStore(config, TelemetryOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -145,14 +156,11 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 	changedRemote := &RemoteComputerConfig{CUA: CUAConfig{Command: "/cua-mcp", ConfigFile: "/another.yaml"}}
 	for _, tc := range []struct {
 		name                      string
-		saved                     agent.PermissionPreset
-		features                  *runtime.SessionFeatures
 		savedRemote, wantedRemote *RemoteComputerConfig
 		modify                    func(*SessionBinding)
 		reuse                     bool
 	}{
 		{name: "matching location and model", reuse: true},
-		{name: "preserves saved permissions and features", saved: agent.PermissionPresetManualReview, features: &runtime.SessionFeatures{AgentQuestions: new(false)}, reuse: true},
 		{name: "runtime", modify: func(b *SessionBinding) { b.RuntimeRef = "other" }},
 		{name: "model", modify: func(b *SessionBinding) { b.Model = "other" }},
 		{name: "effort", modify: func(b *SessionBinding) { b.Effort = "" }},
@@ -164,8 +172,6 @@ func TestSessionReuseRequiresMatchingProfileAndLocation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			spec, err := makeSpec(config, previous)
 			require.NoError(t, err)
-			spec.Config.PermissionPreset = tc.saved
-			spec.Features = tc.features
 			tc.savedRemote.applySessionTools(previous.Role, &spec)
 			require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET spec=?2 WHERE id=?1", spec, previous.ID))
 			next := SessionBinding{Role: previous.Role, ExecutionProfile: previous.ExecutionProfile, Workspace: previous.Workspace, Namespace: previous.Namespace, Name: "new"}
@@ -200,10 +206,8 @@ func TestRoleMCPEndpointDefaultsToLoopback(t *testing.T) {
 }
 
 func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
-	config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", ExternalURL: "https://core.example.com", Sessions: &SessionsConfig{
-		Router:    RouterSessionConfig{ExecutionProfile: ExecutionProfile{RuntimeRef: "agent", Model: "model"}, Workspace: t.TempDir()},
-		Namespace: "routing",
-	}}
+	config := testStoreConfig(t)
+	config.ExternalURL = "https://core.example.com"
 	store, err := OpenStore(config, TelemetryOptions{})
 	require.NoError(t, err)
 	tx, err := store.db.BeginTx(t.Context(), nil)
@@ -218,7 +222,6 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	require.Equal(t, agent.PermissionPresetFullAccess, spec.Config.PermissionPreset)
 	require.Equal(t, &runtime.SessionFeatures{AgentQuestions: new(false)}, spec.Features)
 	require.Contains(t, spec.SystemPrompt, "deduplicate by event_id")
-	spec.SystemPrompt = "Previously persisted Router instructions."
 	require.NoError(t, enqueueInternalEvent(t.Context(), tx, internalEvent{
 		ID: "saved-event", Kind: routeRequestKind,
 		Sender: eventIdentity{Kind: "core"}, Recipient: eventIdentity{Kind: "router"},
@@ -226,9 +229,6 @@ func TestRouterInitializationKeepsPersistedSessionSpec(t *testing.T) {
 	}))
 	_, err = tx.ExecContext(t.Context(), "UPDATE internal_events SET created_at=? WHERE event_id='saved-event'", time.Now().Add(-time.Minute).Format(time.RFC3339Nano))
 	require.NoError(t, err)
-	spec.Config.PermissionPreset = agent.PermissionPresetManualReview
-	spec.Features = nil
-	require.NoError(t, putJSON(t.Context(), tx, "UPDATE session_bindings SET spec=?2 WHERE id=?1", spec, binding.ID))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, store.Close())
 
@@ -271,10 +271,7 @@ func TestClaudeRouterReplacementRespectsInputAndOwnership(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
-			config := Config{DataDir: t.TempDir(), Listen: "127.0.0.1:24370", Sessions: &SessionsConfig{
-				Router:    RouterSessionConfig{ExecutionProfile: ExecutionProfile{RuntimeRef: "agent", Model: "model"}, Workspace: t.TempDir()},
-				Namespace: "routing",
-			}}
+			config := testStoreConfig(t)
 			store, err := OpenStore(config, TelemetryOptions{})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, store.Close()) })

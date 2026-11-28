@@ -24,7 +24,7 @@ type Source struct {
 
 type Config struct {
 	Massd            *MassdConfig          `mapstructure:"massd"`
-	Sessions         *SessionsConfig       `mapstructure:"sessions"`
+	Sessions         SessionsConfig        `mapstructure:"sessions"`
 	RemoteComputer   *RemoteComputerConfig `mapstructure:"remoteComputer"`
 	DataDir          string                `mapstructure:"dataDir"`
 	Listen           string                `mapstructure:"listen"`
@@ -170,14 +170,12 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	return c, nil
 }
 
-var errRemovedPermissionPreset = errors.New("remove permissionPreset")
-
 const routerWorkspaceDir = "router-workspace"
 
 // takeSessionsConfig decodes sessions before Viper normalizes the rest of the
 // configuration. Both entry points use the same strict role field types.
-func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
-	sessions := &SessionsConfig{
+func takeSessionsConfig(fields map[string]any) (SessionsConfig, error) {
+	sessions := SessionsConfig{
 		Router: RouterSessionConfig{ExecutionProfile: ExecutionProfile{RuntimeRef: "claude"}},
 		Topic:  ExecutionProfile{RuntimeRef: "codex"},
 	}
@@ -187,22 +185,19 @@ func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
 			continue
 		}
 		if found {
-			return nil, problem("invalid_argument", "configuration contains duplicate sessions fields")
+			return SessionsConfig{}, problem("invalid_argument", "configuration contains duplicate sessions fields")
 		}
 		found = true
 		if _, ok := raw.(map[string]any); !ok {
-			return nil, problem("invalid_argument", "sessions must be a mapping")
+			return SessionsConfig{}, problem("invalid_argument", "sessions must be a mapping")
 		}
 		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 			ErrorUnused: true,
-			Result:      sessions,
+			Result:      &sessions,
 			RootName:    "sessions",
 			DecodeHook: mapstructure.DecodeHookFuncType(func(_, _ reflect.Type, data any) (any, error) {
 				mapping, _ := data.(map[string]any)
-				for field, value := range mapping {
-					if strings.EqualFold(field, "permissionPreset") {
-						return nil, errRemovedPermissionPreset
-					}
+				for _, value := range mapping {
 					if value == nil {
 						return nil, errors.New("session fields must not be null")
 					}
@@ -211,16 +206,13 @@ func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
 			}),
 		})
 		if err != nil {
-			return nil, err
+			return SessionsConfig{}, err
 		}
 		if err := decoder.Decode(raw); err != nil {
 			if field, ok := errors.AsType[*mapstructure.DecodeError](err); ok {
-				if errors.Is(field, errRemovedPermissionPreset) {
-					return nil, problem("invalid_argument", "remove permissionPreset from "+field.Name()+". New Sessions use fullAccess")
-				}
-				return nil, problem("invalid_argument", field.Name()+" contains an unknown field or invalid value")
+				return SessionsConfig{}, problem("invalid_argument", field.Name()+" contains an unknown field or invalid value")
 			}
-			return nil, problem("invalid_argument", "sessions contains unknown or invalid fields")
+			return SessionsConfig{}, problem("invalid_argument", "sessions contains unknown or invalid fields")
 		}
 		delete(fields, name)
 	}
@@ -235,9 +227,6 @@ func (c Config) String() string { return "superagent configuration" }
 const mcpCredentialsDir = "mcp-files"
 
 func (c Config) prepareMCPFiles() error {
-	if c.Sessions == nil {
-		return nil
-	}
 	dir := filepath.Join(c.DataDir, mcpCredentialsDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return problem("unavailable", "cannot prepare MCP credentials directory")

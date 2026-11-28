@@ -93,15 +93,13 @@ func (p ExecutionProfile) validate(field string) error {
 	return nil
 }
 
-func (c *SessionsConfig) issueProfile(name string) (ExecutionProfile, error) {
+func (c IssueSessionConfig) issueProfile(name string) (ExecutionProfile, error) {
 	if strings.TrimSpace(name) == "" {
 		return ExecutionProfile{}, problem("invalid_argument", "template is required")
 	}
-	if c != nil {
-		for _, template := range c.Issue.Templates {
-			if template.Name == name {
-				return template.ExecutionProfile, nil
-			}
+	for _, template := range c.Templates {
+		if template.Name == name {
+			return template.ExecutionProfile, nil
 		}
 	}
 	return ExecutionProfile{}, problem("invalid_argument", "template must name a configured Issue template")
@@ -215,16 +213,6 @@ func (s *Store) resetReadyBindings(ctx context.Context) error {
 
 func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 	bindings := entClientForTx(tx).SessionBinding
-	if c.Sessions == nil {
-		exists, err := bindings.Query().Exist(ctx)
-		if err != nil {
-			return storageError()
-		}
-		if exists {
-			return problem("failed_precondition", "persisted SessionBindings require sessions configuration")
-		}
-		return nil
-	}
 	b, err := readBinding(ctx, bindings, sessionbinding.RoleEQ("router"), sessionbinding.StateNEQ("revoked"))
 	if err == nil {
 		spec, err := readBindingSpec(ctx, tx, b.ID)
@@ -239,11 +227,9 @@ func initializeRouter(ctx context.Context, tx *sql.Tx, c Config) error {
 		if err != nil {
 			return err
 		}
-		// Existing Sessions keep their persisted instructions, permissions, and features.
-		expected.SystemPrompt = spec.SystemPrompt
-		expected.Features = spec.Features
-		if spec.Config != nil {
-			expected.Config.PermissionPreset = spec.Config.PermissionPreset
+		// Session preparation reconciles changes to the remote computer policy.
+		if spec.Features != nil {
+			expected.Features.RestrictLocalTools = spec.Features.RestrictLocalTools
 		}
 		if !reflect.DeepEqual(spec, expected) {
 			return problem("failed_precondition", "sessions configuration differs from persisted Router binding")
@@ -263,9 +249,6 @@ func createBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, works
 }
 
 func createRoleBinding(ctx context.Context, tx *sql.Tx, c Config, role, owner, workspace, at string, generation int, previous SessionBinding) (SessionBinding, error) {
-	if c.Sessions == nil {
-		return SessionBinding{}, problem("failed_precondition", "sessions configuration is required")
-	}
 	b := SessionBinding{ID: newID("session-binding"), Role: role, OwnerID: owner, Generation: generation, Workspace: workspace, Namespace: c.Sessions.Namespace + "-router", ExecutionProfile: c.Sessions.Router.ExecutionProfile, State: "pending", CreatedAt: at}
 	if role == "topic" {
 		b.ExecutionProfile = c.Sessions.Topic
@@ -280,9 +263,6 @@ func topicNamespace(c Config, topicID string) string {
 }
 
 func createIssueBinding(ctx context.Context, tx *sql.Tx, c Config, issue Issue, previous SessionBinding, at string) (SessionBinding, error) {
-	if c.Sessions == nil {
-		return SessionBinding{}, problem("failed_precondition", "sessions configuration is required")
-	}
 	generation := previous.Generation + 1
 	b := SessionBinding{
 		ID: newID("session-binding"), Role: "issue", OwnerID: issue.ID, TopicID: issue.TopicID, IssueID: issue.ID,
@@ -373,7 +353,7 @@ func makeSpec(c Config, b SessionBinding) (resource.SessionSpec, error) {
 		}}},
 	}}
 	prompt := bindingSystemPrompt(b)
-	if b.Role == "topic" && len(c.Sessions.Issue.Templates) != 0 {
+	if b.Role == "topic" {
 		raw, err := json.Marshal(c.Sessions.Issue.templateSummaries())
 		if err != nil {
 			return resource.SessionSpec{}, err

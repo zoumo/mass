@@ -20,10 +20,9 @@ import (
 func startObserverTelemetryCore(t *testing.T, receiver string, options core.TelemetryOptions) string {
 	t.Helper()
 	f := fixtureAt(t)
+	f.executionWithUnavailableMassd()
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	// Isolate HTTP telemetry from the role execution loop.
-	cfg.Sessions = nil
 	cfg.WebOTLPEndpoint = receiver
 	server, err := core.StartWithContext(t.Context(), cfg, options)
 	require.NoError(t, err)
@@ -137,7 +136,9 @@ func TestObserverTelemetryGateway(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, res.status)
 	require.Empty(t, res.body)
 	require.Len(t, forwarded, 2)
-	require.Empty(t, recorder.Ended(), "the gateway bypasses ordinary Core telemetry")
+	for _, span := range recorder.Ended() {
+		require.Equal(t, "superagent.session_binding.prepare", span.Name(), "the gateway bypasses ordinary Core telemetry")
+	}
 	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodPost, "/status", contentType, nil).status)
 }
 
