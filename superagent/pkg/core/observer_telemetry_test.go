@@ -22,6 +22,8 @@ func startObserverTelemetryCore(t *testing.T, receiver string, options core.Tele
 	f := fixtureAt(t)
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
+	// Isolate HTTP telemetry from the role execution loop.
+	cfg.Sessions = nil
 	cfg.WebOTLPEndpoint = receiver
 	server, err := core.StartWithContext(t.Context(), cfg, options)
 	require.NoError(t, err)

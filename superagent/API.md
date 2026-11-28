@@ -340,8 +340,11 @@ See the [Core configuration example](config.example.yaml) for Session profiles
 and Issue templates, the [embedded deployment guide](README.md#running-mass-inside-core)
 for data ownership, and the [WebSocket binding](../harness/bindings/websocket.md)
 for the optional host mount and token boundary. Core validates Runtime availability
-when it prepares a Session. Set the Router workspace and profile in
-`sessions.router` and the Topic profile in `sessions.topic`. Topic selects
+when it prepares a Session. Both `serve` and `compose` default to `claude` for the
+Router, `codex` for Topics, and a `default` Issue template with `runtimeRef: codex`.
+Core creates the Router workspace at `<dataDir>/router-workspace` unless you
+set `sessions.router.workspace`. Configure any role field to override its
+default. A configured Issue template list supplies the complete set. Topic selects
 an Issue template by its unique `name` in `sessions.issue.templates`. Each
 template specifies a `runtimeRef` and can specify `model`, `effort`, and
 `description`. Core sends the configured execution values to MASS. An omitted
@@ -364,12 +367,12 @@ An Issue Session uses its Topic namespace and a fixed
 `issue-<issueId>-g<generation>` name.
 Each binding stores the selected Runtime, model and any effort, along with the
 workspace and other Session preparation parameters. Core sends `runtimeRef`
-and `config: {model, effort?}` in the MASS Session spec. The template list
-and descriptions live in the startup YAML. On restart, compatible execution
+and includes configured `model` or `effort` in the MASS Session spec.
+Core reads custom templates and their descriptions from the startup YAML. On restart, compatible execution
 configuration preserves binding identities. A changed Router profile fails
 startup with `failed_precondition`. Existing Topic generation specs stay
-fixed. A newly created Topic binding uses the current Topic profile. Enabling execution on an intake-only
-directory processes its pending Router events.
+fixed. A newly created Topic binding uses the current Topic profile.
+An upgraded intake-only data directory processes its pending Router events.
 
 Core prepares a binding before submitting business input. It queries MASS by
 fixed namespace and name, then creates the Session without initial business

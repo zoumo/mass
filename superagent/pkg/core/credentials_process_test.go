@@ -75,6 +75,7 @@ func TestCoreInstanceCredentialsProcess(t *testing.T) {
 }
 
 func TestCoreConcurrentCredentialInitialization(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 	for _, existing := range []string{"fresh", "admin.token", "triggers.token"} {
 		t.Run(existing, func(t *testing.T) {
 			f := fixtureAt(t)

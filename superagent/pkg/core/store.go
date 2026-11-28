@@ -62,7 +62,18 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 		return nil, problem("unavailable", "cannot inspect data directory")
 	}
 	allowed := map[string]bool{".core.lock": true, "core.sqlite": true, "core.sqlite-wal": true, "core.sqlite-shm": true}
+	workspace, relativeWorkspace := c.routerWorkspace()
+	workspaceEntry, _, _ := strings.Cut(relativeWorkspace, string(filepath.Separator))
+	if allowed[workspaceEntry] || workspaceEntry == credentialsDir || workspaceEntry == embeddedMassdDir || workspaceEntry == mcpCredentialsDir {
+		return nil, problem("invalid_argument", "sessions.router.workspace overlaps a Core state path")
+	}
 	for _, e := range entries {
+		if c.Sessions != nil && (e.Name() == routerWorkspaceDir || e.Name() == workspaceEntry) {
+			if err := checkCoreSubdirectory(filepath.Join(c.DataDir, e.Name()), "sessions.router.workspace"); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if e.Name() == credentialsDir || e.Name() == embeddedMassdDir {
 			if err := checkCoreSubdirectory(filepath.Join(c.DataDir, e.Name()), e.Name()); err != nil {
 				return nil, err
@@ -178,6 +189,11 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	if err := initializeRouter(ctx, tx, c); err != nil {
 		return nil, err
 	}
+	if workspace != "" {
+		if err := prepareRouterWorkspace(c.DataDir, workspace, relativeWorkspace); err != nil {
+			return nil, err
+		}
+	}
 	if err := recoverInternalEvents(ctx, tx); err != nil {
 		return nil, err
 	}
@@ -214,6 +230,35 @@ func OpenStore(c Config, options TelemetryOptions) (_ *Store, retErr error) {
 	}
 	s.queueRegistration = s.telemetry.registerQueueDepth(options.Metrics, s)
 	return s, nil
+}
+
+// routerWorkspace identifies the configured directory and any path Core must own
+// inside dataDir.
+func (c Config) routerWorkspace() (workspace, relative string) {
+	if c.Sessions == nil {
+		return "", ""
+	}
+	workspace = c.Sessions.Router.Workspace
+	if rel, err := filepath.Rel(c.DataDir, workspace); err == nil && rel != "." && filepath.IsLocal(rel) {
+		return workspace, rel
+	}
+	return workspace, ""
+}
+
+func prepareRouterWorkspace(dataDir, workspace, relative string) error {
+	if relative != "" {
+		dir := dataDir
+		for part := range strings.SplitSeq(relative, string(filepath.Separator)) {
+			dir = filepath.Join(dir, part)
+			if err := checkCoreSubdirectory(dir, "sessions.router.workspace"); err != nil {
+				return err
+			}
+		}
+	}
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		return problem("unavailable", "cannot create sessions.router.workspace directory")
+	}
+	return nil
 }
 
 func missingQueryIndexes(ctx context.Context, db *sql.DB) (bool, error) {

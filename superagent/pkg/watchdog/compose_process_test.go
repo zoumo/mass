@@ -156,6 +156,7 @@ func writeWatchdogCompose(t *testing.T, dir string, interval time.Duration) (str
 	path := filepath.Join(dir, "stack.yaml")
 	config := fmt.Sprintf(`core:
   listen: 127.0.0.1:0
+  externalURL: http://127.0.0.1:24370
   dataDir: core-state
 watchdog: {interval: %s}
 `, interval)

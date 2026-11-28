@@ -139,10 +139,13 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 		}
 	}
 	c.Sessions = sessions
-	if c.Sessions != nil {
-		if err := c.Sessions.validate(resolve); err != nil {
-			return c, err
-		}
+	if c.Sessions.Router.Workspace == "" {
+		c.Sessions.Router.Workspace = filepath.Join(c.DataDir, routerWorkspaceDir)
+	} else {
+		c.Sessions.Router.Workspace = resolve(c.Sessions.Router.Workspace)
+	}
+	if err := c.Sessions.validate(); err != nil {
+		return c, err
 	}
 	c.Massd = massd
 	if c.Massd != nil {
@@ -158,43 +161,50 @@ func loadConfig(path string, section io.Reader) (Config, error) {
 	if err != nil {
 		return c, problem("invalid_argument", "listen "+err.Error())
 	}
-	if c.ExternalURL != "" || c.Sessions != nil {
-		if portNumber == 0 && c.ExternalURL == "" {
-			return c, problem("invalid_argument", "sessions require a fixed listen port for role MCP across Core restarts")
-		}
-		if _, err := c.roleMCPEndpoint(); err != nil {
-			return c, err
-		}
+	if portNumber == 0 && c.ExternalURL == "" {
+		return c, problem("invalid_argument", "sessions require a fixed listen port for role MCP across Core restarts")
+	}
+	if _, err := c.roleMCPEndpoint(); err != nil {
+		return c, err
 	}
 	return c, nil
 }
 
 var errRemovedPermissionPreset = errors.New("remove permissionPreset")
 
+const routerWorkspaceDir = "router-workspace"
+
 // takeSessionsConfig decodes sessions before Viper normalizes the rest of the
 // configuration. Both entry points use the same strict role field types.
 func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
-	var sessions *SessionsConfig
+	sessions := &SessionsConfig{
+		Router: RouterSessionConfig{ExecutionProfile: ExecutionProfile{RuntimeRef: "claude"}},
+		Topic:  ExecutionProfile{RuntimeRef: "codex"},
+	}
+	var found bool
 	for name, raw := range fields {
 		if !strings.EqualFold(name, "sessions") {
 			continue
 		}
-		if sessions != nil {
+		if found {
 			return nil, problem("invalid_argument", "configuration contains duplicate sessions fields")
 		}
+		found = true
 		if _, ok := raw.(map[string]any); !ok {
 			return nil, problem("invalid_argument", "sessions must be a mapping")
 		}
-		sessions = &SessionsConfig{}
 		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 			ErrorUnused: true,
 			Result:      sessions,
 			RootName:    "sessions",
 			DecodeHook: mapstructure.DecodeHookFuncType(func(_, _ reflect.Type, data any) (any, error) {
 				mapping, _ := data.(map[string]any)
-				for field := range mapping {
+				for field, value := range mapping {
 					if strings.EqualFold(field, "permissionPreset") {
 						return nil, errRemovedPermissionPreset
+					}
+					if value == nil {
+						return nil, errors.New("session fields must not be null")
 					}
 				}
 				return data, nil
@@ -213,6 +223,9 @@ func takeSessionsConfig(fields map[string]any) (*SessionsConfig, error) {
 			return nil, problem("invalid_argument", "sessions contains unknown or invalid fields")
 		}
 		delete(fields, name)
+	}
+	if sessions.Issue.Templates == nil {
+		sessions.Issue.Templates = []IssueTemplate{{Name: "default", ExecutionProfile: ExecutionProfile{RuntimeRef: "codex"}}}
 	}
 	return sessions, nil
 }

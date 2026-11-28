@@ -117,10 +117,17 @@ func (d *routeDriver) AnswerInteraction(_ context.Context, _, ref string, answer
 func (*routeDriver) CloseSession(context.Context, string) error { return nil }
 func (d *routeDriver) Stop(context.Context) error               { d.pipe.End(nil); return nil }
 
-type routeFactory struct{ driver *routeDriver }
+type routeFactory map[string]*routeDriver
 
-func (routeFactory) Validate(runtime.Config) error                        { return nil }
-func (f routeFactory) New(string, runtime.Config) (runtime.Driver, error) { return f.driver, nil }
+func (routeFactory) Validate(runtime.Config) error { return nil }
+
+func (f routeFactory) New(name string, _ runtime.Config) (runtime.Driver, error) {
+	driver, found := f[name]
+	if !found {
+		return nil, errors.Join(runtime.ErrResourcesReleased, errors.New("unexpected fixture Runtime"))
+	}
+	return driver, nil
+}
 
 type routeBoundary struct {
 	url            string
@@ -135,21 +142,29 @@ func newRouteBoundary(t *testing.T) *routeBoundary {
 	return newRouteBoundaryWithRuntime(t, "fixture")
 }
 
-func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string) *routeBoundary {
+func newRouteBoundaryWithRuntime(t *testing.T, runtimeType string, runtimeNames ...string) *routeBoundary {
 	t.Helper()
+	if len(runtimeNames) == 0 {
+		runtimeNames = []string{"agent"}
+	}
 	st, err := massdtest.OpenFileStores(t.TempDir(), false)
 	require.NoError(t, err)
-	d := &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
+	drivers := make(routeFactory, len(runtimeNames))
+	for _, name := range runtimeNames {
+		drivers[name] = &routeDriver{pipe: events.NewEventPipe(64), inputs: map[string][]runtime.Input{}, injects: map[string]int{}, sources: map[string]events.Source{}}
+	}
 	svc := service.NewWithOptions(
-		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: routeFactory{d}}),
+		st.Meta, st.Events, runtime.NewRegistry(map[string]runtime.Factory{runtimeType: drivers}),
 		service.Options{SessionIdleTimeout: service.DefaultSessionIdleTimeout},
 	)
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
-	require.NoError(t, err)
+	for _, name := range runtimeNames {
+		_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: runtimeType, Config: runtime.Config{}}})
+		require.NoError(t, err)
+	}
 	api, err := transport.New(svc, transport.Options{WriteTimeout: time.Second, ServerVersion: "controlled-route-boundary"})
 	require.NoError(t, err)
 	upstream := httptest.NewServer(api)
-	f := &routeBoundary{driver: d, svc: svc}
+	f := &routeBoundary{driver: drivers[runtimeNames[0]], svc: svc}
 	f.url = dropRPCResponse(t, "ws"+strings.TrimPrefix(upstream.URL, "http")+"/jsonrpc", func(method string) bool {
 		return method == "session.create" && f.dropNextCreate.CompareAndSwap(true, false)
 	}, func() { f.dropped.Add(1) })
@@ -556,7 +571,12 @@ func startRoleMCP(t *testing.T, f *fixture, b core.SessionBinding) *roleMCPClien
 	t.Helper()
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
-	c := &roleMCPClient{t: t, endpoint: "http://" + config.Listen, token: roleToken(t, f, b)}
+	return startRoleMCPAt(t, f, b, "http://"+config.Listen)
+}
+
+func startRoleMCPAt(t *testing.T, f *fixture, b core.SessionBinding, endpoint string) *roleMCPClient {
+	t.Helper()
+	c := &roleMCPClient{t: t, endpoint: endpoint, token: roleToken(t, f, b)}
 	initializeMCP(t, c.endpoint, c.token)
 	return c
 }
@@ -1052,14 +1072,15 @@ func TestRoutingPreviousSchemaRefused(t *testing.T) {
 func TestRoutingEnableAndExecutionStartupConfig(t *testing.T) {
 	boundary := newRouteBoundary(t)
 	f := fixtureAt(t)
-	p := f.start()
-	m := submit(t, p, f, input("intake-before-execution"))
-	require.Empty(t, bindings(t, p))
-	p.stop(t, false)
+	store, err := core.OpenStore(core.Config{DataDir: f.data}, core.TelemetryOptions{})
+	require.NoError(t, err)
+	m, err := store.SubmitTriggerMessage(t.Context(), fixtureTriggerSource, input("intake-before-execution"))
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
 	origin := strings.TrimSuffix(boundary.url, "/jsonrpc")
 	f.execution(&routeBoundary{url: origin})
 	credentials := filepath.Join(f.data, "mcp-files")
-	p = f.start()
+	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
 	info, err := os.Stat(credentials)
 	require.NoError(t, err)

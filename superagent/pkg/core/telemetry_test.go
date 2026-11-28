@@ -33,6 +33,8 @@ func TestCoreTelemetryHTTP(t *testing.T) {
 	})
 	cfg, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
+	// Isolate HTTP telemetry from the role execution loop.
+	cfg.Sessions = nil
 	server, err := core.StartWithContext(t.Context(), cfg, core.TelemetryOptions{Traces: traces, Metrics: metrics})
 	require.NoError(t, err)
 	done := make(chan error, 1)

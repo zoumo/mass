@@ -42,5 +42,5 @@ func fixedListen(t *testing.T, config string) string {
 	require.NoError(t, err)
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())
-	return strings.Replace(config, "127.0.0.1:0", address, 1)
+	return strings.Replace(strings.Replace(config, fixtureStableMCP, "", 1), "127.0.0.1:0", address, 1)
 }
