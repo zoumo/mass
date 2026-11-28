@@ -58,28 +58,10 @@ installations share `massd`, give them distinct `sessions.namespace` values.
 For a fresh Trigger database or a restart, follow the
 [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
 
-### Move Core data and credentials
+### Upgrade deployed Core data and credentials
 
-1. Stop Core, MASS, and all Trigger owners. Back up Core and MASS data, the
-   existing tokens, and each adapter's database, send evidence, and feedback state.
-2. Move the embedded MASS data directory to `<dataDir>/massd`. Remove
-   `massd.embedded` from Core YAML. Keep the `massd.endpoint` and
-   `massd.tokenFile` settings if you use external MASS. For the file
-   metadata backend, keep MASS external or migrate its metadata to SQLite
-   before embedding it.
-3. Install the former admin and Trigger tokens as `admin.token` and
-   `triggers.token` under `<dataDir>/credentials`. Use mode `0700` for the
-   directory and mode `0600` for each file. Each token must contain at
-   least 32 bytes without whitespace or control characters. When a token
-   was absent, Core generates it on startup. Remove `accessToken` from the YAML.
-4. Update direct Core clients to use `/apis/core/v1/`. Point embedded MASS
-   clients at `/apis/massd/jsonrpc` on the Core origin and use the Core admin
-   token. Use the external service's configured RPC address for standalone MASS.
-   Keep the existing Trigger account IDs, instance IDs, and database paths.
-   Provide the Core Trigger token to standalone adapters through their `coreTokenEnv`.
-5. Check Core readiness, MASS Session history, and the adapter status.
-   Check a stored Source receipt and, for reply-enabled adapters, Outbox
-   access with the original Source and Account.
+Follow the [single-service migration procedure](docs/migrate-single-service.md)
+to keep data, credentials, and Session history across the upgrade and rollback.
 
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
@@ -290,29 +272,8 @@ Core and embedded MASS paths to `SUPERAGENT_CORE_ORIGIN`, which defaults to
 
 ## Cut over the HTTP API
 
-Use Core, Compose, the Superagent Web build, the gateway configuration,
-Operator CLI, and Trigger binaries that use the same resource API. This
-includes the separately built AntCode Trigger. Configure probes for `/livez`
-and `/readyz` and use `/status` to inspect the stack.
-
-1. Pause incoming Trigger traffic. Stop standalone Triggers and stop Compose
-   or standalone Core. For standalone massd, stop it after Core if you are
-   replacing its binary. Verify that the old processes have exited and
-   released their data directories before starting replacements.
-2. Update the binaries, Web build, gateway configuration, and caller
-   configuration together. Use a schema 28 Core directory and schema 3 Trigger
-   databases. Preserve the massd data directory, credential paths, and Session
-   MCP origin. See the Core [data directory requirements](#reuse-an-existing-core-data-directory)
-   and [Trigger cutover steps](triggers/README.md#replace-deployed-triggers).
-   Run one owner per data directory and one active Outbox sender per account.
-3. Start standalone massd first if you stopped it. Then start Compose or Core
-   and check `/readyz` and `/status` at the printed Core origin. If you expose
-   massd, check `/apis/massd/readyz` at its public origin. Start Web and the gateway
-   and open `/superagent/` at the gateway origin.
-4. Start standalone Triggers and resume traffic. Verify that a Trigger Message
-   can be submitted and its receipt read back by `sourceMessageId`. Inspect
-   pending Outbox delivery before retrying an uncertain send. Keep the original
-   native Message identity and the saved Outbox item ID across retries.
+See the [path mapping and SessionBinding cutover steps](docs/migrate-single-service.md)
+before you upgrade Core, Operator clients, and Triggers together.
 
 ## Inspect delivery and recover input
 
