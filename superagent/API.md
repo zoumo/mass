@@ -1,21 +1,24 @@
 # Core v1 API
 
 This reference covers the Core interfaces for Triggers, trusted readers,
-Operators, and role MCP clients. The [OpenAPI document](openapi.json) defines
-the methods, schemas, and credential requirements. See the [deployment guide](README.md) for startup and
-configuration. MASS Runtime and Session operations follow the
+Operators, and role MCP clients. Core serves business resources, role MCP, and
+browser telemetry under `/apis/core/v1/`. The [OpenAPI document](openapi.json)
+defines methods, schemas, and credential requirements. See the
+[deployment guide](README.md) for startup and configuration.
+MASS Runtime and Session operations follow the
 [MASS JSON-RPC contract](../harness/bindings/jsonrpc.md).
 
 ## Start and ownership
 
 One Core process owns `dataDir` at a time. A successful start returns
-`status: ready` and `endpoint`. Accepted records survive
-process exit. For a lost intake response, use the Message's original identity.
+`status: ready` and `endpoint`. Embedded mode also reports `massdEndpoint`.
+Accepted records survive process exit. For a lost intake response, use the
+Message's original identity.
 See [data directory requirements](README.md#reuse-an-existing-core-data-directory).
 
 ## Submit Message
 
-Send `POST /v1/core/trigger-messages` with these headers.
+Send `POST /apis/core/v1/trigger-messages` with these headers.
 
 | Header | Value |
 | --- | --- |
@@ -78,7 +81,7 @@ Success HTTP 200:
 
 Message, Thread update and the initial internal event commit together.
 The receipt identifies the accepted Message and Thread. Its `eventId` is the initial event ID. Read it through
-`GET /v1/core/internal-events/{eventId}`.
+`GET /apis/core/v1/internal-events/{eventId}`.
 
 Zero or multiple Thread subscriptions enqueue a `route_request` to Router.
 Exactly one queues a `routed_message` to that Topic. Both reference the
@@ -94,7 +97,7 @@ Object field order is immaterial. Changing `_meta` alone returns the original
 receipt and preserves the first metadata. `operationId` correlates a caller's
 request and does not participate in Message deduplication.
 
-`GET /v1/core/trigger-messages?sourceMessageId={encoded-native-id}` requires the
+`GET /apis/core/v1/trigger-messages?sourceMessageId={encoded-native-id}` requires the
 shared Trigger token, `X-Superagent-Source`, and `X-Superagent-Account-Id`.
 Use the same identity as the submission. The lookup returns the stored
 acceptance receipt with `duplicate=false`. An absent Message in that Source
@@ -121,22 +124,22 @@ Brackets indicate an optional detail path.
 
 | Resource | Path |
 | --- | --- |
-| Trigger Messages | `/v1/core/trigger-messages[/{messageId}]` |
-| Router view | `/v1/core/trigger-messages?view=router` |
-| Outbox history | `/v1/core/outbox-messages[/{outboxId}]` |
-| Threads | `/v1/core/threads[/{threadId}]` |
-| Topics | `/v1/core/topics[/{topicId}]` |
-| Topic activity and conversation | `/v1/core/topics/{topicId}/activity` |
-| Issues | `/v1/core/issues[/{issueId}]` |
-| Current Issue facts | `/v1/core/issues/{issueId}?view=summary` |
-| Reports | `/v1/core/reports[/{reportId}]` |
-| Internal Events | `/v1/core/internal-events[/{eventId}]` |
-| Session Bindings | `/v1/core/session-bindings[/{bindingId}]` |
-| Stored Session history | `/v1/core/session-bindings/{bindingId}/history` |
-| Live Session preview | `/v1/core/session-bindings/{bindingId}/live` |
-| Trace | `/v1/telemetry/traces/{traceId}` |
-| Performance | `/v1/telemetry/performance` |
-| Watchdog | `/v1/core/watchdog` |
+| Trigger Messages | `/apis/core/v1/trigger-messages[/{messageId}]` |
+| Router view | `/apis/core/v1/trigger-messages?view=router` |
+| Outbox history | `/apis/core/v1/outbox-messages[/{outboxId}]` |
+| Threads | `/apis/core/v1/threads[/{threadId}]` |
+| Topics | `/apis/core/v1/topics[/{topicId}]` |
+| Topic activity and conversation | `/apis/core/v1/topics/{topicId}/activity` |
+| Issues | `/apis/core/v1/issues[/{issueId}]` |
+| Current Issue facts | `/apis/core/v1/issues/{issueId}?view=summary` |
+| Reports | `/apis/core/v1/reports[/{reportId}]` |
+| Internal Events | `/apis/core/v1/internal-events[/{eventId}]` |
+| Session Bindings | `/apis/core/v1/session-bindings[/{bindingId}]` |
+| Stored Session history | `/apis/core/v1/session-bindings/{bindingId}/history` |
+| Live Session preview | `/apis/core/v1/session-bindings/{bindingId}/live` |
+| Trace | `/apis/core/v1/telemetry/traces/{traceId}` |
+| Performance | `/apis/core/v1/telemetry/performance` |
+| Watchdog | `/apis/core/v1/watchdog` |
 
 Percent-encode the Thread ID as one path segment. Topic and Issue details
 contain PR links. Thread details contain subscriptions. Trigger Message
@@ -159,7 +162,7 @@ Anyone who can reach Superagent Web can use Session chat through the same-origin
 gateway. Core uses its configured MASS client and checks the current binding
 and MASS Session identity on each request.
 
-| Method | Path suffix under `/v1/core/session-bindings/{bindingId}` | Result |
+| Method | Path suffix under `/apis/core/v1/session-bindings/{bindingId}` | Result |
 | --- | --- | --- |
 | GET | `/chat/history` | MASS history page with an optional `cursor` query |
 | GET | `/chat/live` | NDJSON stream beginning with `connected` and the Session state, then `event` and `heartbeat` frames |
@@ -182,13 +185,13 @@ redaction to chat responses.
 reads. Topic activity timelines include the associations with each event.
 An Issue has a creation Trace link when Core saved its creation association.
 
-`/v1/telemetry/traces/{traceId}` returns spans from the OpenObserve stream
+`/apis/core/v1/telemetry/traces/{traceId}` returns spans from the OpenObserve stream
 configured under `openobserve`. Specify a 32-character hexadecimal Trace ID.
 Lookup covers the past seven days by default, or seven days on either side of
 an optional RFC3339 `at` timestamp. The response includes at most 1,000 spans and marks
 partial results. Superagent Web links to `/superagent/trace?id={traceId}`.
 
-`GET /v1/telemetry/performance` queries OTel time series in OpenObserve. `window`
+`GET /apis/core/v1/telemetry/performance` queries OTel time series in OpenObserve. `window`
 accepts `15m`, `1h`, `6h` and `24h` and defaults to `1h`.
 
 - `metric=process` is the default and returns `cpu`, `rss`, `goroutines` and
@@ -208,7 +211,7 @@ Values are cores for `cpu`, bytes for `rss`, counts for `goroutines` and
 `mcp_failure_rate`, and seconds for `mcp_p95`. An empty series list indicates
 no samples. An `unavailable: true` metric indicates a query failure.
 
-`POST /v1/telemetry/traces` and `POST /v1/telemetry/metrics` accept
+`POST /apis/core/v1/telemetry/traces` and `POST /apis/core/v1/telemetry/metrics` accept
 uncompressed OTLP Protobuf when Core starts with `SUPERAGENT_WEB_OTLP_ENDPOINT`.
 See the
 [telemetry deployment guide](telemetry/README.md#enable-superagent-web-telemetry).
@@ -220,11 +223,11 @@ select entries before pagination. `limit` defaults to 20 and accepts 1–200.
 identifies its source record. An `issue_snapshot` describes the saved state
 at `updatedAt`. Lifecycle entries use the timestamp on the saved transition.
 
-`GET /v1/core/topics?view=conversation` lists Topics by their latest
+`GET /apis/core/v1/topics?view=conversation` lists Topics by their latest
 conversation message, newest first. Topics without messages follow in
 creation order, newest first. Equal timestamps sort by Topic ID descending.
 Use `search` to match a substring of the title or ID. Use
-`/v1/core/topics/{topicId}/activity?view=conversation` to list the Topic's
+`/apis/core/v1/topics/{topicId}/activity?view=conversation` to list the Topic's
 conversation timeline in descending `(at, id)` order. Use `filter`
 with `all`, `router_routed`, `thread_direct`, `issue_created`, `issue_session_dispatch`
 or `report`.
@@ -252,9 +255,10 @@ native stops and echoes, Internal Event and Outbox counts, and
 adds their observed states. An unavailable component can make `/status`
 report `degraded` while `/readyz` remains ready.
 
-When massd is exposed under `/massd`, `GET /massd/livez` and
-`GET /massd/readyz` check massd. `GET /massd/jsonrpc` upgrades to a WebSocket
-using the massd instance credential.
+When Core runs embedded MASS, `GET /apis/massd/livez` and
+`GET /apis/massd/readyz` check MASS. `GET /apis/massd/jsonrpc` upgrades to a
+WebSocket with the Core admin token. When Core connects to external MASS,
+its Core listener returns `404` for these endpoints.
 
 ## Read projections and pagination
 
@@ -375,8 +379,8 @@ resuming dispatch.
 
 ## Role MCP and source scope
 
-Core exposes one Streamable HTTP endpoint at `/v1/mcp`. Router, Topic and Issue bindings
-send JSON-RPC 2.0 messages via `POST /v1/mcp` with `Authorization: Bearer TOKEN`.
+Core exposes one Streamable HTTP endpoint at `/apis/core/v1/mcp`. Router, Topic and Issue bindings
+send JSON-RPC 2.0 messages via `POST /apis/core/v1/mcp` with `Authorization: Bearer TOKEN`.
 Core authenticates each request against its binding. `tools/list` advertises
 that binding's tools and `tools/call` enforces its permissions. A revoked
 Issue SessionBinding can discover and call `submit_report` for historical work.
@@ -391,7 +395,7 @@ Send the negotiated version in `MCP-Protocol-Version` after initialization.
 Core recognizes protocol versions 2024-11-05, 2025-03-26, 2025-06-18 and
 2025-11-25. An unknown initialization version negotiates 2025-11-25. Core
 returns one JSON response per request and an empty HTTP 202 for accepted
-notifications. `GET /v1/mcp` returns HTTP 405. Core issues no MCP session ID.
+notifications. `GET /apis/core/v1/mcp` returns HTTP 405. Core issues no MCP session ID.
 
 Successful tool results contain `structuredContent` and a text block with the
 same JSON. Tool validation and business failures set `result.isError` to true
@@ -405,10 +409,10 @@ Topic and Issue Agents use `get_topic` and `get_issue` for scoped business state
 External Message text, metadata, tool arguments and native-subagent suggestions
 cannot select permissions.
 
-MASS-managed role Sessions connect directly to Core `/v1/mcp` over HTTP.
+MASS-managed role Sessions connect directly to Core `/apis/core/v1/mcp` over HTTP.
 `externalURL` optionally sets the base URL for native Session clients. Core
-appends `/v1/mcp`. MASS requires HTTPS for a role MCP endpoint on another host.
-If a reverse proxy terminates TLS, forward `/v1/mcp` to Core and set the
+appends `/apis/core/v1/mcp`. MASS requires HTTPS for a role MCP endpoint on another host.
+If a reverse proxy terminates TLS, forward `/apis/core/v1/mcp` to Core and set the
 upstream `Host` to the local address that receives the request.
 Core writes a private file containing the scoped bearer under `dataDir/mcp-files`
 and passes its absolute path in `headers[].valueFrom.fileKeyRef`. Run Core and
@@ -688,9 +692,9 @@ records input acceptance separately from work completion. See
 ### Operator reconciliation
 
 Use the admin token from `<dataDir>/credentials/admin.token`. Inspection uses
-`GET /v1/core/session-bindings/{bindingId}/runtime-evidence` to read the saved
+`GET /apis/core/v1/session-bindings/{bindingId}/runtime-evidence` to read the saved
 binding, its stop evidence, and a live identity-checked massd snapshot. Submit
-recovery with `POST /v1/core/session-bindings/{bindingId}/recoveries`. The path
+recovery with `POST /apis/core/v1/session-bindings/{bindingId}/recoveries`. The path
 selects the binding. Both require the admin token and a direct Core
 connection from a non-browser client.
 
@@ -817,15 +821,15 @@ Independent task messages route to a sole active subscriber or to the Router.
 
 | Method and path | Input or behavior |
 | --- | --- |
-| `GET` or `HEAD /v1/core/scheduled-tasks` | List task definitions. Filter by `ownerType=topic` with `ownerId`. |
-| `POST /v1/core/scheduled-tasks` | Create a task with `operationId`, `schedule`, and `content`. |
-| `GET` or `HEAD /v1/core/scheduled-tasks/{scheduledTaskId}` | Read a task definition. |
-| `PATCH /v1/core/scheduled-tasks/{scheduledTaskId}` | Supply `expectedRevision` and one or more of `schedule`, `content`, or `status`. |
-| `DELETE /v1/core/scheduled-tasks/{scheduledTaskId}?expectedRevision=1` | Delete an independent task definition. |
-| `POST /v1/core/scheduled-tasks/{scheduledTaskId}/trigger` | Supply `operationId`. Return a Trigger Message acceptance receipt. |
-| `GET` or `HEAD /v1/core/scheduled-tasks/{scheduledTaskId}/trigger-messages` | List a task's messages, including for a deleted task. An unknown task ID returns `404`. |
-| `GET` or `HEAD /v1/core/trigger-messages?scheduledTaskId=…` | Filter the default Trigger Message list by task. |
-| `GET` or `HEAD /v1/core/trigger-messages?source=core:scheduled-task` | Filter the default list by exact source. Combine with `scheduledTaskId` to narrow it. |
+| `GET` or `HEAD /apis/core/v1/scheduled-tasks` | List task definitions. Filter by `ownerType=topic` with `ownerId`. |
+| `POST /apis/core/v1/scheduled-tasks` | Create a task with `operationId`, `schedule`, and `content`. |
+| `GET` or `HEAD /apis/core/v1/scheduled-tasks/{scheduledTaskId}` | Read a task definition. |
+| `PATCH /apis/core/v1/scheduled-tasks/{scheduledTaskId}` | Supply `expectedRevision` and one or more of `schedule`, `content`, or `status`. |
+| `DELETE /apis/core/v1/scheduled-tasks/{scheduledTaskId}?expectedRevision=1` | Delete an independent task definition. |
+| `POST /apis/core/v1/scheduled-tasks/{scheduledTaskId}/trigger` | Supply `operationId`. Return a Trigger Message acceptance receipt. |
+| `GET` or `HEAD /apis/core/v1/scheduled-tasks/{scheduledTaskId}/trigger-messages` | List a task's messages, including for a deleted task. An unknown task ID returns `404`. |
+| `GET` or `HEAD /apis/core/v1/trigger-messages?scheduledTaskId=…` | Filter the default Trigger Message list by task. |
+| `GET` or `HEAD /apis/core/v1/trigger-messages?source=core:scheduled-task` | Filter the default list by exact source. Combine with `scheduledTaskId` to narrow it. |
 
 A manual trigger leaves the planned time intact and replays the same receipt
 for the same task and `operationId`. Trigger Message history returns the
@@ -926,9 +930,9 @@ declared Source and Account returns `not_found`.
 
 | Method and path | Result |
 | --- | --- |
-| GET `/v1/core/outbox-messages?view=delivery` | A page of eligible replies ordered by insertion. Pass optional `limit` (default 50, max 200) and `cursor`. Pull is read-only. |
-| GET `/v1/core/outbox-messages/{outboxId}?view=delivery` | One reply in the account, including terminal states. |
-| PATCH `/v1/core/outbox-messages/{outboxId}` | Update one reply and return its committed {id, status, receipt?}. |
+| GET `/apis/core/v1/outbox-messages?view=delivery` | A page of eligible replies ordered by insertion. Pass optional `limit` (default 50, max 200) and `cursor`. Pull is read-only. |
+| GET `/apis/core/v1/outbox-messages/{outboxId}?view=delivery` | One reply in the account, including terminal states. |
+| PATCH `/apis/core/v1/outbox-messages/{outboxId}` | Update one reply and return its committed {id, status, receipt?}. |
 
 Delivery reads include `source`, `accountId` and the original Message's
 `replyTarget`.

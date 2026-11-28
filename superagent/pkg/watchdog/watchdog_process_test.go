@@ -176,13 +176,13 @@ func TestWatchdogContinuesAfterCandidateChanges(t *testing.T) {
 			proxy := &httputil.ReverseProxy{Rewrite: func(request *httputil.ProxyRequest) { request.SetURL(target) }}
 			var activityRead atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v1/core/topics/mass-t1/activity" && activityRead.CompareAndSwap(false, true) && scenario == "stale" {
+				if r.URL.Path == "/apis/core/v1/topics/mass-t1/activity" && activityRead.CompareAndSwap(false, true) && scenario == "stale" {
 					if _, err := db.ExecContext(r.Context(), `UPDATE issues SET body=json_set(body,'$.status','completed') WHERE id='mass-t1-i9'`); err != nil {
 						http.Error(w, "fixture update failed", http.StatusInternalServerError)
 						return
 					}
 				}
-				if r.URL.Path == "/v1/core/issues/mass-t1-i9" && activityRead.Load() && scenario == "read_failed" {
+				if r.URL.Path == "/apis/core/v1/issues/mass-t1-i9" && activityRead.Load() && scenario == "read_failed" {
 					http.Error(w, "fixture read failed", http.StatusServiceUnavailable)
 					return
 				}
@@ -233,7 +233,7 @@ func TestWatchdogReadsIssueWithLargeReportHistory(t *testing.T) {
 		t.Run(view.method+view.query, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, view.method, endpoint+"/v1/core/issues/mass-t1-i9"+view.query, http.NoBody)
+			req, err := http.NewRequestWithContext(ctx, view.method, endpoint+"/apis/core/v1/issues/mass-t1-i9"+view.query, http.NoBody)
 			require.NoError(t, err)
 			response, err := http.DefaultClient.Do(req)
 			require.NoError(t, err)

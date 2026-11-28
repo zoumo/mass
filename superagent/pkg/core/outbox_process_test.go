@@ -16,7 +16,7 @@ import (
 	"github.com/zoumo/mass/superagent/pkg/core"
 )
 
-const channelOutbox = "/v1/core/outbox-messages"
+const channelOutbox = "/apis/core/v1/outbox-messages"
 
 func markdownReply(text string) core.StructuredContent {
 	data, err := json.Marshal(map[string]string{"text": text})
@@ -213,7 +213,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 		code, raw = patchOutbox(t, p, f.token, result, tc.source)
 		errorCode(t, code, raw, tc.code, tc.problem)
 	}
-	code, raw = request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, input("new-account"), other)
+	code, raw = request(t, http.MethodPost, p.endpoint, "/apis/core/v1/trigger-messages", f.token, input("new-account"), other)
 	require.Equal(t, http.StatusOK, code, "%s", raw)
 	var accepted core.Receipt
 	require.NoError(t, json.Unmarshal(raw, &accepted))
@@ -230,7 +230,7 @@ func TestOutboxRoleTargetAndScope(t *testing.T) {
 		code, raw = patchOutbox(t, p, token, result)
 		errorCode(t, code, raw, http.StatusUnauthorized, "unauthorized")
 	}
-	code, _ = request(t, "POST", p.endpoint, "/v1/core/outbox-messages/"+reply.ID, "", struct{}{})
+	code, _ = request(t, "POST", p.endpoint, "/apis/core/v1/outbox-messages/"+reply.ID, "", struct{}{})
 	require.Equal(t, 405, code)
 	require.Equal(t, "pending", readOutbox(t, p, reply.ID).Status)
 	require.Nil(t, readOutbox(t, p, reply.ID).Receipt)

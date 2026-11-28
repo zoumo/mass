@@ -94,9 +94,9 @@ func TestObserverTelemetryGateway(t *testing.T) {
 		return response{res.StatusCode, res.Header, string(data)}
 	}
 	disabled := startObserverTelemetryCore(t, "", core.TelemetryOptions{})
-	path := "/v1/telemetry/traces"
+	path := "/apis/core/v1/telemetry/traces"
 	require.Equal(t, http.StatusNotFound, request(disabled, http.MethodPost, path, contentType, nil).status)
-	require.Equal(t, http.StatusNotFound, request(endpoint, http.MethodPost, "/v1/telemetry/logs", contentType, nil).status)
+	require.Equal(t, http.StatusNotFound, request(endpoint, http.MethodPost, "/apis/core/v1/telemetry/logs", contentType, nil).status)
 	require.Equal(t, http.StatusNotFound, request(endpoint, http.MethodPost, path+"?destination=override", contentType, nil).status)
 	require.Equal(t, http.StatusMethodNotAllowed, request(endpoint, http.MethodGet, path, contentType, nil).status)
 	require.Equal(t, http.StatusUnsupportedMediaType, request(endpoint, http.MethodPost, path, "application/json", nil).status)
@@ -112,7 +112,7 @@ func TestObserverTelemetryGateway(t *testing.T) {
 	require.Empty(t, forwarded)
 
 	for _, signal := range []string{"traces", "metrics"} {
-		res := request(endpoint, http.MethodPost, "/v1/telemetry/"+signal, contentType, strings.NewReader(signal),
+		res := request(endpoint, http.MethodPost, "/apis/core/v1/telemetry/"+signal, contentType, strings.NewReader(signal),
 			[2]string{"Authorization", "secret"}, [2]string{"Cookie", "session=private"}, [2]string{"Origin", endpoint},
 			[2]string{"Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}, [2]string{"X-Private", "secret"})
 		require.Equal(t, http.StatusOK, res.status)
@@ -171,7 +171,7 @@ func TestTelemetryGatewayBoundsConcurrencyAndTime(t *testing.T) {
 	results := make(chan int, cap(entered))
 	for range cap(entered) {
 		go func() {
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/telemetry/traces", strings.NewReader("batch"))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/apis/core/v1/telemetry/traces", strings.NewReader("batch"))
 			if err != nil {
 				results <- -1
 				return
@@ -194,7 +194,7 @@ func TestTelemetryGatewayBoundsConcurrencyAndTime(t *testing.T) {
 			t.Fatal("all eight exports did not reach the receiver")
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/telemetry/traces", strings.NewReader("excess"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/apis/core/v1/telemetry/traces", strings.NewReader("excess"))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	res, err := http.DefaultClient.Do(req)

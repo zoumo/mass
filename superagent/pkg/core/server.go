@@ -43,7 +43,7 @@ type Server struct {
 }
 
 // MassdMountPath is the Core HTTP prefix for the embedded MASS instance.
-const MassdMountPath = "/massd"
+const MassdMountPath = "/apis/massd"
 
 // StartWithContext starts Core and uses ctx for startup operations.
 func StartWithContext(ctx context.Context, c Config, options TelemetryOptions) (_ *Server, result error) {

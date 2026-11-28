@@ -27,7 +27,7 @@ func prMessage(id, resourceURL, body string) core.SubmitTriggerMessageRequest {
 
 func acceptPRMessage(t *testing.T, p *process, token, source string, input core.SubmitTriggerMessageRequest) core.Receipt {
 	t.Helper()
-	status, data := request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", token, input, core.Source{Source: source, AccountID: source + "-account"})
+	status, data := request(t, http.MethodPost, p.endpoint, "/apis/core/v1/trigger-messages", token, input, core.Source{Source: source, AccountID: source + "-account"})
 	require.Equal(t, http.StatusOK, status, string(data))
 	var receipt core.Receipt
 	require.NoError(t, json.Unmarshal(data, &receipt))
@@ -141,7 +141,7 @@ func TestPullRequestRegistrationAndSourceRouting(t *testing.T) {
 	require.True(t, duplicate.Duplicate)
 	require.Equal(t, accepted.MessageID, duplicate.MessageID)
 	merged.Message.ThreadID = firstPR
-	status, data = request(t, http.MethodPost, p.endpoint, "/v1/core/trigger-messages", f.token, merged, core.Source{Source: "github", AccountID: "github-account"})
+	status, data = request(t, http.MethodPost, p.endpoint, "/apis/core/v1/trigger-messages", f.token, merged, core.Source{Source: "github", AccountID: "github-account"})
 	errorCode(t, status, data, http.StatusConflict, "conflict")
 	require.Equal(t, current.Issue.Status, readRecord[core.Issue](t, p, "issues/"+current.Issue.ID).Status)
 	require.Equal(t, "active", readRecord[core.Topic](t, p, "topics/"+first.OwnerID).Status)

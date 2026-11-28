@@ -3,7 +3,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test'
 const subject = '发布前检查：请确认本次发布涉及的配置变更。'
 const body = subject + '\n' + '服务配置已更新，请核对本次发布的配置项和回归结果。'.repeat(120) + '\n<script>window.injected = true</script>'
 async function seed(request: APIRequestContext) {
-  const response = await request.post('/v1/core/trigger-messages', {
+  const response = await request.post('/apis/core/v1/trigger-messages', {
     headers: { Authorization: 'Bearer ' + 'a'.repeat(48) },
     data: { operationId: 'observer-entry-chinese', message: {
       sourceMessageId: 'observer-entry-chinese', threadId: 'dws:observer-entry',
@@ -12,7 +12,7 @@ async function seed(request: APIRequestContext) {
   })
   expect(response.ok()).toBeTruthy()
   const receipt = await response.json()
-  return (await request.get('/v1/core/trigger-messages/' + receipt.messageId)).json()
+  return (await request.get('/apis/core/v1/trigger-messages/' + receipt.messageId)).json()
 }
 
 test('Message entry reads the selected record, its full text and Core receipt', async ({ page, request, context }, testInfo) => {
@@ -21,7 +21,7 @@ test('Message entry reads the selected record, its full text and Core receipt', 
   const methods: string[] = []
   page.on('request', req => {
     if (req.url().includes('/v1/')) {
-      expect(new URL(req.url()).pathname).toMatch(/^\/v1\/core\//)
+      expect(new URL(req.url()).pathname).toMatch(/^\/apis\/core\/v1\//)
       methods.push(req.method())
     }
   })

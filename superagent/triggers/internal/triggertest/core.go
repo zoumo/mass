@@ -114,7 +114,7 @@ func (f *CoreFixture) WaitRoleToken(role, ownerID string) string {
 					} `json:"_meta"`
 				}
 			}
-			status := Request(f.t, http.MethodPost, f.Endpoint, "/v1/mcp", candidate, request, &response)
+			status := Request(f.t, http.MethodPost, f.Endpoint, "/apis/core/v1/mcp", candidate, request, &response)
 			binding := response.Result.Meta.Binding
 			if status == http.StatusOK && binding.Role == role && binding.OwnerID == ownerID {
 				token = candidate
@@ -219,7 +219,7 @@ func CallRoleTool[T any](t *testing.T, endpoint, token, name string, arguments a
 		"method":  "tools/call",
 		"params":  map[string]any{"name": name, "arguments": arguments},
 	}
-	status := Request(t, http.MethodPost, endpoint, "/v1/mcp", token, request, &reply)
+	status := Request(t, http.MethodPost, endpoint, "/apis/core/v1/mcp", token, request, &reply)
 	if status != http.StatusOK || reply.JSONRPC != "2.0" || reply.ID != 1 || len(reply.Error) != 0 || reply.Result.IsError {
 		t.Fatalf("Role MCP %s failed: HTTP %d, RPC error %s, tool result %s", name, status, reply.Error, reply.Result.StructuredContent)
 	}
@@ -242,7 +242,7 @@ func (f *CoreFixture) RoutingEvents(m map[string]any) []routingEvent {
 	var page struct {
 		Items []routingEvent `json:"items"`
 	}
-	path := "/v1/core/internal-events?messageId=" + url.QueryEscape(m["id"].(string))
+	path := "/apis/core/v1/internal-events?messageId=" + url.QueryEscape(m["id"].(string))
 	if code := Request(f.t, "GET", f.Endpoint, path, "", nil, &page); code != http.StatusOK {
 		f.t.Fatalf("read routing events: HTTP %d", code)
 	}
@@ -254,7 +254,7 @@ func ReadMessages(t *testing.T, endpoint string) []map[string]any {
 	var page struct {
 		Items []map[string]any `json:"items"`
 	}
-	if code := Request(t, http.MethodGet, endpoint, "/v1/core/trigger-messages?limit=200", "", nil, &page); code != http.StatusOK {
+	if code := Request(t, http.MethodGet, endpoint, "/apis/core/v1/trigger-messages?limit=200", "", nil, &page); code != http.StatusOK {
 		t.Fatalf("Core Messages: HTTP %d", code)
 	}
 	return page.Items

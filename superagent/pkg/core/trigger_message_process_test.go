@@ -37,7 +37,7 @@ func TestCoreRejectsRemovedConfigurationFields(t *testing.T) {
 func TestSharedTriggerIdentityContract(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
-	const path = "/v1/core/trigger-messages"
+	const path = "/apis/core/v1/trigger-messages"
 	message := input("native-id")
 	message.Message.ThreadID = "unregistered/Thread%2F入口"
 	identity := core.Source{Source: "unregistered", AccountID: "account-a"}
@@ -96,7 +96,7 @@ func TestSharedTriggerIdentityContract(t *testing.T) {
 func TestStructuredTriggerMessageProcess(t *testing.T) {
 	f := fixtureAt(t)
 	const thread = "opaque/Case%2f:入口"
-	const ingress = "/v1/core/trigger-messages"
+	const ingress = "/apis/core/v1/trigger-messages"
 	identity := func(source string) core.Source {
 		return core.Source{Source: source, AccountID: source + "-account"}
 	}

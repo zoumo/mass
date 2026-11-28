@@ -29,9 +29,9 @@ test('Scheduled Trigger Messages and their delivery use the normal read-only vie
  await page.goto(messageURL)
  await dialog.getByRole('button', { name: /^查看线程 / }).click()
  await expect(dialog.getByRole('button', { name: '查看线程消息' })).toBeVisible()
- expect((await request.get('/v1/core/scheduled-tasks')).status()).toBe(404)
- expect((await request.get('/v1/core/trigger-messages?source=core%3Ascheduled-task')).status()).toBe(404)
- expect((await request.get('/v1/core/trigger-messages?scheduledTaskId=mass-st1')).status()).toBe(404)
+ expect((await request.get('/apis/core/v1/scheduled-tasks')).status()).toBe(404)
+ expect((await request.get('/apis/core/v1/trigger-messages?source=core%3Ascheduled-task')).status()).toBe(404)
+ expect((await request.get('/apis/core/v1/trigger-messages?scheduledTaskId=mass-st1')).status()).toBe(404)
 })
 
 test('Issue requirements, reports, input evidence and business acceptance are read only', async ({ page, request }, testInfo) => {
@@ -81,13 +81,13 @@ test('Issue requirements, reports, input evidence and business acceptance are re
  await expect(page).toHaveURL(/view=reports&issueId=/)
  await expect(page.getByRole('button', { name: 'Sample build verified', exact: true })).toBeVisible()
  for (const collection of ['issues', 'session-bindings', 'reports']) {
-  expect((await request.get(`/v1/core/${collection}`)).status()).toBe(200)
-  expect((await request.head(`/v1/core/${collection}`)).status()).toBe(200)
-  expect((await request.post(`/v1/core/${collection}`, { data: {} })).status()).toBe(405)
+  expect((await request.get(`/apis/core/v1/${collection}`)).status()).toBe(200)
+  expect((await request.head(`/apis/core/v1/${collection}`)).status()).toBe(200)
+  expect((await request.post(`/apis/core/v1/${collection}`, { data: {} })).status()).toBe(405)
  }
  await expect(page.getByRole('navigation').getByRole('button', { name: '执行记录', exact: true })).toHaveCount(0)
- expect((await request.get('/v1/core/executions')).status()).toBe(404)
- expect((await request.get('/v1/core/bindings')).status()).toBe(404)
+ expect((await request.get('/apis/core/v1/executions')).status()).toBe(404)
+ expect((await request.get('/apis/core/v1/bindings')).status()).toBe(404)
  expect(errors).toEqual([])
  expect(methods.length).toBeGreaterThan(0)
  expect(methods.every(method => method === 'GET')).toBeTruthy()
@@ -144,8 +144,8 @@ test('Cancellation and native stop evidence remain separate and read only', asyn
  await expect(dialog).toHaveCSS('transform', /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/)
  await page.screenshot({ path: testInfo.outputPath('cancellation-stop-unknown.png'), fullPage: true, animations: 'disabled' })
  expect(paths.length).toBeGreaterThan(0)
- expect(paths.every(p => p.startsWith('/v1/core/'))).toBeTruthy()
- expect((await request.post('/v1/core/session-bindings', { data: {} })).status()).toBe(405)
+ expect(paths.every(p => p.startsWith('/apis/core/v1/'))).toBeTruthy()
+ expect((await request.post('/apis/core/v1/session-bindings', { data: {} })).status()).toBe(405)
  expect((await request.post('/v1/operator/input-recovery', { data: {} })).status()).toBe(404)
 })
 
@@ -158,9 +158,9 @@ test('A reopened Issue links each report to its own binding and retains shared M
  const endpoint = fixtureOrigins['session-reuse-fixture']
  const { issueId, originalSessionBindingId, currentSessionBindingId, originalReportId, currentReportId, retainedHistory } = fixture
  const [original, current, reports] = await Promise.all([
-  request.get(`${endpoint}/v1/core/session-bindings/${originalSessionBindingId}`),
-  request.get(`${endpoint}/v1/core/session-bindings/${currentSessionBindingId}`),
-  request.get(`${endpoint}/v1/core/reports?issueId=${issueId}`),
+  request.get(`${endpoint}/apis/core/v1/session-bindings/${originalSessionBindingId}`),
+  request.get(`${endpoint}/apis/core/v1/session-bindings/${currentSessionBindingId}`),
+  request.get(`${endpoint}/apis/core/v1/reports?issueId=${issueId}`),
  ].map(async response => (await response).json()))
  expect(original).toMatchObject({ id: originalSessionBindingId, state: 'revoked' })
  expect(current).toMatchObject({ id: currentSessionBindingId, state: 'ready', sessionId: original.sessionId, sessionUid: original.sessionUid })

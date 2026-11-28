@@ -5,7 +5,7 @@ test.use({ locale: 'en-US', timezoneId: 'Asia/Shanghai' })
 const from = Date.UTC(2026, 10, 20) / 1000
 const stepSeconds = 60
 const t = (index: number) => from + index * stepSeconds
-const performanceURL = '**/v1/telemetry/performance?*'
+const performanceURL = '**/apis/core/v1/telemetry/performance?*'
 const titles = ['CPU 使用量', 'RSS 内存', 'Goroutine 数', '打开的文件描述符']
 const coreInstance = 'a347907b-b5a4-4f1f-9b8a-d3995d199799'
 const restartedInstance = '28e33520-d4b3-440d-af28-ef4231d31826'

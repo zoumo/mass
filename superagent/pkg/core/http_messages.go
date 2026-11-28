@@ -8,12 +8,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/zoumo/mass/internal/superagentapi"
 	"github.com/zoumo/mass/superagent/internal/triggeridentity"
 )
 
 const (
-	triggerMessagesPath = "/v1/core/trigger-messages"
-	outboxMessagesPath  = "/v1/core/outbox-messages"
+	triggerMessagesPath = superagentapi.Prefix + "/trigger-messages"
+	outboxMessagesPath  = superagentapi.Prefix + "/outbox-messages"
 )
 
 func (s *Server) observeMessageHTTP(next http.HandlerFunc) http.HandlerFunc {

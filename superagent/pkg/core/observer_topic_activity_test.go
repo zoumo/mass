@@ -30,7 +30,7 @@ func topicActivityPath(t *testing.T, query string) string {
 	t.Helper()
 	params, err := url.ParseQuery(query)
 	require.NoError(t, err)
-	path := "/v1/core/topics/" + url.PathEscape(params.Get("topicId")) + "/activity"
+	path := "/apis/core/v1/topics/" + url.PathEscape(params.Get("topicId")) + "/activity"
 	params.Del("topicId")
 	return path + "?" + params.Encode()
 }

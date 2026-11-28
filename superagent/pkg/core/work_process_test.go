@@ -294,7 +294,7 @@ func TestIssueNativeWorkLifecycle(t *testing.T) {
 	require.Contains(t, session.Spec.SystemPrompt, "submit_report records a result against the goalRevision you worked on.")
 	require.NotNil(t, session.Spec.MCPServers)
 	require.Equal(t, []runtime.MCPServer{{
-		Name: "superagent", Type: runtime.MCPTransportHTTP, URL: p.endpoint + "/v1/mcp",
+		Name: "superagent", Type: runtime.MCPTransportHTTP, URL: p.endpoint + "/apis/core/v1/mcp",
 		Headers: []mcp.NamedValue{{Name: "Authorization", ValueFrom: &mcp.ValueSource{
 			FileKeyRef: &mcp.FileKeyRef{Path: testCapabilityPath(f, issueBinding), Key: "AUTHORIZATION"},
 		}}},

@@ -6,10 +6,12 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+
+	"github.com/zoumo/mass/internal/superagentapi"
 )
 
 func newScheduledTasks() *cobra.Command {
-	const collection = "/v1/core/scheduled-tasks"
+	const collection = superagentapi.Prefix + "/scheduled-tasks"
 	var operator operatorTarget
 	var operationID, topic string
 	var limit int

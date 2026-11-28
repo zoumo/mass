@@ -23,7 +23,7 @@ func TestScheduledTaskSystemRoutingFollowsActiveSubscriptions(t *testing.T) {
 	p := f.start()
 	router := waitBinding(t, p, "router", "", "ready")
 
-	const tasks = "/v1/core/scheduled-tasks"
+	const tasks = "/apis/core/v1/scheduled-tasks"
 	status, raw := request(t, http.MethodPost, p.endpoint, tasks, operator, core.CreateScheduledTaskRequest{
 		OperationID: "system-followup",
 		Schedule: core.ScheduledTaskSchedule{

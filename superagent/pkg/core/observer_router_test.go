@@ -102,12 +102,12 @@ func TestObserverRouterMessages(t *testing.T) {
 		"trigger-messages?view=router&order=oldest", "trigger-messages?order=newest&cursor=" + next,
 		"trigger-messages?view=router&messageId=" + promoted + "&cursor=" + next, "trigger-messages?view=router&topicId=" + topic.OwnerID,
 	} {
-		status, _ := request(t, http.MethodGet, p.endpoint, "/v1/core/"+path, "", nil)
+		status, _ := request(t, http.MethodGet, p.endpoint, "/apis/core/v1/"+path, "", nil)
 		require.Equal(t, http.StatusBadRequest, status, path)
 	}
-	status, _ := request(t, http.MethodHead, p.endpoint, "/v1/core/trigger-messages?view=router", "", nil)
+	status, _ := request(t, http.MethodHead, p.endpoint, "/apis/core/v1/trigger-messages?view=router", "", nil)
 	require.Equal(t, http.StatusOK, status)
-	status, _ = request(t, http.MethodPut, p.endpoint, "/v1/core/trigger-messages?view=router", "", nil)
+	status, _ = request(t, http.MethodPut, p.endpoint, "/apis/core/v1/trigger-messages?view=router", "", nil)
 	require.Equal(t, http.StatusMethodNotAllowed, status)
 
 	direct := submit(t, p, f, input("direct-after-route"))

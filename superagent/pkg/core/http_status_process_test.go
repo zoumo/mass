@@ -21,6 +21,7 @@ import (
 func TestStandaloneStatusProbes(t *testing.T) {
 	f := fixtureAt(t)
 	p := f.start()
+	require.Equal(t, "ws"+strings.TrimPrefix(p.endpoint, "http")+"/apis/massd/jsonrpc", p.massdEndpoint)
 	for path, outcome := range map[string]string{"/livez": "alive", "/readyz": "ready"} {
 		status, body := request(t, http.MethodGet, p.endpoint, path, "", nil)
 		require.Equal(t, http.StatusOK, status)
@@ -40,7 +41,7 @@ func TestStandaloneStatusProbes(t *testing.T) {
 	}
 	require.Equal(t, "not_started", checkStandaloneStackStatus(t, p, "ready", "ready").Router)
 	for _, path := range []string{"/livez", "/readyz"} {
-		status, _ := request(t, http.MethodGet, p.endpoint, "/massd"+path, "", nil)
+		status, _ := request(t, http.MethodGet, p.endpoint, "/apis/massd"+path, "", nil)
 		require.Equal(t, http.StatusOK, status)
 	}
 }
@@ -67,9 +68,12 @@ func TestStandaloneStatusWithExternalMassd(t *testing.T) {
 	write(t, f.config, strings.Replace(string(config), "  endpoint: "+endpoint+"\n", "  endpoint: "+endpoint+"\n  tokenFile: "+tokenFile+"\n", 1))
 
 	p := f.start()
+	require.Empty(t, p.massdEndpoint)
 	checkStandaloneStackStatus(t, p, "ready", "ready", token, endpoint, external.URL)
-	status, _ := request(t, http.MethodGet, p.endpoint, "/massd/jsonrpc", token, nil)
-	require.Equal(t, http.StatusNotFound, status)
+	for _, path := range []string{"/apis/massd/jsonrpc", "/apis/massd/livez", "/apis/massd/readyz"} {
+		status, _ := request(t, http.MethodGet, p.endpoint, path, token, nil)
+		require.Equal(t, http.StatusNotFound, status)
+	}
 
 	external.Close()
 	checkStandaloneStackStatus(t, p, "degraded", "unavailable", token, endpoint, external.URL)

@@ -285,7 +285,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 
 	opToken, err := os.ReadFile(operatorFile)
 	require.NoError(t, err)
-	operatorPath := "/v1/core/session-bindings/" + issueBinding.ID
+	operatorPath := "/apis/core/v1/session-bindings/" + issueBinding.ID
 	for _, token := range []string{"", f.token, issueToken} {
 		status, data := request(t, http.MethodGet, p.endpoint, operatorPath+"/runtime-evidence", token, nil)
 		errorCode(t, status, data, http.StatusUnauthorized, "unauthorized")
@@ -468,7 +468,7 @@ func TestLifecycleNativeCancelReopenAndReplace(t *testing.T) {
 	require.Equal(t, thirdBinding.SessionID, thirdInput.session)
 	decodeInternalBatch(t, thirdInput, third.SessionBinding.StartEventID)
 	waitWorkEvent(t, p, third.SessionBinding.StartEventID, "sent")
-	for _, path := range []string{"/v1/core/topics/" + oldTopic.ID, "/v1/core/session-bindings/" + newTopic.ID} {
+	for _, path := range []string{"/apis/core/v1/topics/" + oldTopic.ID, "/apis/core/v1/session-bindings/" + newTopic.ID} {
 		status, _ = request(t, http.MethodPost, p.endpoint, path, string(opToken), nil)
 		require.Equal(t, http.StatusMethodNotAllowed, status)
 	}
@@ -579,11 +579,13 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 	require.NoError(t, os.MkdirAll(project, 0o700))
 	f, operatorFile := eventFixture(t, endpoint)
 	p := f.start()
-	router := startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))
+	routerBinding := waitBinding(t, p, "router", "", "ready")
+	router := startRoleMCP(t, f, routerBinding)
 	source := submit(t, p, f, input("claude-reuse"))
 	waitRouteStatus(t, p, source.EventID, "sent")
 	decision := mcpWork[core.RouteDecision](t, router, "route_messages", newRoute("claude-reuse", []string{source.MessageID}, workspace))
-	topic := startRoleMCP(t, f, waitBinding(t, p, "topic", decision.Targets[0].TopicID, "ready"))
+	topicBinding := waitBinding(t, p, "topic", decision.Targets[0].TopicID, "ready")
+	topic := startRoleMCP(t, f, topicBinding)
 	waitDelivered(t, p, source.MessageID, "topic", decision.Targets[0].TopicID)
 	create := issueInput(workspace, "claude-issue")
 	create.Start = true
@@ -621,6 +623,30 @@ func TestLifecycleClaudeReusesClosedSessionWithFreshMCP(t *testing.T) {
 		return false
 	}, 5*time.Second, 25*time.Millisecond)
 	require.NoError(t, syscall.Kill(nativePID, 0))
+	for _, want := range []struct{ id, tool string }{
+		{routerBinding.ID, "list_topics"},
+		{topicBinding.ID, "get_topic"},
+		{old.ID, "get_issue"},
+	} {
+		require.Eventually(t, func() bool {
+			raw, err := os.ReadFile(filepath.Join(native, "mcp.jsonl"))
+			if err != nil {
+				return false
+			}
+			for line := range strings.SplitSeq(string(raw), "\n") {
+				var row struct {
+					MCPPath string
+					Tool    string
+					Binding struct{ ID string }
+				}
+				if json.Unmarshal([]byte(line), &row) == nil && row.Binding.ID == want.id && row.Tool == want.tool {
+					require.Equal(t, "/apis/core/v1/mcp", row.MCPPath)
+					return true
+				}
+			}
+			return false
+		}, 5*time.Second, 25*time.Millisecond, "native client must call %s for binding %s", want.tool, want.id)
+	}
 	findMCP := func(want string) bool {
 		raw, err := os.ReadFile(filepath.Join(native, "mcp.jsonl"))
 		if err != nil {

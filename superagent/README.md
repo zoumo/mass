@@ -72,9 +72,11 @@ For a fresh Trigger database or a restart, follow the
    directory and mode `0600` for each file. Each token must contain at
    least 32 bytes without whitespace or control characters. When a token
    was absent, Core generates it on startup. Remove `accessToken` from the YAML.
-4. Point embedded MASS clients at the Core admin token. Keep the existing
-   Trigger account IDs, instance IDs, and database paths. Provide the Core
-   Trigger token to standalone adapters through their `coreTokenEnv`.
+4. Update direct Core clients to use `/apis/core/v1/`. Point embedded MASS
+   clients at `/apis/massd/jsonrpc` on the Core origin and use the Core admin
+   token. Use the external service's configured RPC address for standalone MASS.
+   Keep the existing Trigger account IDs, instance IDs, and database paths.
+   Provide the Core Trigger token to standalone adapters through their `coreTokenEnv`.
 5. Check Core readiness, MASS Session history, and the adapter status.
    Check a stored Source receipt and, for reply-enabled adapters, Outbox
    access with the original Source and Account.
@@ -157,13 +159,15 @@ Session operations, including operations on Sessions managed by Core.
 
 ```sh
 MASS_TOKEN="$(cat /absolute/run/superagent-core-data/credentials/admin.token)" \
-	bin/massctl --url ws://127.0.0.1:24370/massd session list
+	bin/massctl --url ws://127.0.0.1:24370/apis/massd session list
 ```
 
-For remote access, use a trusted TLS reverse proxy. Forward `/massd/`, the
+For remote access, use a trusted TLS reverse proxy. Forward `/apis/massd/`, the
 Bearer header, and the WebSocket Upgrade. Set upstream `Host` to the Core
-listen address with its port. Native clients use `wss://<proxy-host>/massd`.
+listen address with its port. Native clients use `wss://<proxy-host>/apis/massd`.
 Embedded MASS rejects upgrades containing an `Origin` header.
+In embedded mode, both `superagent serve` and `superagent compose` print
+`massdEndpoint` with the full WebSocket RPC path in the ready record.
 
 ## Run one Watchdog check
 
@@ -227,7 +231,7 @@ after Watchdog exits and starts with an empty snapshot after restart.
    use the corresponding address in `triggerEndpoints`. Compose reports the
    actual bound port and uses a loopback address for a wildcard listener.
 5. When Core runs embedded MASS, the ready record includes `massdEndpoint`.
-   Connect with the Core admin token. Use `/massd/livez` and `/massd/readyz`
+   Connect with the Core admin token. Use `/apis/massd/livez` and `/apis/massd/readyz`
    at the Core origin to check the embedded instance.
 
 Press Ctrl-C to stop the Triggers before Core and embedded MASS. After startup,
@@ -254,8 +258,8 @@ caddy run --config Gateway.Caddyfile
 
 Open `http://127.0.0.1:24372/superagent/`. The Web service listens on
 `127.0.0.1:24371` and serves `superagent/web/dist`. The gateway sends
-`/superagent/` and its assets to Web. It sends `/v1/core/`, `/v1/telemetry/`,
-`/v1/mcp`, `/status`, `/livez`, and `/readyz` to Core. Restart Web to serve a
+`/superagent/` and its assets to Web. It sends `/apis/core/v1/*`, `/status`,
+`/livez`, and `/readyz` to Core. Restart Web to serve a
 new build. Core and Compose can keep running during that restart.
 
 | Setting | Use |
@@ -265,7 +269,7 @@ new build. Core and Compose can keep running during that restart.
 | `SUPERAGENT_PUBLIC_ORIGIN` | Gateway address with scheme, such as `https://superagent.example.com`. Use your TLS hostname for HTTPS. Set `SUPERAGENT_GATEWAY_BIND` to the intended interface. |
 | `SUPERAGENT_WEB_UPSTREAM` | Host and port of the Web service. Defaults to `127.0.0.1:24371`. |
 | `SUPERAGENT_CORE_UPSTREAM` | Host and port of the Core listener. Defaults to `127.0.0.1:24370`. |
-| `SUPERAGENT_MASSD_ROUTE` | `embedded_massd` forwards `/massd/` to Core. `standalone_massd` removes the `/massd` prefix and forwards to `SUPERAGENT_MASSD_UPSTREAM`, which defaults to `127.0.0.1:24368`. |
+| `SUPERAGENT_MASSD_ROUTE` | `embedded_massd` forwards `/apis/massd/` to Core. `standalone_massd` removes the `/apis/massd` prefix and forwards to `SUPERAGENT_MASSD_UPSTREAM`, which defaults to `127.0.0.1:24368`. |
 
 The gateway checks the browser Origin against the incoming scheme and host. It
 checks Fetch Metadata and normalizes `Host` before forwarding to Core. Keep
@@ -303,7 +307,7 @@ and `/readyz` and use `/status` to inspect the stack.
    Run one owner per data directory and one active Outbox sender per account.
 3. Start standalone massd first if you stopped it. Then start Compose or Core
    and check `/readyz` and `/status` at the printed Core origin. If you expose
-   massd, check `/massd/readyz` at its public origin. Start Web and the gateway
+   massd, check `/apis/massd/readyz` at its public origin. Start Web and the gateway
    and open `/superagent/` at the gateway origin.
 4. Start standalone Triggers and resume traffic. Verify that a Trigger Message
    can be submitted and its receipt read back by `sourceMessageId`. Inspect

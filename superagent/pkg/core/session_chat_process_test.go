@@ -40,7 +40,7 @@ func TestCurrentSessionChatBoundary(t *testing.T) {
 	waitWorkEvent(t, p, worker.StartEventID, "sent")
 
 	path := func(binding core.SessionBinding) string {
-		return "/v1/core/session-bindings/" + binding.ID + "/chat"
+		return "/apis/core/v1/session-bindings/" + binding.ID + "/chat"
 	}
 	answer := map[string]any{"action": "answer", "interaction": "fixture-permission", "answer": map[string]string{"optionId": "allow-once"}}
 	for _, binding := range []core.SessionBinding{topic, worker} {

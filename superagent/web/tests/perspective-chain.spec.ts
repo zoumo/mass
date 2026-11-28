@@ -13,7 +13,7 @@ for (const [size, width, height] of [
     request,
   }, info) => {
     const endpoint = fixtureOrigins['message-path-fixture']
-    const get = async (path: string) => (await request.get(endpoint + '/v1/core/' + path)).json()
+    const get = async (path: string) => (await request.get(endpoint + '/apis/core/v1/' + path)).json()
     const messages = (await get('trigger-messages?limit=200')).items
     const msg = messages.find((m: { sourceMessageId: string }) => m.sourceMessageId === 'observer-path-rerouted')
     const topic = (await get('topics')).items.find((t: { title: string }) => t.title === '发布准备')
@@ -25,7 +25,7 @@ for (const [size, width, height] of [
     page.on('pageerror', (e) => errors.push(e.message))
     page.on('request', (req) => {
       if (new URL(req.url()).pathname.startsWith('/v1/')) {
-        expect(new URL(req.url()).pathname).toMatch(/^\/v1\/core\//)
+        expect(new URL(req.url()).pathname).toMatch(/^\/apis\/core\/v1\//)
         methods.add(req.method())
       }
     })
