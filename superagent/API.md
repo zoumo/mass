@@ -342,8 +342,10 @@ for data ownership, and the [WebSocket binding](../harness/bindings/websocket.md
 for the optional host mount and token boundary. Core validates Runtime availability
 when it prepares a Session. Set the Router workspace and profile in
 `sessions.router` and the Topic profile in `sessions.topic`. Topic selects
-an allowed Runtime and model pair from `sessions.issue.templates`. Core sends
-the literal configured values and the optional effort to MASS.
+an Issue template by its unique `name` in `sessions.issue.templates`. Each
+template specifies a `runtimeRef` and can specify `model`, `effort`, and
+`description`. Core sends the configured execution values to MASS. An omitted
+model or effort leaves that setting to the Agent.
 
 New Router Sessions, Topic Sessions and Issue Sessions use `config.permissionPreset: fullAccess`
 and `features.agentQuestions: false`. This applies to replacement Sessions and
@@ -505,13 +507,19 @@ An Issue inherits the Topic workspace unless the request supplies an existing
 absolute path. Message materials must belong to the Topic's reception history.
 A stale `expectedRevision` returns `conflict` with `resource` and `currentRevision`.
 
-For each explicit selection, Core validates the complete Runtime and model
-pair against the current list and takes effort from that entry. An incomplete
-or unlisted pair returns `invalid_argument`. A `start_issue` with neither
-field uses the saved Issue profile, even if the template changed or was
-removed. Issue reads include `executionProfile: {runtimeRef, model, effort?}`,
-including through the Issue Session's `get_issue`. An identical create retry
-returns the original Issue identity and, for `start: true`, its initial SessionBinding.
+Topic Session instructions and `get_topic(include: ["executionTemplates"])`
+list each template's `name` and `description`. An omitted description appears
+as an empty string. `create_issue` requires the template name in `template`,
+including when `default` is the only template. A missing, blank, or unlisted
+name returns `invalid_argument`.
+
+Core saves the template name and its execution profile in the Issue.
+`start_issue` can select a different template by name before it creates a new
+SessionBinding. Omitting `template` reuses the saved profile, even if the
+template changed or was removed. Issue reads include the saved `template`
+when present and `executionProfile: {runtimeRef, model, effort?}`. An
+identical create retry returns the original Issue identity and, for
+`start: true`, its initial SessionBinding.
 
 `start: true` uses the same scheduling transaction as `start_issue`. Core
 saves the Issue's profile and `currentSessionBindingId`, creates the

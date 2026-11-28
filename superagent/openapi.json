@@ -1247,6 +1247,9 @@
           "status": {
             "type": "string"
           },
+          "template": {
+            "type": "string"
+          },
           "title": {
             "type": "string"
           },
@@ -5946,6 +5949,9 @@
                             "type": "integer"
                           },
                           "status": {
+                            "type": "string"
+                          },
+                          "template": {
                             "type": "string"
                           },
                           "title": {

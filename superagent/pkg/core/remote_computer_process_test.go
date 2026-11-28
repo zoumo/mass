@@ -128,9 +128,9 @@ func TestRemoteComputerRoleSessionsAndReplacement(t *testing.T) {
 	topic := startRoleMCP(t, f, topicBinding)
 	require.Len(t, queryTemplates(t, topic), 2)
 
-	for _, model := range []core.ExecutionProfile{issueModel, reviewModel} {
-		request := issueInput(f.dir, "make-remote-"+model.Model)
-		request.RuntimeRef, request.Model, request.Start = model.RuntimeRef, model.Model, true
+	for _, template := range []string{"default", "review"} {
+		request := issueInput(f.dir, "make-remote-"+template)
+		request.Template, request.Start = template, true
 		work := mcpWork[core.WorkReceipt](t, topic, "create_issue", request)
 		require.NotNil(t, work.SessionBinding)
 		binding := waitBinding(t, p, "issue", work.SessionBinding.ID, "ready")

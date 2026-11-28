@@ -28,8 +28,8 @@ func TestExecutionTemplateConfig(t *testing.T) {
 	config, err := core.LoadConfig(f.config)
 	require.NoError(t, err)
 	require.Equal(t, []core.IssueTemplate{
-		{ExecutionProfile: issueModel, Description: "Implement changes"},
-		{ExecutionProfile: reviewModel, Description: "Review results"},
+		{Name: "default", ExecutionProfile: issueModel, Description: "Implement changes"},
+		{Name: "review", ExecutionProfile: reviewModel, Description: "Review results"},
 	}, config.Sessions.Issue.Templates)
 
 	require.Equal(t, f.dir, config.Sessions.Router.Workspace)
@@ -68,9 +68,11 @@ func TestExecutionTemplateConfig(t *testing.T) {
 		{"bad runtime name", "  topic:\n    runtimeRef: agent", "  topic:\n    runtimeRef: Invalid/Runtime", "sessions.topic.runtimeRef"},
 		{"missing issue section", "  issue:\n    templates:\n" + templates, "", "sessions.issue"},
 		{"empty issue list", "    templates:\n" + templates, "    templates: []\n", "sessions.issue.templates"},
-		{"missing description", "        description: Review results\n", "", "sessions.issue.templates[1].description"},
-		{"blank description", "description: Review results", "description: '   '", "sessions.issue.templates[1].description"},
-		{"duplicate pair", "model: review-model", "model: issue-model", "sessions.issue.templates[1].runtimeRef and model"},
+		{"missing template name", "      - name: review\n        runtimeRef: agent", "      - runtimeRef: agent", "sessions.issue.templates[1].name"},
+		{"blank template name", "name: review", "name: '   '", "sessions.issue.templates[1].name"},
+		{"duplicate template name", "name: review", "name: default", "sessions.issue.templates[1].name"},
+		{"numeric template name", "name: review", "name: 123", "sessions.issue.templates[1].name"},
+		{"missing template runtime", "name: review\n        runtimeRef: agent", "name: review", "sessions.issue.templates[1].runtimeRef"},
 		{"unknown role field", "model: topic-model", "model: topic-model\n    other: null", "sessions.topic"},
 		{"unknown template field", "description: Review results", "description: Review results\n        other: value", "sessions.issue.templates[1]"},
 		{"numeric model", "model: router-model", "model: 123", "sessions.router.model"},
@@ -154,9 +156,40 @@ func assertTemplateAccess(t *testing.T, p *process, binding core.SessionBinding,
 	errorCode(t, code, body, http.StatusForbidden, "forbidden")
 }
 
-func queryTemplates(t *testing.T, topic *roleMCPClient) []core.IssueTemplate {
+func queryTemplates(t *testing.T, topic *roleMCPClient) []map[string]string {
 	t.Helper()
-	return mcpWork[struct{ ExecutionTemplates []core.IssueTemplate }](t, topic, "get_topic", map[string][]string{"include": {"executionTemplates"}}).ExecutionTemplates
+	return mcpWork[struct{ ExecutionTemplates []map[string]string }](t, topic, "get_topic", map[string][]string{"include": {"executionTemplates"}}).ExecutionTemplates
+}
+
+func assertTemplateInputs(t *testing.T, topic *roleMCPClient) {
+	t.Helper()
+	var result struct {
+		Tools []struct {
+			Name        string
+			InputSchema struct {
+				Required   []string
+				Properties map[string]json.RawMessage
+			}
+		}
+	}
+	require.NoError(t, json.Unmarshal(topic.call("tools/list", struct{}{})["result"], &result))
+	checked := 0
+	for _, tool := range result.Tools {
+		if tool.Name != "create_issue" && tool.Name != "start_issue" {
+			continue
+		}
+		checked++
+		require.Contains(t, tool.InputSchema.Properties, "template")
+		for _, key := range []string{"runtimeRef", "model", "effort"} {
+			require.NotContains(t, tool.InputSchema.Properties, key)
+		}
+		if tool.Name == "create_issue" {
+			require.Contains(t, tool.InputSchema.Required, "template")
+		} else {
+			require.NotContains(t, tool.InputSchema.Required, "template")
+		}
+	}
+	require.Equal(t, 2, checked)
 }
 
 func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
@@ -208,6 +241,32 @@ func TestLegacyRouterSessionResumesWithSavedSpec(t *testing.T) {
 	require.Equal(t, *spec.Config, native)
 }
 
+func TestSingleIssueTemplateRequiresName(t *testing.T) {
+	peer := newNativeSubmitPeer(t)
+	endpoint, _ := startEventTestMassd(t, peer)
+	f, _ := eventFixture(t, endpoint)
+	raw, err := os.ReadFile(f.config)
+	require.NoError(t, err)
+	config, _, found := strings.Cut(string(raw), "      - name: review\n")
+	require.True(t, found)
+	write(t, f.config, config)
+	p := f.start()
+	router := startRoleMCP(t, f, waitBinding(t, p, "router", "", "ready"))
+	topicBinding, _ := nativeWorkTopic(t, f, p, peer, router, "one-template")
+	topic := startRoleMCP(t, f, topicBinding)
+	require.Equal(t, []map[string]string{{"name": "default", "description": "Implement changes"}}, queryTemplates(t, topic))
+
+	request := issueInput(f.dir, "single-template")
+	mcpWorkError(t, topic, "create_issue", "invalid_argument", map[string]any{
+		"operationId": request.OperationID, "title": request.Title, "goal": request.Goal, "start": true,
+	})
+	require.Empty(t, page(t, p, "issues").Items)
+	require.Empty(t, issueBindings(t, p))
+
+	work := mcpWork[core.WorkReceipt](t, topic, "create_issue", request)
+	require.Equal(t, "default", work.Issue.Template)
+}
+
 func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	peer := newNativeSubmitPeer(t)
 	endpoint, massd := startEventTestMassd(t, peer)
@@ -229,8 +288,19 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	config := strings.Replace(string(raw), fmt.Sprintf("workspace: %q", cwd), fmt.Sprintf("workspace: %q", routerWorkspace), 1)
 	config = strings.Replace(config, "runtimeRef: agent\n    model: router-model", "runtimeRef: router-agent\n    model: router-model", 1)
 	config = strings.Replace(config, "runtimeRef: agent\n    model: topic-model", "runtimeRef: topic-agent\n    model: topic-model\n    effort: medium", 1)
-	const missingTemplate = "      - runtimeRef: missing-agent\n        model: missing-model\n        description: Missing Runtime fixture\n"
-	write(t, f.config, config+missingTemplate)
+	const additionalTemplates = `      - name: unavailable
+        runtimeRef: missing-agent
+        model: missing-model
+        description: Missing Runtime fixture
+      - name: careful
+        runtimeRef: agent
+        model: issue-model
+        effort: high
+        description: Work in depth
+      - name: native
+        runtimeRef: agent
+`
+	write(t, f.config, config+additionalTemplates)
 	p := f.start()
 	routerBinding := waitBinding(t, p, "router", "", "ready")
 	router := startRoleMCP(t, f, routerBinding)
@@ -252,25 +322,40 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	assertSessionProfile(t, massd, peer, topicBinding, topicProfile)
 	var topicSession resource.Session
 	require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: topicBinding.SessionID}, &topicSession))
-	require.Contains(t, topicSession.Spec.SystemPrompt, "runtimeRef")
-	require.Contains(t, topicSession.Spec.SystemPrompt, "issue-model")
-	require.Contains(t, topicSession.Spec.SystemPrompt, "Review results")
+	_, templateJSON, found := strings.Cut(topicSession.Spec.SystemPrompt, "\nConfigured Issue Agent templates\n")
+	require.True(t, found)
+	var promptTemplates []map[string]string
+	require.NoError(t, json.Unmarshal([]byte(templateJSON), &promptTemplates))
+	wantTemplates := []map[string]string{
+		{"name": "default", "description": "Implement changes"},
+		{"name": "review", "description": "Review results"},
+		{"name": "unavailable", "description": "Missing Runtime fixture"},
+		{"name": "careful", "description": "Work in depth"},
+		{"name": "native", "description": ""},
+	}
+	require.Equal(t, wantTemplates, promptTemplates)
+	require.Equal(t, wantTemplates, queryTemplates(t, topic))
 	assertTemplateAccess(t, p, topicBinding, f, topic, true)
+	assertTemplateInputs(t, topic)
 	missing := core.ExecutionProfile{RuntimeRef: "missing-agent", Model: "missing-model"}
-	require.Equal(t, []core.IssueTemplate{
-		{ExecutionProfile: issueModel, Description: "Implement changes"},
-		{ExecutionProfile: reviewModel, Description: "Review results"},
-		{ExecutionProfile: missing, Description: "Missing Runtime fixture"},
-	}, queryTemplates(t, topic))
 	mcpWorkError(t, topic, "get_topic", "invalid_argument", map[string]string{"runtimeRef": "agent"})
 
 	started := issueInput(f.dir, "start-with-create")
 	started.Start = true
-	invalid := started
-	invalid.RuntimeRef, invalid.Model = "missing-agent", "issue-model"
+	invalid := map[string]any{
+		"operationId": started.OperationID, "title": started.Title, "goal": started.Goal, "start": true,
+	}
 	mcpWorkError(t, topic, "create_issue", "invalid_argument", invalid)
-	invalid.RuntimeRef, invalid.Model = "agent", ""
-	mcpWorkError(t, topic, "create_issue", "invalid_argument", invalid)
+	for _, value := range []any{nil, "", "  ", "unknown", 123} {
+		invalid["template"] = value
+		mcpWorkError(t, topic, "create_issue", "invalid_argument", invalid)
+	}
+	invalid["template"] = "default"
+	for _, key := range []string{"runtimeRef", "model", "effort"} {
+		invalid[key] = "obsolete"
+		mcpWorkError(t, topic, "create_issue", "invalid_argument", invalid)
+		delete(invalid, key)
+	}
 	require.Empty(t, page(t, p, "issues").Items)
 	require.Empty(t, issueBindings(t, p))
 	require.Len(t, bindings(t, p), 2)
@@ -280,27 +365,28 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	initialRetry := mcpWork[core.WorkReceipt](t, topic, "create_issue", started)
 	require.Equal(t, work.Issue, initialRetry.Issue)
 	require.Equal(t, work.SessionBinding.ID, initialRetry.SessionBinding.ID)
+	require.Equal(t, "default", work.Issue.Template)
 	require.Equal(t, issueModel, work.Issue.ExecutionProfile)
 	first := verifyTemplateIssue(t, p, massd, peer, work, issueModel)
 	issue := startRoleMCP(t, f, first)
 	assertTemplateAccess(t, p, first, f, issue, false)
 	require.Equal(t, issueModel, mcpWork[core.WorkReceipt](t, issue, "get_issue", struct{}{}).Issue.ExecutionProfile)
 	changedRetry := started
-	changedRetry.Model = "review-model"
+	changedRetry.Template = "review"
 	mcpWorkError(t, topic, "create_issue", "conflict", changedRetry)
 
 	keep := mcpWork[core.WorkReceipt](t, topic, "create_issue", issueInput(f.dir, "use-removed-template")).Issue
 	switchIssue := mcpWork[core.WorkReceipt](t, topic, "create_issue", issueInput(f.dir, "switch-template")).Issue
 	switchIssue = blockers(t, topic, switchIssue, "pending-approval", human("Wait for evidence"))
 	baseStart := startRequest("replace-profile", switchIssue)
-	partial := baseStart
-	partial.Model = new("review-model")
-	mcpWorkError(t, topic, "start_issue", "invalid_argument", partial)
-	mcpWorkError(t, topic, "start_issue", "invalid_argument", map[string]any{
-		"operationId": "null-selection", "issueId": switchIssue.ID, "expectedRevision": switchIssue.Revision, "model": nil,
-	})
+	for _, invalid := range []map[string]any{{"template": nil}, {"model": "review-model"}, {"runtimeRef": "agent"}, {"effort": "high"}} {
+		invalid["operationId"] = "invalid-selection"
+		invalid["issueId"] = switchIssue.ID
+		invalid["expectedRevision"] = switchIssue.Revision
+		mcpWorkError(t, topic, "start_issue", "invalid_argument", invalid)
+	}
 	override := baseStart
-	override.RuntimeRef, override.Model = new("agent"), new("review-model")
+	override.Template = new("review")
 	stale := override
 	stale.ExpectedRevision--
 	mcpWorkError(t, topic, "start_issue", "conflict", stale)
@@ -321,7 +407,7 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 
 	p.stop(t, false)
 	equivalent := strings.Replace(config, "sessions:\n", "sessions:\n  namespace: superagent\n", 1)
-	write(t, f.config, equivalent+missingTemplate)
+	write(t, f.config, equivalent+additionalTemplates)
 	p = f.start()
 	for i, binding := range originalBindings {
 		identity := binding.OwnerID
@@ -340,11 +426,11 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	}
 
 	p.stop(t, false)
-	updated := strings.Replace(equivalent, "      - runtimeRef: agent\n        model: issue-model\n        effort: medium\n        description: Implement changes\n", "", 1)
+	updated := strings.Replace(equivalent, "      - name: default\n        runtimeRef: agent\n        model: issue-model\n        effort: medium\n        description: Implement changes\n", "", 1)
 	updated = strings.Replace(updated, "description: Review results", "description: Review results with new guidance", 1)
-	write(t, f.config, strings.Replace(updated, "effort: low", "effort: high", 1)+missingTemplate)
+	write(t, f.config, strings.Replace(updated, "effort: low", "effort: high", 1)+additionalTemplates)
 	f.fails("failed_precondition")
-	write(t, f.config, updated+missingTemplate)
+	write(t, f.config, updated+additionalTemplates)
 	p = f.start()
 	require.Equal(t, routerBinding.SessionUID, waitBinding(t, p, "router", "", "ready").SessionUID)
 	require.Equal(t, topicBinding.SessionUID, waitBinding(t, p, "topic", topicBinding.OwnerID, "ready").SessionUID)
@@ -356,15 +442,12 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	retry := mcpWork[core.WorkReceipt](t, topic, "create_issue", started)
 	require.Equal(t, work.Issue, retry.Issue)
 	require.Equal(t, work.SessionBinding.ID, retry.SessionBinding.ID)
-	require.Equal(t, work.SessionBinding.ID, retry.SessionBinding.ID)
 	require.Equal(t, keep, readRecord[core.Issue](t, p, "issues/"+keep.ID))
-	require.Equal(t, []core.IssueTemplate{
-		{ExecutionProfile: reviewModel, Description: "Review results with new guidance"},
-		{ExecutionProfile: missing, Description: "Missing Runtime fixture"},
-	}, queryTemplates(t, topic))
+	wantTemplates[1]["description"] = "Review results with new guidance"
+	require.Equal(t, wantTemplates[1:], queryTemplates(t, topic))
 
 	removed := startRequest("explicit-removed", keep)
-	removed.RuntimeRef, removed.Model = new("agent"), new("issue-model")
+	removed.Template = new("default")
 	mcpWorkError(t, topic, "start_issue", "invalid_argument", removed)
 	require.Equal(t, keep, readRecord[core.Issue](t, p, "issues/"+keep.ID))
 	verifyTemplateIssue(t, p, massd, peer, mcpWork[core.WorkReceipt](t, topic, "start_issue", startRequest("keep-profile", keep)), issueModel)
@@ -372,11 +455,12 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	override.Resolve = []core.BlockerResolution{{BlockerID: switchIssue.Blockers[0].ID, Reason: "Verified evidence"}}
 	replacement := mcpWork[core.WorkReceipt](t, topic, "start_issue", override)
 	require.Empty(t, replacement.Issue.Blockers)
+	require.Equal(t, "review", replacement.Issue.Template)
 	require.Equal(t, reviewModel, replacement.Issue.ExecutionProfile)
 	verifyTemplateIssue(t, p, massd, peer, replacement, reviewModel)
 
 	badRuntime := issueInput(f.dir, "missing-runtime")
-	badRuntime.RuntimeRef, badRuntime.Model, badRuntime.Start = missing.RuntimeRef, missing.Model, true
+	badRuntime.Template, badRuntime.Start = "unavailable", true
 	unavailable := mcpWork[core.WorkReceipt](t, topic, "create_issue", badRuntime)
 	require.Equal(t, missing, unavailable.Issue.ExecutionProfile)
 	var pending core.SessionBinding
@@ -388,7 +472,26 @@ func TestExecutionTemplateSelectionAndRestart(t *testing.T) {
 	require.Equal(t, "pending", pending.State)
 	require.Contains(t, pending.LastError, "session_prepare_not_found")
 	require.Empty(t, pending.SessionID)
-	t.Logf("Missing Runtime preserved the selected profile and exposed %s", pending.LastError)
+	for _, selection := range []struct {
+		name string
+		want core.ExecutionProfile
+	}{
+		{"careful", core.ExecutionProfile{RuntimeRef: issueModel.RuntimeRef, Model: issueModel.Model, Effort: "high"}},
+		{"native", core.ExecutionProfile{RuntimeRef: "agent"}},
+	} {
+		req := issueInput(f.dir, "select-"+selection.name)
+		req.Template, req.Start = selection.name, true
+		selected := mcpWork[core.WorkReceipt](t, topic, "create_issue", req)
+		require.Equal(t, selection.name, selected.Issue.Template)
+		binding := verifyTemplateIssue(t, p, massd, peer, selected, selection.want)
+		if selection.name == "native" {
+			var session resource.Session
+			require.NoError(t, massd.GetSession(t.Context(), resource.SessionRef{SessionID: binding.SessionID}, &session))
+			rawConfig, err := json.Marshal(session.Spec.Config)
+			require.NoError(t, err)
+			require.JSONEq(t, `{"permissionPreset":"fullAccess"}`, string(rawConfig))
+		}
+	}
 }
 
 func verifyTemplateIssue(t *testing.T, p *process, massd *client.Client, peer *nativeSubmitPeer, work core.WorkReceipt, profile core.ExecutionProfile) core.SessionBinding {

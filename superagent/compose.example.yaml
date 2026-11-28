@@ -30,7 +30,8 @@ core:
   #     effort: medium
   #   issue:
   #     templates:
-  #       - runtimeRef: codex
+  #       - name: default
+  #         runtimeRef: codex
   #         model: gpt-6.2-sol
   #         description: Implement and verify code changes.
   # Optional remote computer for Topic and Issue Sessions.

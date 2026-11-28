@@ -258,11 +258,13 @@ const fixtureSessions = `sessions:
     model: topic-model
   issue:
     templates:
-      - runtimeRef: agent
+      - name: default
+        runtimeRef: agent
         model: issue-model
         effort: medium
         description: Implement changes
-      - runtimeRef: agent
+      - name: review
+        runtimeRef: agent
         model: review-model
         description: Review results
 `
