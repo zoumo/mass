@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,12 +16,8 @@ import (
 
 func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 	f := fixtureAt(t)
-	operatorFile := filepath.Join(f.dir, "operator.token")
 	token := strings.Repeat("O", 48)
-	write(t, operatorFile, token)
-	config, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	write(t, f.config, string(config)+"  admin: "+operatorFile+"\n")
+	f.seedToken("admin.token", token)
 	p := f.start()
 	const tasks = "/v1/core/scheduled-tasks"
 	const messages = "/v1/core/trigger-messages"
@@ -93,7 +87,7 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 
 	invokeCLI := func(args ...string) []byte {
 		t.Helper()
-		args = append([]string{"scheduled-tasks", "--endpoint", p.endpoint, "--operator-token-file", operatorFile}, args...)
+		args = append([]string{"scheduled-tasks", "--endpoint", p.endpoint, "--config", f.config}, args...)
 		output, err := exec.CommandContext(t.Context(), build(t), args...).CombinedOutput()
 		require.NoError(t, err, string(output))
 		return output
@@ -125,17 +119,13 @@ func TestScheduledTaskOperatorHTTPAndCLI(t *testing.T) {
 	call(http.MethodDelete, taskPath+"?expectedRevision="+strconv.Itoa(task.Revision+2), nil, http.StatusOK)
 	call(http.MethodGet, taskPath, nil, http.StatusNotFound)
 	require.JSONEq(t, string(all), string(call(http.MethodGet, nested, nil, http.StatusOK)))
-	require.Empty(t, checkStandaloneStackStatus(t, p, "ready", "disabled").ScheduledTaskStates)
+	require.Empty(t, checkStandaloneStackStatus(t, p, "ready", "ready").ScheduledTaskStates)
 }
 
 func TestScheduledTaskRequestValidationMatchesOpenAPI(t *testing.T) {
 	f := fixtureAt(t)
-	operatorFile := filepath.Join(f.dir, "operator.token")
 	token := strings.Repeat("O", 48)
-	write(t, operatorFile, token)
-	config, err := os.ReadFile(f.config)
-	require.NoError(t, err)
-	write(t, f.config, string(config)+"  admin: "+operatorFile+"\n")
+	f.seedToken("admin.token", token)
 	p := f.start()
 
 	doc := core.OpenAPI()

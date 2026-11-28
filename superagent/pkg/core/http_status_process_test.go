@@ -38,10 +38,10 @@ func TestStandaloneStatusProbes(t *testing.T) {
 		require.NoError(t, response.Body.Close())
 		require.Equal(t, http.StatusForbidden, response.StatusCode)
 	}
-	require.Equal(t, "not_started", checkStandaloneStackStatus(t, p, "ready", "disabled").Router)
-	for _, path := range []string{"/livez", "/readyz", "/jsonrpc"} {
+	require.Equal(t, "not_started", checkStandaloneStackStatus(t, p, "ready", "ready").Router)
+	for _, path := range []string{"/livez", "/readyz"} {
 		status, _ := request(t, http.MethodGet, p.endpoint, "/massd"+path, "", nil)
-		require.Equal(t, http.StatusNotFound, status)
+		require.Equal(t, http.StatusOK, status)
 	}
 }
 

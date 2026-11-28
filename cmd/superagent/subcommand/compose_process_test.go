@@ -22,8 +22,10 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/massd"
 	"github.com/zoumo/mass/massd/pkg/client"
 	"github.com/zoumo/mass/massd/pkg/resource"
+	"github.com/zoumo/mass/massd/pkg/transport"
 	"github.com/zoumo/mass/superagent/triggers"
 )
 
@@ -55,7 +57,13 @@ type composeFixtureEvent struct {
 	TriggerToken bool
 }
 
+func composeTokenPath(dir, file string) string {
+	return filepath.Join(dir, "core-state", "credentials", file)
+}
+
 func recordComposeEvent(dir, name string) {
+	data, _ := os.ReadFile(composeTokenPath(dir, "triggers.token"))
+	token := strings.TrimSpace(string(data))
 	f, err := os.OpenFile(filepath.Join(dir, "events.ndjson"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		panic(err)
@@ -64,7 +72,7 @@ func recordComposeEvent(dir, name string) {
 	err = json.NewEncoder(f).Encode(composeFixtureEvent{
 		Name: name, PID: os.Getpid(), Parent: os.Getppid(), Args: os.Args[1:],
 		Env:          [3]bool{os.Getenv(composeGitHubCoreEnv) != "", os.Getenv(composeGitHubEnv) != "", os.Getenv(composeDWSCoreEnv) != ""},
-		TriggerToken: os.Getenv(composeGitHubCoreEnv) == composeTriggerToken || os.Getenv(composeDWSCoreEnv) == composeTriggerToken,
+		TriggerToken: token != "" && (os.Getenv(composeGitHubCoreEnv) == token || os.Getenv(composeDWSCoreEnv) == token),
 	})
 	if err != nil {
 		panic(err)
@@ -77,6 +85,19 @@ func runComposeFixture(dir string, args []string) int {
 		return Execute()
 	case "serve":
 		if os.Getenv("TEST_COMPOSE_CORE_FIXTURE") != "" {
+			path := composeTokenPath(dir, "triggers.token")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				panic(err)
+			}
+			for _, file := range []string{"triggers.token", "admin.token"} {
+				token := composeTriggerToken
+				if file == "admin.token" {
+					token = strings.Repeat("a", 48)
+				}
+				if err := os.WriteFile(composeTokenPath(dir, file), []byte(token), 0o600); err != nil {
+					panic(err)
+				}
+			}
 			return runComposeHTTPFixture(dir, "core")
 		}
 		recordComposeEvent(dir, "core:start")
@@ -235,7 +256,8 @@ func runComposeHTTPFixture(dir, name string) int {
 }
 
 func composeFixtureAdmission(dir string, w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer "+composeTriggerToken || r.Method != http.MethodPost ||
+	token, err := os.ReadFile(composeTokenPath(dir, "triggers.token"))
+	if err != nil || r.Header.Get("Authorization") != "Bearer "+strings.TrimSpace(string(token)) || r.Method != http.MethodPost ||
 		r.Header.Get("X-Superagent-Source") != "dws" || r.Header.Get("X-Superagent-Account-Id") != "fixture-dws" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -389,11 +411,9 @@ func assertComposeOrder(t *testing.T, dir string, names ...string) {
 
 func composeFixtureConfig(t *testing.T, dir, coreListen string, github, dws bool) string {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "trigger-token"), []byte(composeTriggerToken), 0o600))
 	config := fmt.Sprintf(`core:
   listen: %q
   dataDir: ./core-state
-  accessToken: {triggers: ./trigger-token}
 `, coreListen)
 	if !github && !dws {
 		return config
@@ -462,8 +482,8 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		startup := first.startup(t)
 		trace := composeHTTPBody(t, startup.Endpoint+"/v1/telemetry/traces/"+traceID)
 		require.Contains(t, trace, "fixture-span")
-		require.DirExists(t, filepath.Join(dir, "massd-data"))
-		require.NotContains(t, readComposeFile(t, first.stdout), "massdEndpoint")
+		require.DirExists(t, filepath.Join(dir, "core-state", "massd"))
+		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/massd/jsonrpc", startup.MassdEndpoint)
 		require.NoDirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
 		checkStackStatus(t, startup.Endpoint, "ready", "ready", "disabled", "disabled")
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, startup.Endpoint+"/massd/readyz", http.NoBody)
@@ -471,18 +491,23 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		response, err := (&http.Client{Timeout: time.Second}).Do(req)
 		require.NoError(t, err)
 		require.NoError(t, response.Body.Close())
-		require.Equal(t, http.StatusNotFound, response.StatusCode)
+		require.Equal(t, http.StatusOK, response.StatusCode)
 
-		contender := strings.Replace(config, "./core-state", "./contender-state", 1)
-		second := startComposeProcess(t, binary, dir, contender, "PATH="+dir)
+		admin := readComposeFile(t, composeTokenPath(dir, "admin.token"))
+		trigger := readComposeFile(t, composeTokenPath(dir, "triggers.token"))
+		require.NotEqual(t, admin, trigger)
+		second := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		require.Error(t, second.wait(t))
-		require.Contains(t, readComposeFile(t, second.logs), "data_directory_in_use")
+		require.Contains(t, readComposeFile(t, second.logs), "already owned by another Core")
+		require.Equal(t, admin, readComposeFile(t, composeTokenPath(dir, "admin.token")))
+		require.Equal(t, trigger, readComposeFile(t, composeTokenPath(dir, "triggers.token")))
 		require.Empty(t, readComposeFile(t, second.stdout))
 		composeHTTPBody(t, startup.Endpoint+"/status")
 		require.NoError(t, first.cmd.Process.Signal(syscall.SIGTERM))
 		require.NoError(t, first.wait(t), readComposeFile(t, first.logs))
 
 		// The next startup opens MASS before Core's bind attempt fails.
+		contender := strings.Replace(config, "./core-state", "./contender-state", 1)
 		occupied, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		defer occupied.Close()
@@ -490,24 +515,32 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		require.Error(t, failed.wait(t))
 		require.Contains(t, readComposeFile(t, failed.logs), "cannot bind listen address")
 		require.Empty(t, readComposeFile(t, failed.stdout))
-		restarted := startComposeProcess(t, binary, dir, contender, "PATH="+dir)
-		restarted.startup(t)
+		recovered := startComposeProcess(t, binary, dir, contender, "PATH="+dir)
+		recovered.startup(t)
+		require.NoError(t, recovered.cmd.Process.Signal(syscall.SIGTERM))
+		require.NoError(t, recovered.wait(t), readComposeFile(t, recovered.logs))
+
+		restarted := startComposeProcess(t, binary, dir, config, "PATH="+dir)
+		instance := restarted.startup(t)
+		require.Equal(t, admin, readComposeFile(t, composeTokenPath(dir, "admin.token")))
+		require.Equal(t, trigger, readComposeFile(t, composeTokenPath(dir, "triggers.token")))
+		command := exec.CommandContext(t.Context(), binary, "scheduled-tasks", "--config", filepath.Join(dir, "stack.yaml"), "--endpoint", instance.Endpoint, "list")
+		out, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		require.JSONEq(t, `{"items":[]}`, string(out))
 		require.NoError(t, restarted.cmd.Process.Signal(syscall.SIGTERM))
 		require.NoError(t, restarted.wait(t), readComposeFile(t, restarted.logs))
+		for _, path := range []string{restarted.stdout, restarted.logs} {
+			for _, secret := range []string{admin, trigger} {
+				require.NotContains(t, readComposeFile(t, path), strings.TrimSpace(secret))
+			}
+		}
 	})
 	t.Run("sessions and authenticated RPC", func(t *testing.T) {
 		dir := t.TempDir()
-		token := strings.Repeat("m", 48)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "massd.token"), []byte(token), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "cua-mcp"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "cua.yaml"), []byte("{}\n"), 0o600))
 		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + `  externalURL: http://127.0.0.1:24370
-  massd:
-    embedded:
-      dataDir: ./custom-massd
-      sessionIdleTimeout: 0s
-      writeTimeout: 2s
-      expose: {tokenFile: ./massd.token}
   remoteComputer:
     cua: {command: ./cua-mcp, configFile: ./cua.yaml}
   sessions:
@@ -519,13 +552,14 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 `
 		p := startComposeProcess(t, binary, dir, config, "PATH="+dir)
 		startup := p.startup(t)
-		require.DirExists(t, filepath.Join(dir, "custom-massd"))
-		require.NoDirExists(t, filepath.Join(dir, "massd-data"))
+		token := strings.TrimSpace(readComposeFile(t, composeTokenPath(dir, "admin.token")))
+		trigger := strings.TrimSpace(readComposeFile(t, composeTokenPath(dir, "triggers.token")))
+		require.DirExists(t, filepath.Join(dir, "core-state", "massd"))
 		require.DirExists(t, filepath.Join(dir, "core-state", "mcp-files"))
 		require.Equal(t, "ws"+strings.TrimPrefix(startup.Endpoint, "http")+"/massd/jsonrpc", startup.MassdEndpoint)
 		require.JSONEq(t, `{"status":"ready"}`, composeHTTPBody(t, startup.Endpoint+"/massd/readyz"))
 		dial := &websocket.Dialer{HandshakeTimeout: time.Second}
-		for _, credential := range []string{"", composeTriggerToken} {
+		for _, credential := range []string{"", trigger} {
 			header := make(http.Header)
 			if credential != "" {
 				header.Set("Authorization", "Bearer "+credential)
@@ -545,6 +579,29 @@ func TestComposeEmbeddedMASSProcess(t *testing.T) {
 		defer cancel()
 		require.NoError(t, c.GetRuntime(ctx, "codex", &codex))
 		require.Equal(t, "codex", codex.Metadata.Name)
+		require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
+		require.NoError(t, p.wait(t), readComposeFile(t, p.logs))
+	})
+	t.Run("external MASS", func(t *testing.T) {
+		dir := t.TempDir()
+		const token = "fixture-standalone-massd-credential"
+		instance, err := massd.Start(t.Context(), massd.Options{
+			DataDir: t.TempDir(), Transport: transport.Options{Token: token, WriteTimeout: time.Second},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, instance.Shutdown(context.Background())) })
+		external := httptest.NewServer(instance.Handler())
+		t.Cleanup(external.Close)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "external.token"), []byte(token), 0o600))
+		config := composeFixtureConfig(t, dir, "127.0.0.1:0", false, false) + fmt.Sprintf(`  massd:
+    endpoint: %q
+    tokenFile: ./external.token
+`, "ws"+strings.TrimPrefix(external.URL, "http")+"/jsonrpc")
+		p := startComposeProcess(t, binary, dir, config, "PATH="+dir)
+		startup := p.startup(t)
+		require.Empty(t, startup.MassdEndpoint)
+		require.NoDirExists(t, filepath.Join(dir, "core-state", "massd"))
+		checkStackStatus(t, startup.Endpoint, "ready", "ready", "disabled", "disabled")
 		require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
 		require.NoError(t, p.wait(t), readComposeFile(t, p.logs))
 	})
@@ -586,8 +643,8 @@ func TestComposeProcessCombinations(t *testing.T) {
 				require.True(t, strings.HasPrefix(startup.Endpoint, tc.origin), startup.Endpoint)
 			}
 			require.False(t, strings.HasSuffix(startup.Endpoint, ":0"), startup.Endpoint)
-			require.Empty(t, startup.MassdEndpoint)
-			require.DirExists(t, filepath.Join(dir, "massd-data"))
+			require.NotEmpty(t, startup.MassdEndpoint)
+			require.DirExists(t, filepath.Join(dir, "core-state", "massd"))
 			server := awaitComposeEvent(t, dir, "core:start")
 			require.Equal(t, p.cmd.Process.Pid, server.Parent)
 			require.Equal(t, [3]bool{!tc.github, !tc.github, !tc.dws}, server.Env)
@@ -602,7 +659,7 @@ func TestComposeProcessCombinations(t *testing.T) {
 				}
 				require.Contains(t, collector.Args, startup.Endpoint)
 				require.Contains(t, composeHTTPBody(t, startup.TriggerEndpoints["github"]+"/status"), `"state":"stale"`)
-				assertComposeOrder(t, dir, "github:check", "core:start", "github:start")
+				assertComposeOrder(t, dir, "core:start", "github:check", "github:start")
 			} else {
 				require.NotContains(t, startup.TriggerEndpoints, "github")
 			}
@@ -637,7 +694,7 @@ func TestComposeProcessCombinations(t *testing.T) {
 						status.Connection == "ready" && status.ConsumerReady && status.Accepted == 1
 				}, 5*time.Second, 20*time.Millisecond)
 				require.Contains(t, composeHTTPBody(t, startup.Endpoint+"/v1/core/trigger-messages"), "last-message")
-				assertComposeOrder(t, dir, "dws:check", "core:start", "dws:serve", "consumer:start")
+				assertComposeOrder(t, dir, "core:start", "dws:check", "dws:serve", "consumer:start")
 			} else {
 				require.NotContains(t, startup.TriggerEndpoints, "dws")
 			}
@@ -684,10 +741,9 @@ func TestComposeProcessPreflight(t *testing.T) {
 		environment               []string
 	}{
 		{"unknown Trigger field", "    repositories:", "    unused: PRIVATE-FIXTURE\n    repositories:", "triggers.github configuration", nil},
-		{"missing Trigger credential file", "./trigger-token", "./missing-token", "accessToken.triggers must be a readable private regular file", nil},
 		{"credential shared across scopes", "", "", "triggers.github preflight: native service credentials must be distinct", []string{composeGitHubEnv + "=" + composeTriggerToken}},
 		{"credential environment shared across scopes", "coreTokenEnv: " + composeDWSCoreEnv, "coreTokenEnv: " + composeGitHubEnv, "triggers.github githubTokenEnv conflicts with triggers.dws coreTokenEnv", nil},
-		{"state under MASS", "./dws.sqlite", "./massd-data/dws.sqlite", "triggers.dws databasePath conflicts with core.massd.embedded dataDir", nil},
+		{"state under MASS", "./dws.sqlite", "./core-state/massd/dws.sqlite", "triggers.dws databasePath conflicts with core dataDir", nil},
 		{"state under Core", "./dws.sqlite", "./core-state/dws.sqlite", "triggers.dws databasePath conflicts with core dataDir", nil},
 		{"shared state", "./dws.sqlite", "./github.sqlite-wal", "triggers.dws databasePath conflicts with triggers.github databasePath", nil},
 		{"invalid status port", "    databasePath: ./dws.sqlite", "    statusListen: 127.0.0.1:invalid\n    databasePath: ./dws.sqlite", "statusListen must use host:port with a numeric port", nil},
@@ -703,6 +759,11 @@ func TestComposeProcessPreflight(t *testing.T) {
 				require.Contains(t, config, tc.old)
 				config = strings.ReplaceAll(config, tc.old, tc.new)
 			}
+			if tc.name == "credential shared across scopes" {
+				path := composeTokenPath(dir, "triggers.token")
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+				require.NoError(t, os.WriteFile(path, []byte(composeTriggerToken), 0o600))
+			}
 			p := startComposeFixture(t, dir, config, tc.environment...)
 			require.Error(t, p.wait(t))
 			require.Empty(t, readComposeFile(t, p.stdout))
@@ -710,7 +771,14 @@ func TestComposeProcessPreflight(t *testing.T) {
 			require.Contains(t, logs, tc.errorText)
 			require.NotContains(t, logs, "PRIVATE-FIXTURE")
 			for _, event := range composeEvents(dir) {
-				require.False(t, strings.HasSuffix(event.Name, ":start"), event.Name)
+				require.False(t, strings.HasSuffix(event.Name, ":start") && event.Name != "core:start", event.Name)
+			}
+			if tc.name == "credential shared across scopes" || tc.name == "DWS CLI local contract" {
+				assertComposeOrder(t, dir, "core:start", "core:stop")
+				started := awaitComposeEvent(t, dir, "core:start")
+				require.ErrorIs(t, syscall.Kill(started.PID, 0), syscall.ESRCH)
+			} else {
+				require.Empty(t, composeEvents(dir))
 			}
 		})
 	}

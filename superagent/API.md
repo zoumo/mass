@@ -687,8 +687,7 @@ records input acceptance separately from work completion. See
 
 ### Operator reconciliation
 
-Set `accessToken.admin` to a private file with an admin token distinct from
-the Trigger token. Inspection uses
+Use the admin token from `<dataDir>/credentials/admin.token`. Inspection uses
 `GET /v1/core/session-bindings/{bindingId}/runtime-evidence` to read the saved
 binding, its stop evidence, and a live identity-checked massd snapshot. Submit
 recovery with `POST /v1/core/session-bindings/{bindingId}/recoveries`. The path
@@ -696,13 +695,16 @@ selects the binding. Both require the admin token and a direct Core
 connection from a non-browser client.
 
 ```sh
-superagent inspect-session-binding SESSION_BINDING_ID --endpoint http://127.0.0.1:24370 \
-  --operator-token-file /private/operator.token
-superagent recover-input SESSION_BINDING_ID --endpoint http://127.0.0.1:24370 \
-  --operator-token-file /private/operator.token --operation-id incident-123 \
+superagent inspect-session-binding SESSION_BINDING_ID --config /absolute/run/core.yaml
+superagent recover-input SESSION_BINDING_ID --config /absolute/run/core.yaml \
+  --operation-id incident-123 \
   --mode retry --reconciliation 'Compared original native trace and affected work' \
   --accept-possible-duplicate
 ```
+
+For a remote Core, pass `--endpoint` and `--operator-token-file`.
+For a local listener configured with port zero, pass the ready record's
+`endpoint` with `--endpoint`.
 
 `retry` targets a current blocked Router, Topic or Issue Session binding. The operator
 records facts checked and accepts the possibility of duplication. Core
@@ -831,10 +833,10 @@ content and task ID captured at acceptance. Use `eventId` to inspect the
 Internal Event. The Web shows normal messages and delivery records, with task
 counts by state in its status summary.
 
-Pass the admin token file as `--operator-token-file` to `superagent scheduled-tasks list`,
-`superagent scheduled-tasks get TASK_ID`, `superagent scheduled-tasks
-trigger-messages TASK_ID`, or `superagent scheduled-tasks trigger TASK_ID
---operation-id OPERATION_ID`.
+Pass the local Core or Compose YAML with `--config` to `superagent scheduled-tasks`.
+For remote calls, pass `--endpoint` and `--operator-token-file`.
+Use `list`, `get TASK_ID`, `trigger-messages TASK_ID`, or
+`trigger TASK_ID --operation-id OPERATION_ID`.
 
 ## Pull request registration and subscriptions
 

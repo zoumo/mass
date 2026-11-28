@@ -36,11 +36,9 @@ func TestObserverTraceReadProjectsKnownFields(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "source.token"), []byte("fixture-source-token-with-32-bytes"), 0o600))
 	configPath := filepath.Join(dir, "core.yaml")
 	data := fmt.Sprintf(`openobserve:
   endpoint: %q
-accessToken: {triggers: ./source.token}
 `, server.URL)
 	require.NoError(t, os.WriteFile(configPath, []byte(data), 0o600))
 	config, err := LoadConfig(configPath)

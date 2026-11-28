@@ -5405,12 +5405,12 @@
     },
     "securitySchemes": {
       "massdBearer": {
-        "description": "massd instance credential",
+        "description": "Core admin.token credential for embedded MASS",
         "scheme": "bearer",
         "type": "http"
       },
       "operatorBearer": {
-        "description": "Core accessToken.admin credential for Operators",
+        "description": "Core admin.token credential for Operators",
         "scheme": "bearer",
         "type": "http"
       },
@@ -5420,7 +5420,7 @@
         "type": "http"
       },
       "triggerBearer": {
-        "description": "Core accessToken.triggers credential",
+        "description": "Core triggers.token credential",
         "scheme": "bearer",
         "type": "http"
       }
@@ -5465,7 +5465,7 @@
     },
     "/massd/jsonrpc": {
       "get": {
-        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
+        "description": "Available when Core runs embedded MASS.",
         "operationId": "connectMassd",
         "responses": {
           "101": {
@@ -5482,7 +5482,7 @@
                 }
               }
             },
-            "description": "massd instance credential required"
+            "description": "Core admin token required"
           },
           "403": {
             "content": {
@@ -5509,7 +5509,7 @@
                 }
               }
             },
-            "description": "massd exposure disabled"
+            "description": "Core is configured for external MASS"
           },
           "503": {
             "content": {
@@ -5535,7 +5535,7 @@
     },
     "/massd/livez": {
       "get": {
-        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
+        "description": "Available when Core runs embedded MASS.",
         "operationId": "massdLiveness",
         "responses": {
           "200": {
@@ -5566,7 +5566,7 @@
                 }
               }
             },
-            "description": "massd exposure disabled"
+            "description": "Core is configured for external MASS"
           }
         },
         "summary": "Check that the massd process can respond",
@@ -5577,7 +5577,7 @@
     },
     "/massd/readyz": {
       "get": {
-        "description": "Available when embedded massd exposure is enabled. A deployment can also mount standalone massd at this prefix.",
+        "description": "Available when Core runs embedded MASS.",
         "operationId": "massdReadiness",
         "responses": {
           "200": {
@@ -5608,7 +5608,7 @@
                 }
               }
             },
-            "description": "massd exposure disabled"
+            "description": "Core is configured for external MASS"
           },
           "503": {
             "content": {

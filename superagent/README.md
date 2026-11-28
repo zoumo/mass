@@ -6,10 +6,10 @@ MASS. The DWS and GitHub Triggers collect Messages. Superagent Web reads Core st
 ## Start Core
 
 1. Copy [the Core example](config.example.yaml) to a private run directory.
-   Set `accessToken.triggers` to a private file containing the shared Trigger
-   token. Set `accessToken.admin` to a separate private file to enable
-   Operator commands. Use at least 32 bytes per token without whitespace or
-   control characters. Relative paths start at the YAML file's directory.
+   Resolve relative paths from the YAML file's directory. Core creates
+   `<dataDir>/credentials/admin.token` for Operators and embedded MASS, and
+   `<dataDir>/credentials/triggers.token` for Triggers. Core reuses these files
+   on restart.
 2. Build and start Core from the repository root.
 
    ```sh
@@ -34,8 +34,10 @@ Omit `sessions` to collect Messages without starting Agents. To enable execution
 set `sessions.router`, `sessions.topic`, and at least one template in
 `sessions.issue.templates`.
 Use a fixed Core listen port or stable `externalURL` for the role MCP endpoint.
-Use the same host and OS account for Core and standalone `massd` so native
-Sessions can read their credential files. See the [Session preparation contract](API.md#session-configuration-and-preparation).
+When MASS runs on another host, set an HTTPS `externalURL` that the MASS host
+can reach. The MASS host must be able to read the Session workspaces and
+`<dataDir>/mcp-files` at the absolute paths Core puts in the Session spec.
+See the [Session preparation contract](API.md#session-configuration-and-preparation).
 
 Core resource reads need no login. Keep Core and the Web gateway within a
 network boundary for trusted readers. When `listen` uses a wildcard, use a
@@ -56,22 +58,26 @@ installations share `massd`, give them distinct `sessions.namespace` values.
 For a fresh Trigger database or a restart, follow the
 [Trigger data path instructions](triggers/README.md#replace-deployed-triggers).
 
-### Migrate Core access tokens
+### Move Core data and credentials
 
-1. Stop the existing Core and Trigger owners. Preserve the Core data directory
-   and each adapter's database, send evidence, and feedback state.
-2. Set `accessToken.triggers` to the shared Trigger token file. Move the
-   former `operatorTokenFile` value to `accessToken.admin`. In Compose,
-   place `accessToken` under `core`. Remove the old `triggerTokenFile`,
-   `operatorTokenFile`, `sources`, and `outboxConsumers` settings.
-3. Upgrade Core and all Triggers together. Set the standalone adapters'
-   configured token environment variables to the shared value. Compose
-   supplies the value from `core.accessToken.triggers`. Keep the original
-   account IDs, instance IDs, and database paths so each adapter can resume
-   its queue.
-4. Check Core readiness, the adapter status, and a stored Source receipt.
-   For reply-enabled adapters, check that the shared token and the adapter's
-   Source and Account reach its Outbox. Start Outbox pagination again.
+1. Stop Core, MASS, and all Trigger owners. Back up Core and MASS data, the
+   existing tokens, and each adapter's database, send evidence, and feedback state.
+2. Move the embedded MASS data directory to `<dataDir>/massd`. Remove
+   `massd.embedded` from Core YAML. Keep the `massd.endpoint` and
+   `massd.tokenFile` settings if you use external MASS. For the file
+   metadata backend, keep MASS external or migrate its metadata to SQLite
+   before embedding it.
+3. Install the former admin and Trigger tokens as `admin.token` and
+   `triggers.token` under `<dataDir>/credentials`. Use mode `0700` for the
+   directory and mode `0600` for each file. Each token must contain at
+   least 32 bytes without whitespace or control characters. When a token
+   was absent, Core generates it on startup. Remove `accessToken` from the YAML.
+4. Point embedded MASS clients at the Core admin token. Keep the existing
+   Trigger account IDs, instance IDs, and database paths. Provide the Core
+   Trigger token to standalone adapters through their `coreTokenEnv`.
+5. Check Core readiness, MASS Session history, and the adapter status.
+   Check a stored Source receipt and, for reply-enabled adapters, Outbox
+   access with the original Source and Account.
 
 `storageMaxPages` limits the main SQLite database. Leave room for WAL and
 other filesystem overhead. When the budget runs out, ingestion returns
@@ -119,7 +125,7 @@ to release its current Session and prepare a new one with the updated options.
 ## Scheduled tasks
 
 Topic Sessions manage their own scheduled tasks through MCP. For independent
-tasks and triggering from a local script or CLI, configure `accessToken.admin`
+tasks and triggering from a local script or CLI, use the Core admin token
 and connect directly to Core. Independent schedules also run
 in standalone Core without Session execution. Their Router events remain
 pending until a Router can handle them.
@@ -131,53 +137,33 @@ Core parses five-field cron expressions with [robfig/cron v3](https://github.com
 
 ## Running MASS inside Core
 
-Replace `massd.endpoint` and `massd.tokenFile` with an `embedded` block. Keep
-Core and MASS in separate directories. Set the role profiles and Issue
-profiles to Runtime names available in that MASS instance. MASS registers
-missing `codex` and `claude` Runtimes on startup.
+Core starts embedded MASS in `<dataDir>/massd` when you omit the `massd`
+section. Set the Session role profiles and Issue templates to Runtime names
+available in that instance. MASS registers missing `codex` and `claude`
+Runtimes on startup.
 
-```yaml
-dataDir: ./superagent
-massd:
-  embedded:
-    dataDir: ./massd
-```
-
-Start Core as above. Core prepares embedded MASS before it prints the ready
-record. See [ADR 0001](docs/adr/0001-use-one-mass-rpc-boundary.md) for the
-shared RPC boundary and data ownership.
-
-To switch between embedded and standalone MASS:
-
-1. Stop Core and the current MASS owner. Verify both exited successfully
-   before starting the replacement.
-2. Keep the same MASS data directory, metadata backend, and recovery material.
-   Keep Core's data directory, role MCP address, and credential file paths.
-3. For embedded mode, set `massd.embedded.dataDir`. For standalone mode, start
-   `massd` with the same directory and set `massd.endpoint` in Core.
-4. Restart Core. Compare the Session IDs, resource UIDs, and specs of existing
-   bindings with the pre-cutover records. Reconcile uncertain input before
-   manually resubmitting it. See [operator reconciliation](API.md#operator-reconciliation).
+To connect to external MASS, set `massd.endpoint` to its WebSocket RPC
+address and set `massd.tokenFile` if the service requires a bearer token.
+When moving the MASS data between owners, stop Core and MASS before the
+handoff. Keep the same MASS metadata and recovery material. After restarting
+Core, compare the Session IDs, resource UIDs, and specs against the saved
+bindings. Reconcile any uncertain input before manually resubmitting it.
+See [operator reconciliation](API.md#operator-reconciliation).
 
 ### Accessing embedded MASS with massctl
 
-Set `massd.embedded.expose.tokenFile` to a private file with a dedicated MASS
-token of at least 32 bytes. The token can't contain whitespace or control
-characters. Use separate credentials for Core Source, Operator, and role MCP
-access. Reserve the `cap_` prefix for role MCP.
-The MASS token grants access to all Runtime and Session operations, including
-Sessions managed by Core.
+Use `<dataDir>/credentials/admin.token`. It authorizes all MASS Runtime and
+Session operations, including operations on Sessions managed by Core.
 
 ```sh
-MASS_TOKEN="$(cat /absolute/run/embedded-massd.token)" \
+MASS_TOKEN="$(cat /absolute/run/superagent-core-data/credentials/admin.token)" \
 	bin/massctl --url ws://127.0.0.1:24370/massd session list
 ```
 
 For remote access, use a trusted TLS reverse proxy. Forward `/massd/`, the
 Bearer header, and the WebSocket Upgrade. Set upstream `Host` to the Core
-listen address with its port. Clients use `wss://<proxy-host>/massd`. If they
-send `Origin`, add the exact value to `massd.embedded.expose.allowedOrigins`.
-See the [WebSocket binding](../harness/bindings/websocket.md#认证与部署).
+listen address with its port. Native clients use `wss://<proxy-host>/massd`.
+Embedded MASS rejects upgrades containing an `Origin` header.
 
 ## Run one Watchdog check
 
@@ -223,13 +209,11 @@ after Watchdog exits and starts with an empty snapshot after restart.
 ## Run the stack with Compose
 
 1. Copy [the Compose example](compose.example.yaml) to a private run directory.
-   Keep `core` and the Trigger sections you want to run. Compose starts
-   embedded MASS. Keep Core, MASS, and Trigger data in separate paths.
-2. Set `core.accessToken.triggers`. Compose supplies the shared token to the
-   Trigger subprocesses. Reply-enabled Triggers use the token and their
-   Source and Account to read and update the Outbox. Supply
-   native GitHub and DWS credentials as described in the
-   [Trigger guide](triggers/README.md).
+   Keep `core` and the Trigger sections you want to run. Keep Trigger files
+   outside `core.dataDir`.
+2. Supply native GitHub and DWS credentials. Compose waits for Core readiness,
+   reads `<core.dataDir>/credentials/triggers.token`, and injects the token into
+   each Trigger subprocess. See the [Trigger guide](triggers/README.md).
 3. Start Compose from the repository root.
 
    ```sh
@@ -242,9 +226,9 @@ after Watchdog exits and starts with an empty snapshot after restart.
    while `/readyz` continues to report Core admission. For adapter details,
    use the corresponding address in `triggerEndpoints`. Compose reports the
    actual bound port and uses a loopback address for a wildcard listener.
-5. If you enabled embedded MASS exposure, use `massdEndpoint` with its
-   dedicated token. Use `/massd/livez` and `/massd/readyz` at the Core origin
-   to check the exposed instance.
+5. When Core runs embedded MASS, the ready record includes `massdEndpoint`.
+   Connect with the Core admin token. Use `/massd/livez` and `/massd/readyz`
+   at the Core origin to check the embedded instance.
 
 Press Ctrl-C to stop the Triggers before Core and embedded MASS. After startup,
 Compose logs a Trigger exit and keeps the other processes running. If Core

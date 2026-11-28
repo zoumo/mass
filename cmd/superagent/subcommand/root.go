@@ -208,7 +208,7 @@ func runCore(ctx context.Context, cmd *cobra.Command, config core.Config) (resul
 	}()
 	defer func() {
 		budget := coreShutdownTimeout
-		if config.Massd != nil && config.Massd.Embedded != nil {
+		if config.Massd == nil {
 			budget += massd.ShutdownTimeout
 		}
 		shutdown, cancel := context.WithTimeout(context.Background(), budget)

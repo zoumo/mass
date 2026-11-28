@@ -86,7 +86,7 @@ func TestObserveCoreResourceCLI(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(run("status"), &status))
 	require.Equal(t, "ready", status.Core.Status)
-	require.Equal(t, "disabled", status.Massd.Status)
+	require.Equal(t, "ready", status.Massd.Status)
 	require.Equal(t, "not_managed", status.Triggers.GitHub.Status)
 	var messages core.Page
 	require.NoError(t, json.Unmarshal(run("trigger-messages", "--thread-id", message.Message.ThreadID, "--limit", "1"), &messages))
@@ -118,14 +118,22 @@ func fixtureAt(t *testing.T) *fixture {
 	t.Helper()
 	dir := t.TempDir()
 	f := &fixture{t: t, dir: dir, config: filepath.Join(dir, "config.yaml"), data: filepath.Join(dir, "data"), token: strings.Repeat("a", 48)}
-	write(t, filepath.Join(dir, "source.token"), f.token)
 	f.configure(0)
 	return f
 }
 
 func (f *fixture) configure(pages int) {
 	f.t.Helper()
-	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\naccessToken:\n  triggers: %s\n", f.data, pages, filepath.Join(f.dir, "source.token")))
+	write(f.t, f.config, fmt.Sprintf("dataDir: %s\nlisten: 127.0.0.1:0\nstorageMaxPages: %d\n", f.data, pages))
+}
+
+func (f *fixture) seedToken(name, token string) string {
+	f.t.Helper()
+	dir := filepath.Join(f.data, "credentials")
+	require.NoError(f.t, os.MkdirAll(dir, 0o700))
+	path := filepath.Join(dir, name)
+	write(f.t, path, token)
+	return path
 }
 
 func write(t *testing.T, p, s string) {
@@ -143,6 +151,16 @@ func (f *fixture) coreExecutable() string {
 }
 
 func (f *fixture) start(env ...string) *process {
+	f.t.Helper()
+	if _, err := os.Stat(filepath.Join(f.data, "credentials", "triggers.token")); errors.Is(err, os.ErrNotExist) {
+		f.seedToken("triggers.token", f.token)
+	} else {
+		require.NoError(f.t, err)
+	}
+	return f.startConfigured(env...)
+}
+
+func (f *fixture) startConfigured(env ...string) *process {
 	f.t.Helper()
 	p := &process{done: make(chan error, 1)}
 	p.cmd = exec.CommandContext(context.Background(), f.coreExecutable(), "serve", "--config", f.config)
