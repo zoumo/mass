@@ -13,6 +13,7 @@ func TestCoreEndpoint(t *testing.T) {
 		"https://core.example.com",
 		"http://192.0.2.10:5970",
 		"http://core.example.com",
+		"http://core_internal:24370",
 	} {
 		require.NoError(t, ValidateCoreEndpoint(endpoint), endpoint)
 	}
@@ -35,6 +36,7 @@ func TestStatusAddress(t *testing.T) {
 	require.NoError(t, ValidateStatusEndpoint("https://trigger.example.com"))
 	require.Error(t, ValidateStatusEndpoint("https://trigger.example.com/status"))
 	require.NoError(t, ValidateStatusListen("localhost:0"))
+	require.NoError(t, ValidateStatusListen("trigger_status:0"))
 	require.NoError(t, ValidateStatusListen("0.0.0.0:24371"))
 	require.NoError(t, ValidateStatusListen(":24371"))
 	require.Error(t, ValidateStatusListen("localhost"))

@@ -32,6 +32,7 @@ func TestReadAllowedHostsConfig(t *testing.T) {
 		"[user@observer.example.com]",
 		"[observer.example.com:]",
 		"[observer.example.com:0]",
+		"[observer.example.com:080]",
 		"[observer.example.com:65536]",
 		"[observer.example.com:abc]",
 		"[observer..example.com]",
