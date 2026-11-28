@@ -24,13 +24,9 @@ func (s *Server) authorizeOperator(w http.ResponseWriter, r *http.Request) bool 
 		s.fail(w, problem("forbidden", "operator access requires a non-browser client"))
 		return false
 	}
-	if s.credentials.adminToken == "" {
-		s.fail(w, problem("not_found", "operator access is not configured"))
-		return false
-	}
 	got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
 	expected := sha256.Sum256([]byte("Bearer " + s.credentials.adminToken))
-	if subtle.ConstantTimeCompare(got[:], expected[:]) != 1 {
+	if s.credentials.adminToken == "" || subtle.ConstantTimeCompare(got[:], expected[:]) != 1 {
 		s.fail(w, problem("unauthorized", "valid Core admin token is required"))
 		return false
 	}

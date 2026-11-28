@@ -27,10 +27,6 @@ type instanceCredentials struct {
 	triggerHash  [32]byte
 }
 
-// String omits credentials from diagnostic output.
-func (instanceCredentials) String() string     { return "Core instance credentials" }
-func (c instanceCredentials) GoString() string { return c.String() }
-
 // AdminTokenPath locates the instance admin token without initializing Core.
 func (c Config) AdminTokenPath() string {
 	return filepath.Join(c.DataDir, credentialsDir, adminTokenFile)

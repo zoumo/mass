@@ -98,25 +98,23 @@ func matchesText(rules []matchRule, text string) bool {
 }
 
 type dwsConfig struct {
-	DWS          string `yaml:"dwsExecutable"`
-	Profile      string `yaml:"profile"`
-	Source       string `yaml:"source"`
-	AccountID    string `yaml:"accountId"`
-	SelfID       string `yaml:"selfOpenDingtalkId"`
-	InstanceID   string `yaml:"instanceId"`
-	CoreEndpoint string `yaml:"coreEndpoint"`
-	// Deprecated: HTTP is accepted on any Core host.
-	AllowInsecureCoreHTTP bool            `yaml:"allowInsecureCoreHTTP,omitempty"`
-	TokenEnv              string          `yaml:"coreTokenEnv"`
-	Listen                string          `yaml:"statusListen"`
-	Direct                directConfig    `yaml:"direct,omitempty"`
-	SelfChat              selfChatConfig  `yaml:"selfChat,omitempty"`
-	Groups                []groupConfig   `yaml:"groups,omitempty"`
-	Feedback              *feedbackConfig `yaml:"feedback,omitempty"`
-	DatabasePath          string          `yaml:"databasePath"`
-	Capacity              int             `yaml:"bufferCapacity"`
-	RetryMillis           int             `yaml:"retryMillis"`
-	RequestMillis         int             `yaml:"requestTimeoutMillis"`
+	DWS           string          `yaml:"dwsExecutable"`
+	Profile       string          `yaml:"profile"`
+	Source        string          `yaml:"source"`
+	AccountID     string          `yaml:"accountId"`
+	SelfID        string          `yaml:"selfOpenDingtalkId"`
+	InstanceID    string          `yaml:"instanceId"`
+	CoreEndpoint  string          `yaml:"coreEndpoint"`
+	TokenEnv      string          `yaml:"coreTokenEnv"`
+	Listen        string          `yaml:"statusListen"`
+	Direct        directConfig    `yaml:"direct,omitempty"`
+	SelfChat      selfChatConfig  `yaml:"selfChat,omitempty"`
+	Groups        []groupConfig   `yaml:"groups,omitempty"`
+	Feedback      *feedbackConfig `yaml:"feedback,omitempty"`
+	DatabasePath  string          `yaml:"databasePath"`
+	Capacity      int             `yaml:"bufferCapacity"`
+	RetryMillis   int             `yaml:"retryMillis"`
+	RequestMillis int             `yaml:"requestTimeoutMillis"`
 }
 
 func loadDWSConfig(path string, section io.Reader, coreEndpoint string) (dwsConfig, error) {

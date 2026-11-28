@@ -3,7 +3,6 @@ import tailwindcss from '@tailwindcss/vite'
 
 const backendPaths = '^/(?:apis(?:/|\\?|$)|(?:status|livez|readyz)(?:\\?|$))'
 const backendPath = new RegExp(backendPaths)
-const retiredPath = /^\/(?:superagent|massd|v1)(?:\/|$)/
 const coreOrigin = process.env.SUPERAGENT_CORE_ORIGIN || 'http://127.0.0.1:24370'
 
 function sameOriginProxy(): Plugin {
@@ -19,10 +18,6 @@ function sameOriginProxy(): Plugin {
           path = decodeURIComponent(rawPath)
         } catch {
           res.writeHead(400).end()
-          return
-        }
-        if (retiredPath.test(path)) {
-          res.writeHead(404).end()
           return
         }
         if (!backendPath.test(path)) return next()

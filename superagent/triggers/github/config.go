@@ -13,18 +13,16 @@ import (
 const githubSource = "github"
 
 type githubConfig struct {
-	GitHubTokenEnv string `yaml:"githubTokenEnv"`
-	AccountID      string `yaml:"accountId"`
-	InstanceID     string `yaml:"instanceId"`
-	CoreEndpoint   string `yaml:"coreEndpoint"`
-	// Deprecated: HTTP is accepted on any Core host.
-	AllowInsecureCoreHTTP bool               `yaml:"allowInsecureCoreHTTP,omitempty"`
-	TokenEnv              string             `yaml:"coreTokenEnv"`
-	Listen                string             `yaml:"statusListen"`
-	DatabasePath          string             `yaml:"databasePath"`
-	PollSeconds           int                `yaml:"pollIntervalSeconds"`
-	RequestMillis         int                `yaml:"requestTimeoutMillis"`
-	Repositories          []githubRepository `yaml:"repositories"`
+	GitHubTokenEnv string             `yaml:"githubTokenEnv"`
+	AccountID      string             `yaml:"accountId"`
+	InstanceID     string             `yaml:"instanceId"`
+	CoreEndpoint   string             `yaml:"coreEndpoint"`
+	TokenEnv       string             `yaml:"coreTokenEnv"`
+	Listen         string             `yaml:"statusListen"`
+	DatabasePath   string             `yaml:"databasePath"`
+	PollSeconds    int                `yaml:"pollIntervalSeconds"`
+	RequestMillis  int                `yaml:"requestTimeoutMillis"`
+	Repositories   []githubRepository `yaml:"repositories"`
 }
 
 type githubRepository struct {
